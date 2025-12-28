@@ -326,3 +326,13 @@ type ClosedWindow =
         | Right -> PlClosedWindow.Right
         | Both -> PlClosedWindow.Both
         | NoWindow -> PlClosedWindow.None
+
+type Roll =
+    | Raise 
+    | Forward 
+    | Backward
+    member internal this.ToNative() =
+        match this with
+        | Raise -> PlRoll.Raise
+        | Forward -> PlRoll.Forward
+        | Backward -> PlRoll.Backward

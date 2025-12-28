@@ -151,7 +151,7 @@ public static partial class PolarsWrapper
         e.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-    public static ExprHandle ExprAddBusinessDays(
+    public static ExprHandle DtAddBusinessDays(
         ExprHandle expr, 
         ExprHandle n, 
         bool[] weekMask, 
@@ -178,7 +178,7 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(h);
     }
 
-    public static ExprHandle ExprIsBusinessDay(
+    public static ExprHandle DtIsBusinessDay(
         ExprHandle expr,
         bool[] weekMask,
         int[] holidays)

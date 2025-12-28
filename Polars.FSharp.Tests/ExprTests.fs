@@ -460,3 +460,109 @@ type ``String Logic Tests`` () =
         // "User: 12345" -> "12345"
         Assert.Equal("12345", res.String("extracted_id", 0).Value)
         Assert.Equal("999", res.String("extracted_id", 1).Value)
+    [<Fact>]
+    member _.``Dt: Add Business Days (Standard Week)`` () =
+        // 2023-01-01 是周日
+        // 2023-01-02 是周一 (Business Day)
+        let start = DateOnly(2023, 1, 1)
+        let df = DataFrame.ofRecords [ {| Date = start |} ]
+
+        // 场景 1: 周日 + 1 工作日 (Roll=Forward) -> 应该是周一 + 1 = 周二 (2023-01-03)?
+        // Polars 逻辑: 如果 start 不是工作日且 roll=forward，它会先滚动到下一个工作日(周一)，然后加 n。
+        // 所以: Sun(Roll->Mon) + 1 BD = Tue.
+        
+        let res = 
+            df.Select([
+                pl.col("Date").Dt.AddBusinessDays(1, roll=Roll.Forward).Alias("Next")
+            ])
+            
+        // 2023-01-03
+        Assert.Equal(DateOnly(2023, 1, 3), res.Cell<DateOnly>("Next",0))
+
+    [<Fact>]
+    member _.``Dt: Add Business Days (With Holidays)`` () =
+        // 2023-01-04 (周三)
+        // 2023-01-05 (周四) -> 设为假期
+        // 2023-01-06 (周五)
+        // 2023-01-07 (周六)
+        // 2023-01-08 (周日)
+        // 2023-01-09 (周一)
+        
+        let start = DateOnly(2023, 1, 4) // Wed
+        let holidays = [ DateOnly(2023, 1, 5) ] // Thu is holiday
+        
+        let df = DataFrame.ofRecords [ {| Date = start |} ]
+
+        // Wed + 2 Business Days
+        // Day 1: Thu (Skip/Holiday) -> Fri
+        // Day 2: Sat (Skip) -> Sun (Skip) -> Mon
+        // Result should be Mon Jan 09
+        
+        let res = 
+            df.Select([
+                pl.col("Date").Dt
+                    .AddBusinessDays(2, holidays=holidays)
+                    .Alias("Result")
+            ])
+            
+        Assert.Equal(DateOnly(2023, 1, 9), res.Cell<DateOnly>("Result", 0))
+
+    [<Fact>]
+    member _.``Dt: Custom Week Mask (Weekend is Fri/Sat)`` () =
+        // 模拟中东工作周 (周日-周四工作，周五周六休息)
+        // Mask 顺序: Mon, Tue, Wed, Thu, Fri, Sat, Sun
+        let customWeek = [| true; true; true; true; false; false; true |]
+        
+        // 2023-01-05 (周四)
+        // + 1 BD -> Fri(Skip), Sat(Skip) -> Sun (2023-01-08)
+        let start = DateOnly(2023, 1, 5) 
+        let df = DataFrame.ofRecords [ {| Date = start |} ]
+        
+        let res = 
+            df.Select([
+                pl.col("Date").Dt
+                    .AddBusinessDays(1, weekMask=customWeek)
+                    .Alias "Result"
+            ])
+            
+        Assert.Equal(DateOnly(2023, 1, 8), res.Cell<DateOnly>("Result",0))
+
+    [<Fact>]
+    member _.``Dt: Is Business Day`` () =
+        let dates = [
+            DateOnly(2023, 1, 6) // Fri
+            DateOnly(2023, 1, 7) // Sat
+            DateOnly(2023, 1, 8) // Sun
+            DateOnly(2023, 1, 9) // Mon
+        ]
+        
+        let df = 
+            DataFrame.ofRecords [ 
+                for d in dates do yield {| Date = d |} 
+            ]
+
+        // 默认: Sat/Sun 是非工作日
+        let res = 
+            df.WithColumns([
+                pl.col("Date").Dt.IsBusinessDay().Alias "IsBiz"
+            ])
+        
+        // Fri -> True
+        Assert.True(res.Cell<bool>("IsBiz",0))
+        // Sat -> False
+        Assert.False(res.Cell<bool>("IsBiz",1))
+        // Sun -> False
+        Assert.False(res.Cell<bool>("IsBiz",2))
+        // Mon -> True
+        Assert.True(res.Cell<bool>("IsBiz",3))
+
+    [<Fact>]
+    member _.``Dt: Is Business Day (With Holidays)`` () =
+        let df = DataFrame.ofRecords [ {| Date = DateOnly(2023, 1, 2) |} ] // Mon
+        let hols = [ DateOnly(2023, 1, 2) ] // Monday is holiday
+        
+        let res = df.Select([
+            pl.col("Date").Dt.IsBusinessDay(holidays=hols)
+        ])
+        
+        Assert.False(res.Cell<bool>("Date", 0))

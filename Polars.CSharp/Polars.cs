@@ -32,7 +32,7 @@ public static class Polars
     public static Expr Len()
         => new(PolarsWrapper.Len());
     // --- Literals ---
-     public static Expr Lit(string value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(string value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(int value)    => new(PolarsWrapper.Lit(value));
     public static Expr Lit(double value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(DateTime value) => new(PolarsWrapper.Lit(value));

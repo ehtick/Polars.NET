@@ -387,6 +387,70 @@ and DtOps(handle: ExprHandle) =
     /// </summary>
     member this.ReplaceTimeZone(timeZone: string, ?ambiguous: string, ?nonExistent: string) =
         this.ReplaceTimeZone(Some timeZone, ?ambiguous=ambiguous, ?nonExistent=nonExistent)
+    /// <summary>
+    /// Add business days to a date column.
+    /// </summary>
+    /// <param name="n">Number of business days to add.</param>
+    /// <param name="weekMask">Array of 7 bools (Mon-Sun) indicating business days. Default: [true, true, true, true, true, false, false].</param>
+    /// <param name="holidays">List of holidays to skip.</param>
+    /// <param name="roll">Strategy for handling non-business start dates. Default: Raise.</param>
+    member this.AddBusinessDays(
+        n: Expr, 
+        ?weekMask: bool[], 
+        ?holidays: seq<DateOnly>, 
+        ?roll: Roll
+    ) =
+        // 1. 处理默认参数
+        let mask = defaultArg weekMask [| true; true; true; true; true; false; false |]
+        let r = defaultArg roll Roll.Raise
+        
+        // 2. 处理假期 (DateOnly -> int days since 1970-01-01)
+        let epoch = DateOnly(1970, 1, 1).DayNumber
+        let holidayInts = 
+            match holidays with
+            | Some hols -> hols |> Seq.map (fun d -> d.DayNumber - epoch) |> Seq.toArray
+            | None -> [||]
+
+        // 3. 调用 Wrapper
+        new Expr(PolarsWrapper.DtAddBusinessDays(
+            handle, 
+            n.CloneHandle(), 
+            mask, 
+            holidayInts, 
+            r.ToNative()
+        ))
+
+    /// <summary>
+    /// Overload: Add business days using an integer literal.
+    /// </summary>
+    member this.AddBusinessDays(n: int, ?weekMask, ?holidays, ?roll) =
+        let expr = new Expr(PolarsWrapper.Lit n)
+        this.AddBusinessDays(
+            expr, 
+            ?weekMask = weekMask, 
+            ?holidays = holidays, 
+            ?roll = roll
+        )
+
+    /// <summary>
+    /// Check if the date is a business day.
+    /// </summary>
+    /// <param name="weekMask">Array of 7 bools (Mon-Sun). Default: Mon-Fri are business days.</param>
+    /// <param name="holidays">List of holidays.</param>
+    member this.IsBusinessDay(?weekMask: bool[], ?holidays: seq<DateOnly>) =
+        let mask = defaultArg weekMask [| true; true; true; true; true; false; false |]
+        
+        let epoch = DateOnly(1970, 1, 1).DayNumber
+        let holidayInts = 
+            match holidays with
+            | Some hols -> hols |> Seq.map (fun d -> d.DayNumber - epoch) |> Seq.toArray
+            | None -> [||]
+
+        new Expr(PolarsWrapper.DtIsBusinessDay(
+            handle,
+            mask,
+            holidayInts
+        ))
         
 and StringOps(handle: ExprHandle) =
     let wrap op = new Expr(op handle)

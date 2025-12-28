@@ -1116,7 +1116,7 @@ public class DtOps
         var nHandle = PolarsWrapper.CloneExpr(n.Handle);
         var handle = PolarsWrapper.CloneExpr(_expr.Handle);
         
-        return new Expr(PolarsWrapper.ExprAddBusinessDays(
+        return new Expr(PolarsWrapper.DtAddBusinessDays(
             handle, 
             nHandle, 
             mask, 
@@ -1143,7 +1143,7 @@ public class DtOps
             holidayInts = [.. holidays.Select(d => d.DayNumber - EpochDayNumber)];
         }
         var handle = PolarsWrapper.CloneExpr(_expr.Handle);
-        return new Expr(PolarsWrapper.ExprIsBusinessDay(handle, mask, holidayInts));
+        return new Expr(PolarsWrapper.DtIsBusinessDay(handle, mask, holidayInts));
     }
 }
 

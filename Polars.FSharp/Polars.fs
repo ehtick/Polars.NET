@@ -6,8 +6,7 @@ open Polars.NET.Core
 open System.Threading.Tasks
 
 // =========================================================================
-// 1. 核心实现层 (Internal / Private Implementation)
-//    这里放所有的逻辑，但不对外直接暴露，防止命名污染
+// 1. 核心实现层
 // =========================================================================
 [<EditorBrowsable(EditorBrowsableState.Never)>]
 type LitMechanism = LitMechanism with
