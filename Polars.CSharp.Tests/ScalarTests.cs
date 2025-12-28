@@ -60,7 +60,6 @@ public class ScalarTests
         // 4. 验证索引器 (object 返回值类型检查)
         // 索引器返回的是 object，我们需要验证它是否被正确拆箱为强类型
         
-        // DateTimeOffset 自动处理验证 (Series indexer 对于 Datetime 返回 DateTimeOffset)
         Assert.IsType<DateTime>(df[0, "dt"]); 
         Assert.IsType<bool>(df[0,"b"]);
         Assert.IsType<string>(df[0,"s"]);

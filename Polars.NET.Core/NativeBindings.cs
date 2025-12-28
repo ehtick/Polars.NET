@@ -189,6 +189,14 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_fill_nan(ExprHandle expr, ExprHandle fillValue);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_null(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_not_null(ExprHandle expr);
+    // Unique ops
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_unique(ExprHandle expr);
+
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_duplicated(ExprHandle expr);
+
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_unique(ExprHandle expr);
+
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_unique_stable(ExprHandle expr);
     // Math ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_pow(ExprHandle baseExpr, ExprHandle exponent);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sqrt(ExprHandle expr);
@@ -793,6 +801,10 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial SeriesHandle pl_series_is_not_nan(SeriesHandle s);
     [LibraryImport(LibName)] public static partial SeriesHandle pl_series_is_finite(SeriesHandle s);
     [LibraryImport(LibName)] public static partial SeriesHandle pl_series_is_infinite(SeriesHandle s);
+    [LibraryImport(LibName)] public static partial SeriesHandle pl_series_unique(SeriesHandle series);
+
+    [LibraryImport(LibName)] public static partial SeriesHandle pl_series_unique_stable(SeriesHandle series);
+    [LibraryImport(LibName)] public static partial UIntPtr pl_series_n_unique(SeriesHandle series);
     // --- Series Cast ---
     [LibraryImport(LibName)]
     public static partial SeriesHandle pl_series_cast(SeriesHandle s, DataTypeHandle dtype);

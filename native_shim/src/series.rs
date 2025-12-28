@@ -434,6 +434,44 @@ pub extern "C" fn pl_series_null_count(s_ptr: *mut SeriesContext) -> usize {
     let ctx = unsafe { &*s_ptr };
     ctx.series.null_count()
 }
+
+// Unique (去重)
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_unique(ptr: *mut SeriesContext) -> *mut SeriesContext {
+    ffi_try!({
+        let s = unsafe { &*ptr }.series.clone();
+        let out = s.unique()?;
+        Ok(Box::into_raw(Box::new(SeriesContext { series: out })))
+    })
+}
+
+// UniqueStable (稳定去重)
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_unique_stable(ptr: *mut SeriesContext) -> *mut SeriesContext {
+    ffi_try!({
+        let s = unsafe { &*ptr }.series.clone();
+        let out = s.unique_stable()?;
+        Ok(Box::into_raw(Box::new(SeriesContext { series: out })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_n_unique(ptr: *mut SeriesContext) -> usize {
+    // 使用 AssertUnwindSafe 包裹闭包，强制告诉编译器这是“异常安全”的
+    // 这是 FFI 中处理 catch_unwind 的标准做法
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if ptr.is_null() {
+            return 0;
+        }
+        let ctx = unsafe { &*ptr };
+        // n_unique() 返回 PolarsResult<usize>
+        // 如果逻辑出错（Result::Err），返回 0
+        ctx.series.n_unique().unwrap_or(0)
+    }));
+
+    // 如果发生了 Panic（catch_unwind 捕获到了错误），也返回 0
+    result.unwrap_or(0)
+}
 // --- Scalar Access ---
 
 #[unsafe(no_mangle)]

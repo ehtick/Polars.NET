@@ -318,6 +318,15 @@ public class LazyFrame : IDisposable
         return new LazyFrame(PolarsWrapper.LazySelect(lfClone, handles));
     }
     /// <summary>
+    /// Select columns by name.
+    /// <para>Syntactic sugar for <c>Select(Expr.Col(name))</c>.</para>
+    /// </summary>
+    public LazyFrame Select(params string[] columns)
+    {
+        var exprs = columns.Select(Polars.Col).ToArray();
+        return Select(exprs);
+    }
+    /// <summary>
     /// Filter rows based on a boolean expression.
     /// </summary>
     /// <param name="expr"></param>
@@ -346,7 +355,7 @@ public class LazyFrame : IDisposable
     /// </summary>
     public LazyFrame Sort(string column, bool descending = false)
     {
-        return Sort(new[] { column }, new[] { descending });
+        return Sort([column], [descending]);
     }
     /// <summary>
     /// Sort using a single expression.
@@ -354,7 +363,7 @@ public class LazyFrame : IDisposable
     public LazyFrame Sort(Expr expr, bool descending = false)
     {
         // 包装成数组，复用核心逻辑
-        return Sort(new[] { expr }, new[] { descending });
+        return Sort([expr], [descending]);
     }
     /// <summary>
     /// Sort the LazyFrame by multiple columns (all ascending or all descending).
@@ -520,7 +529,26 @@ public class LazyFrame : IDisposable
     /// <returns></returns>
     public LazyFrame Join(LazyFrame other, Expr leftOn, Expr rightOn, JoinType how = JoinType.Inner)
     {
-        return Join(other,new Expr[] {leftOn}, new Expr[] {rightOn}, how);
+        return Join(other,[leftOn], [rightOn], how);
+    }
+    /// <summary>
+    /// Join with another LazyFrame using column names.
+    /// </summary>
+    public LazyFrame Join(LazyFrame other, string[] leftOn, string[] rightOn, JoinType how = JoinType.Inner)
+    {
+        var lExprs = leftOn.Select(Polars.Col).ToArray();
+        var rExprs = rightOn.Select(Polars.Col).ToArray();
+
+        return Join(other, lExprs, rExprs, how);
+    }
+
+    /// <summary>
+    /// Join with another LazyFrame using a single column pair.
+    /// </summary>
+    public LazyFrame Join(LazyFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
+    {
+        // 包装成数组调用上面的重载
+        return Join(other, new[] { leftOn }, new[] { rightOn }, how);
     }
 
     /// <summary>
@@ -561,12 +589,12 @@ public class LazyFrame : IDisposable
     /// <param name="rightBy"></param>
     /// <returns></returns>
     public LazyFrame JoinAsOf(
-    LazyFrame other, 
-    Expr leftOn, Expr rightOn, 
-    TimeSpan tolerance,
-    string strategy = "backward",
-    Expr[]? leftBy = null,
-    Expr[]? rightBy = null)
+        LazyFrame other, 
+        Expr leftOn, Expr rightOn, 
+        TimeSpan tolerance,
+        string strategy = "backward",
+        Expr[]? leftBy = null,
+        Expr[]? rightBy = null)
     {
         return JoinAsOf(other,leftOn,rightOn,DurationFormatter.ToPolarsString(tolerance),strategy,leftBy,rightBy);
     }
@@ -583,6 +611,30 @@ public class LazyFrame : IDisposable
         var lfClone = CloneHandle();
         
         return new LazyGroupBy(lfClone, keys);
+    }
+    /// <summary>
+    /// Group by a single column name.
+    /// <para>
+    /// Explicit overload to ensure the string is treated as a Column, not a Literal.
+    /// </para>
+    /// </summary>
+    public LazyGroupBy GroupBy(string name)
+    {
+        // 关键：显式包装为 Col，截断隐式转换(Lit)的路径
+        return GroupBy([Polars.Col(name)]);
+    }
+
+    /// <summary>
+    /// Group by multiple column names.
+    /// <para>
+    /// Explicit overload to ensure strings are treated as Columns, not Literals.
+    /// </para>
+    /// </summary>
+    public LazyGroupBy GroupBy(params string[] names)
+    {
+        // 关键：显式包装为 Col
+        var exprs = names.Select(n => Polars.Col(n)).ToArray();
+        return GroupBy(exprs);
     }
     /// <summary>
     /// Group by dynamic windows based on a time index.
@@ -603,7 +655,7 @@ public class LazyFrame : IDisposable
         string periodStr = DurationFormatter.ToPolarsString(period) ?? everyStr;
         string offsetStr = DurationFormatter.ToPolarsString(offset) ?? "0s";
 
-        var keys = by ?? new Expr[]{};
+        var keys = by ?? [];
         return new LazyDynamicGroupBy(
             CloneHandle(),
             indexColumn,

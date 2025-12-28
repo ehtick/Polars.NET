@@ -101,9 +101,9 @@ public class SeriesTests
             // 用户只需写标准的 C# 集合
             var data = new List<List<int?>?>
             {
-                new List<int?> { 1, 2 },
+                new() { 1, 2 },
                 null,
-                new List<int?> { 3, null, 5 } // 甚至支持子元素 null
+                new() { 3, null, 5 } // 甚至支持子元素 null
             };
 
             // 一行代码创建 Series
@@ -175,10 +175,10 @@ public class SeriesTests
 
         // 4. 组装 StructArray
         // 字段定义
-        var fields = new List<Apache.Arrow.Field>
+        var fields = new List<Field>
         {
-            new Apache.Arrow.Field("Name", new StringType(), false),
-            new Apache.Arrow.Field("Scores", new ListType(new Int64Type()), true)
+            new("Name", new StringType(), false),
+            new("Scores", new ListType(new Int64Type()), true)
         };
         var structType = new StructType(fields);
 
@@ -229,9 +229,9 @@ public class SeriesTests
     {
         var students = new List<Student>
         {
-            new Student { Name = "Alice", Age = 20 },
+            new() { Name = "Alice", Age = 20 },
             null!, // Struct Null
-            new Student { Name = "Bob", Age = 22 }
+            new() { Name = "Bob", Age = 22 }
         };
 
         // 这一行代码，对于用户来说是极其舒适的
@@ -317,7 +317,7 @@ public class SeriesTests
     public void Test_Series_Cast_Decimal()
     {
         // 1. 创建 Double Series
-        using var s = new Series("prices", new double[]{10.5, 20.0});
+        using var s = new Series("prices", [10.5, 20.0]);
 
         // 2. Cast 到 Decimal(10, 2)
         // 这需要 DataType 类发挥作用
@@ -450,5 +450,38 @@ public class SeriesTests
         // IsInfinite -> [false, false, true]
         using var isInf = s.IsInfinite();
         Assert.True(isInf.GetValue<bool>(2));
+    }
+    [Fact]
+    public void Test_Series_Unique_Composite()
+    {
+        // 数据: [1, 2, 2, 3]
+        using var s = Series.From("nums", new[] { 1, 2, 2, 3 });
+
+        // 1. 测试 NUnique (Rust FFI)
+        Assert.Equal(3UL, s.NUnique); // 1, 2, 3 共3个唯一值
+
+        // 2. 测试 IsDuplicated (C# Composite)
+        using var dupMask = s.IsDuplicated();
+        Assert.Equal(DataTypeKind.Boolean, dupMask.DataType.Kind);
+        
+        // 验证逻辑: [1, 2, 2, 3] -> [F, T, T, F] (默认 keep='all' 语义，或者 keep='avg'?)
+        // Polars expr.is_duplicated() 默认行为是: 重复的元素标记为 true。
+        // [1(F), 2(T), 2(T), 3(F)] ? 还是 [1(F), 2(F), 2(T), 3(F)] ?
+        // 经查 Polars 文档，is_duplicated() 默认把所有涉及重复的项都标记为 true。
+        // 即: 只要这个数出现次数 > 1，它就是 true。
+        // 所以预期是: [F, T, T, F]
+        
+        Assert.False((bool)dupMask[0]!); // 1
+        Assert.True((bool)dupMask[1]!);  // 2
+        Assert.True((bool)dupMask[2]!);  // 2
+        Assert.False((bool)dupMask[3]!); // 3
+
+        // 3. 测试 Unique (C# Composite)
+        using var uniq = s.UniqueStable();
+        Assert.Equal(3, uniq.Length);
+        // 验证值
+        Assert.Equal(1, uniq[0]);
+        Assert.Equal(2, uniq[1]);
+        Assert.Equal(3, uniq[2]);
     }
 }

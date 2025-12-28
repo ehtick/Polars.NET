@@ -21,7 +21,7 @@ public class AsyncTests
         using var lf = LazyFrame.ScanCsv(new DisposableFile("id,val\n1,10\n2,20\n3,30",".csv").Path);
         
         var query = lf
-            .Filter(Col("val") > Lit(15))
+            .Filter(Col("val") > 15)
             .Select(Col("id"));
 
         // 4. 测试 LazyFrame.CollectAsync

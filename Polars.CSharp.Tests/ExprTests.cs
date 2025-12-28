@@ -57,7 +57,7 @@ public class ExprTests
         using var df = DataFrame.ReadCsv(csv.Path);
 
         // C# 运算符重载: Col("val") > Lit(15)
-        using var res = df.Filter(Col("val") > Lit(15));
+        using var res = df.Filter(Col("val") > 15);
         
         Assert.Equal(2, res.Height); // 20, 30
         
@@ -83,7 +83,7 @@ Zhang,2025-10-31,55,1.75";
         using var df = DataFrame.ReadCsv(csv.Path);
 
         // 逻辑: birthdate.year < 1990
-        using var res = df.Filter(Col("birthdate").Dt.Year() < Lit(1990));
+        using var res = df.Filter(Col("birthdate").Dt.Year() < 1990);
 
         Assert.Equal(1, res.Height); // 只有 Ben Brown
         
@@ -116,7 +116,7 @@ Zhang,2025-10-31,55,1.75";
         
         // 逻辑: value == 3.36
         // 注意浮点数比较通常有精度问题，但在 Polars 内部如果是完全匹配的字面量通常没问题
-        using var res = df.Filter(Col("value") == Lit(3.36));
+        using var res = df.Filter(Col("value") == 3.36);
         
         Assert.Equal(2, res.Height);
     }
@@ -137,9 +137,9 @@ Zhang,2025-10-31,55,1.75";
         // C# Eager 写法:
         using var filled = df
             .WithColumns(
-                Col("age").FillNull(Lit(0)).Alias("age_filled")
+                Col("age").FillNull(0).Alias("age_filled")
             )
-            .Filter(Col("age_filled") >= Lit(0));
+            .Filter(Col("age_filled") >= 0);
             
         // 结果应该是 3 行 (10, 0, 30)
         Assert.Equal(3, filled.Height);
@@ -180,7 +180,7 @@ TooShort,1990-05-20,1.60";
             Col("birthdate").IsBetween(Lit(startDt), Lit(endDt))
             & // 条件 2: AND (注意 C# 是 & 不是 &&)
             // 条件 3: 身高
-            (Col("height") > Lit(1.7))
+            (Col("height") > 1.7)
         );
 
         // 验证: 只有 Qinglei 符合 (TooOld 生日不对，TooShort 身高不对)
@@ -206,7 +206,6 @@ TooShort,1990-05-20,1.60";
             // 顺便测一下 sqrt: sqrt(height)
             Col("height").Sqrt().Alias("sqrt_h")
         );
-
 
         // 验证 Bob 的 BMI: 80 / 1.8^2 = 24.691358...
         // Bob 是第二行 (index 1)
@@ -461,11 +460,11 @@ TooShort,1990-05-20,1.60";
         // else "Fail"
         
         var gradeExpr = IfElse(
-            Col("score") >= Lit(90),
+            Col("score") >= 90,
             Lit("A"),
             // 嵌套 IfElse (Else 分支)
             IfElse(
-                Col("score") >= Lit(60),
+                Col("score") >= 60,
                 Lit("Pass"),
                 Lit("Fail")
             )
@@ -473,7 +472,7 @@ TooShort,1990-05-20,1.60";
 
         using var res = df
             .WithColumns(gradeExpr)
-            .Sort(Col("score"), descending: true); // 降序
+            .Sort("score", descending: true); // 降序
 
         // 验证
         using var batch = res.ToArrow();

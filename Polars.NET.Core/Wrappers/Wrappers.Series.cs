@@ -329,6 +329,14 @@ public static partial class PolarsWrapper
     {
         return (long)NativeBindings.pl_series_null_count(s);
     }
+    public static SeriesHandle SeriesUnique(SeriesHandle handle) => ErrorHelper.Check(NativeBindings.pl_series_unique(handle));
+
+    public static SeriesHandle SeriesUniqueStable(SeriesHandle handle) => ErrorHelper.Check(NativeBindings.pl_series_unique_stable(handle));
+    public static ulong SeriesNUnique(SeriesHandle handle)
+    {
+        // 只要 Handle 有效，这个调用就是安全的
+        return NativeBindings.pl_series_n_unique(handle);
+    }
     // Ops
     public static SeriesHandle SeriesAdd(SeriesHandle s1, SeriesHandle s2) => ErrorHelper.Check(NativeBindings.pl_series_add(s1, s2));
     public static SeriesHandle SeriesSub(SeriesHandle s1, SeriesHandle s2) => ErrorHelper.Check(NativeBindings.pl_series_sub(s1, s2));

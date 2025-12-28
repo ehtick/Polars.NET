@@ -126,7 +126,6 @@ public class TimeSeriesTests
         
         Assert.Equal(10, res.Height);
         
-        // [修复] 这里用 uint 或者 10u
         Assert.Equal(10, res.GetValue<int>(0, "Count"));
     }
 }

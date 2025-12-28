@@ -300,6 +300,14 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return new DataFrame(PolarsWrapper.Select(Handle, handles));
     }
     /// <summary>
+    /// Select columns by name.
+    /// </summary>
+    public DataFrame Select(params string[] columns)
+    {
+        var exprs = columns.Select(Polars.Col).ToArray();
+        return Select(exprs);
+    }
+    /// <summary>
     /// Filter rows based on a boolean expression. 
     /// </summary>
     /// <param name="expr"></param>
@@ -326,7 +334,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public DataFrame Sort(string column, bool descending = false)
     {
-        return Sort(new[] { column }, new[] { descending });
+        return Sort([column], [descending]);
     }
     /// <summary>
     /// Sort using a single expression.
@@ -334,7 +342,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     public DataFrame Sort(Expr expr, bool descending = false)
     {
         // 包装成数组，复用核心逻辑
-        return Sort(new[] { expr }, new[] { descending });
+        return Sort([expr], [descending]);
     }
     /// <summary>
     /// Sort the DataFrame by multiple columns (all ascending or all descending).
@@ -515,6 +523,24 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             how.ToNative()
         ));
     }
+    /// <summary>
+    /// Join with another DataFrame using column names.
+    /// </summary>
+    public DataFrame Join(DataFrame other, string[] leftOn, string[] rightOn, JoinType how = JoinType.Inner)
+    {
+        var lExprs = leftOn.Select(c => Polars.Col(c)).ToArray();
+        var rExprs = rightOn.Select(c => Polars.Col(c)).ToArray();
+
+        return Join(other, lExprs, rExprs, how);
+    }
+
+    /// <summary>
+    /// Join with another DataFrame using a single column pair.
+    /// </summary>
+    public DataFrame Join(DataFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
+    {
+        return Join(other, [leftOn], [rightOn], how);
+    }
     
     /// <summary>
     /// Concatenate multiple DataFrames
@@ -539,8 +565,15 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <returns></returns>
     public GroupByBuilder GroupBy(params Expr[] by)
     {
-        // 返回一个构建器，不立即执行
         return new GroupByBuilder(this, by);
+    }
+    /// <summary>
+    /// Group by column names.
+    /// </summary>
+    public GroupByBuilder GroupBy(params string[] columns)
+    {
+        var exprs = columns.Select(Polars.Col).ToArray();
+        return GroupBy(exprs);
     }
 
     // ==========================================

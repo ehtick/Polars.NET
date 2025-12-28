@@ -215,6 +215,11 @@ gen_unary_op!(pl_expr_not, not);
 // is_null()
 gen_unary_op!(pl_expr_is_null, is_null);
 gen_unary_op!(pl_expr_is_not_null, is_not_null);
+// dupilicated and unique
+gen_unary_op!(pl_expr_unique, unique);
+gen_unary_op!(pl_expr_unique_stable, unique_stable);
+gen_unary_op!(pl_expr_is_duplicated, is_duplicated);
+gen_unary_op!(pl_expr_is_unique, is_unique);
 // Math Ops
 gen_unary_op!(pl_expr_sqrt,sqrt);
 gen_unary_op!(pl_expr_exp,exp);

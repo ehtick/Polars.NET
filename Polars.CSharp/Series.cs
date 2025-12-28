@@ -21,6 +21,21 @@ public class Series : IDisposable
         PolarsWrapper.SeriesRename(handle, name);
         Handle = handle;
     }
+
+    private Series ApplyExpr(Expr expr)
+    {
+        // 1. 临时包装成 DataFrame
+        // DataFrame.New 会增加 Series 的引用计数，所以是安全的
+        using var df = new DataFrame(this);
+
+        // 2. 执行 Select
+        // 这会生成一个新的 DataFrame
+        using var dfRes = df.Select(expr);
+
+        // 3. 提取结果列
+        // 索引器 dfRes[0] 会返回一个新的 Series 对象
+        return dfRes[0];
+    }
     // ==========================================
     // Metadata
     // ==========================================
@@ -681,6 +696,40 @@ public class Series : IDisposable
     /// </summary>
     /// <returns></returns>
     public Series IsInfinite() => new(PolarsWrapper.SeriesIsInfinite(Handle));
+    // ==========================================
+    // Unique Ops 
+    // ==========================================
+    /// <summary>
+    /// Count the number of unique values in this Series.
+    /// </summary>
+    public ulong NUnique => PolarsWrapper.SeriesNUnique(Handle);
+    /// <summary>
+    /// Get the unique elements of this Series.
+    /// </summary>
+    public Series Unique() => new(PolarsWrapper.SeriesUnique(Handle));
+
+    /// <summary>
+    /// Get the unique elements of this Series, maintaining the order of appearance.
+    /// </summary>
+    public Series UniqueStable() => new(PolarsWrapper.SeriesUniqueStable(Handle));
+
+    /// <summary>
+    /// Get a boolean mask indicating which values are unique.
+    /// <para>Implemented via DataFrame expression composition.</para>
+    /// </summary>
+    public Series IsUnique()
+    {
+        return ApplyExpr(Polars.Col(Name).IsUnique());
+    }
+
+    /// <summary>
+    /// Get a boolean mask indicating which values are duplicated.
+    /// <para>Implemented via DataFrame expression composition.</para>
+    /// </summary>
+    public Series IsDuplicated()
+    {
+        return ApplyExpr(Polars.Col(Name).IsDuplicated());
+    }
     // ==========================================
     // Conversions (Arrow / DataFrame)
     // ==========================================

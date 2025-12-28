@@ -31,7 +31,7 @@ David,40,80000";
             // SQL 逻辑: SELECT name, salary FROM df WHERE age > 30
             using var filtered = df
                 .Filter(Col("age") > 30)
-                .Select(Col("name"), Col("salary"));
+                .Select("name", "salary");
 
             // 验证结果
             // 应该剩下 Charlie (35) 和 David (40)
@@ -97,7 +97,7 @@ HR,50";
 
             // GroupBy dept, Agg Sum(salary)
             using var grouped = df
-                .GroupBy(Col("dept"))
+                .GroupBy("dept")
                 .Agg(Col("salary").Sum().Alias("total_salary"))
                 .Sort(Col("total_salary"), descending: true); // 排序方便断言
 
@@ -152,8 +152,8 @@ Bob,2024,History";
         // 3. Bob + 2023   -> 左表有Bob 2023，但右表只有 Bob 2024 -> 丢弃 (因为是 Inner Join)
         using var joinedDf = scoresDf.Join(
             classDf,
-            leftOn: [Col("student"), Col("year")],   // 左表双键
-            rightOn: [Col("student"), Col("year")],  // 右表双键
+            leftOn: ["student", "year"],   // 左表双键
+            rightOn: ["student", "year"],  // 右表双键
             how: JoinType.Inner
         );
 
@@ -244,7 +244,7 @@ Bob,2024,History";
             using var csv2 = new DisposableFile("B,C\n20,300",".csv");
             using var df2 = DataFrame.ReadCsv(csv2.Path);
 
-            using var res = DataFrame.Concat(new[] { df1, df2 }, ConcatType.Diagonal);
+            using var res = DataFrame.Concat([df1, df2], ConcatType.Diagonal);
 
             Assert.Equal(2, res.Height); // 垂直堆叠
             Assert.Equal(3, res.Width);  // A, B, C (列的并集)
@@ -648,42 +648,42 @@ B,5";
         Assert.Contains("shape: (2, 3)", html);
     }
     [Fact]
-        public void Test_MultiColumn_Sort()
+    public void Test_MultiColumn_Sort()
+    {
+        // 准备数据：故意乱序
+        // a: 1, 1, 2, 2
+        // b: 10, 5, 2, 8
+        using var df = DataFrame.FromColumns(new 
         {
-            // 准备数据：故意乱序
-            // a: 1, 1, 2, 2
-            // b: 10, 5, 2, 8
-            using var df = DataFrame.FromColumns(new 
-            {
-                a = new[] { 1, 1, 2, 2 },
-                b = new[] { 10, 5, 2, 8 }
-            });
+            a = new[] { 1, 1, 2, 2 },
+            b = new[] { 10, 5, 2, 8 }
+        });
 
-            // 场景 1: 按 "a" 升序，"b" 降序 (String API)
-            // 预期结果:
-            // a=1, b=10
-            // a=1, b=5
-            // a=2, b=8  <-- 注意这里，a=2时，b=8排在b=2前面
-            // a=2, b=2
-            using var sorted1 = df.Sort(
-                columns: new[] { "a", "b" }, 
-                descending: new[] { false, true } // a asc, b desc
-            );
-            
-            Assert.Equal(10, sorted1["b"][0]);
-            Assert.Equal(5, sorted1["b"][1]);
-            Assert.Equal(8, sorted1["b"][2]);
-            Assert.Equal(2, sorted1["b"][3]);
+        // 场景 1: 按 "a" 升序，"b" 降序 (String API)
+        // 预期结果:
+        // a=1, b=10
+        // a=1, b=5
+        // a=2, b=8  <-- 注意这里，a=2时，b=8排在b=2前面
+        // a=2, b=2
+        using var sorted1 = df.Sort(
+            columns: ["a", "b"], 
+            descending: [false, true] // a asc, b desc
+        );
+        
+        Assert.Equal(10, sorted1["b"][0]);
+        Assert.Equal(5, sorted1["b"][1]);
+        Assert.Equal(8, sorted1["b"][2]);
+        Assert.Equal(2, sorted1["b"][3]);
 
-            // 场景 2: 按表达式排序 (Expr API)
-            // 按 a 降序，b 升序
-            using var sorted2 = df.Sort(
-                exprs: new[] { Col("a"), Col("b") },
-                descending: new[] { true, false }
-            );
+        // 场景 2: 按表达式排序 (Expr API)
+        // 按 a 降序，b 升序
+        using var sorted2 = df.Sort(
+            exprs: [Col("a"), Col("b")],
+            descending: [true, false]
+        );
 
-            Assert.Equal(2, sorted2["a"][0]); // a desc, so 2 first
-            Assert.Equal(2, sorted2["b"][0]); // a=2 tied, b asc -> 2
-            Assert.Equal(8, sorted2["b"][1]); // a=2 tied, b asc -> 8
-        }
+        Assert.Equal(2, sorted2["a"][0]); // a desc, so 2 first
+        Assert.Equal(2, sorted2["b"][0]); // a=2 tied, b asc -> 2
+        Assert.Equal(8, sorted2["b"][1]); // a=2 tied, b asc -> 8
+    }
 }

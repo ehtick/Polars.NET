@@ -241,6 +241,19 @@ public static partial class PolarsWrapper
 
     public static ExprHandle IsNotNull(ExprHandle expr) 
         => UnaryOp(NativeBindings.pl_expr_is_not_null, expr);
+
+    // Unique and Duplicated
+    public static ExprHandle ExprIsUnique(ExprHandle expr)
+        => UnaryOp(NativeBindings.pl_expr_is_unique,expr);
+
+    public static ExprHandle ExprIsDuplicated(ExprHandle expr)
+        => UnaryOp(NativeBindings.pl_expr_is_duplicated,expr);
+
+    public static ExprHandle ExprUnique(ExprHandle expr)
+        => UnaryOp(NativeBindings.pl_expr_unique,expr);
+
+    public static ExprHandle ExprUniqueStable(ExprHandle expr)
+        => UnaryOp(NativeBindings.pl_expr_unique_stable,expr);
     // Math
     public static ExprHandle Pow(ExprHandle b, ExprHandle e) => BinaryOp(NativeBindings.pl_expr_pow, b, e);
     public static ExprHandle Sqrt(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_sqrt, e);

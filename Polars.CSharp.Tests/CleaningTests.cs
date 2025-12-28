@@ -108,4 +108,73 @@ public class CleaningTests
         Assert.Equal(0.0, rows[3]); // "NaN" -> NaN -> 0
         Assert.Equal(0.0, rows[4]); // null -> 0
     }
+    [Fact]
+    public void Test_Series_Unique_And_Duplicated()
+    {
+        // 数据: [1, 2, 2, 3]
+        // IsUnique -> [T, F, F, T] (1和3是唯一的)
+        // IsDuplicated -> [F, T, T, F] (2是重复的)
+        
+        using var s = Series.From("nums", [1, 2, 2, 3]);
+
+        // 1. 测试 Unique (去重)
+        using var unique = s.UniqueStable();
+        Assert.Equal(3, unique.Length);
+        Assert.Equal(1, unique[0]);
+        Assert.Equal(2, unique[1]);
+        Assert.Equal(3, unique[2]);
+
+        // 2. 测试 IsDuplicated (掩码)
+        using var dupMask = s.IsDuplicated();
+        Assert.Equal(DataTypeKind.Boolean, dupMask.DataType.Kind);
+        // 验证: 1->F, 2->T, 2->T, 3->F
+        Assert.False((bool)dupMask[0]);
+        Assert.True((bool)dupMask[1]);
+        Assert.True((bool)dupMask[2]);
+        Assert.False((bool)dupMask[3]);
+
+        // 3. 测试 IsUnique (反向掩码: 只出现一次的才为 True)
+        using var uniqMask = s.IsUnique();
+        Assert.True((bool)uniqMask[0]);  // 1 只出现一次
+        Assert.False((bool)uniqMask[1]); // 2 出现了两次
+        Assert.False((bool)uniqMask[2]);
+        Assert.True((bool)uniqMask[3]);  // 3 只出现一次
+    }
+
+    [Fact]
+    public void Test_Expr_Unique_Context()
+    {
+        using var df = DataFrame.FromColumns(new 
+        {
+            Group = new[] { "A", "A", "B", "B", "B" },
+            Val = new[]   { 1,   1,   2,   3,   2 }
+        });
+
+        // 测试在 GroupBy 上下文中去重
+        // A组: [1, 1] -> unique -> [1]
+        // B组: [2, 3, 2] -> unique -> [2, 3]
+        
+        using var res = df.Lazy()
+            .GroupBy(Col("Group"))
+            .Agg(
+                Col("Val").Unique().Alias("UniqueVals"),
+                Col("Val").IsDuplicated().Sum().Alias("DupCount") // 统计重复的数量
+            )
+            .Sort("Group")
+            .Collect();
+
+        // A组: UniqueVals=[1], DupCount=2 (因为两个1都是重复的一部分? Polars IsDuplicated 语义是: 是否标记重复)
+        // Polars is_duplicated: 如果元素重复出现，第一次出现标记为 false (除非 keep='none')? 
+        // 不，默认 is_duplicated() 会把所有重复项（除了第一个）标记为 true，或者取决于策略。
+        // 实际上 Polars is_duplicated() 默认把所有重复的都标记为 True。
+        
+        // 让我们验证一下
+        var groupA_DupCount = (uint)res["DupCount"][0]; 
+        // A: [1, 1]. IsDuplicated -> [True, True] (因为1不是唯一的). Sum = 2.
+        Assert.Equal(2u, groupA_DupCount);
+
+        var groupB_DupCount = (uint)res["DupCount"][1];
+        // B: [2, 3, 2]. IsDuplicated -> [True, False, True]. Sum = 2.
+        Assert.Equal(2u, groupB_DupCount);
+    }
 }

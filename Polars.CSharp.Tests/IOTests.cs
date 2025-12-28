@@ -47,8 +47,8 @@ namespace Polars.CSharp.Tests
         public void Test_Parquet_RoundTrip()
         {
             // 1. 创建数据
-            using var s1 = new Series("a", new int[]{1, 2, 3});
-            using var s2 = new Series("b", new string[]{"x", "y", "z"});
+            using var s1 = new Series("a", [1, 2, 3]);
+            using var s2 = new Series("b", ["x", "y", "z"]);
             using var dfOriginal = new DataFrame(s1, s2);
 
             // 2. 写入 Parquet (需要 DataFrame.WriteParquet 实现)
@@ -72,7 +72,7 @@ namespace Polars.CSharp.Tests
         public void Test_Ipc_RoundTrip()
         {
             // IPC (Feather) 格式测试
-            using var s = new Series("ts", new DateTime[]{new DateTime(2023,1,1), new DateTime(2024,1,1)});
+            using var s = new Series("ts", [new DateTime(2023,1,1), new DateTime(2024,1,1)]);
             using var dfOriginal = new DataFrame(s);
 
             using var f = new DisposableFile(".ipc"); // 或 .arrow
@@ -189,8 +189,8 @@ namespace Polars.CSharp.Tests
                 // 3. 转换逻辑 (Lazy)
                 // 只保留 Type == "A" 的数据 (50万行)
                 var q = lf
-                    .Filter(Polars.Col("Type") == Polars.Lit("A"))
-                    .Select(Polars.Col("Id"), Polars.Col("Val"));
+                    .Filter(Col("Type") == "A")
+                    .Select(Col("Id"), Col("Val"));
 
                 Console.WriteLine("Starting Streaming Sink...");
                 var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -244,7 +244,7 @@ namespace Polars.CSharp.Tests
                     {
                         Id = i,
                         // 测试 List<int> -> Parquet LIST
-                        Tags = new[] { i, i * 2 }, 
+                        Tags = [i, i * 2], 
                         // 测试 POCO -> Parquet STRUCT
                         Meta = new MetaInfo { Score = i * 0.5, Label = $"L_{i}" } 
                     };
@@ -389,7 +389,6 @@ namespace Polars.CSharp.Tests
             // 断言它包含元素 (具体格式取决于 Polars Series ToString 实现)
             // 只要不报错，说明结构对了。
             
-            // 验证 LargeString 也没炸
             Assert.Equal("Row1", df.GetValue<string>(0, "Memo"));
             
             // 5. 进阶：Explode (炸开) 测试
@@ -460,7 +459,7 @@ namespace Polars.CSharp.Tests
             using var reader = table.CreateDataReader();
 
             // 2. [高光时刻] 一行代码，Eager 加载！
-            // 此时数据已经在 C++ 堆内存里了，C# 端只有 handle
+            // 此时数据已经在 Rust 堆内存里了，C# 端只有 handle
             using var df = DataFrame.ReadDatabase(reader);
 
             // 3. 验证

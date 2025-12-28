@@ -61,8 +61,6 @@ public class Expr : IDisposable
 
     public static implicit operator Expr(double value) => Polars.Lit(value);
 
-    public static implicit operator Expr(string value) => Polars.Lit(value);
-
     public static implicit operator Expr(DateTime value) => Polars.Lit(value);
 
     public static implicit operator Expr(bool value) => Polars.Lit(value);
@@ -443,6 +441,28 @@ public class Expr : IDisposable
         // 自动把 value 转为 Lit Expr
         return new Expr(PolarsWrapper.FillNan(CloneHandle(), MakeLit(value).Handle));
     }
+    // ==========================================
+    // Unique and Duplicated
+    // ==========================================
+    /// <summary>
+    /// Create a boolean expression indicating whether the value is unique.
+    /// </summary>
+    public Expr IsUnique() => new(PolarsWrapper.ExprIsUnique(Handle));
+
+    /// <summary>
+    /// Create a boolean expression indicating whether the value is duplicated.
+    /// </summary>
+    public Expr IsDuplicated() => new(PolarsWrapper.ExprIsDuplicated(Handle));
+
+    /// <summary>
+    /// Get unique values.
+    /// </summary>
+    public Expr Unique() => new(PolarsWrapper.ExprUnique(Handle));
+
+    /// <summary>
+    /// Get unique values, maintaining order.
+    /// </summary>
+    public Expr UniqueStable() => new(PolarsWrapper.ExprUniqueStable(Handle));
     // ==========================================
     // Statistical Ops
     // ==========================================
@@ -905,6 +925,11 @@ public class DtOps
     /// Format the date/datetime as a string using the given format string (strftime).
     /// </summary>
     public Expr ToString(string format)
+    {
+        var h = PolarsWrapper.CloneExpr(_expr.Handle);
+        return new Expr(PolarsWrapper.DtToString(h, format));
+    }
+    public Expr Strftime(string format)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.DtToString(h, format));

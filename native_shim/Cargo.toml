@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 # 1. 主库 (提供高层 API)
 polars = { version = "0.50.0", features = ["lazy", "csv","dtype-date","parquet","strings","regex","timezones",
-"semi_anti_join","cross_join","is_between","is_in","log","abs","round_series","dtype-struct","pivot",
+"semi_anti_join","cross_join","is_between","is_in","is_unique","log","abs","round_series","dtype-struct","pivot",
 "sql","diff","rolling_window","rolling_window_by","json","ipc","asof_join","diagonal_concat",
 "dtype-categorical","serde","dynamic_group_by"] }
 

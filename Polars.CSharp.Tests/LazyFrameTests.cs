@@ -26,7 +26,7 @@ David,40,80000";
         // 3. 执行操作：筛选 age > 30 并选择 name 和 salary
         // SQL 逻辑: SELECT name, salary FROM df WHERE age > 30
         using var filtered = lf_copyed
-            .Filter(Col("age") > Lit(30))
+            .Filter(Col("age") > 30)
             .Select(Col("name"), Col("salary"));
         using var resultDf = filtered.Collect();
         // 验证结果
@@ -192,7 +192,7 @@ HR,50";
 
         // GroupBy dept, Agg Sum(salary)
         using var groupedlf = lf
-            .GroupBy(Col("dept"))
+            .GroupBy("dept")
             .Agg(Col("salary").Sum().Alias("total_salary"))
             .Sort("total_salary", descending: true); // 排序方便断言
         var grouped = groupedlf.Collect();
@@ -397,9 +397,9 @@ HR,50";
 
         // 1. 准备数据
         // Schema: { "a": Int32, "b": Float64, "c": String }
-        using var s1 = Series.From("a", new[] { 1, 2, 3 });
-        using var s2 = Series.From("b", new[] { 1.1, 2.2, 3.3 });
-        using var s3 = Series.From("c", new[] { "apple", "banana", "cherry" });
+        using var s1 = Series.From("a", [1, 2, 3]);
+        using var s2 = Series.From("b", [1.1, 2.2, 3.3]);
+        using var s3 = Series.From("c", ["apple", "banana", "cherry"]);
         using var df = new DataFrame(s1, s2, s3);
         
         using var lf = df.Lazy();
@@ -476,7 +476,7 @@ HR,50";
                 ? $"<Inner: {dt.InnerType?.Kind}>" 
                 : "";
                 
-            Console.WriteLine($"Column: {kvp.Key.PadRight(10)} | Kind: {dt.Kind.ToString().PadRight(10)} | {dt} {extraInfo}");
+            Console.WriteLine($"Column: {kvp.Key,-10} | Kind: {dt.Kind,-10} | {dt} {extraInfo}");
         }
     }
 }
