@@ -102,3 +102,24 @@ public enum PlClosedWindow
     Both = 2,
     None = 3
 }
+
+/// <summary>
+/// Strategy to handle dates that land on non-business days (weekends or holidays).
+/// </summary>
+public enum PlRoll
+{
+    /// <summary>
+    /// Raise an error if the result is not a business day.
+    /// </summary>
+    Raise = 0,
+    
+    /// <summary>
+    /// Roll forward to the next business day.
+    /// </summary>
+    Forward = 1,
+    
+    /// <summary>
+    /// Roll backward to the previous business day.
+    /// </summary>
+    Backward = 2
+}

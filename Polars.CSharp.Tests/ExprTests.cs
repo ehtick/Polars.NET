@@ -739,4 +739,69 @@ TooShort,1990-05-20,1.60";
         Assert.Equal(10, result[1, "DiffValue"]); // 20 - 10 = 10
         Assert.Equal(100, result[4, "DiffValue"]); // 200 - 100 = 100
     }
+    [Fact]
+    public void Test_AddBusinessDays_SupplyChain_Scenario()
+    {
+        // 2024-01-05 是周五
+        var startDate = new DateOnly(2024, 1, 5); 
+        
+        using var df = DataFrame.FromColumns(new 
+        {
+            OrderDate = new[] { startDate }
+        });
+
+        // 场景 1: 标准周末 (周五 + 2工作日 -> 周二)
+        // 周五 -> (跳过周六, 周日) -> 周一(+1) -> 周二(+2)
+        using var res1 = df.Select(
+            Col("OrderDate").Dt
+                .AddBusinessDays(2) // 默认 Mon-Fri, 无假期
+                .Alias("Delivery")
+        );
+
+        var delivery1 = (DateOnly)res1["Delivery"][0];
+        Assert.Equal(new DateOnly(2024, 1, 9), delivery1); // 周二
+
+        // 场景 2: 遇到假期 (下周一 2024-01-08 是假期)
+        // 周五 -> (跳过周六, 周日) -> (跳过周一假期) -> 周二(+1) -> 周三(+2)
+        var holidays = new[] { new DateOnly(2024, 1, 8) };
+        
+        using var res2 = df.Select(
+            Col("OrderDate").Dt
+                .AddBusinessDays(2, holidays: holidays)
+                .Alias("Delivery")
+        );
+
+        var delivery2 = (DateOnly)res2["Delivery"][0];
+        Assert.Equal(new DateOnly(2024, 1, 10), delivery2); // 周三
+    }
+
+    [Fact]
+    public void Test_IsBusinessDay()
+    {
+        // 2024-01-05 (Fri), 01-06 (Sat), 01-07 (Sun), 01-08 (Mon)
+        var dates = new[] 
+        { 
+            new DateOnly(2024, 1, 5), 
+            new DateOnly(2024, 1, 6),
+            new DateOnly(2024, 1, 8) 
+        };
+
+        using var df = DataFrame.FromColumns(new { Date = dates });
+
+        // 设定 01-08 为假期
+        var holidays = new[] { new DateOnly(2024, 1, 8) };
+
+        using var res = df.Select(
+            Col("Date"),
+            Col("Date").Dt.IsBusinessDay(holidays: holidays).Alias("IsBiz")
+        );
+
+        // Fri -> True
+        Assert.True((bool)res["IsBiz"][0]);
+        // Sat -> False (Weekend)
+        Assert.False((bool)res["IsBiz"][1]);
+        // Mon -> False (Holiday)
+        Assert.False((bool)res["IsBiz"][2]);
+    }
+    
 }

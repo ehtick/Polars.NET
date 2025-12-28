@@ -1,4 +1,5 @@
 #pragma warning disable CS1591 // 缺少对公共可见类型或成员的 XML 注释
+using System.Reflection.Metadata;
 using Apache.Arrow;
 using Polars.NET.Core;
 
@@ -891,6 +892,9 @@ public class DtOps
     /// <summary>Get the year from the underlying date/datetime.</summary>
     public Expr Year() => Wrap(PolarsWrapper.DtYear);
 
+    /// <summary>Get the quarter from the underlying date/datetime.</summary>
+    public Expr Quarter() => Wrap(PolarsWrapper.DtQuarter);
+
     /// <summary>Get the month from the underlying date/datetime.</summary>
     public Expr Month() => Wrap(PolarsWrapper.DtMonth);
 
@@ -1056,7 +1060,91 @@ public class DtOps
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.DtReplaceTimeZone(h, timeZone, ambiguous, nonExistent));
     }
-    
+    // ==========================================
+    // BusinessDays
+    // ==========================================
+    // 默认工作日掩码：周一到周五为 True
+    private static readonly bool[] DefaultWeekMask = [true, true, true, true, true, false, false];
+
+    /// <summary>
+    /// Add business days to the date column.
+    /// </summary>
+    /// <param name="n">Number of business days to add (can be negative).</param>
+    /// <param name="holidays">List of holidays (dates to skip).</param>
+    /// <param name="weekMask">
+    /// Array of 7 bools indicating business days, starting from Monday. 
+    /// Default is Mon-Fri.
+    /// </param>
+    /// <param name="roll">Strategy for handling non-business days.</param>
+    public Expr AddBusinessDays(
+        int n, 
+        IEnumerable<DateOnly>? holidays = null, 
+        bool[]? weekMask = null, 
+        Roll roll = Roll.Raise)
+    {
+        return AddBusinessDays(Polars.Lit(n), holidays, weekMask, roll);
+    }
+
+    /// <summary>
+    /// Add business days to the date column.
+    /// </summary>
+    public Expr AddBusinessDays(
+        Expr n, 
+        IEnumerable<DateOnly>? holidays = null, 
+        bool[]? weekMask = null, 
+        Roll roll = Roll.Raise)
+    {
+        // 1. 处理 Mask
+        var mask = weekMask ?? DefaultWeekMask;
+        
+        // 2. 处理假期 (DateOnly -> Int32 Days since Epoch)
+        int[] holidayInts;
+        if (holidays == null)
+        {
+            holidayInts = [];
+        }
+        else
+        {
+            // Polars 使用 1970-01-01 作为 0
+            // DateOnly.DayNumber 是从 0001-01-01 开始的天数
+            // 1970-01-01 的 DayNumber 是 719162
+            const int EpochDayNumber = 719162;
+            holidayInts = [.. holidays.Select(d => d.DayNumber - EpochDayNumber)];
+        }
+
+        // 3. Clone handle for 'n' (consume semantics)
+        var nHandle = PolarsWrapper.CloneExpr(n.Handle);
+        var handle = PolarsWrapper.CloneExpr(_expr.Handle);
+        
+        return new Expr(PolarsWrapper.ExprAddBusinessDays(
+            handle, 
+            nHandle, 
+            mask, 
+            holidayInts, 
+            roll.ToNative()
+        ));
+    }
+
+    /// <summary>
+    /// Check if the date is a business day.
+    /// </summary>
+    public Expr IsBusinessDay(IEnumerable<DateOnly>? holidays = null, bool[]? weekMask = null)
+    {
+        var mask = weekMask ?? DefaultWeekMask;
+        
+        int[] holidayInts;
+        if (holidays == null)
+        {
+            holidayInts = [];
+        }
+        else
+        {
+            const int EpochDayNumber = 719162;
+            holidayInts = [.. holidays.Select(d => d.DayNumber - EpochDayNumber)];
+        }
+        var handle = PolarsWrapper.CloneExpr(_expr.Handle);
+        return new Expr(PolarsWrapper.ExprIsBusinessDay(handle, mask, holidayInts));
+    }
 }
 
 // ==========================================

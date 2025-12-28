@@ -99,6 +99,27 @@ public enum ClosedWindow
     None
 }
 
+/// <summary>
+/// Strategy to handle dates that land on non-business days (weekends or holidays).
+/// </summary>
+public enum Roll
+{
+    /// <summary>
+    /// Raise an error if the result is not a business day.
+    /// </summary>
+    Raise,
+    
+    /// <summary>
+    /// Roll forward to the next business day.
+    /// </summary>
+    Forward,
+    
+    /// <summary>
+    /// Roll backward to the previous business day.
+    /// </summary>
+    Backward
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlTimeUnit ToNative(this TimeUnit unit) => unit switch
@@ -176,6 +197,14 @@ internal static class EnumExtensions
         ClosedWindow.Both => CoreEnums.PlClosedWindow.Both,
         ClosedWindow.None => CoreEnums.PlClosedWindow.None,
         _ => throw new ArgumentOutOfRangeException(nameof(closed), closed, null)
+    };
+
+    internal static CoreEnums.PlRoll ToNative(this Roll roll) => roll switch
+    {
+        Roll.Backward => CoreEnums.PlRoll.Backward,
+        Roll.Forward => CoreEnums.PlRoll.Forward,
+        Roll.Raise => CoreEnums.PlRoll.Raise,
+        _ => throw new ArgumentOutOfRangeException(nameof(roll), roll, null)
     };
 }
 

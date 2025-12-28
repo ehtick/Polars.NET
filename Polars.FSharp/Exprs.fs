@@ -205,7 +205,7 @@ and Expr(handle: ExprHandle) =
         | "forward" | "ffill" -> this.ForwardFill()
         | "backward" | "bfill" -> this.BackwardFill()
         | _ -> failwith "Unsupported strategy"
-        
+
     // ==========================================
     // Uniqueness & Duplication
     // ==========================================
@@ -300,6 +300,7 @@ and Expr(handle: ExprHandle) =
 and DtOps(handle: ExprHandle) =
     let wrap op = new Expr(op handle)
     member _.Year() = wrap PolarsWrapper.DtYear
+    member _.Quarter() = wrap PolarsWrapper.DtQuarter
     member _.Month() = wrap PolarsWrapper.DtMonth
     member _.Day() = wrap PolarsWrapper.DtDay
     member _.Hour() = wrap PolarsWrapper.DtHour

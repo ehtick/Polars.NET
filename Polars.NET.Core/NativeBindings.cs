@@ -216,8 +216,8 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_select(DataFrameHandle df, IntPtr[] exprs, UIntPtr len);
     // Temporal
-    [LibraryImport(LibName)] 
-    public static partial ExprHandle pl_expr_dt_year(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_dt_year(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_dt_quarter(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_dt_month(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_dt_day(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_dt_ordinal_day(ExprHandle expr);
@@ -253,6 +253,23 @@ unsafe internal partial class NativeBindings
         string? timeZone, 
         string? ambiguous, 
         string? nonExistent
+    );
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_add_business_days(
+        ExprHandle expr,
+        ExprHandle n,
+        [In, MarshalAs(UnmanagedType.LPArray, SizeConst = 7)] byte[] weekMask,
+        [In, MarshalAs(UnmanagedType.LPArray)] int[] holidays,     
+        UIntPtr holidaysLen,
+        PlRoll rollStrategy
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_is_business_day(
+        ExprHandle expr,
+        [In, MarshalAs(UnmanagedType.LPArray, SizeConst = 7)] byte[] weekMask,
+        [In, MarshalAs(UnmanagedType.LPArray)] int[] holidays,
+        UIntPtr holidaysLen
     );
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_clone(ExprHandle expr);

@@ -251,6 +251,7 @@ gen_binary_op!(pl_expr_pow,pow);
 // dt 命名空间
 gen_namespace_unary!(pl_expr_dt_year, dt, year);
 gen_namespace_unary!(pl_expr_dt_month, dt, month);
+gen_namespace_unary!(pl_expr_dt_quarter, dt, quarter);
 gen_namespace_unary!(pl_expr_dt_day, dt, day);
 gen_namespace_unary!(pl_expr_dt_ordinal_day, dt, ordinal_day);
 gen_namespace_unary!(pl_expr_dt_weekday, dt, weekday);
@@ -703,6 +704,88 @@ pub extern "C" fn pl_expr_dt_replace_time_zone(
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_add_business_days(
+    expr_ptr: *mut ExprContext,
+    n_ptr: *mut ExprContext,
+    week_mask_ptr: *const u8, // 长度必须为 7
+    holidays_ptr: *const i32,   // 假期数组指针 (Days since epoch)
+    holidays_len: usize,
+    roll_strategy: u8           // 0: Raise, 1: Forward, 2: Backward
+) -> *mut ExprContext {
+    ffi_try!({
+        let e = unsafe { Box::from_raw(expr_ptr) };
+        let n = unsafe { Box::from_raw(n_ptr) };
+        
+        // 1. 构建 Week Mask [bool; 7]
+        // 顺序: Mon, Tue, Wed, Thu, Fri, Sat, Sun
+        let week_mask = unsafe {
+        let slice = std::slice::from_raw_parts(week_mask_ptr, 7);
+        let mut arr = [false; 7];
+            for i in 0..7 {
+                arr[i] = slice[i] != 0; // 0 是 false, 非 0 是 true
+            }
+            arr
+        };
+
+        // 2. 构建 Holidays Vec<i32>
+        let holidays = unsafe {
+            std::slice::from_raw_parts(holidays_ptr, holidays_len).to_vec()
+        };
+
+        // 3. 构建 Roll 策略
+        let roll = match roll_strategy {
+            1 => Roll::Forward,
+            2 => Roll::Backward,
+            _ => Roll::Raise,
+        };
+
+        // 4. 调用 Polars DSL
+        // 注意：add_business_days 通常挂载在 dt 命名空间下
+        let new_expr = e.inner.dt().add_business_days(
+            n.inner,
+            week_mask,
+            holidays,
+            roll
+        );
+
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_is_business_day(
+    expr_ptr: *mut ExprContext,
+    week_mask_ptr: *const u8,
+    holidays_ptr: *const i32,
+    holidays_len: usize
+) -> *mut ExprContext {
+    ffi_try!({
+        let e = unsafe { Box::from_raw(expr_ptr) };
+
+        let week_mask = unsafe {
+        let slice = std::slice::from_raw_parts(week_mask_ptr, 7);
+        let mut arr = [false; 7];
+            for i in 0..7 {
+                arr[i] = slice[i] != 0; // 0 是 false, 非 0 是 true
+            }
+            arr
+        };
+
+        let holidays = unsafe {
+            std::slice::from_raw_parts(holidays_ptr, holidays_len).to_vec()
+        };
+
+        let new_expr = e.inner.dt().is_business_day(
+            week_mask,
+            holidays
+        );
+
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
 // ==========================================
 // Intervals
 // ==========================================

@@ -93,6 +93,7 @@ public static partial class PolarsWrapper
     public static ExprHandle Abs(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_abs, e);
     // Temporal
     public static ExprHandle DtYear(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_dt_year, e);
+    public static ExprHandle DtQuarter(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_dt_quarter, e);
     public static ExprHandle DtMonth(ExprHandle e) => UnaryDtOp(NativeBindings.pl_expr_dt_month, e);
     public static ExprHandle DtDay(ExprHandle e) => UnaryDtOp(NativeBindings.pl_expr_dt_day, e);
     public static ExprHandle DtOrdinalDay(ExprHandle e) => UnaryDtOp(NativeBindings.pl_expr_dt_ordinal_day, e);
@@ -148,6 +149,53 @@ public static partial class PolarsWrapper
     {
         var h = NativeBindings.pl_expr_dt_replace_time_zone(e, timeZone, ambiguous, nonExistent);
         e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle ExprAddBusinessDays(
+        ExprHandle expr, 
+        ExprHandle n, 
+        bool[] weekMask, 
+        int[] holidays,
+        PlRoll roll) // 接收 API Enum
+    {
+        if (weekMask.Length != 7) 
+            throw new ArgumentException("Week mask must have length 7.");
+
+        var maskBytes = new byte[7];
+        for (int i = 0; i < 7; i++) maskBytes[i] = weekMask[i] ? (byte)1 : (byte)0;
+
+        // 直接调用，无需 unsafe，无需 fixed
+        var h = ErrorHelper.Check(NativeBindings.pl_expr_add_business_days(
+                expr,
+                n,
+                maskBytes,
+                holidays,
+                (UIntPtr)holidays.Length,
+                roll
+            ));
+        expr.TransferOwnership();
+        n.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+
+    public static ExprHandle ExprIsBusinessDay(
+        ExprHandle expr,
+        bool[] weekMask,
+        int[] holidays)
+    {
+        if (weekMask.Length != 7) 
+            throw new ArgumentException("Week mask must have length 7.");
+
+        var maskBytes = new byte[7];
+        for (int i = 0; i < 7; i++) maskBytes[i] = weekMask[i] ? (byte)1 : (byte)0;
+
+        var h = ErrorHelper.Check(NativeBindings.pl_expr_is_business_day(
+            expr,
+            maskBytes,
+            holidays,
+            (UIntPtr)holidays.Length
+        ));
+        expr.TransferOwnership();
         return ErrorHelper.Check(h);
     }
     // String Ops
