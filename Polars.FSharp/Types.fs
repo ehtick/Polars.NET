@@ -494,138 +494,82 @@ type Series(handle: SeriesHandle) =
         if index < 0L || index >= len then
             raise (IndexOutOfRangeException(sprintf "Index %d is out of bounds for Series length %d." index len))
 
-        let t = typeof<'T>
-        let underlying = Nullable.GetUnderlyingType(t)
-        let targetType = if isNull underlying then t else underlying
-
-        // ----------------------------------------------------------
-        // 🚀 1. Fast Path (Native Bindings)
-        // ----------------------------------------------------------
-        
-        // F# 中泛型转换需要先 box 再 unbox
-        // 注意：Rust 返回的通常是 Option 类型或者 Nullable，我们需要处理 null
-
-        if t = typeof<int> || t = typeof<int option> || t = typeof<Nullable<int>> then
-             let valOpt = PolarsWrapper.SeriesGetInt(handle, index)
-             if valOpt.HasValue then 
-                 let v = int valOpt.Value
-                 if t = typeof<int option> then box (Some v) |> unbox<'T>
-                 else box v |> unbox<'T>
-             else 
-                 // Handle Null
-                 if t = typeof<int> then Unchecked.defaultof<'T> // Returns 0
-                 else box null |> unbox<'T> // Returns null (for int?) or None (for int option)
-
-        else if t = typeof<int64> || t = typeof<int64 option> || t = typeof<Nullable<int64>> then
-             let valOpt = PolarsWrapper.SeriesGetInt(handle, index)
-             if valOpt.HasValue then 
-                 let v = valOpt.Value
-                 if t = typeof<int64 option> then box (Some v) |> unbox<'T>
-                 else box v |> unbox<'T>
-             else 
-                 if t = typeof<int64> then Unchecked.defaultof<'T> 
-                 else box null |> unbox<'T>
-
-        else if t = typeof<double> || t = typeof<double option> || t = typeof<Nullable<double>> then
-             let valOpt = PolarsWrapper.SeriesGetDouble(handle, index)
-             if valOpt.HasValue then 
-                 let v = valOpt.Value
-                 if t = typeof<double option> then box (Some v) |> unbox<'T>
-                 else box v |> unbox<'T>
-             else 
-                 if t = typeof<double> then Unchecked.defaultof<'T>
-                 else box null |> unbox<'T>
-                 
-        else if t = typeof<float32> || t = typeof<float32 option> || t = typeof<Nullable<float32>> then
-             let valOpt = PolarsWrapper.SeriesGetDouble(handle, index)
-             if valOpt.HasValue then 
-                 let v = float32 valOpt.Value
-                 if t = typeof<float32 option> then box (Some v) |> unbox<'T>
-                 else box v |> unbox<'T>
-             else 
-                 if t = typeof<float32> then Unchecked.defaultof<'T>
-                 else box null |> unbox<'T>
-
-        else if t = typeof<bool> || t = typeof<bool option> || t = typeof<Nullable<bool>> then
-             let valOpt = PolarsWrapper.SeriesGetBool(handle, index)
-             if valOpt.HasValue then 
-                 let v = valOpt.Value
-                 if t = typeof<bool option> then box (Some v) |> unbox<'T>
-                 else box v |> unbox<'T>
-             else 
-                 if t = typeof<bool> then Unchecked.defaultof<'T>
-                 else box null |> unbox<'T>
-
-        else if t = typeof<string> || t = typeof<string option> then
-             if PolarsWrapper.SeriesIsNullAt(handle, index) then
-                 box null |> unbox<'T> // null string or None
-             else
-                 let s = PolarsWrapper.SeriesGetString(handle, index)
-                 if t = typeof<string option> then box (Some s) |> unbox<'T>
-                 else box s |> unbox<'T>
-
-        else if t = typeof<decimal> || t = typeof<decimal option> || t = typeof<Nullable<decimal>> then
-             let valOpt = PolarsWrapper.SeriesGetDecimal(handle, index)
-             if valOpt.HasValue then 
-                 let v = valOpt.Value
-                 if t = typeof<decimal option> then box (Some v) |> unbox<'T>
-                 else box v |> unbox<'T>
-             else 
-                 if t = typeof<decimal> then Unchecked.defaultof<'T>
-                 else box null |> unbox<'T>
-
-        else if t = typeof<DateOnly> || t = typeof<DateOnly option> || t = typeof<Nullable<DateOnly>> then
-             let valOpt = PolarsWrapper.SeriesGetDate(handle, index)
-             if valOpt.HasValue then 
-                 let v = valOpt.Value
-                 if t = typeof<DateOnly option> then box (Some v) |> unbox<'T>
-                 else box v |> unbox<'T>
-             else 
-                 if t = typeof<DateOnly> then Unchecked.defaultof<'T>
-                 else box null |> unbox<'T>
-
-        else if t = typeof<TimeOnly> || t = typeof<TimeOnly option> || t = typeof<Nullable<TimeOnly>> then
-             let valOpt = PolarsWrapper.SeriesGetTime(handle, index)
-             if valOpt.HasValue then 
-                 let v = valOpt.Value
-                 if t = typeof<TimeOnly option> then box (Some v) |> unbox<'T>
-                 else box v |> unbox<'T>
-             else 
-                 if t = typeof<TimeOnly> then Unchecked.defaultof<'T>
-                 else box null |> unbox<'T>
-             
-        else if t = typeof<TimeSpan> || t = typeof<TimeSpan option> || t = typeof<Nullable<TimeSpan>> then
-             let valOpt = PolarsWrapper.SeriesGetDuration(handle, index)
-             if valOpt.HasValue then 
-                 let v = valOpt.Value
-                 if t = typeof<TimeSpan option> then box (Some v) |> unbox<'T>
-                 else box v |> unbox<'T>
-             else 
-                 if t = typeof<TimeSpan> then Unchecked.defaultof<'T>
-                 else box null |> unbox<'T>
-
-        // ----------------------------------------------------------
-        // 🐢 2. Universal Path (Arrow Infrastructure)
-        // 针对 Struct, List, DateTime, F# Option 等复杂类型
-        // ----------------------------------------------------------
+        // 1. 统一空值检查 (Consistent Null Check)
+        if PolarsWrapper.SeriesIsNullAt(handle, index) then
+            // 对于 F# Option 类型，Unchecked.defaultof 实际上就是 null (即 None)
+            // 对于引用类型 (string) 和 Nullable<T>，也是 null
+            // 对于值类型 (int, double)，是 0
+            Unchecked.defaultof<'T>
         else
-            // A. 切片：只取这一行
-            // 我们需要利用 PolarsWrapper 的 Slice 功能 (SeriesSlice 应该暴露在 Wrapper 中)
-            use slicedHandle = PolarsWrapper.SeriesSlice(handle, index, 1L)
+            // 2. 取值 (此时已知不为空)
+            let t = typeof<'T>
             
-            // B. 包装为 DataFrame 以便导出 Arrow
-            // Polars Series 转 DataFrame 很简单，就是单列 DataFrame
-            use dfHandle = PolarsWrapper.SeriesToFrame slicedHandle
-            
-            // C. 导出为 RecordBatch (Zero Copy)
-            use batch = ArrowFfiBridge.ExportDataFrame dfHandle
-            
-            // D. 获取 Arrow Column
-            let column = batch.Column 0
+            // --- Integer Family ---
+            if t = typeof<int> || t = typeof<int option> || t = typeof<Nullable<int>> then
+                // 已知不为空，直接取 Value
+                let v = int (PolarsWrapper.SeriesGetInt(handle, index).Value)
+                if t = typeof<int option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
 
-            // E. 调用强大的 ArrowReader 解析
-            // 这一步是精华：ArrowReader 会自动处理 F# Option, List 递归, Struct 等
-            ArrowReader.ReadItem<'T>(column, 0)
+            else if t = typeof<int64> || t = typeof<int64 option> || t = typeof<Nullable<int64>> then
+                let v = PolarsWrapper.SeriesGetInt(handle, index).Value
+                if t = typeof<int64 option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
+            // --- Float Family ---
+            else if t = typeof<double> || t = typeof<double option> || t = typeof<Nullable<double>> then
+                let v = PolarsWrapper.SeriesGetDouble(handle, index).Value
+                if t = typeof<double option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
+            else if t = typeof<float32> || t = typeof<float32 option> || t = typeof<Nullable<float32>> then
+                let v = float32 (PolarsWrapper.SeriesGetDouble(handle, index).Value)
+                if t = typeof<float32 option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
+            // --- Boolean ---
+            else if t = typeof<bool> || t = typeof<bool option> || t = typeof<Nullable<bool>> then
+                let v = PolarsWrapper.SeriesGetBool(handle, index).Value
+                if t = typeof<bool option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
+            // --- String ---
+            else if t = typeof<string> || t = typeof<string option> then
+                let v = PolarsWrapper.SeriesGetString(handle, index)
+                if t = typeof<string option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
+            // --- Decimal ---
+            else if t = typeof<decimal> || t = typeof<decimal option> || t = typeof<Nullable<decimal>> then
+                let v = PolarsWrapper.SeriesGetDecimal(handle, index).Value
+                if t = typeof<decimal option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
+            // --- Temporal ---
+            else if t = typeof<DateOnly> || t = typeof<DateOnly option> || t = typeof<Nullable<DateOnly>> then
+                let v = PolarsWrapper.SeriesGetDate(handle, index).Value
+                if t = typeof<DateOnly option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
+            else if t = typeof<TimeOnly> || t = typeof<TimeOnly option> || t = typeof<Nullable<TimeOnly>> then
+                let v = PolarsWrapper.SeriesGetTime(handle, index).Value
+                if t = typeof<TimeOnly option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+                
+            else if t = typeof<TimeSpan> || t = typeof<TimeSpan option> || t = typeof<Nullable<TimeSpan>> then
+                let v = PolarsWrapper.SeriesGetDuration(handle, index).Value
+                if t = typeof<TimeSpan option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
+            // --- Complex Types (Arrow Fallback) ---
+            else
+                // 复杂类型走通用通道
+                use slicedHandle = PolarsWrapper.SeriesSlice(handle, index, 1L)
+                use dfHandle = PolarsWrapper.SeriesToFrame(slicedHandle)
+                use batch = ArrowFfiBridge.ExportDataFrame(dfHandle)
+                let column = batch.Column(0)
+                ArrowReader.ReadItem<'T>(column, 0)
+                
     /// <summary>
     /// [Indexer] Access value at specific index as boxed object.
     /// Syntax: series.[index]
@@ -1012,53 +956,55 @@ and DataFrame(handle: DataFrameHandle) =
         let h = PolarsWrapper.Filter(this.Handle,expr.CloneHandle())
         new DataFrame(h)
     /// <summary>
-    /// Sort by multiple expressions with a single direction for all.
+    /// [复杂版] 支持每列独立控制排序方向和 Null 值位置。
     /// </summary>
-    member this.Sort(columns: seq<#IColumnExpr>, descending: bool) =
-        // 1. 展开 Expr 并克隆 Handle
-        // 我们约定：传递给 Wrapper 的 Expr 必须是所有权转移的
-        // 所以这里必须 map e.CloneHandle()
+    /// <param name="columns">排序的列 (Expr/Selector)。</param>
+    /// <param name="descending">每列的排序方向 (true=降序)。长度必须为 1 (广播) 或与列数一致。</param>
+    /// <param name="nullsLast">每列的 Null 值位置 (true=最后)。长度必须为 1 (广播) 或与列数一致。</param>
+    /// <param name="maintainOrder">是否保持稳定性 (Stable Sort)。</param>
+    member this.Sort(
+        columns: seq<#IColumnExpr>,
+        descending: seq<bool>,
+        nullsLast: seq<bool>,
+        ?maintainOrder: bool
+    ) =
+        // 1. 准备 Expr Handles (Clone for Transfer)
         let exprHandles = 
             columns 
             |> Seq.collect (fun x -> x.ToExprs()) 
-            |> Seq.map (fun e -> e.CloneHandle()) // <--- 关键修改
+            |> Seq.map (fun e -> e.CloneHandle()) 
             |> Seq.toArray
         
-        // 2. 构造 bool 数组 (长度为 1，Rust 端会广播)
-        let descArr = [| descending |]
-        
-        let h = PolarsWrapper.Sort(this.Handle, exprHandles, descArr)
+        // 2. 准备 Bool Arrays
+        let descArr = descending |> Seq.toArray
+        let nullsArr = nullsLast |> Seq.toArray
+        let stable = defaultArg maintainOrder false
+
+        // 3. 调用 Wrapper
+        let h = PolarsWrapper.DataFrameSort(this.Handle, exprHandles, descArr, nullsArr, stable)
         new DataFrame(h)
 
     /// <summary>
-    /// Sort by multiple expressions with per-column direction.
+    /// [简单版] 全局控制排序方向和 Null 值位置。
     /// </summary>
-    member this.Sort(columns: seq<#IColumnExpr>, descending: seq<bool>) =
-        // 1. 同样展开并克隆
-        let exprHandles = 
-            columns 
-            |> Seq.collect (fun x -> x.ToExprs()) 
-            |> Seq.map (fun e -> e.CloneHandle()) // <--- 关键修改
-            |> Seq.toArray
+    member this.Sort(
+        columns: seq<#IColumnExpr>,
+        ?descending: bool,
+        ?nullsLast: bool,
+        ?maintainOrder: bool
+    ) =
+        let desc = defaultArg descending false
+        let nLast = defaultArg nullsLast false
         
-        let descArr = descending |> Seq.toArray
-        
-        if exprHandles.Length <> descArr.Length then
-            invalidArg "descending" "Length of descending flags must match columns."
+        // 构造单元素数组，利用底层的广播机制
+        this.Sort(columns, [| desc |], [| nLast |], ?maintainOrder = maintainOrder)
 
-        let h = PolarsWrapper.Sort(this.Handle, exprHandles, descArr)
-        new DataFrame(h)
-    // [兼容旧 API] 默认升序
-    member this.Sort(columns: seq<#IColumnExpr>) =
-        this.Sort(columns, false)
+    // [兼容旧单列 API]
+    member this.Sort(expr: Expr, ?descending: bool, ?nullsLast: bool) =
+        this.Sort([expr], ?descending=descending, ?nullsLast=nullsLast)
 
-    // [兼容单列 Expr]
-    member this.Sort(expr: Expr, descending: bool) =
-        this.Sort([expr], descending)
-        
-    // [兼容单列 Name]
-    member this.Sort(colName: string, descending: bool) =
-        this.Sort([Expr.Col colName], descending)
+    member this.Sort(colName: string, ?descending: bool, ?nullsLast: bool) =
+        this.Sort([Expr.Col colName], ?descending=descending, ?nullsLast=nullsLast)
 
     member this.Orderby (expr: Expr,desc :bool) : DataFrame =
         this.Sort(expr,desc)
@@ -1624,28 +1570,15 @@ and LazyFrame(handle: LazyFrameHandle) =
             
             this.Select exprs
     /// <summary>
-    /// Sort by multiple expressions with a single direction for all.
+    /// [复杂版] 支持每列独立控制排序方向和 Null 值位置。
     /// </summary>
-    member this.Sort(columns: seq<#IColumnExpr>, descending: bool) =
-        // 1. 展开 Expr 并克隆 (Transfer Ownership)
-        let exprHandles = 
-            columns 
-            |> Seq.collect (fun x -> x.ToExprs()) 
-            |> Seq.map (fun e -> e.CloneHandle()) 
-            |> Seq.toArray
-        
-        let descArr = [| descending |]
-        
-        // 2. Clone LF Handle (因为底层会消耗它)
-        let lfHandle = this.CloneHandle()
-        
-        let h = PolarsWrapper.LazySort(lfHandle, exprHandles, descArr)
-        new LazyFrame(h)
-
-    /// <summary>
-    /// Sort by multiple expressions with per-column direction.
-    /// </summary>
-    member this.Sort(columns: seq<#IColumnExpr>, descending: seq<bool>) =
+    member this.Sort(
+        columns: seq<#IColumnExpr>,
+        descending: seq<bool>,
+        nullsLast: seq<bool>,
+        ?maintainOrder: bool
+    ) =
+        // 1. 准备 Expr Handles (Clone for Transfer)
         let exprHandles = 
             columns 
             |> Seq.collect (fun x -> x.ToExprs()) 
@@ -1653,31 +1586,38 @@ and LazyFrame(handle: LazyFrameHandle) =
             |> Seq.toArray
         
         let descArr = descending |> Seq.toArray
-        
-        if exprHandles.Length <> descArr.Length then
-            invalidArg "descending" "Length of descending flags must match columns."
+        let nullsArr = nullsLast |> Seq.toArray
+        let stable = defaultArg maintainOrder false
 
-        // Clone LF Handle
+        // 2. Clone LF Handle (Wrapper 会消耗它)
         let lfHandle = this.CloneHandle()
-        let h = PolarsWrapper.LazySort(lfHandle, exprHandles, descArr)
+
+        // 3. 调用 Wrapper
+        let h = PolarsWrapper.LazyFrameSort(lfHandle, exprHandles, descArr, nullsArr, stable)
         new LazyFrame(h)
 
-    // [兼容性重载]
-    member this.Sort(columns: seq<#IColumnExpr>) =
-        this.Sort(columns, false)
-
-    member this.Sort(expr: Expr, descending: bool) =
-        this.Sort([expr], descending)
+    /// <summary>
+    /// [简单版] 全局控制排序方向和 Null 值位置。
+    /// </summary>
+    member this.Sort(
+        columns: seq<#IColumnExpr>,
+        ?descending: bool,
+        ?nullsLast: bool,
+        ?maintainOrder: bool
+    ) =
+        let desc = defaultArg descending false
+        let nLast = defaultArg nullsLast false
         
-    member this.Sort(colName: string, descending: bool) =
-        this.Sort([Expr.Col colName], descending)
+        // 构造单元素数组，利用底层的广播机制
+        this.Sort(columns, [| desc |], [| nLast |], ?maintainOrder = maintainOrder)
+    member this.Sort(expr: Expr, ?descending: bool, ?nullsLast: bool) =
+        this.Sort([expr], ?descending=descending, ?nullsLast=nullsLast)
 
+    member this.Sort(colName: string, ?descending: bool, ?nullsLast: bool) =
+        this.Sort([Expr.Col colName], ?descending=descending, ?nullsLast=nullsLast)
     // Alias
-    member this.OrderBy(columns: seq<#IColumnExpr>, descending: bool) = 
-        this.Sort(columns, descending)
-        
-    member this.OrderBy(columns: seq<#IColumnExpr>) = 
-        this.Sort(columns, false)
+    member this.OrderBy(columns: seq<#IColumnExpr>, ?descending: bool, ?nullsLast: bool) = 
+        this.Sort(columns, ?descending=descending, ?nullsLast=nullsLast)
     member this.Limit (n: uint) : LazyFrame =
         let lfClone = this.CloneHandle()
         let h = PolarsWrapper.LazyLimit(lfClone, n)

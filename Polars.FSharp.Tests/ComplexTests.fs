@@ -702,22 +702,22 @@ type ``Complex Query Tests`` () =
         Assert.Equal(3L, res.Rows) // A有2个窗口，B有1个窗口
 
         // --- Row 0: Category A, Time 10:00 ---
-        Assert.Equal("A", res.Cell<string>(0, "Category"))
+        Assert.Equal("A", res.Cell<string>( "Category",0))
         // Count: 4 (10, 20, 30, 40)
-        Assert.Equal(4, res.Cell<int>(0, "Count")) 
+        Assert.Equal(4, res.Cell<int>("Count",0)) 
         // Mean: (10+20+30+40)/4 = 25.0
-        Assert.Equal(25.0, res.Cell<double>(0, "Mean"))
+        Assert.Equal(25.0, res.Cell<double>("Mean",0))
         // Sum (Selector): 100
-        Assert.Equal(100L, res.Cell<int64>(0, "Value_Sum"))
+        Assert.Equal(100L, res.Cell<int64>("Value_Sum",0))
 
         // --- Row 1: Category A, Time 11:00 ---
-        Assert.Equal(DateTime(2023, 1, 1, 11, 0, 0), res.Cell<DateTime>(1, "Time"))
+        Assert.Equal(DateTime(2023, 1, 1, 11, 0, 0), res.Cell<DateTime>("Time",1))
         // Count: 2 (30, 40)
-        Assert.Equal(2, res.Cell<int>(1, "Count"))
+        Assert.Equal(2, res.Cell<int>("Count",1))
         // Mean: (30+40)/2 = 35.0
-        Assert.Equal(35.0, res.Cell<double>(1, "Mean"))
+        Assert.Equal(35.0, res.Cell<double>("Mean",1))
         
         // --- Row 2: Category B, Time 10:00 ---
-        Assert.Equal("B", res.Cell<string>(2, "Category"))
-        Assert.Equal(1, res.Cell<int>(2, "Count"))
-        Assert.Equal(100.0, res.Cell<double>(2, "Mean"))
+        Assert.Equal("B", res.Cell<string>("Category",2))
+        Assert.Equal(1, res.Cell<int>("Count",2))
+        Assert.Equal(100.0, res.Cell<double>("Mean",2))

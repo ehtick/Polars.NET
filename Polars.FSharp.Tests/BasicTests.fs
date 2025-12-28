@@ -402,8 +402,8 @@ type ``Basic Functionality Tests`` () =
         Assert.Equal(pl.date, sDoB.DataType)
         
         // B. 二维索引器: df.[row, col] 返回 obj
-        Assert.Equal(Some date, df.Cell<DateOnly option>(0, "DoB"))
-        Assert.Equal(Some time, df.Cell<TimeOnly option>(0, "WakeUp"))
+        Assert.Equal(Some date, df.Cell<DateOnly option>("DoB",0))
+        Assert.Equal(Some time, df.Cell<TimeOnly option>("WakeUp",0))
         // 显式拆箱验证
         Assert.Equal(Some dur,  unbox<TimeSpan option> df.[0, "Shift"])
         
@@ -765,9 +765,9 @@ type ``Basic Functionality Tests`` () =
         // 3. 验证 Unique (Native)
         let sUniq = s.Unique().Sort false // Sort to compare deterministically
         Assert.Equal(3L, sUniq.Length)
-        Assert.Equal(1, sUniq.GetValue<int>(0))
-        Assert.Equal(2, sUniq.GetValue<int>(1))
-        Assert.Equal(3, sUniq.GetValue<int>(2))
+        Assert.Equal(1, sUniq.GetValue<int> 0)
+        Assert.Equal(2, sUniq.GetValue<int> 1)
+        Assert.Equal(3, sUniq.GetValue<int> 2)
 
         // 4. 验证 IsUnique (ApplyExpr)
         // [1, 2, 2, 3] -> IsUnique -> [T, F, F, T]
@@ -809,3 +809,78 @@ type ``Basic Functionality Tests`` () =
         // 虽然这里只有 4 个元素很难测出不稳定的情况，但 API 没崩就是胜利
         let sStable = s.Sort(maintainOrder = true)
         Assert.Equal(4L, sStable.Length)
+    [<Fact>]
+    member _.``DataFrame: Sort Advanced (Multi-Column & Nulls)`` () =
+        // 1. 准备数据
+        // Group: A, B
+        // Val: 1, 2, null
+        let data = [
+            {| Group = "A"; Val = Some 1 |}
+            {| Group = "A"; Val = None |}   // Null
+            {| Group = "A"; Val = Some 2 |}
+            {| Group = "B"; Val = Some 1 |}
+        ]
+        let df = DataFrame.ofRecords data
+
+        // ==========================================
+        // 场景 1: 简单全局排序 + Nulls Last
+        // 需求: 按 Val 升序，Null 放最后
+        // ==========================================
+        let sorted1 = df.Sort( "Val", descending=false, nullsLast=true)
+        
+        // 预期: 1, 1, 2, null
+        Assert.Equal(1, sorted1.Cell<int>("Val",0))
+        Assert.True(sorted1.IsNullAt("Val",0) |> not)
+        Assert.True(sorted1.IsNullAt("Val",3)) // 最后一个必须是 Null
+
+        // ==========================================
+        // 场景 2: 多列混合排序
+        // 需求: Group 降序 (B->A), Val 升序 (1->2->null), Null Last
+        // ==========================================
+        let sorted2 = df.Sort(
+            columns = [ pl.col "Group"; pl.col "Val" ],
+            descending = [ true; false ],  // Group=Desc, Val=Asc
+            nullsLast = [ false; true ]    // Group=Default, Val=Last
+        )
+
+        // 预期顺序:
+        // 1. B, 1
+        // 2. A, 1
+        // 3. A, 2
+        // 4. A, null
+
+        // Row 0: B, 1
+        Assert.Equal("B", sorted2.Cell<string>("Group",0))
+        Assert.Equal(1, sorted2.Cell<int>("Val",0))
+
+        // Row 3: A, null
+        Assert.Equal("A", sorted2.Cell<string>("Group",3))
+        Assert.True(sorted2.IsNullAt("Val",3))
+
+    [<Fact>]
+    member _.``LazyFrame: Sort Advanced`` () =
+        let data = [
+            {| A = 1; B = 3 |}
+            {| A = 1; B = 1 |}
+            {| A = 2; B = 2 |}
+        ]
+        let lf = DataFrame.ofRecords(data).Lazy()
+
+        // 需求: A 升序, B 降序
+        let res = 
+            lf.Sort(
+                [ pl.col "A"; pl.col "B" ], 
+                descending = [false; true], 
+                nullsLast = [false; false]
+            ).Collect()
+
+        // 预期:
+        // 1. A=1, B=3
+        // 2. A=1, B=1
+        // 3. A=2, B=2
+        
+        Assert.Equal(1, res.Cell<int>("A",0))
+        Assert.Equal(3, res.Cell<int>("B",0)) // B=3 排在 B=1 前面
+        
+        Assert.Equal(1, res.Cell<int>("A",1))
+        Assert.Equal(1, res.Cell<int>("B",1))

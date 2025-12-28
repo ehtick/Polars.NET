@@ -144,7 +144,7 @@ type SelectorTests() =
         
         // 验证计算结果
         // Alice Age 30 -> 0.3
-        Assert.Equal(0.3, dfTransformed.Cell<double>(0, "Age_pct"))
+        Assert.Equal(0.3, dfTransformed.Cell<double>("Age_pct",0))
         
         // 验证保留列还在
         Assert.Contains("IsActive", dfTransformed.Columns)
@@ -179,6 +179,6 @@ type SelectorTests() =
 
         Assert.Equal(2L, dfAgg.Rows)
         // US Sum: 100 + 150 = 250
-        Assert.Equal(250, dfAgg.Cell<int>(1, "Sales")) 
+        Assert.Equal(250, dfAgg.Cell<int>( "Sales",1)) 
         // US Profit: 20 + 30 = 50
-        Assert.Equal(50, dfAgg.Cell<int>(1, "Profit"))
+        Assert.Equal(50, dfAgg.Cell<int>( "Profit",1))
