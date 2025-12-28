@@ -205,7 +205,34 @@ and Expr(handle: ExprHandle) =
         | "forward" | "ffill" -> this.ForwardFill()
         | "backward" | "bfill" -> this.BackwardFill()
         | _ -> failwith "Unsupported strategy"
+        
+    // ==========================================
+    // Uniqueness & Duplication
+    // ==========================================
 
+    /// <summary>
+    /// Get a boolean mask indicating which values are unique.
+    /// </summary>
+    member this.IsUnique() =
+        new Expr(PolarsWrapper.ExprIsUnique(this.CloneHandle()))
+
+    /// <summary>
+    /// Get a boolean mask indicating which values are duplicated.
+    /// </summary>
+    member this.IsDuplicated() =
+        new Expr(PolarsWrapper.ExprIsDuplicated(this.CloneHandle()))
+
+    /// <summary>
+    /// Get unique values of this expression.
+    /// </summary>
+    member this.Unique() =
+        new Expr(PolarsWrapper.ExprUnique(this.CloneHandle()))
+
+    /// <summary>
+    /// Get unique values of this expression, maintaining order (Stable).
+    /// </summary>
+    member this.UniqueStable() =
+        new Expr(PolarsWrapper.ExprUniqueStable(this.CloneHandle()))
     member this.RollingMin(windowSize: string, ?minPeriod: int) =
         let m = defaultArg minPeriod 1
         new Expr(PolarsWrapper.RollingMin(this.CloneHandle(), windowSize,m))

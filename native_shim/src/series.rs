@@ -798,3 +798,32 @@ pub unsafe extern "C" fn pl_series_get_dtype(ptr: *mut Series) -> *mut DataType 
         Ok(Box::into_raw(Box::new(s.dtype().clone())))
     })
 }
+
+// ==========================================
+// Operations
+// ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_sort(
+    series_ptr: *mut SeriesContext,
+    descending: bool,
+    nulls_last: bool,
+    multithreaded: bool,
+    maintain_order: bool
+) -> *mut SeriesContext {
+    ffi_try!({
+        let ctx = unsafe { &*series_ptr };
+        
+        let options = SortOptions {
+            descending,
+            nulls_last,
+            multithreaded,
+            maintain_order,
+            limit: None, // 暂时不暴露 limit，通常用 .head(n) 代替
+        };
+
+        // 调用新的 sort 接口
+        let out = ctx.series.sort(options)?;
+        
+        Ok(Box::into_raw(Box::new(SeriesContext { series: out })))
+    })
+}

@@ -815,6 +815,11 @@ unsafe internal partial class NativeBindings
         CArrowArray* cArray,
         CArrowSchema* cSchema
     );
+    [LibraryImport(LibName)] public static partial SeriesHandle pl_series_sort(SeriesHandle series,
+    [MarshalAs(UnmanagedType.U1)] bool descending,
+    [MarshalAs(UnmanagedType.U1)] bool nulls_last,
+    [MarshalAs(UnmanagedType.U1)] bool multithreaded,
+    [MarshalAs(UnmanagedType.U1)] bool maintain_order);
     // --- Arrow Export ---
     [LibraryImport(LibName)]
     public static partial ArrowArrayContextHandle pl_series_to_arrow(SeriesHandle h);

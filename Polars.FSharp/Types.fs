@@ -24,12 +24,60 @@ type Series(handle: SeriesHandle) =
     member _.Len = PolarsWrapper.SeriesLen handle
     member _.Count = PolarsWrapper.SeriesLen handle
     member _.NullCount : int64 = PolarsWrapper.SeriesNullCount handle
-    
+
+    // ==========================================
+    // Expression Composition (The "ApplyExpr" Pattern)
+    // ==========================================
+
+    /// <summary>
+    /// Helper: Wrap this Series in a DataFrame, run an Expr, and extract the result.
+    /// This allows Series to use the full power of the Expression engine.
+    /// </summary>
+    member private this.ApplyExpr(expr: Expr) : Series =
+        // 1. 临时包装成 DataFrame
+        // SeriesToFrame 会创建一个单列的 DataFrame
+        // 使用 use 确保这个临时 DataFrame 被释放 (Handle 引用计数 -1)
+        use dfHandle = PolarsWrapper.SeriesToFrame handle
+        use df = new DataFrame(dfHandle)
+
+        // 2. 执行 Select
+        // 这会生成一个新的 DataFrame
+        use dfRes = df.Select [expr]
+
+        // 3. 提取结果列
+        dfRes.[0]
+        
     member this.Rename(name: string) = 
         PolarsWrapper.SeriesRename(handle, name)
         this
     member this.Slice(offset: int64, length: int64) =
         new Series(PolarsWrapper.SeriesSlice(handle, offset, length))
+    /// <summary>
+    /// Sort this Series. Returns a new Series.
+    /// </summary>
+    /// <param name="descending">Sort in descending order (default: false).</param>
+    /// <param name="nullsLast">Place null values last (default: false).</param>
+    /// <param name="maintainOrder">Maintain the order of equal elements (Stable sort) (default: false).</param>
+    /// <param name="multithreaded">Use multiple threads (default: true).</param>
+    member this.Sort(
+        ?descending: bool,
+        ?nullsLast: bool,
+        ?maintainOrder: bool,
+        ?multithreaded: bool
+    ) =
+        // 处理默认值
+        let desc = defaultArg descending false
+        let nLast = defaultArg nullsLast false
+        let stable = defaultArg maintainOrder false
+        let multi = defaultArg multithreaded true
+
+        new Series(PolarsWrapper.SeriesSort(handle, desc, nLast, multi, stable))
+
+    /// <summary>
+    /// Sort this Series in ascending order.
+    /// </summary>
+    member this.Sort() =
+        this.Sort false
     /// <summary>
     /// Get the string representation of the Series Data Type (e.g., "Int64", "String").
     /// </summary>
@@ -74,6 +122,43 @@ type Series(handle: SeriesHandle) =
 
     /// <summary> Check if floating point values are infinite. </summary>
     member this.IsInfinite() = new Series(PolarsWrapper.SeriesIsInfinite handle)
+    // ==========================================
+    // Uniqueness
+    // ==========================================
+
+    /// <summary>
+    /// Get unique values (distinct).
+    /// </summary>
+    member this.Unique() =
+        new Series(PolarsWrapper.SeriesUnique handle)
+
+    /// <summary>
+    /// Get unique values (distinct), maintaining original order.
+    /// </summary>
+    member this.UniqueStable() =
+        new Series(PolarsWrapper.SeriesUniqueStable handle)
+
+    /// <summary>
+    /// Count the number of unique values.
+    /// </summary>
+    member this.NUnique = 
+        PolarsWrapper.SeriesNUnique handle
+    /// <summary>
+    /// Get a boolean mask indicating which values are unique.
+    /// Implemented via Expression engine.
+    /// </summary>
+    member this.IsUnique() =
+        // col(Name).IsUnique()
+        let expr = Expr.Col(this.Name).IsUnique()
+        this.ApplyExpr expr
+
+    /// <summary>
+    /// Get a boolean mask indicating which values are duplicated.
+    /// Implemented via Expression engine.
+    /// </summary>
+    member this.IsDuplicated() =
+        let expr = Expr.Col(this.Name).IsDuplicated()
+        this.ApplyExpr expr
     // ==========================================
     // Static Constructors
     // ==========================================
@@ -420,52 +505,104 @@ type Series(handle: SeriesHandle) =
         // F# 中泛型转换需要先 box 再 unbox
         // 注意：Rust 返回的通常是 Option 类型或者 Nullable，我们需要处理 null
 
-        if targetType = typeof<int> then
-             // Rust SeriesGetInt 返回 int64 (long)，需要截断为 int
+        if t = typeof<int> || t = typeof<int option> || t = typeof<Nullable<int>> then
              let valOpt = PolarsWrapper.SeriesGetInt(handle, index)
              if valOpt.HasValue then 
-                 box (int valOpt.Value) |> unbox<'T>
+                 let v = int valOpt.Value
+                 if t = typeof<int option> then box (Some v) |> unbox<'T>
+                 else box v |> unbox<'T>
              else 
-                 Unchecked.defaultof<'T> // Return null for Nullable<int>
+                 // Handle Null
+                 if t = typeof<int> then Unchecked.defaultof<'T> // Returns 0
+                 else box null |> unbox<'T> // Returns null (for int?) or None (for int option)
 
-        else if targetType = typeof<int64> then
+        else if t = typeof<int64> || t = typeof<int64 option> || t = typeof<Nullable<int64>> then
              let valOpt = PolarsWrapper.SeriesGetInt(handle, index)
-             if valOpt.HasValue then box valOpt.Value |> unbox<'T> else Unchecked.defaultof<'T>
+             if valOpt.HasValue then 
+                 let v = valOpt.Value
+                 if t = typeof<int64 option> then box (Some v) |> unbox<'T>
+                 else box v |> unbox<'T>
+             else 
+                 if t = typeof<int64> then Unchecked.defaultof<'T> 
+                 else box null |> unbox<'T>
 
-        else if targetType = typeof<double> then
+        else if t = typeof<double> || t = typeof<double option> || t = typeof<Nullable<double>> then
              let valOpt = PolarsWrapper.SeriesGetDouble(handle, index)
-             if valOpt.HasValue then box valOpt.Value |> unbox<'T> else Unchecked.defaultof<'T>
-
-        else if targetType = typeof<float32> then
+             if valOpt.HasValue then 
+                 let v = valOpt.Value
+                 if t = typeof<double option> then box (Some v) |> unbox<'T>
+                 else box v |> unbox<'T>
+             else 
+                 if t = typeof<double> then Unchecked.defaultof<'T>
+                 else box null |> unbox<'T>
+                 
+        else if t = typeof<float32> || t = typeof<float32 option> || t = typeof<Nullable<float32>> then
              let valOpt = PolarsWrapper.SeriesGetDouble(handle, index)
-             if valOpt.HasValue then box (float32 valOpt.Value) |> unbox<'T> else Unchecked.defaultof<'T>
+             if valOpt.HasValue then 
+                 let v = float32 valOpt.Value
+                 if t = typeof<float32 option> then box (Some v) |> unbox<'T>
+                 else box v |> unbox<'T>
+             else 
+                 if t = typeof<float32> then Unchecked.defaultof<'T>
+                 else box null |> unbox<'T>
 
-        else if targetType = typeof<bool> then
+        else if t = typeof<bool> || t = typeof<bool option> || t = typeof<Nullable<bool>> then
              let valOpt = PolarsWrapper.SeriesGetBool(handle, index)
-             if valOpt.HasValue then box valOpt.Value |> unbox<'T> else Unchecked.defaultof<'T>
+             if valOpt.HasValue then 
+                 let v = valOpt.Value
+                 if t = typeof<bool option> then box (Some v) |> unbox<'T>
+                 else box v |> unbox<'T>
+             else 
+                 if t = typeof<bool> then Unchecked.defaultof<'T>
+                 else box null |> unbox<'T>
 
-        else if targetType = typeof<string> then
+        else if t = typeof<string> || t = typeof<string option> then
              if PolarsWrapper.SeriesIsNullAt(handle, index) then
-                 Unchecked.defaultof<'T> // null string
+                 box null |> unbox<'T> // null string or None
              else
                  let s = PolarsWrapper.SeriesGetString(handle, index)
-                 box s |> unbox<'T>
+                 if t = typeof<string option> then box (Some s) |> unbox<'T>
+                 else box s |> unbox<'T>
 
-        else if targetType = typeof<decimal> then
+        else if t = typeof<decimal> || t = typeof<decimal option> || t = typeof<Nullable<decimal>> then
              let valOpt = PolarsWrapper.SeriesGetDecimal(handle, index)
-             if valOpt.HasValue then box valOpt.Value |> unbox<'T> else Unchecked.defaultof<'T>
+             if valOpt.HasValue then 
+                 let v = valOpt.Value
+                 if t = typeof<decimal option> then box (Some v) |> unbox<'T>
+                 else box v |> unbox<'T>
+             else 
+                 if t = typeof<decimal> then Unchecked.defaultof<'T>
+                 else box null |> unbox<'T>
 
-        else if targetType = typeof<DateOnly> then
+        else if t = typeof<DateOnly> || t = typeof<DateOnly option> || t = typeof<Nullable<DateOnly>> then
              let valOpt = PolarsWrapper.SeriesGetDate(handle, index)
-             if valOpt.HasValue then box valOpt.Value |> unbox<'T> else Unchecked.defaultof<'T>
+             if valOpt.HasValue then 
+                 let v = valOpt.Value
+                 if t = typeof<DateOnly option> then box (Some v) |> unbox<'T>
+                 else box v |> unbox<'T>
+             else 
+                 if t = typeof<DateOnly> then Unchecked.defaultof<'T>
+                 else box null |> unbox<'T>
 
-        else if targetType = typeof<TimeOnly> then
+        else if t = typeof<TimeOnly> || t = typeof<TimeOnly option> || t = typeof<Nullable<TimeOnly>> then
              let valOpt = PolarsWrapper.SeriesGetTime(handle, index)
-             if valOpt.HasValue then box valOpt.Value |> unbox<'T> else Unchecked.defaultof<'T>
+             if valOpt.HasValue then 
+                 let v = valOpt.Value
+                 if t = typeof<TimeOnly option> then box (Some v) |> unbox<'T>
+                 else box v |> unbox<'T>
+             else 
+                 if t = typeof<TimeOnly> then Unchecked.defaultof<'T>
+                 else box null |> unbox<'T>
              
-        else if targetType = typeof<TimeSpan> then
+        else if t = typeof<TimeSpan> || t = typeof<TimeSpan option> || t = typeof<Nullable<TimeSpan>> then
              let valOpt = PolarsWrapper.SeriesGetDuration(handle, index)
-             if valOpt.HasValue then box valOpt.Value |> unbox<'T> else Unchecked.defaultof<'T>
+             if valOpt.HasValue then 
+                 let v = valOpt.Value
+                 if t = typeof<TimeSpan option> then box (Some v) |> unbox<'T>
+                 else box v |> unbox<'T>
+             else 
+                 if t = typeof<TimeSpan> then Unchecked.defaultof<'T>
+                 else box null |> unbox<'T>
 
         // ----------------------------------------------------------
         // 🐢 2. Universal Path (Arrow Infrastructure)

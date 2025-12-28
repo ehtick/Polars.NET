@@ -754,3 +754,58 @@ type ``Basic Functionality Tests`` () =
         // 2: 3 items -> 3*3 = 9
         // Total = 34
         Assert.Equal(34L, res.Rows)
+    [<Fact>]
+    member _.``Series: Uniqueness and ApplyExpr`` () =
+        // 1. 准备数据: [1, 2, 2, 3]
+        let s = Series.create("nums", [1; 2; 2; 3])
+
+        // 2. 验证 NUnique (Native)
+        Assert.Equal(3UL, s.NUnique) // 1, 2, 3
+
+        // 3. 验证 Unique (Native)
+        let sUniq = s.Unique().Sort false // Sort to compare deterministically
+        Assert.Equal(3L, sUniq.Length)
+        Assert.Equal(1, sUniq.GetValue<int>(0))
+        Assert.Equal(2, sUniq.GetValue<int>(1))
+        Assert.Equal(3, sUniq.GetValue<int>(2))
+
+        // 4. 验证 IsUnique (ApplyExpr)
+        // [1, 2, 2, 3] -> IsUnique -> [T, F, F, T]
+        let sIsUniq = s.IsUnique()
+        Assert.Equal(4L, sIsUniq.Length)
+        Assert.True(sIsUniq.GetValue<bool> 0)  // 1 is unique
+        Assert.False(sIsUniq.GetValue<bool> 1) // 2 is not
+        Assert.False(sIsUniq.GetValue<bool> 2) // 2 is not
+        Assert.True(sIsUniq.GetValue<bool> 3)  // 3 is unique
+
+        // 5. 验证 IsDuplicated (ApplyExpr)
+        // [1, 2, 2, 3] -> IsDup -> [F, T, T, F]
+        let sIsDup = s.IsDuplicated()
+        Assert.False(sIsDup.GetValue<bool> 0)
+        Assert.True(sIsDup.GetValue<bool> 1)
+    [<Fact>]
+    member _.``Series: Sort with Options (Nulls & Stable)`` () =
+        // 1. 准备数据: [2, null, 1, 2]
+        // 这里的 int option list 会被 Series.create 识别为 nullable int
+        let s = Series.create("nums", [Some 2; None; Some 1; Some 2])
+
+        // 2. 默认排序 (升序, Null 在前) -> [null, 1, 2, 2]
+        // Polars 默认 nulls_last=false (Nulls are smallest)
+        let sDef = s.Sort()
+        Assert.True(sDef.IsNullAt 0)
+        Assert.Equal(1,sDef .% 1)
+
+        // 3. Nulls Last (升序, Null 在后) -> [1, 2, 2, null]
+        let sNullLast = s.Sort(nullsLast = true)
+        Assert.Equal(1, sNullLast .% 0)
+        Assert.True(sNullLast.IsNullAt 3)
+
+        // 4. 降序 + Nulls Last -> [2, 2, 1, null]
+        let sDescNullLast = s.Sort(descending = true, nullsLast = true)
+        Assert.Equal(2, sDescNullLast .% 0)
+        Assert.True(sDescNullLast.IsNullAt 3)
+        
+        // 5. 稳定排序 (Maintain Order)
+        // 虽然这里只有 4 个元素很难测出不稳定的情况，但 API 没崩就是胜利
+        let sStable = s.Sort(maintainOrder = true)
+        Assert.Equal(4L, sStable.Length)

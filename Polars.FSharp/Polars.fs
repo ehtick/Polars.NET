@@ -125,6 +125,15 @@ module pl =
     let fillNull (fillValue: Expr) (e: Expr) = e.FillNull fillValue
     let isNull (e: Expr) = e.IsNull()
     let isNotNull (e: Expr) = e.IsNotNull()
+    // unique and duplicated helpers
+    /// <summary> Get unique values. </summary>
+    let inline unique (e: Expr) = e.Unique()
+    /// <summary> Get unique values (stable). </summary>
+    let inline uniqueStable (e: Expr) = e.UniqueStable()
+    /// <summary> Check if values are unique. </summary>
+    let inline isUnique (e: Expr) = e.IsUnique()
+    /// <summary> Check if values are duplicated. </summary>
+    let inline isDuplicated (e: Expr) = e.IsDuplicated()
     // Math Helpers
     let abs (e: Expr) = e.Abs()
     let pow (exponent: Expr) (baseExpr: Expr) = baseExpr.Pow exponent
@@ -316,3 +325,4 @@ module PolarsAutoOpen =
     /// Helps mixing types in a list.
     /// </summary>
     let inline (!>) (x: #IColumnExpr) = x :> IColumnExpr
+    let inline (.%) (s: Series) (i: int) : 'T = s.GetValue<'T>(int64 i)

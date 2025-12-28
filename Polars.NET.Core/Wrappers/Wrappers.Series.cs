@@ -361,4 +361,21 @@ public static partial class PolarsWrapper
         // 将 long 长度转为 UIntPtr
         return ErrorHelper.Check(NativeBindings.pl_series_slice(handle, offset, (UIntPtr)length));
     }
+    // Sort
+    public static SeriesHandle SeriesSort(
+        SeriesHandle series, 
+        bool descending = false,
+        bool nullsLast = false,
+        bool multithreaded = true, // Polars 默认是 true
+        bool maintainOrder = false // Polars 默认是 false
+    )
+    {
+        return ErrorHelper.Check(NativeBindings.pl_series_sort(
+            series, 
+            descending, 
+            nullsLast, 
+            multithreaded, 
+            maintainOrder
+        ));
+    }
 }

@@ -731,6 +731,31 @@ public class Series : IDisposable
         return ApplyExpr(Polars.Col(Name).IsDuplicated());
     }
     // ==========================================
+    // Common Ops 
+    // ==========================================
+    /// <summary>
+    /// Sort this Series.
+    /// </summary>
+    /// <param name="descending">Sort in descending order.</param>
+    /// <param name="nullsLast">Place null values last (default behavior depends on ascending/descending).</param>
+    /// <param name="multithreaded">Use parallel sorting (default: true).</param>
+    /// <param name="maintainOrder">Use stable sort (maintain order of equal elements) (default: false).</param>
+    public Series Sort(
+        bool descending = false, 
+        bool nullsLast = false, 
+        bool maintainOrder = false, // 放在这里比较符合直觉
+        bool multithreaded = true)
+    {
+        var h = PolarsWrapper.SeriesSort(
+            Handle, 
+            descending, 
+            nullsLast, 
+            multithreaded, 
+            maintainOrder
+        );
+        return new Series(h);
+    }
+    // ==========================================
     // Conversions (Arrow / DataFrame)
     // ==========================================
 

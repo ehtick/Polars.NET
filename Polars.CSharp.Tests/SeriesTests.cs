@@ -484,4 +484,58 @@ public class SeriesTests
         Assert.Equal(2, uniq[1]);
         Assert.Equal(3, uniq[2]);
     }
+    [Fact]
+    public void Test_Series_Sort_Options()
+    {
+        // 准备数据：包含重复值和 Null
+        // [3, null, 1, 3, 2]
+        using var s = Series.From("nums", new int?[] { 3, null, 1, 3, 2 });
+
+        // 1. 默认排序 (Ascending)
+        // 预期: [null, 1, 2, 3, 3] (Polars 默认 nulls_last=false 且 ascending 时，null 在前)
+        // 或者 [1, 2, 3, 3, null] 取决于具体版本，我们通过 nullsLast 参数显式控制更稳
+        using var sAsc = s.Sort(descending: false, nullsLast: false);
+        
+        // 验证 Null 在最前面
+        Assert.Null(sAsc[0]); 
+        Assert.Equal(1, sAsc[1]);
+        Assert.Equal(3, sAsc[4]);
+
+        // 2. 降序 (Descending)
+        // 预期: [3, 3, 2, 1, null] (nullsLast=false 在降序时通常意味着 null 最小，即放在最后? 
+        // 不，Polars 逻辑通常是 null 视为最小值。
+        // Ascending: null, ..., max
+        // Descending: max, ..., null (如果 null 最小)
+        // 让我们显式测试 nullsLast=true
+        using var sDesc = s.Sort(descending: true, nullsLast: true);
+        
+        // 验证: [3, 3, 2, 1, null]
+        Assert.Equal(3, sDesc[0]);
+        Assert.Equal(3, sDesc[1]);
+        Assert.Equal(1, sDesc[3]);
+        Assert.Null(sDesc[4]);
+
+        // 3. Nulls Last (Ascending)
+        // 预期: [1, 2, 3, 3, null]
+        using var sNullsLast = s.Sort(descending: false, nullsLast: true);
+        
+        Assert.Equal(1, sNullsLast[0]);
+        Assert.Null(sNullsLast[4]);
+
+        // 4. Stable Sort (maintainOrder)
+        // 虽然对于 int 很难直观验证稳定性（除非我们看索引），但我们至少要确保开启它不会崩
+        using var sStable = s.Sort(maintainOrder: true);
+        Assert.Equal(5, sStable.Length);
+    }
+
+    [Fact]
+    public void Test_Series_Sort_Strings()
+    {
+        using var s = Series.From("chars", ["c", "a", "b"]);
+        
+        using var sorted = s.Sort();
+        Assert.Equal("a", sorted[0]);
+        Assert.Equal("b", sorted[1]);
+        Assert.Equal("c", sorted[2]);
+    }
 }
