@@ -326,84 +326,114 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     public DataFrame WithColumns(params Expr[] exprs)
     {
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
-        //
+
         return new DataFrame(PolarsWrapper.WithColumns(Handle, handles));
     }
     /// <summary>
     /// Sort the DataFrame by a single column.
     /// </summary>
-    public DataFrame Sort(string column, bool descending = false)
+    public DataFrame Sort(
+        string column, 
+        bool descending = false, 
+        bool nullsLast = false, 
+        bool maintainOrder = false)
     {
-        return Sort([column], [descending]);
+        return Sort(
+            [Polars.Col(column)], 
+            [descending], 
+            [nullsLast], 
+            maintainOrder
+        );
     }
     /// <summary>
-    /// Sort using a single expression.
+    /// Sort the DataFrame by a single expr.
     /// </summary>
-    public DataFrame Sort(Expr expr, bool descending = false)
+    public DataFrame Sort(
+        Expr expr, 
+        bool descending = false, 
+        bool nullsLast = false, 
+        bool maintainOrder = false)
     {
-        // 包装成数组，复用核心逻辑
-        return Sort([expr], [descending]);
+        return Sort(
+            [expr], 
+            [descending], 
+            [nullsLast], 
+            maintainOrder
+        );
     }
     /// <summary>
     /// Sort the DataFrame by multiple columns (all ascending or all descending).
     /// </summary>
-    public DataFrame Sort(string[] columns, bool descending = false)
+    public DataFrame Sort(
+        string[] columns, 
+        bool descending = false, 
+        bool nullsLast = false, 
+        bool maintainOrder = false)
     {
-        // 广播 bool 值
-        var descArray = new bool[columns.Length];
-        System.Array.Fill(descArray, descending);
-        
-        return Sort(columns, descArray);
+        var exprs = columns.Select(Polars.Col).ToArray();
+        return Sort(
+            exprs, 
+            [descending], 
+            [nullsLast], 
+            maintainOrder
+        );
     }
 
     /// <summary>
     /// Sort the DataFrame by multiple columns with specific sort orders.
     /// </summary>
-    public DataFrame Sort(string[] columns, bool[] descending)
+    public DataFrame Sort(
+        string[] columns, 
+        bool[] descending, 
+        bool[] nullsLast, 
+        bool maintainOrder = false)
     {
-        if (columns.Length != descending.Length)
-            throw new ArgumentException("Columns and descending array must have the same length.");
-
-        // String -> Expr.Col()
-        var exprs = new Expr[columns.Length];
-        for (int i = 0; i < columns.Length; i++)
-        {
-            exprs[i] = Polars.Col(columns[i]);
-        }
-
-        // 调用核心 Expr[] 重载
-        return Sort(exprs, descending);
+        var exprs = columns.Select(Polars.Col).ToArray();
+        return Sort(exprs, descending, nullsLast, maintainOrder);
     }
 
     /// <summary>
     /// Sort using multiple expressions (all ascending or all descending).
     /// </summary>
-    public DataFrame Sort(Expr[] exprs, bool descending = false)
+    public DataFrame Sort(
+        Expr[] exprs, 
+        bool descending = false, 
+        bool nullsLast = false, 
+        bool maintainOrder = false)
     {
-        // 广播 bool 值
-        var descArray = new bool[exprs.Length];
-        System.Array.Fill(descArray, descending);
-
-        return Sort(exprs, descArray);
+        // 构造长度为 1 的数组，利用 Rust/Wrapper 的广播机制
+        return Sort(
+            exprs, 
+            [descending], 
+            [nullsLast], 
+            maintainOrder
+        );
     }
 
     /// <summary>
     /// Sort the DataFrame by multiple columns.
     /// </summary>
-    public DataFrame Sort(Expr[] exprs, bool[] descending)
+    public DataFrame Sort(
+        Expr[] exprs, 
+        bool[] descending, 
+        bool[] nullsLast, 
+        bool maintainOrder = false)
     {
-        if (exprs.Length != descending.Length)
-            throw new ArgumentException("Expressions and descending array must have the same length.");
-
-        // 1. API 层 Clone (保护用户对象)
+        // 1. Clone Exprs (为了不消耗用户手中的对象)
         var clonedHandles = new ExprHandle[exprs.Length];
         for (int i = 0; i < exprs.Length; i++)
         {
             clonedHandles[i] = PolarsWrapper.CloneExpr(exprs[i].Handle);
         }
 
-        // 2. 调用 Wrapper (Consume Clone)
-        var h = PolarsWrapper.Sort(Handle, clonedHandles, descending);
+        // 2. 调用 Wrapper
+        var h = PolarsWrapper.DataFrameSort(
+            Handle, 
+            clonedHandles, 
+            descending, 
+            nullsLast, 
+            maintainOrder
+        );
         
         return new DataFrame(h);
     }

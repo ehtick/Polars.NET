@@ -70,36 +70,43 @@ public static partial class PolarsWrapper
         expr.TransferOwnership(); 
         return ErrorHelper.Check(h);
     }
-    public static LazyFrameHandle LazySort(LazyFrameHandle lf, ExprHandle expr, bool desc)
+    public static LazyFrameHandle LazyFrameSort(
+        LazyFrameHandle lf, 
+        ExprHandle[] exprs, 
+        bool[] descending,
+        bool[] nullsLast,
+        bool maintainOrder)
     {
-        var h = NativeBindings.pl_lazy_sort(lf, expr, desc);
-        lf.TransferOwnership();
-        expr.TransferOwnership();
-        return ErrorHelper.Check(h);
-    }
-    public static LazyFrameHandle LazySort(LazyFrameHandle lf, ExprHandle[] exprs, bool[] descending)
-    {
-        // 1. 转换 Expr 数组 (提取内部指针)
-        // HandlesToPtrs 是你之前写好的辅助方法
+        // 1. 校验参数
+        if ((descending.Length != 1 && descending.Length != exprs.Length) ||
+            (nullsLast.Length != 1 && nullsLast.Length != exprs.Length))
+        {
+                throw new ArgumentException("Sort options length mismatch.");
+        }
+
+        // 2. 转换并移交 Expr 所有权
         var exprPtrs = HandlesToPtrs(exprs);
 
         unsafe
         {
-            // 2. 锁定 bool 数组内存，获取指针
-            // C# 的 bool 是 1 字节 (System.Boolean)，Rust 的 bool 也是 1 字节
-            // 它们在内存布局上是兼容的，可以直接传指针
             fixed (bool* descPtr = descending)
+            fixed (bool* nullsPtr = nullsLast)
             {
-                // 3. 调用 Native
-                var h = NativeBindings.pl_lazy_sort_multiple(
-                    lf, 
-                    exprPtrs, 
-                    (UIntPtr)exprs.Length, 
-                    descPtr, 
-                    (UIntPtr)descending.Length
+                var h = NativeBindings.pl_lazyframe_sort(
+                    lf,
+                    exprPtrs,
+                    (UIntPtr)exprs.Length,
+                    descPtr,
+                    (UIntPtr)descending.Length,
+                    nullsPtr,
+                    (UIntPtr)nullsLast.Length,
+                    maintainOrder
                 );
+
+                // 3. 移交 LazyFrame 自身的所有权
+                // (Exprs 的所有权在 HandlesToPtrs 里已经移交了，这里不用管)
                 lf.TransferOwnership();
-                // 4. 检查错误
+
                 return ErrorHelper.Check(h);
             }
         }

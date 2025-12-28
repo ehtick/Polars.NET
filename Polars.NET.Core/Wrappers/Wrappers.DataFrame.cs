@@ -128,36 +128,42 @@ public static partial class PolarsWrapper
         var rPtrs = HandlesToPtrs(rightOn);
         return ErrorHelper.Check(NativeBindings.pl_join(left, right, lPtrs, (UIntPtr)lPtrs.Length, rPtrs, (UIntPtr)rPtrs.Length, how));
     }
-    public static DataFrameHandle Sort(DataFrameHandle df, ExprHandle expr, bool descending)
+    public static DataFrameHandle DataFrameSort(
+        DataFrameHandle df, 
+        ExprHandle[] exprs, 
+        bool[] descending,
+        bool[] nullsLast,
+        bool maintainOrder)
     {
-        var h = NativeBindings.pl_sort(df, expr, descending);
-        expr.TransferOwnership();
-        return ErrorHelper.Check(h);
-    }
-    public static DataFrameHandle Sort(DataFrameHandle df, ExprHandle[] exprs, bool[] descending)
-    {
-        // 1. 转换 Expr 数组 (提取内部指针)
-        // HandlesToPtrs 是你之前写好的辅助方法
+        // 1. 校验参数
+        if ((descending.Length != 1 && descending.Length != exprs.Length) ||
+            (nullsLast.Length != 1 && nullsLast.Length != exprs.Length))
+        {
+                throw new ArgumentException("Sort options length mismatch.");
+        }
+
+        // 2. 转换并移交 Expr 所有权 (Move)
+        // 这一步之后，C# 端的 exprs 里的 handle 已经失效，指针控制权交给 ptrs 数组
         var exprPtrs = HandlesToPtrs(exprs);
 
         unsafe
         {
-            // 2. 锁定 bool 数组内存，获取指针
-            // C# 的 bool 是 1 字节 (System.Boolean)，Rust 的 bool 也是 1 字节
-            // 它们在内存布局上是兼容的，可以直接传指针
+            // 3. 锁定 bool 数组
             fixed (bool* descPtr = descending)
+            fixed (bool* nullsPtr = nullsLast)
             {
-                // 3. 调用 Native
-                var h = NativeBindings.pl_sort_multiple(
-                    df, 
-                    exprPtrs, 
-                    (UIntPtr)exprs.Length, 
-                    descPtr, 
-                    (UIntPtr)descending.Length
-                );
-
-                // 4. 检查错误
-                return ErrorHelper.Check(h);
+                // 4. 调用 Native
+                // Rust 端会通过 Box::from_raw 接管 exprPtrs 指向的内存
+                return ErrorHelper.Check(NativeBindings.pl_dataframe_sort(
+                    df,
+                    exprPtrs,
+                    (UIntPtr)exprs.Length,
+                    descPtr,
+                    (UIntPtr)descending.Length,
+                    nullsPtr,
+                    (UIntPtr)nullsLast.Length,
+                    maintainOrder
+                ));
             }
         }
     }

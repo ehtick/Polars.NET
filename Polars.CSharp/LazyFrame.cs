@@ -353,75 +353,91 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Sort the LazyFrame by a single column.
     /// </summary>
-    public LazyFrame Sort(string column, bool descending = false)
+    public LazyFrame Sort(
+        string column, 
+        bool descending = false, 
+        bool nullsLast = false, 
+        bool maintainOrder = false)
     {
-        return Sort([column], [descending]);
+        return Sort([Polars.Col(column)], [descending], [nullsLast], maintainOrder);
     }
     /// <summary>
     /// Sort using a single expression.
     /// </summary>
-    public LazyFrame Sort(Expr expr, bool descending = false)
+    public LazyFrame Sort(
+        Expr expr, 
+        bool descending = false, 
+        bool nullsLast = false, 
+        bool maintainOrder = false)
     {
-        // 包装成数组，复用核心逻辑
-        return Sort([expr], [descending]);
+        return Sort([expr], [descending], [nullsLast], maintainOrder);
+    }
+    /// <summary>
+    /// Sort using multiple exprs and single option.
+    /// </summary>
+    /// <param name="exprs"></param>
+    /// <param name="descending"></param>
+    /// <param name="nullsLast"></param>
+    /// <param name="maintainOrder"></param>
+    /// <returns></returns>
+    public LazyFrame Sort(
+        Expr[] exprs, 
+        bool descending = false, 
+        bool nullsLast = false, 
+        bool maintainOrder = false)
+    {
+        return Sort(exprs, [descending], [nullsLast], maintainOrder);
     }
     /// <summary>
     /// Sort the LazyFrame by multiple columns (all ascending or all descending).
     /// </summary>
-    public LazyFrame Sort(string[] columns, bool descending = false)
+    public LazyFrame Sort(
+        string[] columns, 
+        bool descending = false, 
+        bool nullsLast = false, 
+        bool maintainOrder = false)
     {
-        var descArray = new bool[columns.Length];
-        System.Array.Fill(descArray, descending);
-        
-        return Sort(columns, descArray);
+        var exprs = columns.Select(Polars.Col).ToArray();
+        return Sort(exprs, [descending], [nullsLast], maintainOrder);
     }
 
     /// <summary>
     /// Sort the LazyFrame by multiple columns with specific sort orders.
     /// </summary>
-    public LazyFrame Sort(string[] columns, bool[] descending)
+    public LazyFrame Sort(
+        string[] columns, 
+        bool[] descending, 
+        bool[] nullsLast, 
+        bool maintainOrder = false)
     {
-        if (columns.Length != descending.Length)
-            throw new ArgumentException("Columns and descending array must have the same length.");
-
-        var exprs = new Expr[columns.Length];
-        for (int i = 0; i < columns.Length; i++)
-        {
-            exprs[i] = Polars.Col(columns[i]);
-        }
-
-        return Sort(exprs, descending);
+        var exprs = columns.Select(Polars.Col).ToArray();
+        return Sort(exprs, descending, nullsLast, maintainOrder);
     }
 
     /// <summary>
-    /// Sort using multiple expressions (all ascending or all descending).
+    /// Sort the LazyFrame by multiple exprs.
     /// </summary>
-    public LazyFrame Sort(Expr[] exprs, bool descending = false)
+    public LazyFrame Sort(
+        Expr[] exprs, 
+        bool[] descending, 
+        bool[] nullsLast, 
+        bool maintainOrder = false)
     {
-        var descArray = new bool[exprs.Length];
-        System.Array.Fill(descArray, descending);
-
-        return Sort(exprs, descArray);
-    }
-
-    /// <summary>
-    /// Sort the LazyFrame by multiple columns.
-    /// </summary>
-    public LazyFrame Sort(Expr[] exprs, bool[] descending)
-    {
-        if (exprs.Length != descending.Length)
-            throw new ArgumentException("Expressions and descending array must have the same length.");
-
-        // 1. API 层 Clone
+        // 1. Clone Exprs (保护用户对象)
         var clonedHandles = new ExprHandle[exprs.Length];
         for (int i = 0; i < exprs.Length; i++)
         {
             clonedHandles[i] = PolarsWrapper.CloneExpr(exprs[i].Handle);
         }
 
-        // 2. 调用 Wrapper (Consume Clone)
-        // LazySort 会消耗掉当前的 LazyFrameHandle (self)，这是预期行为
-        var h = PolarsWrapper.LazySort(Handle, clonedHandles, descending);
+        // 2. 调用 Wrapper
+        var h = PolarsWrapper.LazyFrameSort(
+            Handle, 
+            clonedHandles, 
+            descending, 
+            nullsLast, 
+            maintainOrder
+        );
         
         return new LazyFrame(h);
     }
@@ -548,7 +564,7 @@ public class LazyFrame : IDisposable
     public LazyFrame Join(LazyFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
     {
         // 包装成数组调用上面的重载
-        return Join(other, new[] { leftOn }, new[] { rightOn }, how);
+        return Join(other, [leftOn], [rightOn], how);
     }
 
     /// <summary>

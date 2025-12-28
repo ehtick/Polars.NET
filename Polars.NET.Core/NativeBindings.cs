@@ -296,15 +296,18 @@ unsafe internal partial class NativeBindings
         IntPtr[] rightOn, UIntPtr rightLen,
         PlJoinType how
     );
-    [LibraryImport(LibName)] 
-    public static partial DataFrameHandle pl_sort(DataFrameHandle df, ExprHandle expr, [MarshalAs(UnmanagedType.U1)] bool descending);
     [LibraryImport(LibName)]
-    public static partial DataFrameHandle pl_sort_multiple(
+    public static partial DataFrameHandle pl_dataframe_sort(
         DataFrameHandle df,
-        IntPtr[] exprs,          // Expr 指针数组 (本质是 *mut ExprContext 数组)
-        UIntPtr expr_len,        // Expr 数量
-        bool* descending, // bool 数组指针 (Rust 端是 *const bool)
-        UIntPtr descending_len   // bool 数量
+        IntPtr[] exprs,
+        UIntPtr exprLen,
+        // bool 数组必须用 byte* 或 bool* 传，LibraryImport 可能会要求 ref/in 或者 unsafe 指针
+        // 为了灵活性，我们这里用 unsafe 指针接收 bool 数组
+        bool* descending, 
+        UIntPtr descendingLen,
+        bool* nullsLast,
+        UIntPtr nullsLastLen,
+        [MarshalAs(UnmanagedType.I1)] bool maintainOrder
     );
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_explode(DataFrameHandle df, IntPtr[] exprs, UIntPtr len);
@@ -402,14 +405,15 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] 
     public static partial LazyFrameHandle pl_lazy_select(LazyFrameHandle lf, IntPtr[] exprs, UIntPtr len);
     [LibraryImport(LibName)] 
-    public static partial LazyFrameHandle pl_lazy_sort(LazyFrameHandle lf, ExprHandle expr, [MarshalAs(UnmanagedType.U1)] bool desc);
-    [LibraryImport(LibName)] 
-    public static partial LazyFrameHandle pl_lazy_sort_multiple(
+    public static partial LazyFrameHandle pl_lazyframe_sort(
         LazyFrameHandle lf,
-        IntPtr[] exprs,          // Expr 指针数组 (本质是 *mut ExprContext 数组)
-        UIntPtr expr_len,        // Expr 数量
-        bool* descending, // bool 数组指针 (Rust 端是 *const bool)
-        UIntPtr descending_len   // bool 数量
+        IntPtr[] exprs,
+        UIntPtr exprLen,
+        bool* descending,
+        UIntPtr descendingLen,
+        bool* nullsLast,
+        UIntPtr nullsLastLen,
+        [MarshalAs(UnmanagedType.I1)] bool maintainOrder
     );
     [LibraryImport(LibName)] 
     public static partial LazyFrameHandle pl_lazy_groupby_agg(

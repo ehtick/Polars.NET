@@ -453,17 +453,32 @@ HR,50";
         Console.WriteLine("=== NO STRING PARSE! ===");
     }
     [Fact]
-    public void Test_Lazy_MultiSort()
+    public void Test_LazyFrame_Sort_FullOptions()
     {
-        using var df = DataFrame.FromColumns(new { val = new[] { 3, 1, 2 } });
-        using var lf = df.Lazy();
+        // 数据: 
+        // val: [3, null, 1]
+        // grp: [1, 1, 1]
+        using var df = DataFrame.FromColumns(new 
+        {
+            val = new int?[] { 3, null, 1 },
+            grp = new[] { 1, 1, 1 }
+        });
 
-        // 简单排序
-        using var sorted = lf.Sort("val", descending: false).Collect();
+        // Lazy Sort: 按 val 降序，但空值放最后
+        // 预期顺序: [3, 1, null]
         
-        Assert.Equal(1, sorted["val"][0]);
-        Assert.Equal(2, sorted["val"][1]);
-        Assert.Equal(3, sorted["val"][2]);
+        using var lf = df.Lazy();
+        using var sortedLf = lf.Sort(
+            "val", 
+            descending: true, 
+            nullsLast: true // 如果 false，降序时 null 通常最大(在前)；设为 true 则强制在后
+        );
+        
+        using var res = sortedLf.Collect();
+
+        Assert.Equal(3, res["val"][0]);
+        Assert.Equal(1, res["val"][1]);
+        Assert.Null(res["val"][2]);
     }
 
     // 辅助打印方法

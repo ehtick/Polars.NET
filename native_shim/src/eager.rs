@@ -155,67 +155,51 @@ pub extern "C" fn pl_join(
 // Sort
 // ==========================================
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_sort(
-    df_ptr: *mut DataFrameContext,
-    expr_ptr: *mut ExprContext,
-    descending: bool
-) -> *mut DataFrameContext {
-    ffi_try!({
-        let ctx = unsafe { &*df_ptr };
-        let expr_ctx = unsafe { Box::from_raw(expr_ptr) };
-        
-        // 0.50+ Eager Sort 支持表达式
-        let res_df = ctx.df.clone()
-            .lazy()
-            // LazyFrame::sort 接受 Expr 列表
-            .sort_by_exprs(
-                vec![expr_ctx.inner], 
-                SortMultipleOptions::default().with_order_descending(descending)
-            )
-            .collect()?;
-
-        Ok(Box::into_raw(Box::new(DataFrameContext { df: res_df })))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_sort_multiple(
+pub extern "C" fn pl_dataframe_sort(
     df_ptr: *mut DataFrameContext,
     expr_ptrs: *const *mut ExprContext, // Expr 指针数组
     expr_len: usize,
-    descending_ptr: *const bool,        // bool 数组 (对应每一列的排序方向)
-    descending_len: usize               // bool 数组长度
+    descending_ptr: *const bool,        // bool 数组
+    descending_len: usize,
+    nulls_last_ptr: *const bool,        // [新增] nulls_last 数组
+    nulls_last_len: usize,
+    maintain_order: bool                // [新增] 稳定排序开关
 ) -> *mut DataFrameContext {
     ffi_try!({
         let ctx = unsafe { &*df_ptr };
         
-        // 1. 还原 Exprs Vec
+        // 1. 还原 Exprs Vec (消费所有权)
         let mut exprs = Vec::with_capacity(expr_len);
         let ptr_slice = unsafe { std::slice::from_raw_parts(expr_ptrs, expr_len) };
         for &ptr in ptr_slice {
-            // 我们约定 C# 端 TransferOwnership，这里直接 Box::from_raw
             let expr_ctx = unsafe { Box::from_raw(ptr) };
             exprs.push(expr_ctx.inner);
         }
 
         // 2. 还原 Descending Vec
         let desc_slice = unsafe { std::slice::from_raw_parts(descending_ptr, descending_len) };
-        let descending: Vec<bool> = desc_slice.to_vec();
-
-        // 3. 构建排序选项
-        // 如果 descending 只有一个值，Polars 会自动广播吗？
-        // 最好我们在 Rust 这边处理：如果 len=1，就广播给所有 Expr
-        let final_descending = if descending_len == 1 && expr_len > 1 {
-             vec![descending[0]; expr_len]
+        // 自动广播逻辑：如果 C# 传了 1 个值但 expr 有 N 个，我们在 Rust 这边广播，增强鲁棒性
+        let descending = if descending_len == 1 && expr_len > 1 {
+            vec![desc_slice[0]; expr_len]
         } else {
-             descending
+            desc_slice.to_vec()
         };
 
-        let options = SortMultipleOptions::default()
-            .with_order_descending_multi(final_descending); // 注意复数形式
+        // 3. 还原 Nulls Last Vec
+        let nulls_slice = unsafe { std::slice::from_raw_parts(nulls_last_ptr, nulls_last_len) };
+        let nulls_last = if nulls_last_len == 1 && expr_len > 1 {
+            vec![nulls_slice[0]; expr_len]
+        } else {
+            nulls_slice.to_vec()
+        };
 
-        // 4. 执行 Sort
-        // Eager Sort 在 Polars 0.50+ 推荐走 Lazy 路径
+        // 4. 构建选项
+        let options = SortMultipleOptions::default()
+            .with_order_descending_multi(descending)
+            .with_nulls_last_multi(nulls_last)
+            .with_maintain_order(maintain_order);
+
+        // 5. 执行 Lazy Sort 并 Collect
         let res_df = ctx.df.clone()
             .lazy()
             .sort_by_exprs(exprs, options)

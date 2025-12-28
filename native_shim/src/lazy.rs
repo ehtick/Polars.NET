@@ -97,41 +97,21 @@ gen_lazy_scalar_op!(pl_lazy_tail, tail, u32);
 // Sort
 // ==========================================
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_sort(
+pub extern "C" fn pl_lazyframe_sort(
     lf_ptr: *mut LazyFrameContext,
-    expr_ptr: *mut ExprContext,
-    descending: bool
-) -> *mut LazyFrameContext {
-    ffi_try!({
-        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        let expr_ctx = unsafe { Box::from_raw(expr_ptr) };
-        
-        // 构建排序选项
-        let options = SortMultipleOptions::default()
-            .with_order_descending(descending);
-
-        // Polars 0.50: sort_by_exprs 接受 Vec<Expr>
-        let new_lf = lf_ctx.inner.sort_by_exprs(
-            vec![expr_ctx.inner], 
-            options
-        );
-        
-        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_sort_multiple(
-    lf_ptr: *mut LazyFrameContext,
-    expr_ptrs: *const *mut ExprContext, // Expr 指针数组
+    expr_ptrs: *const *mut ExprContext,
     expr_len: usize,
-    descending_ptr: *const bool,        // bool 数组 (对应每一列的排序方向)
-    descending_len: usize               // bool 数组长度
+    descending_ptr: *const bool,
+    descending_len: usize,
+    nulls_last_ptr: *const bool,   // [新增]
+    nulls_last_len: usize,         // [新增]
+    maintain_order: bool           // [新增]
 ) -> *mut LazyFrameContext {
     ffi_try!({
+        // 1. 消费 LazyFrame (Consuming Self)
         let ctx = unsafe { Box::from_raw(lf_ptr) };
         
-        // 1. 还原 Exprs Vec
+        // 2. 还原 Exprs (Consuming Exprs)
         let mut exprs = Vec::with_capacity(expr_len);
         let ptr_slice = unsafe { std::slice::from_raw_parts(expr_ptrs, expr_len) };
         for &ptr in ptr_slice {
@@ -139,27 +119,32 @@ pub extern "C" fn pl_lazy_sort_multiple(
             exprs.push(expr_ctx.inner);
         }
 
-        // 2. 还原 Descending Vec
+        // 3. 处理 Descending (支持广播)
         let desc_slice = unsafe { std::slice::from_raw_parts(descending_ptr, descending_len) };
-        let descending: Vec<bool> = desc_slice.to_vec();
-
-        // 3. 构建排序选项
-        // 如果 descending 只有一个值，Polars 会自动广播吗？
-        // 最好我们在 Rust 这边处理：如果 len=1，就广播给所有 Expr
-        let final_descending = if descending_len == 1 && expr_len > 1 {
-             vec![descending[0]; expr_len]
+        let descending = if descending_len == 1 && expr_len > 1 {
+            vec![desc_slice[0]; expr_len]
         } else {
-             descending
+            desc_slice.to_vec()
         };
 
+        // 4. 处理 Nulls Last (支持广播)
+        let nulls_slice = unsafe { std::slice::from_raw_parts(nulls_last_ptr, nulls_last_len) };
+        let nulls_last = if nulls_last_len == 1 && expr_len > 1 {
+            vec![nulls_slice[0]; expr_len]
+        } else {
+            nulls_slice.to_vec()
+        };
+
+        // 5. 构建选项
         let options = SortMultipleOptions::default()
-            .with_order_descending_multi(final_descending); // 注意复数形式
+            .with_order_descending_multi(descending)
+            .with_nulls_last_multi(nulls_last)
+            .with_maintain_order(maintain_order);
 
-        // 4. 执行 Sort
-        let res_lf = ctx.inner
-            .sort_by_exprs(exprs, options);
+        // 6. 执行 Sort
+        let res_lf = ctx.inner.sort_by_exprs(exprs, options);
 
-        Ok(Box::into_raw(Box::new(LazyFrameContext { inner:res_lf })))
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: res_lf })))
     })
 }
 // ==========================================

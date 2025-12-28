@@ -99,7 +99,7 @@ HR,50";
             using var grouped = df
                 .GroupBy("dept")
                 .Agg(Col("salary").Sum().Alias("total_salary"))
-                .Sort(Col("total_salary"), descending: true); // 排序方便断言
+                .Sort("total_salary", descending: true); // 排序方便断言
 
             // 预期: 
             // IT: 300
@@ -648,42 +648,36 @@ B,5";
         Assert.Contains("shape: (2, 3)", html);
     }
     [Fact]
-    public void Test_MultiColumn_Sort()
+    public void Test_DataFrame_Sort_Advanced()
     {
-        // 准备数据：故意乱序
-        // a: 1, 1, 2, 2
-        // b: 10, 5, 2, 8
+        // 数据: 
+        // A: [1, 1, 2, 2]
+        // B: [null, 10, null, 5]
         using var df = DataFrame.FromColumns(new 
         {
-            a = new[] { 1, 1, 2, 2 },
-            b = new[] { 10, 5, 2, 8 }
+            A = new[] { 1, 1, 2, 2 },
+            B = new int?[] { null, 10, null, 5 }
         });
 
-        // 场景 1: 按 "a" 升序，"b" 降序 (String API)
-        // 预期结果:
-        // a=1, b=10
-        // a=1, b=5
-        // a=2, b=8  <-- 注意这里，a=2时，b=8排在b=2前面
-        // a=2, b=2
-        using var sorted1 = df.Sort(
-            columns: ["a", "b"], 
-            descending: [false, true] // a asc, b desc
-        );
-        
-        Assert.Equal(10, sorted1["b"][0]);
-        Assert.Equal(5, sorted1["b"][1]);
-        Assert.Equal(8, sorted1["b"][2]);
-        Assert.Equal(2, sorted1["b"][3]);
+        // 1. Sort by A asc, B desc (nulls last)
+        // 预期逻辑:
+        // A=1 分组: B=[null, 10]。B desc nulls last -> [10, null]
+        // A=2 分组: B=[null, 5]。 B desc nulls last -> [5, null]
+        // 结果顺序: 
+        // row 1: A=1, B=10
+        // row 0: A=1, B=null
+        // row 3: A=2, B=5
+        // row 2: A=2, B=null
 
-        // 场景 2: 按表达式排序 (Expr API)
-        // 按 a 降序，b 升序
-        using var sorted2 = df.Sort(
-            exprs: [Col("a"), Col("b")],
-            descending: [true, false]
+        using var sorted = df.Sort(
+            ["A", "B"],
+            descending: [false, true], // A asc, B desc
+            nullsLast: [false, true]   // A normal, B nulls last
         );
 
-        Assert.Equal(2, sorted2["a"][0]); // a desc, so 2 first
-        Assert.Equal(2, sorted2["b"][0]); // a=2 tied, b asc -> 2
-        Assert.Equal(8, sorted2["b"][1]); // a=2 tied, b asc -> 8
+        Assert.Equal(10, sorted["B"][0]);
+        Assert.Null(sorted["B"][1]);
+        Assert.Equal(5, sorted["B"][2]);
+        Assert.Null(sorted["B"][3]);
     }
 }
