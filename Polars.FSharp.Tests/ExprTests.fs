@@ -473,7 +473,7 @@ type ``String Logic Tests`` () =
         
         let res = 
             df.Select([
-                pl.col("Date").Dt.AddBusinessDays(1, roll=Roll.Forward).Alias("Next")
+                pl.col("Date").Dt.AddBusinessDays(1, roll=Roll.Forward).Alias "Next"
             ])
             
         // 2023-01-03
@@ -502,7 +502,7 @@ type ``String Logic Tests`` () =
             df.Select([
                 pl.col("Date").Dt
                     .AddBusinessDays(2, holidays=holidays)
-                    .Alias("Result")
+                    .Alias "Result"
             ])
             
         Assert.Equal(DateOnly(2023, 1, 9), res.Cell<DateOnly>("Result", 0))

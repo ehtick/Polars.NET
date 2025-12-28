@@ -7,7 +7,7 @@ namespace Polars.CSharp;
 /// <summary>
 /// Represents a Polars Series.
 /// </summary>
-public class Series : IDisposable
+public partial class Series : IDisposable
 {
     internal SeriesHandle Handle { get; }
 
@@ -21,8 +21,12 @@ public class Series : IDisposable
         PolarsWrapper.SeriesRename(handle, name);
         Handle = handle;
     }
+    /// <summary>
+    /// Date Ops
+    /// </summary>
+    public SeriesDtOps Dt => new(this);
 
-    private Series ApplyExpr(Expr expr)
+    internal Series ApplyExpr(Expr expr)
     {
         // 1. 临时包装成 DataFrame
         // DataFrame.New 会增加 Series 的引用计数，所以是安全的
@@ -258,15 +262,41 @@ public class Series : IDisposable
     {
         return new Series(PolarsWrapper.SeriesDiv(left.Handle, right.Handle));
     }
+    /// <summary>
+    /// Calculate absolute value.
+    /// <para>Implemented via Expr composition.</para>
+    /// </summary>
+    public Series Abs() => ApplyExpr(Polars.Col(Name).Abs());
+    /// <summary>
+    /// Calculate square value.
+    /// <para>Implemented via Expr composition.</para>
+    /// </summary>
+    public Series Sqrt() => ApplyExpr(Polars.Col(Name).Sqrt());
+    /// <summary>
+    /// Calculate exponent value.
+    /// <para>Implemented via Expr composition.</para>
+    /// </summary>
+    public Series Pow(double exponent) => ApplyExpr(Polars.Col(Name).Pow(exponent));
+    /// <summary>
+    /// Calculate the power of the Euler's number.
+    /// </summary>
+    public Series Exp() =>  ApplyExpr(Polars.Col(Name).Exp());
+    /// <summary>
+    /// Calculate the ln of Number 
+    /// </summary>
+    /// <param name="baseVal"></param>
+    /// <returns></returns>
+    public Series Ln(double baseVal = Math.E) => ApplyExpr(Polars.Col(Name).Ln(baseVal));
+    /// <summary>
+    /// Round the number
+    /// </summary>
+    /// <param name="decimals"></param>
+    /// <returns></returns>
+    public Series Round(uint decimals) => ApplyExpr(Polars.Col(Name).Round(decimals));
 
     // ==========================================
     // Comparison Methods & Operators (比较)
     // ==========================================
-
-    // C# 的 == 和 != 运算符重载有比较严格的限制（通常用于对象相等性），
-    // 且必须成对重载并重写 Equals/GetHashCode。
-    // 为了避免混淆（是比较引用还是生成布尔掩码？），我们推荐使用显式的 Eq/Neq 方法，
-    // 或者在未来实现复杂的运算符重载策略。目前先暴露方法。
     /// <summary>
     /// Compare whether two Series is equal
     /// </summary>
@@ -649,7 +679,7 @@ public class Series : IDisposable
     // ==========================================
 
     /// <summary>
-    /// 检查指定索引处的值是否为 Null。
+    /// Check whether indexed value is null。
     /// </summary>
     public bool IsNullAt(long index)
     {
@@ -657,7 +687,7 @@ public class Series : IDisposable
     }
 
     /// <summary>
-    /// 返回一个布尔 Series，如果元素为 Null 则为 True。
+    /// Return a Boolean series, where null value will be masked as true.
     /// </summary>
     public Series IsNull()
     {
@@ -666,7 +696,7 @@ public class Series : IDisposable
     }
 
     /// <summary>
-    /// 返回一个布尔 Series，如果元素不为 Null 则为 True。
+    /// Return a Boolean series, where null value will be masked as false.
     /// </summary>
     public Series IsNotNull()
     {
@@ -674,7 +704,28 @@ public class Series : IDisposable
         return new Series(newHandle);
     }
     // ==========================================
-    // Float Checks (数值检查)
+    // Fill Ops
+    // ==========================================
+    /// <summary>
+    /// Fill null values with a specified value.
+    /// </summary>
+    public Series FillNull(object value) => ApplyExpr(Polars.Col(Name).FillNull(value));
+    /// <summary>
+    /// Fill null values with a specific strategy (Forward).
+    /// </summary>
+    public Series ForwardFill(uint? limit = null) => ApplyExpr(Polars.Col(Name).ForwardFill(limit));
+    /// <summary>
+    /// Fill null values with a specific strategy (Backward).
+    /// </summary>
+    public Series BackwardFill(uint? limit = null) => ApplyExpr(Polars.Col(Name).BackwardFill(limit));
+    /// <summary>
+    /// Fill floating point NaN values with a specified value.
+    /// Note: This is different from FillNull. It only handles IEEE 754 NaN.
+    /// </summary>
+    public Series FillNan(object value) => ApplyExpr(Polars.Col(Name).FillNan(value));
+
+    // ==========================================
+    // Float Checks
     // ==========================================
     /// <summary>
     /// Check whether this series is NaN
@@ -717,10 +768,7 @@ public class Series : IDisposable
     /// Get a boolean mask indicating which values are unique.
     /// <para>Implemented via DataFrame expression composition.</para>
     /// </summary>
-    public Series IsUnique()
-    {
-        return ApplyExpr(Polars.Col(Name).IsUnique());
-    }
+    public Series IsUnique() => ApplyExpr(Polars.Col(Name).IsUnique());
 
     /// <summary>
     /// Get a boolean mask indicating which values are duplicated.
@@ -809,4 +857,156 @@ public class Series : IDisposable
     {
         Handle.Dispose();
     }
+}
+
+/// <summary>
+/// Date Ops Namespace
+/// </summary>
+public class SeriesDtOps
+{
+    private readonly Series _series;
+    internal SeriesDtOps(Series series) { _series = series; }
+
+    private Series Apply(Func<Expr, Expr> op) 
+    {
+        var expr = op(Polars.Col(_series.Name));
+        
+        return _series.ApplyExpr(expr);
+    }
+    /// <summary>Get the year from the underlying date/datetime.</summary>
+    public Series Year() => Apply(e => e.Dt.Year());
+    /// <summary>Get the quarter from the underlying date/datetime.</summary>
+    public Series Quarter() => Apply(e => e.Dt.Quarter());
+    /// <summary>Get the month from the underlying date/datetime.</summary>
+    public Series Month() => Apply(e => e.Dt.Month());
+    /// <summary>Get the day from the underlying date/datetime.</summary>
+    public Series Day() => Apply(e => e.Dt.Day());
+    /// <summary>Get the ordinal day (day of year) from the underlying date/datetime.</summary>
+    public Series OrdinalDay() => Apply(e => e.Dt.OrdinalDay());
+    /// <summary>Get the weekday from the underlying date/datetime.</summary>
+    public Series WeekDay() => Apply(e => e.Dt.Weekday());
+    /// <summary>Get the hour from the underlying datetime.</summary>
+    public Series Hour() => Apply(e => e.Dt.Hour());
+    /// <summary>Get the minute from the underlying datetime.</summary>
+    public Series Minute() => Apply(e => e.Dt.Minute());
+    /// <summary>Get the second from the underlying datetime.</summary>
+    public Series Second() => Apply(e => e.Dt.Second());
+    /// <summary>Get the millisecond from the underlying datetime.</summary>
+    public Series Millisecond() => Apply(e => e.Dt.Millisecond());
+    /// <summary>Get the microsecond from the underlying datetime.</summary>
+    public Series Microsecond() => Apply(e => e.Dt.Microsecond());
+    /// <summary>Get the nanosecond from the underlying datetime.</summary>
+    public Series Nanosecond() => Apply(e => e.Dt.Nanosecond());
+
+    /// <summary>
+    /// Cast to Date (remove time component).
+    /// </summary>
+    /// <returns></returns>
+    public Series Date() => Apply(e => e.Dt.Date());
+    /// <summary>
+    /// Cast to Time (remove Date component).
+    /// </summary>
+    /// <returns></returns>
+    public Series Time() => Apply(e => e.Dt.Time());
+    // ==========================================
+    // Truncate & Round (时间对齐)
+    // ==========================================
+
+    /// <summary>
+    /// Truncate the datetimes to the given interval (e.g. "1d", "1h", "15m").
+    /// </summary>
+    public Series Truncate(string every) => Apply(e => e.Dt.Truncate(every));
+    /// <summary>
+    /// Truncate the datetimes to the given timespan
+    /// </summary>
+    /// <param name="every"></param>
+    /// <returns></returns>
+    public Series Truncate(TimeSpan every) => Apply(e => e.Dt.Truncate(every));
+    /// <summary>
+    /// Round the datetimes to the given interval.
+    /// </summary>
+    public Series Round(string every) => Apply(e => e.Dt.Round(every));
+    /// <summary>
+    /// Round the datetimes to the given timespan interval.
+    /// </summary>
+    /// <param name="every"></param>
+    /// <returns></returns>
+    public Series Round(TimeSpan every) => Apply(e => e.Dt.Round(every));
+    // ==========================================
+    // Offset (时间平移)
+    // ==========================================
+
+    /// <summary>
+    /// Offset the datetimes by a given duration expression.
+    /// </summary>
+    public Series OffsetBy(Expr by) => Apply(e => e.Dt.OffsetBy(by));
+    /// <summary>
+    /// Offset the datetimes by a constant duration string (e.g., "1d", "-2h").
+    /// </summary>
+    public Series OffsetBy(string duration) => Apply(e => e.Dt.OffsetBy(duration));
+    /// <summary>
+    /// Offset the datetimes by TimeSpan
+    /// </summary>
+    /// <param name="duration"></param>
+    /// <returns></returns>
+    public Series OffsetBy(TimeSpan duration) => Apply(e => e.Dt.OffsetBy(duration));
+
+    // ==========================================
+    // Timestamp (转整数)
+    // ==========================================
+
+    /// <summary>
+    /// Convert the datetime to an integer timestamp (Unix epoch).
+    /// </summary>
+    public Series Timestamp(TimeUnit unit = TimeUnit.Microseconds) => Apply(e => e.Dt.Timestamp(unit));
+
+    // ==========================================
+    // TimeZone
+    // ==========================================
+    /// <summary>
+    /// Convert from one timezone to another.
+    /// Resulting Series will have the given time zone.
+    /// </summary>
+    /// <param name="tz">Target time zone (e.g. "Asia/Shanghai")</param>    
+    public Series ConvertTimeZone(string tz) => Apply(e => e.Dt.ConvertTimeZone(tz));
+
+    /// <summary>
+    /// Replace the time zone of a Series.
+    /// This does not change the underlying timestamp, only the metadata.
+    /// </summary>
+    public Series ReplaceTimeZone(string? timeZone, string? ambiguous = null, string? nonExistent = "raise")
+         =>Apply(e => e.Dt.ReplaceTimeZone(timeZone,ambiguous,nonExistent));
+    // ==========================================
+    // BusinessDays
+    // ==========================================
+    /// <summary>
+    /// Add business days to the date column.
+    /// </summary>
+    /// <param name="n">Number of business days to add (can be negative).</param>
+    /// <param name="holidays">List of holidays (dates to skip).</param>
+    /// <param name="weekMask">
+    /// Array of 7 bools indicating business days, starting from Monday. 
+    /// Default is Mon-Fri.
+    /// </param>
+    /// <param name="roll">Strategy for handling non-business days.</param>
+    public Series AddBusinessDays(
+        int n, 
+        IEnumerable<DateOnly>? holidays = null, 
+        bool[]? weekMask = null, 
+        Roll roll = Roll.Raise)
+        =>Apply(e => e.Dt.AddBusinessDays(n,holidays,weekMask,roll));
+    /// <summary>
+    /// Add business days to the date column.
+    /// </summary>
+    public Series AddBusinessDays(
+        Expr n, 
+        IEnumerable<DateOnly>? holidays = null, 
+        bool[]? weekMask = null, 
+        Roll roll = Roll.Raise)
+        =>Apply(e => e.Dt.AddBusinessDays(n,holidays,weekMask,roll));
+        /// <summary>
+    /// Check if the date is a business day.
+    /// </summary>
+    public Series IsBusinessDay(IEnumerable<DateOnly>? holidays = null, bool[]? weekMask = null)
+        =>Apply(e => e.Dt.IsBusinessDay(holidays,weekMask));
 }
