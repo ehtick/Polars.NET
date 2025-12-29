@@ -1231,7 +1231,7 @@ public class StringOps
          return new Expr(PolarsWrapper.StrSplit(h, separator));
     }
     // ==========================================
-    // Strip / Clean (去除字符)
+    // Strip / Clean
     // ==========================================
 
     /// <summary>
