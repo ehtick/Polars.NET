@@ -533,6 +533,44 @@ TooShort,1990-05-20,1.60";
         Assert.Equal("5", batch.Column("max_char").GetStringValue(0));
     }
     [Fact]
+    public void Test_List_Sort_Options()
+    {
+        // 数据: [[3, null, 1]]
+        // 构造一个 List Series
+        using var s = Series.From("vals", [3, 1]); // 简单起见，先构造非 null
+        // 实际构造含 Null 的 List 比较麻烦，通常通过 Expr 构造
+        
+        // 我们用 DataFrame + Expr 来测试更方便
+        using var df = DataFrame.FromColumns(new 
+        {
+            // 这里只是为了有一行数据
+            dummy = new[] { 1 } 
+        }).Select(
+            // 构造 list: [3, null, 1]
+            Lit(3).Implode().List.Concat(LitNull().Implode()).List.Concat(Lit(1).Implode())
+            .Alias("list_col")
+        );
+        
+        // 1. 默认 Sort (Ascending) -> null 在前 (通常)
+        // 预期: [null, 1, 3]
+        using var df1 = df.Select(Col("list_col").List.Sort(descending: false, nullsLast: false));
+        // 验证逻辑...
+
+        // 2. Sort (Ascending + NullsLast)
+        // 预期: [1, 3, null]
+        using var df2 = df.Select(Col("list_col").List.Sort(descending: false, nullsLast: true));
+        
+        // 取出第一行的 List
+        // 注意：这里需要 Series List 的 GetValue 支持，或者转为 JSON 验证
+        // 简单验证: List.Get(-1) 应该是 null
+        using var lastItem = df2.Select(Col("list_col").List.Get(-1));
+        Assert.Null(lastItem["list_col"][0]);
+        
+        // List.Get(0) 应该是 1
+        using var firstItem = df2.Select(Col("list_col").List.Get(0));
+        Assert.Equal(1, (int)firstItem["list_col"][0]);
+    }
+    [Fact]
     public void Test_Expr_Explode_In_Select()
     {
         using var s = new Series("data", ["x,y"]);

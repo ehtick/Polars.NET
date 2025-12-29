@@ -32,13 +32,22 @@ public static class Polars
     public static Expr Len()
         => new(PolarsWrapper.Len());
     // --- Literals ---
-    public static Expr Lit(string value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(string? value)
+    {
+        // [关键修正] 如果字符串为 null，返回 Polars 的 Null Literal
+        if (value is null)
+        {
+            return new Expr(PolarsWrapper.LitNull());
+        }
+        return new Expr(PolarsWrapper.Lit(value));
+    }
     public static Expr Lit(int value)    => new(PolarsWrapper.Lit(value));
     public static Expr Lit(double value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(DateTime value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(bool value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(long value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(float value) => new(PolarsWrapper.Lit(value));
+    public static Expr LitNull() => new(PolarsWrapper.LitNull());
     
     // ---------------------------------------------------------
     // Selectors Entry Points
@@ -131,6 +140,18 @@ public static class Polars
         var f = PolarsWrapper.CloneExpr(falseExpr.Handle);
         
         return new Expr(PolarsWrapper.IfElse(p, t, f));
+    }
+    // ==========================================
+    // List Operations
+    // ==========================================
+    /// <summary>
+    /// Concat multiple list expressions into a single list expression.
+    /// </summary>
+    public static Expr ConcatList(params Expr[] exprs)
+    {
+        // Clone all handles
+        var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
+        return new Expr(PolarsWrapper.ConcatList(handles));
     }
     // ==========================================
     // Struct Operations

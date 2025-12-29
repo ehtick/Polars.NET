@@ -379,9 +379,9 @@ public static partial class PolarsWrapper
     public static ExprHandle ListMean(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_list_mean, e);
 
     // --- List Other ---
-    public static ExprHandle ListSort(ExprHandle e, bool descending)
+    public static ExprHandle ListSort(ExprHandle e, bool descending, bool nullsLast, bool maintainOrder)
     {
-        var h = NativeBindings.pl_expr_list_sort(e, descending);
+        var h = NativeBindings.pl_expr_list_sort(e, descending, nullsLast, maintainOrder);
         e.TransferOwnership();
         return ErrorHelper.Check(h);
     }
@@ -392,6 +392,14 @@ public static partial class PolarsWrapper
         listExpr.TransferOwnership();
         itemExpr.TransferOwnership();
         return ErrorHelper.Check(h);
+    }
+    public static ExprHandle ConcatList(ExprHandle[] exprs)
+    {
+        var ptrs = HandlesToPtrs(exprs); // 使用之前定义的 Helper
+        return ErrorHelper.Check(NativeBindings.pl_concat_list(
+            ptrs,
+            (UIntPtr)exprs.Length
+        ));
     }
     // --- Struct ---
     public static ExprHandle AsStruct(ExprHandle[] exprs)

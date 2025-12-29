@@ -843,15 +843,23 @@ pub extern "C" fn pl_expr_list_get(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_list_sort(
     expr_ptr: *mut ExprContext,
-    descending: bool
+    descending: bool,
+    nulls_last: bool,      // [新增]
+    maintain_order: bool   // [新增]
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
         let options = SortOptions {
             descending,
-            ..Default::default()
+            nulls_last,
+            multithreaded: true, // List sort 内部通常是并行的，默认开启
+            maintain_order,
+            limit: None
         };
+        
         let new_expr = ctx.inner.list().sort(options);
+        
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
@@ -934,6 +942,26 @@ pub extern "C" fn pl_expr_list_len(expr_ptr: *mut ExprContext) -> *mut ExprConte
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_concat_list(
+    exprs_ptr: *const *mut ExprContext,
+    exprs_len: usize
+) -> *mut ExprContext {
+    ffi_try!({
+        // 1. 还原 Exprs Vec
+        let mut exprs = Vec::with_capacity(exprs_len);
+        let ptr_slice = unsafe { std::slice::from_raw_parts(exprs_ptr, exprs_len) };
+        for &ptr in ptr_slice {
+            let expr_ctx = unsafe { Box::from_raw(ptr) };
+            exprs.push(expr_ctx.inner);
+        }
+
+        // 2. 调用 concat_list
+        let new_expr = concat_list(exprs).expect("concat_list failed");
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
 // ==========================================
 // Math
 // ==========================================

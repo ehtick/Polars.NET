@@ -1378,11 +1378,13 @@ public class ListOps
     /// Sort the list elements.
     /// </summary>
     /// <param name="descending"></param>
+    /// <param name="nullsLast"></param>
+    /// <param name="maintainOrder"></param>
     /// <returns></returns>
-    public Expr Sort(bool descending)
+    public Expr Sort(bool descending=false, bool nullsLast=false, bool maintainOrder=false)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
-        return new Expr(PolarsWrapper.ListSort(h, descending));
+        return new Expr(PolarsWrapper.ListSort(h, descending,nullsLast,maintainOrder));
     }
     /// <summary>
     /// Calculate the sum of the list elements.
@@ -1415,7 +1417,6 @@ public class ListOps
         var i = PolarsWrapper.CloneExpr(item.Handle);
         return new Expr(PolarsWrapper.ListContains(h, i));
     }
-    
     /// <summary>
     /// Check if the list contains a specific integer or string item.
     /// </summary>
@@ -1428,6 +1429,33 @@ public class ListOps
     /// <param name="item"></param>
     /// <returns></returns>
     public Expr Contains(string item) => Contains(Polars.Lit(item));
+    /// <summary>
+    /// Concat this list expression with other list expressions.
+    /// </summary>
+    /// <param name="others">Other list expressions to append.</param>
+    public Expr Concat(params Expr[] others)
+    {
+        // 构造参数列表: [this, other1, other2, ...]
+        var allExprs = new ExprHandle[others.Length + 1];
+        
+        // 1. Clone this
+        allExprs[0] = PolarsWrapper.CloneExpr(_expr.Handle);
+        
+        // 2. Clone others
+        for (int i = 0; i < others.Length; i++)
+        {
+            allExprs[i + 1] = PolarsWrapper.CloneExpr(others[i].Handle);
+        }
+
+        // 3. 调用 Wrapper
+        return new Expr(PolarsWrapper.ConcatList(allExprs));
+    }
+    
+    // 显式重载以支持单个 Expr，避免 params 数组分配的开销（可选）
+    public Expr Concat(Expr other)
+    {
+        return Concat([other]);
+    }
 }
 
 // ==========================================

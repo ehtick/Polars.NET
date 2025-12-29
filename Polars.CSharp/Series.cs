@@ -29,6 +29,23 @@ public partial class Series : IDisposable
     /// String Ops
     /// </summary>
     public SeriesStrOps Str => new(this);
+    /// <summary>
+    /// Access list operations.
+    /// </summary>
+    public SeriesListOps List => new(this);
+    /// <summary>
+    /// Access struct operations.
+    /// </summary>
+    public SeriesStructOps Struct => new(this);
+
+    /// <summary>
+    /// Clone the Series
+    /// </summary>
+    /// <returns></returns>
+    public Series Clone()
+    {
+        return new(PolarsWrapper.CloneSeries(Handle));
+    }
 
     internal Series ApplyExpr(Expr expr)
     {
@@ -43,6 +60,55 @@ public partial class Series : IDisposable
         // 3. 提取结果列
         // 索引器 dfRes[0] 会返回一个新的 Series 对象
         return dfRes[0];
+    }
+
+    internal Series ApplyBinaryExpr(Series other, Func<Expr, Expr, Expr> op)
+    {
+        string leftName = this.Name;
+        string rightName = other.Name;
+        
+        // 标记是否创建了临时对象，用于 finally 块清理
+        Series? tempRight = null;
+
+        try
+        {
+            // 1. 处理命名冲突
+            // 如果名字一样，Polars 无法在同一个 DF 里放两列同名的
+            Series rightSeries;
+            
+            if (leftName == rightName)
+            {
+                rightName = "__other_temp__";
+                // Clone 出来改名，避免修改原始对象
+                tempRight = other.Clone();
+                tempRight.Name = rightName;
+                rightSeries = tempRight;
+            }
+            else
+            {
+                rightSeries = other;
+            }
+
+            // 2. 构建 DataFrame (关键修正)
+            // 直接将两个 Series 传入构造函数，而不是先创建再 Add
+            // 假设你的 DataFrame.FromColumns 支持 params Series[]
+            // (如果不支持，请使用 DataFrame.New(params Series[]) 或类似的构造函数)
+            using var df = new DataFrame([this, rightSeries]);
+
+            // 3. 执行表达式
+            // Op 接收两个 Expr：Col(this.Name) 和 Col(otherName)
+            using var resDf = df.Select(op(Polars.Col(leftName), Polars.Col(rightName)));
+
+            // 4. 返回结果 Series
+            // 注意：resDf[0] 返回的新 Series，其 Handle 引用计数 +1，所以 df Dispose 不影响它
+            return resDf[0];
+        }
+        finally
+        {
+            // 5. 清理临时 Clone 的 Series
+            // (rightSeries 如果是 other，不需要 Dispose；如果是 tempRight，需要 Dispose)
+            tempRight?.Dispose();
+        }
     }
     // ==========================================
     // Metadata
@@ -1135,7 +1201,7 @@ public class SeriesStrOps
     /// Check if the string ends with the given suffix.
     /// </summary>
     public Series EndsWith(string suffix)
-        => Apply(e => e.Str.StripSuffix(suffix));
+        => Apply(e => e.Str.StripSuffix(suffix ));
 
     // ==========================================
     // Temporal Parsing (日期转换)
@@ -1152,4 +1218,120 @@ public class SeriesStrOps
     /// </summary>
     public Series ToDatetime(string format)
         => Apply(e => e.Str.ToDatetime(format));
+}
+
+/// <summary>
+/// Series List Ops Namespace
+/// </summary>
+public class SeriesListOps
+{
+    private readonly Series _series;
+    internal SeriesListOps(Series series) { _series = series; }
+
+    // 复用 ApplyExpr 核心逻辑
+    private Series Apply(Func<Expr, Expr> op) 
+    {
+        // 这里的 ApplyExpr 需要是你 Series 类里的 internal/private 方法
+        // 逻辑是: DataFrame.New(this).Select(op(Col(Name)))[0]
+        return _series.ApplyExpr(op(Polars.Col(_series.Name)));
+    }
+
+    /// <summary>
+    /// Get the length of the arrays.
+    /// </summary>
+    public Series Len() => Apply(e => e.List.Len());
+
+    /// <summary>
+    /// Get the first element.
+    /// </summary>
+    public Series First() => Apply(e => e.List.First());
+
+    /// <summary>
+    /// Get the element at the given index.
+    /// </summary>
+    public Series Get(int index) => Apply(e => e.List.Get(index));
+
+    /// <summary>
+    /// Join elements with a separator.
+    /// </summary>
+    public Series Join(string separator) => Apply(e => e.List.Join(separator));
+
+    /// <summary>
+    /// Calculate the sum of the list elements (element-wise).
+    /// </summary>
+    public Series Sum() => Apply(e => e.List.Sum());
+
+    /// <summary>
+    /// Calculate the min of the list elements.
+    /// </summary>
+    public Series Min() => Apply(e => e.List.Min());
+
+    /// <summary>
+    /// Calculate the max of the list elements.
+    /// </summary>
+    public Series Max() => Apply(e => e.List.Max());
+
+    /// <summary>
+    /// Calculate the mean of the list elements.
+    /// </summary>
+    public Series Mean() => Apply(e => e.List.Mean());
+
+    /// <summary>
+    /// Sort the arrays in the list.
+    /// </summary>
+    public Series Sort(bool descending = false,bool nullsLast=false,bool maintainOrder= false) 
+        => Apply(e => e.List.Sort(descending,nullsLast,maintainOrder));
+
+    /// <summary>
+    /// Check if the list contains the given item.
+    /// </summary>
+    public Series Contains(int item) => Apply(e => e.List.Contains(item));
+    /// <summary>
+    /// Check if the list contains the given item.
+    /// </summary>
+    public Series Contains(string item) => Apply(e => e.List.Contains(item));
+    /// <summary>
+    /// Concat this list series with another list series.
+    /// Result is a new Series with the lists concatenated.
+    /// </summary>
+    public Series Concat(Series other)
+    {
+        // 调用我们刚写的 ApplyBinaryExpr
+        // 逻辑：Col(this) .List.Concat ( Col(other) )
+        return _series.ApplyBinaryExpr(other, (left, right) => left.List.Concat(right));
+    }
+}
+
+/// <summary>
+/// Series Struct Ops Namespace
+/// </summary>
+public class SeriesStructOps
+{
+    private readonly Series _series;
+    internal SeriesStructOps(Series series) { _series = series; }
+
+    private Series Apply(Func<Expr, Expr> op) 
+        => _series.ApplyExpr(op(Polars.Col(_series.Name)));
+
+    /// <summary>
+    /// Retrieve a field from the struct by name.
+    /// Returns a new Series of that field's type.
+    /// </summary>
+    public Series Field(string name) => Apply(e => e.Struct.Field(name));
+
+    /// <summary>
+    /// Retrieve a field from the struct by index.
+    /// </summary>
+    public Series Field(int index) => Apply(e => e.Struct.Field(index));
+
+    /// <summary>
+    /// Rename the fields of the struct.
+    /// </summary>
+    public Series RenameFields(params string[] names) => Apply(e => e.Struct.RenameFields(names));
+
+    /// <summary>
+    /// Convert struct to JSON string.
+    /// </summary>
+    public Series JsonEncode() => Apply(e => e.Struct.JsonEncode());
+
 }

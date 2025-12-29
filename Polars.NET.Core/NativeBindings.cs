@@ -565,8 +565,14 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_mean(ExprHandle expr);
     
     // List Other
-    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_sort(ExprHandle expr,[MarshalAs(UnmanagedType.U1)] bool descending);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_sort(
+        ExprHandle expr,
+        [MarshalAs(UnmanagedType.U1)] bool descending,
+        [MarshalAs(UnmanagedType.U1)] bool nulls_last,
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order
+    );
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_contains(ExprHandle expr, ExprHandle item);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_concat_list(IntPtr[] exprs,UIntPtr exprLen);
     // Naming
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_prefix(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string prefix);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_suffix(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string suffix);
@@ -795,6 +801,8 @@ unsafe internal partial class NativeBindings
         UIntPtr len,
         UIntPtr scale
     );
+    [LibraryImport(LibName)] 
+    public static partial SeriesHandle pl_series_clone(SeriesHandle s);
     // --- Series Properties ---
     [LibraryImport(LibName)]
     public static partial IntPtr pl_series_dtype_str(SeriesHandle s);

@@ -169,6 +169,18 @@ pub extern "C" fn pl_series_new_decimal(
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_clone(ptr: *mut SeriesContext) -> *mut SeriesContext {
+    ffi_try!({
+        // 1. 借用 (&*ptr) 而不是消费 (Box::from_raw)
+        let ctx = unsafe { &*ptr };
+        
+        // 2. Clone (Deep copy of the logical plan/structure, data is COW)
+        let new_series = ctx.series.clone();
+        
+        Ok(Box::into_raw(Box::new(SeriesContext { series: new_series })))
+    })
+}
 // ==========================================
 // Methods
 // ==========================================

@@ -123,6 +123,10 @@ public static partial class PolarsWrapper
             (UIntPtr)scale
         ));
     }
+    public static SeriesHandle CloneSeries(SeriesHandle handle)
+    {
+        return ErrorHelper.Check(NativeBindings.pl_series_clone(handle));
+    }
     // --- Properties ---
     public static string GetSeriesDtypeString(SeriesHandle h)
     {
