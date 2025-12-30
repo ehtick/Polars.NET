@@ -206,9 +206,11 @@ fn map_i32_to_dtype_selector(kind: i32) -> DataTypeSelector {
         // 因为它不关心 Struct 内部的字段结构，只要是 Struct 就选中
         19 => DataTypeSelector::Struct,
 
-        // Float16 (Polars 较新的特性)
-        // 20 => dt_selector_single(DataType::Float16),
+        20 => DataTypeSelector::List(None),
 
+        21 => DataTypeSelector::Categorical,
+        22 => DataTypeSelector::Decimal,
+        23 => DataTypeSelector::Array(None, None),
         // 兜底
         _ => DataTypeSelector::Empty,
     }
