@@ -455,4 +455,20 @@ public class DataTypeTests
         var valNaive = (DateTime)df4["ts_naive"][0];
         Assert.Equal(18, valNaive.Hour);
     }
+    [Fact]
+    public void Test_DataType_Array()
+    {
+        // 创建 Array(Int32, 3)
+        var dtype = DataType.Array(DataType.Int32, 3);
+        
+        // 验证 Kind
+        // 注意：需要确保你的 PlDataTypeKind 枚举里已经加了 Array = 23
+        Assert.Equal(DataTypeKind.Array, dtype.Kind);
+        
+        // 验证 Width (通过我们刚加的 API)
+        Assert.Equal(3UL, dtype.ArrayWidth);
+        
+        // 验证 Inner Type (复用已有的 Inner 逻辑)
+        Assert.Equal(DataTypeKind.Int32, dtype.InnerType.Kind);
+    }
 }

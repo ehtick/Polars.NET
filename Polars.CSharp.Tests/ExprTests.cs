@@ -841,5 +841,262 @@ TooShort,1990-05-20,1.60";
         // Mon -> False (Holiday)
         Assert.False((bool)res["IsBiz"][2]);
     }
-    
+    public class ArrayExprTests
+    {
+        // 辅助方法：构造一个包含 Array 列的 DataFrame
+        // 逻辑：创建 List -> Cast 为 Array(Int32, 3)
+        private DataFrame CreateArrayDataFrame()
+        {
+            // 原始数据: List<int>
+            var lists = new[] 
+            {
+                [1, 2, 3],
+                [10, 20, 30],
+                new[] { 5, 0, 5 },
+                null // 测试 Null 行
+            };
+
+            using var df = DataFrame.FromColumns(new { data = lists });
+            
+            // Cast List -> Array(Int32, 3)
+            // 这一步验证了我们之前修好的 DataType.Array 工厂方法
+            var targetType = DataType.Array(DataType.Int32, 3);
+            
+            var dfArray = df.Select(
+                Col("data").Cast(targetType).Alias("arr")
+            );
+            
+            return dfArray;
+        }
+
+        [Fact]
+        public void Test_Array_Aggregations()
+        {
+            using var df = CreateArrayDataFrame();
+
+            // 测试: Sum, Min, Max, Mean
+            // Row 0: [1, 2, 3] -> Sum=6, Max=3
+            // Row 1: [10, 20, 30] -> Sum=60, Max=30
+            using var res = df.Select(
+                Col("arr").Array.Sum().Alias("sum"),
+                Col("arr").Array.Max().Alias("max"),
+                Col("arr").Array.Min().Alias("min"),
+                Col("arr").Array.Mean().Alias("mean")
+            );
+
+            // 验证第一行
+            Assert.Equal(6, (int)res["sum"][0]);
+            Assert.Equal(3, (int)res["max"][0]);
+            Assert.Equal(1, (int)res["min"][0]);
+            Assert.Equal(2.0, (double)res["mean"][0]);
+
+            // 验证第二行
+            Assert.Equal(60, (int)res["sum"][1]);
+        }
+
+        [Fact]
+        public void Test_Array_ToStruct()
+        {
+            // 这是杀手级功能：Embedding -> Features
+            using var df = CreateArrayDataFrame();
+
+            // Array(3) -> Struct { field_0, field_1, field_2 }
+            using var res = df.Select(
+                Col("arr").Array.ToStruct().Alias("struct_col")
+            );
+
+            // 1. 验证类型
+            var structCol = res["struct_col"];
+            Assert.Equal(DataTypeKind.Struct, structCol.DataType.Kind);
+
+            // 2. 验证 Unnest (通常配合 ToStruct 使用)
+            // 将 Struct 炸开成列
+            using var unnested = res.Unnest("struct_col");
+            
+            Assert.True(unnested.Columns.Contains("field_0"));
+            Assert.True(unnested.Columns.Contains("field_1"));
+            Assert.True(unnested.Columns.Contains("field_2"));
+
+            Assert.Equal(1, (int)unnested["field_0"][0]);
+            Assert.Equal(2, (int)unnested["field_1"][0]);
+            Assert.Equal(3, (int)unnested["field_2"][0]);
+        }
+
+        [Fact]
+        public void Test_Array_Get_And_Join()
+        {
+            using var df = CreateArrayDataFrame();
+
+            using var res = df.Select(
+                Col("arr").Array.Get(0).Alias("first"),  // 取第0个
+                Col("arr").Array.Get(-1).Alias("last")   // 取最后一个
+            );
+
+            Assert.Equal(1, (int)res["first"][0]);
+            Assert.Equal(3, (int)res["last"][0]);
+            
+            Assert.Equal(10, (int)res["first"][1]);
+            Assert.Equal(30, (int)res["last"][1]);
+        }
+
+        [Fact]
+        public void Test_Array_Join_String()
+        {
+            // 测试 Join 需要字符串数组
+            var data = new[] { new[] { "a", "b" }, ["c", "d"] };
+            using var df = DataFrame.FromColumns(new { strs = data });
+            
+            using var res = df.Select(
+                Col("strs")
+                    .Cast(DataType.Array(DataType.String, 2)) // 转为定长
+                    .Array.Join("-")
+                    .Alias("joined")
+            );
+
+            Assert.Equal("a-b", (string)res["joined"][0]);
+            Assert.Equal("c-d", (string)res["joined"][1]);
+        }
+
+        [Fact]
+        public void Test_Array_Sort_And_Reverse()
+        {
+            // 数据: [3, 1, 2]
+            var data = new[] { new[] { 3, 1, 2 } };
+            using var df = DataFrame.FromColumns(new { data })
+                .Select(Col("data").Cast(DataType.Array(DataType.Int32, 3)).Alias("arr"));
+
+            using var res = df.Select(
+                Col("arr").Array.Sort().Alias("sorted"),       // [1, 2, 3]
+                Col("arr").Array.Reverse().Alias("reversed"),  // [2, 1, 3] (原序反转)
+                Col("arr").Array.ArgMin().Alias("argmin"),     // Index of 1 is 1
+                Col("arr").Array.ArgMax().Alias("argmax")      // Index of 3 is 0
+            );
+
+            // 1. 验证 Sort (返回的是 List/Array)
+            // res["sorted"][0] 返回的是 object，如果是 List<int> 或 int[]
+            // 这样 ArrowReader 知道你要 int，它会创建 List<int> 而不是 List<object>
+            var sortedList = res["sorted"].GetValue<List<int>>(0); 
+
+            Assert.NotNull(sortedList);
+            Assert.Equal(1, sortedList[0]);
+            Assert.Equal(2, sortedList[1]);
+            Assert.Equal(3, sortedList[2]);
+
+            // [修复] Reverse 同理
+            var reversedList = res["reversed"].GetValue<List<int>>(0);
+            Assert.NotNull(reversedList);
+            Assert.Equal(2, reversedList[0]);
+            Assert.Equal(1, reversedList[1]);
+            Assert.Equal(3, reversedList[2]);
+            // 验证 ArgMin/ArgMax
+            // ArgMin 应该返回 1 (因为 1 在索引 1)
+            // ArgMax 应该返回 0 (因为 3 在索引 0)
+            Assert.Equal(1U, res["argmin"][0]); // Polars 索引通常是 UInt32
+            Assert.Equal(0U, res["argmax"][0]);
+        }
+
+        [Fact]
+        public void Test_Array_Boolean_Ops()
+        {
+            var data = new[] 
+            { 
+                [true, false], 
+                [true, true],
+                new[] { false, false }
+            };
+            
+            using var df = DataFrame.FromColumns(new { vals = data })
+                .Select(Col("vals").Cast(DataType.Array(DataType.Boolean, 2)).Alias("arr"));
+
+            using var res = df.Select(
+                Col("arr").Array.Any().Alias("any"),
+                Col("arr").Array.All().Alias("all")
+            );
+
+            // Row 0: [T, F] -> Any=T, All=F
+            Assert.True((bool)res["any"][0]);
+            Assert.False((bool)res["all"][0]);
+
+            // Row 1: [T, T] -> Any=T, All=T
+            Assert.True((bool)res["any"][1]);
+            Assert.True((bool)res["all"][1]);
+
+            // Row 2: [F, F] -> Any=F, All=F
+            Assert.False((bool)res["any"][2]);
+            Assert.False((bool)res["all"][2]);
+        }
+        
+        [Fact]
+        public void Test_Array_Contains()
+        {
+             // 数据: [3, 1, 2]
+            var data = new[] { new[] { 3, 1, 2 } };
+            using var df = DataFrame.FromColumns(new { data })
+                .Select(Col("data").Cast(DataType.Array(DataType.Int32, 3)).Alias("arr"));
+            
+            using var res = df.Select(
+                Col("arr").Array.Contains(1).Alias("has_1"),
+                Col("arr").Array.Contains(99).Alias("has_99")
+            );
+            
+            Assert.True((bool)res["has_1"][0]);
+            Assert.False((bool)res["has_99"][0]);
+        }
+        
+        [Fact]
+        public void Test_Array_InnerType_Property()
+        {
+            // 验证我们在 DataType.cs 里修好的 InnerType 逻辑
+            var arrType = DataType.Array(DataType.Float64, 5);
+            
+            Assert.Equal(DataTypeKind.Array, arrType.Kind);
+            // 这里之前会崩溃，现在应该好了
+            Assert.Equal(DataTypeKind.Float64, arrType.InnerType.Kind);
+            // 验证 Width
+            Assert.Equal(5UL, arrType.ArrayWidth);
+        }
+        [Fact]
+        public void Test_Series_Array_ReadItem()
+        {
+            // 1. 准备数据: Array(Int32, 3)
+            // Row 0: [1, 2, 3]
+            // Row 1: [10, 20, 30]
+            // Row 2: [5, 0, 5]
+            // Row 3: null
+            using var df = CreateArrayDataFrame(); 
+            var series = df["arr"]; 
+
+            // 2. 测试读取为 List<int>
+            var listVal = series.GetValue<List<int>>(0);
+            Assert.NotNull(listVal);
+            Assert.Equal(3, listVal.Count);
+            Assert.Equal(1, listVal[0]);
+            Assert.Equal(2, listVal[1]);
+            Assert.Equal(3, listVal[2]);
+
+            // 3. 测试读取为 int[] (数组)
+            var arrayVal = series.GetValue<int[]>(1);
+            Assert.NotNull(arrayVal);
+            Assert.Equal(3, arrayVal.Length);
+            Assert.Equal(10, arrayVal[0]);
+            Assert.Equal(20, arrayVal[1]);
+            Assert.Equal(30, arrayVal[2]);
+            
+            // 4. 测试读取 Null 行
+            var nullVal = series.GetValue<List<int>>(3);
+            Assert.Null(nullVal);
+            
+            // 5. 测试读取嵌套结构 (如果实现了 Array<Struct>)
+            // 这里简单验证一下类型系统是否能处理
+            // 假设我们有一个 Array<double>
+            using var dfFloat = DataFrame.FromColumns(new 
+            { 
+                v = new[] { [1.1, 2.2], new[] { 3.3, 4.4 } } 
+            }).Select(Col("v").Cast(DataType.Array(DataType.Float64, 2)).Alias("vec"));
+            
+            var vec = dfFloat["vec"].GetValue<double[]>(0);
+            Assert.Equal(1.1, vec[0], 1);
+            Assert.Equal(2.2, vec[1], 1);
+        }
+    }
 }

@@ -415,7 +415,7 @@ public class SeriesTests
     [Fact]
     public void Test_Series_Aggregations()
     {
-        using var s = new Series("nums", new int[]{1, 2, 3, 4, 5});
+        using var s = new Series("nums", [1, 2, 3, 4, 5]);
 
         // Sum: 15
         using var sumSeries = s.Sum();
@@ -439,7 +439,7 @@ public class SeriesTests
     {
         // 构造包含 NaN 和 Inf 的 Series
         // C# double.NaN 对应 Polars Float64 NaN
-        using var s = new Series("f", new double[]{1.0, double.NaN, double.PositiveInfinity});
+        using var s = new Series("f", [1.0, double.NaN, double.PositiveInfinity]);
 
         // IsNan -> [false, true, false]
         using var isNan = s.IsNan();
