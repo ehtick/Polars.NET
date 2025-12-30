@@ -58,6 +58,7 @@ public static class ArrowExtensions
             // 嵌套类型
             ListArray arr      => FormatList(arr, index),
             LargeListArray arr => FormatLargeList(arr, index),
+            FixedSizeListArray arr => FormatFixedSizeList(arr, index),
             StructArray arr => FormatStruct(arr, index),
 
             _ => $"<{array.GetType().Name}>"
@@ -250,7 +251,20 @@ public static class ArrowExtensions
         var items = Enumerable.Range(start, end - start).Select(i => arr.Values.FormatValue(i));
         return $"[{string.Join(", ", items)}]";
     }
-
+    private static string FormatFixedSizeList(FixedSizeListArray arr, int index)
+    {
+        var type = (FixedSizeListType)arr.Data.DataType;
+        int width = type.ListSize;
+        
+        int start = index * width;
+        int count = width;
+        
+        // 遍历子元素并格式化
+        var items = Enumerable.Range(start, count)
+            .Select(i => arr.Values.FormatValue(i));
+            
+        return $"[{string.Join(", ", items)}]";
+    }
     private static string FormatStruct(StructArray arr, int index)
     {
         var structType = arr.Data.DataType as StructType;

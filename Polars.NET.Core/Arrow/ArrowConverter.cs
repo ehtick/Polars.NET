@@ -213,6 +213,59 @@ public static class ArrowConverter
         );
     }
 
+    /// <summary>
+    /// Build FixedSizeListArray
+    /// </summary>
+    public static FixedSizeListArray BuildFixedSizeListArray<U>(IEnumerable<IEnumerable<U>?> data, int listSize)
+    {
+        var flattenedData = new List<U>();
+        var validityBuilder = new BooleanArray.Builder();
+        int nullCount = 0;
+        int rowCount = 0;
+
+        foreach (var subList in data)
+        {
+            rowCount++;
+            if (subList == null)
+            {
+                validityBuilder.Append(false);
+                nullCount++;
+                // 填充默认值/占位符以保持 alignment
+                for(int i=0; i<listSize; i++) flattenedData.Add(default!);
+            }
+            else
+            {
+                // 校验长度
+                int count = 0;
+                foreach (var item in subList)
+                {
+                    flattenedData.Add(item);
+                    count++;
+                }
+
+                if (count != listSize)
+                    throw new ArgumentException($"Element at index {rowCount-1} has length {count}, expected {listSize}.");
+
+                validityBuilder.Append(true);
+            }
+        }
+
+        // 构建子数组
+        IArrowArray valuesArray = Build(flattenedData);
+        var validityArray = validityBuilder.Build();
+
+        // 构建 FixedSizeListType
+        var listType = new FixedSizeListType(valuesArray.Data.DataType, listSize);
+
+        return new FixedSizeListArray(
+            listType,
+            rowCount,
+            valuesArray,
+            validityArray.ValueBuffer,
+            nullCount
+        );
+    }
+
     // --- 基础类型 Builders (简单搬运) ---
     /// <summary>
     /// 中转方法：判断 U 是值类型还是引用类型，分发到不同的构建器

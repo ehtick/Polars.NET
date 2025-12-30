@@ -962,6 +962,238 @@ pub extern "C" fn pl_concat_list(
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
+
+// ==========================================
+// Array Ops (array 命名空间)
+// ==========================================
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_max(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        // array().max()
+        let new_expr = ctx.inner.arr().max(); 
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_min(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().min();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_sum(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().sum();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_unique(expr_ptr: *mut ExprContext, stable: bool) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = if stable {
+            ctx.inner.arr().unique_stable()
+        } else {
+            ctx.inner.arr().unique()
+        };
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// Join elements with a separator (requires Array<String>)
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_join(
+    expr_ptr: *mut ExprContext, 
+    separator_ptr: *const c_char,
+    ignore_nulls: bool
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let sep = ptr_to_str(separator_ptr).unwrap();
+        
+        // array().join(separator, ignore_nulls)
+        let new_expr = ctx.inner.arr().join(lit(sep), ignore_nulls);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// Convert Array (Fixed) to List (Variable)
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_to_list(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
+        let new_expr = ctx.inner.cast(DataType::List(Box::new(DataType::Null)));
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// Check if array contains value
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_contains(
+    expr_ptr: *mut ExprContext,
+    item_ptr: *mut ExprContext,
+    nulls_equal: bool
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let item = unsafe { Box::from_raw(item_ptr) };
+        
+        // array().contains(item)
+        let new_expr = ctx.inner.arr().contains(item.inner,nulls_equal);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// 统计类
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_mean(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().mean();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_median(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().median();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_std(expr_ptr: *mut ExprContext, ddof: u8) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().std(ddof);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_var(expr_ptr: *mut ExprContext, ddof: u8) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().var(ddof);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// 布尔逻辑
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_any(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().any();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_all(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().all();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// 排序与极值
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_sort(
+    expr_ptr: *mut ExprContext, 
+    descending: bool, 
+    nulls_last: bool,
+    maintain_order: bool
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let options = SortOptions {
+            descending,
+            nulls_last,
+            multithreaded: true,
+            maintain_order,
+            limit: None,
+        };
+        let new_expr = ctx.inner.arr().sort(options);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_reverse(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().reverse();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_arg_min(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().arg_min();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_arg_max(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().arg_max();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// 结构变换
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_get(
+    expr_ptr: *mut ExprContext, 
+    index_ptr: *mut ExprContext,
+    null_on_oob: bool
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let idx = unsafe { Box::from_raw(index_ptr) };
+        // arr().get(index, null_on_oob)
+        let new_expr = ctx.inner.arr().get(idx.inner, null_on_oob);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_explode(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.arr().explode();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_array_to_struct(
+    expr_ptr: *mut ExprContext
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        // arr().to_struct(name_generator). 这里传 None 使用默认命名 (field_0, field_1...)
+        let new_expr = ctx.inner.arr().to_struct(None);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
 // ==========================================
 // Math
 // ==========================================

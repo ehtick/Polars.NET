@@ -1,7 +1,9 @@
 using System.Collections;
 using System.Data;
 using System.Data.Common;
+using System.Text;
 using Apache.Arrow;
+using Apache.Arrow.Arrays;
 using Apache.Arrow.Types;
 
 namespace Polars.NET.Core.Data
@@ -160,16 +162,19 @@ namespace Polars.NET.Core.Data
         {
             switch (array)
             {
-                case Int32Array arr: return arr.GetValue(index).GetValueOrDefault();
-                case Int64Array arr: return arr.GetValue(index).GetValueOrDefault();
-                case FloatArray arr: return arr.GetValue(index).GetValueOrDefault();
-                case DoubleArray arr: return arr.GetValue(index).GetValueOrDefault();
-                case BooleanArray arr: return arr.GetValue(index).GetValueOrDefault();
+                case Int32Array arr: return arr.GetValue(index) ?? (object)DBNull.Value;
+                case Int64Array arr: return arr.GetValue(index) ?? (object)DBNull.Value;
+                case FloatArray arr: return arr.GetValue(index) ?? (object)DBNull.Value;
+                case DoubleArray arr: return arr.GetValue(index) ?? (object)DBNull.Value;
+                case BooleanArray arr: return arr.GetValue(index) ?? (object)DBNull.Value;
                 case StringArray arr: return arr.GetString(index);
                 case LargeStringArray arr: return arr.GetString(index);
                 case StringViewArray arr: return arr.GetString(index);
                 case BinaryArray arr: return arr.GetBytes(index).ToArray();
                 case BinaryViewArray arr: return arr.GetBytes(index).ToArray();
+                case FixedSizeBinaryArray arr: return arr.GetBytes(index).ToArray();
+                case FixedSizeListArray arr:
+                    return FormatFixedSizeList(arr, index);
                 // [修复] Date32Array
                 case Date32Array arr:
                     // arr.GetDateTime(index) 返回的是 DateTime?
@@ -199,15 +204,113 @@ namespace Polars.NET.Core.Data
                     // 1 us = 10 ticks
                     return new TimeSpan(val.Value * 10);
                 }
-                // 复杂类型兜底
-                case ListArray arr: return "List<...>"; 
-                case StructArray arr: return "{Struct}";
+
+                case ListArray arr:
+                    return FormatList(arr, index);
+                case StructArray arr: return FormatStruct(arr, index);
                 
                 default:
-                    // 尝试通用获取 (性能较差)
-                    // return array.GetValue(index) ?? DBNull.Value;
                     throw new NotSupportedException($"ArrowToDbStream does not yet support type: {array.GetType().Name}");
             }
+        }
+        // -------------------------------------------------------------
+        // JSON Format Helper
+        // -------------------------------------------------------------
+        // [核心] 通用 JSON 值格式化
+        private static string FormatJsonValue(object? val)
+        {
+            if (val == null || val == DBNull.Value) return "null";
+
+            return val switch
+            {
+                // [修复 1] 顺序调整：优先匹配嵌套 JSON 字符串 (List/Struct 递归生成的)
+                // 必须放在通用的 string s 之前，否则会被 string s 拦截
+                string jsonStr when jsonStr.Length > 1 && (jsonStr.StartsWith("{") || jsonStr.StartsWith("[")) 
+                    => jsonStr,
+
+                // [修复 2 & 升级] 生产级转义
+                // JsonSerializer.Serialize 会自动加上双引号，并完美处理所有转义字符
+                // 比如：换行 -> \n, 引号 -> \", Tab -> \t, 中文 -> 正常显示或转义
+                string s => System.Text.Json.JsonSerializer.Serialize(s),
+                char c => System.Text.Json.JsonSerializer.Serialize(c.ToString()),
+
+                // 基础类型
+                bool b => b ? "true" : "false",
+                
+                // 时间类型 (保持 ISO 8601 格式，手动控制比 Serialize 更稳，因为我们要控制 DateOnly/TimeOnly 的具体格式)
+                DateTime dt => $"\"{dt:O}\"",
+                DateTimeOffset dto => $"\"{dto:O}\"",
+                DateOnly d => $"\"{d:yyyy-MM-dd}\"",
+                TimeOnly t => $"\"{t:HH:mm:ss.ffffff}\"",
+                TimeSpan ts => $"\"{ts}\"", // TimeSpan 保持默认 ToString
+
+                // 数字类型直接 ToString
+                _ => val.ToString()!
+            };
+        }
+        // [新增] 格式化 Struct -> JSON Object
+        private static string FormatStruct(StructArray arr, int index)
+        {
+            // 1. 检查 Struct 自身的 Nullity (Arrow Struct 可以是 Null)
+            if (arr.IsNull(index)) return "null";
+
+            var structType = (StructType)arr.Data.DataType;
+            var sb = new StringBuilder("{");
+            
+            for (int i = 0; i < structType.Fields.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                
+                var field = structType.Fields[i];
+                var childArr = arr.Fields[i];
+                
+                // Key: 字段名 (加引号)
+                sb.Append($"\"{field.Name}\": ");
+                
+                // Value: 递归获取值并转 JSON
+                object val = GetValueFromArray(childArr, index);
+                sb.Append(FormatJsonValue(val));
+            }
+            sb.Append("}");
+            return sb.ToString();
+        }
+        // [新增] 格式化定长数组
+        private static string FormatFixedSizeList(FixedSizeListArray arr, int index)
+        {
+            if (arr.IsNull(index)) return "null";
+
+            var type = (FixedSizeListType)arr.Data.DataType;
+            int width = type.ListSize;
+            int start = index * width;
+            
+            var sb = new StringBuilder("[");
+            for (int i = 0; i < width; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                object val = GetValueFromArray(arr.Values, start + i);
+                sb.Append(FormatJsonValue(val));
+            }
+            sb.Append("]");
+            return sb.ToString();
+        }
+        // [新增] 格式化变长数组
+        private static string FormatList(ListArray arr, int index)
+        {
+            if (arr.IsNull(index)) return "null";
+
+            int start = arr.ValueOffsets[index];
+            int end = arr.ValueOffsets[index + 1];
+            int count = end - start;
+
+            var sb = new StringBuilder("[");
+            for (int i = 0; i < count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                object val = GetValueFromArray(arr.Values, start + i);
+                sb.Append(FormatJsonValue(val)); // 使用通用格式化器
+            }
+            sb.Append("]");
+            return sb.ToString();
         }
         public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length)
         {

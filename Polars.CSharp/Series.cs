@@ -22,6 +22,15 @@ public partial class Series : IDisposable
         Handle = handle;
     }
     /// <summary>
+    /// Rename Series
+    /// </summary>
+    /// <param name="newName"></param>
+    public void Rename(string newName)
+    {
+        this.Name = newName;
+    }
+
+    /// <summary>
     /// Date Ops
     /// </summary>
     public SeriesDtOps Dt => new(this);
@@ -92,7 +101,6 @@ public partial class Series : IDisposable
             // 2. 构建 DataFrame (关键修正)
             // 直接将两个 Series 传入构造函数，而不是先创建再 Add
             // 假设你的 DataFrame.FromColumns 支持 params Series[]
-            // (如果不支持，请使用 DataFrame.New(params Series[]) 或类似的构造函数)
             using var df = new DataFrame([this, rightSeries]);
 
             // 3. 执行表达式
@@ -213,11 +221,7 @@ public partial class Series : IDisposable
         using var slice = Slice(index, 1);
         
         // 2. 导出为 Arrow Array
-        // 因为 ArrowReader 需要 IArrowArray，我们暂时没有 Series.ToArrow 直接绑定
-        // 所以我们把它包在 DataFrame 里导出，然后取第一列
-        using var df = new DataFrame(slice);
-        using var batch = df.ToArrow(); // 调用 Core 层的 ExportDataFrame
-        var column = batch.Column(0);
+        var column = slice.ToArrow();
 
         // 3. 使用强大的 ArrowReader 解析
         // 这里会自动处理 Struct 递归、F# Option 解包、DateTimeOffset 时区归一化
@@ -284,6 +288,7 @@ public partial class Series : IDisposable
                     // 注意：Series.GetValue<object> 需要在内部处理好 List/Struct 的装箱
                     DataTypeKind.List => GetValue<object>(index), 
                     DataTypeKind.Struct => GetValue<object>(index),
+                    DataTypeKind.Array => GetValue<object>(index),
                 
                 _ => throw new NotSupportedException($"Indexer not supported for type {DataType.Kind}")
             };
@@ -733,14 +738,8 @@ public partial class Series : IDisposable
     /// <typeparam name="T"></typeparam>
     /// <returns></returns>
     public T[] ToArray<T>()
-    {
-        // 1. 转为 DataFrame (为了用 ToArrow 导出 Batch)
-        using var df = new DataFrame(this);
-        using var batch = df.ToArrow();
-        
-        // 2. 取第一列
-        var col = batch.Column(0);
-        
+    {  
+        var col = this.ToArrow();
         // 3. 读取
         return ArrowReader.ReadColumn<T>(col);
     }

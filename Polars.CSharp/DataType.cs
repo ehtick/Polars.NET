@@ -22,6 +22,12 @@ public class DataType : IDisposable
     public TimeUnit? Unit { get; private set; }
     public string? TimeZone { get; private set; }
 
+    /// <summary>
+    /// If this is an Array type, returns the fixed width.
+    /// Returns 0 if not an Array type.
+    /// </summary>
+    public ulong ArrayWidth => PolarsWrapper.DataTypeGetArrayWidth(Handle);
+
     // 修改构造函数：强制要求传入 Handle 和 Kind
     internal DataType(DataTypeHandle handle, DataTypeKind kind = DataTypeKind.Unknown)
     {
@@ -87,10 +93,10 @@ public class DataType : IDisposable
         get 
         {
             // 1. 快速检查，避免不必要的 FFI 调用
-            if (Kind != DataTypeKind.List) return null;
+            if (Kind != DataTypeKind.List && Kind != DataTypeKind.Array) return null;
 
             // 2. 调用 Wrapper 获取内部 Handle (Rust Clone 的新对象)
-            var innerHandle = PolarsWrapper.GetListInnerType(Handle);
+            var innerHandle = PolarsWrapper.GetInnerType(Handle);
             
             // 3. 检查是否无效 (虽然理论上 Kind==List 不会失败，但防一手)
             if (innerHandle.IsInvalid) return null;
@@ -99,6 +105,7 @@ public class DataType : IDisposable
             return new DataType(innerHandle); 
         }
     }
+
     // ==========================================
     // Helper Properties
     // ==========================================
@@ -182,10 +189,21 @@ public class DataType : IDisposable
         // Wrapper 负责调用 Rust 创建 List<inner>
         return new DataType(PolarsWrapper.NewListType(innerType.Handle), DataTypeKind.List);
     }
+    /// <summary>
+    /// Create a Fixed-Size List (Array) data type.
+    /// <para>Example: DataType.Array(DataType.Int32, 3)</para>
+    /// </summary>
+    /// <param name="inner">The data type of the elements.</param>
+    /// <param name="width">The fixed length of the array.</param>
+    public static DataType Array(DataType inner, uint width)
+    {
+        var h = PolarsWrapper.NewArrayType(inner.Handle, width);
+        return new DataType(h,DataTypeKind.Array);
+    }
     public static DataType Struct(string[] names, DataType[] types)
     {
         // 提取 Handles
-        var handles = Array.ConvertAll(types, t => t.Handle);
+        var handles = System.Array.ConvertAll(types, t => t.Handle);
         
         // 调用新 Wrapper
         var h = PolarsWrapper.NewStructType(names, handles);

@@ -15,6 +15,12 @@ public static partial class PolarsWrapper
         => ErrorHelper.Check(NativeBindings.pl_datatype_new_datetime(unit,timezone));
     public static DataTypeHandle NewDurationType(int unit) 
         => ErrorHelper.Check(NativeBindings.pl_datatype_new_duration(unit));
+    public static DataTypeHandle NewArrayType(DataTypeHandle inner, ulong width)
+    {
+        // 注意：这里传 inner.Handle 是安全的
+        // Rust 端只是借用 (&*ptr) 并克隆了内部结构，并没有消费掉 inner 指针
+        return ErrorHelper.Check(NativeBindings.pl_datatype_new_array(inner, (UIntPtr)width));
+    }
     public static DataTypeHandle NewStructType(string[] names, DataTypeHandle[] types)
     {
         if (names.Length != types.Length) 
@@ -97,12 +103,16 @@ public static partial class PolarsWrapper
     /// <summary>
     /// 获取 List 类型的内部元素类型 Handle。
     /// </summary>
-    public static DataTypeHandle GetListInnerType(DataTypeHandle handle)
+    public static DataTypeHandle GetInnerType(DataTypeHandle handle)
     {
         // 这里的 NativeBindings.pl_datatype_get_inner 返回的是一个新的 Handle (Clone)
         return ErrorHelper.Check(NativeBindings.pl_datatype_get_inner(handle));
     }
-
+    public static ulong DataTypeGetArrayWidth(DataTypeHandle dtype)
+    {
+        // 这是一个无害读取操作，直接返回结果
+        return (ulong)NativeBindings.pl_datatype_get_array_width(dtype);
+    }
     /// <summary>
     /// 获取 Struct 类型的字段数量。
     /// </summary>

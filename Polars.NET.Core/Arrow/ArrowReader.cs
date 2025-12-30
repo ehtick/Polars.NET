@@ -137,11 +137,16 @@ namespace Polars.NET.Core.Arrow
                 };
             }
             // ---------------------------------------------------------
-            // 2. ListArray / LargeListArray -> List<T>
+            // 2. ListArray / LargeListArray -> List<T> / FixedSizeListArray -> List<T>
             // ---------------------------------------------------------
-            else if (array is ListArray || array is LargeListArray)
+            else if (array is ListArray || array is LargeListArray || array is FixedSizeListArray)
             {
-                // 统一处理 List 和 LargeList 的共性逻辑
+                Type elementType = typeof(object);
+                if (underlyingType.IsGenericType) elementType = underlyingType.GetGenericArguments()[0];
+                else if (underlyingType.IsArray) elementType = underlyingType.GetElementType()!;
+                bool isFSharpList = underlyingType.IsGenericType && 
+                                    (underlyingType.GetGenericTypeDefinition().FullName == "Microsoft.FSharp.Collections.FSharpList`1");
+
                 IArrowArray valuesArray;
                 Func<int, long> getOffset;
                 Func<int, bool> isNull;
@@ -152,22 +157,21 @@ namespace Polars.NET.Core.Arrow
                     getOffset = i => listArr.ValueOffsets[i];
                     isNull = listArr.IsNull;
                 }
-                else
+                else if (array is LargeListArray largeArr)
                 {
-                    var largeArr = (LargeListArray)array;
                     valuesArray = largeArr.Values;
                     getOffset = i => largeArr.ValueOffsets[i];
                     isNull = largeArr.IsNull;
                 }
+                else
+                {
+                    var fixedArr = (FixedSizeListArray)array;
+                    valuesArray = fixedArr.Values;
+                    int width = ((FixedSizeListType)fixedArr.Data.DataType).ListSize;
+                    getOffset = i =>  (long)(i + array.Offset) * width;
+                    isNull = fixedArr.IsNull;
+                }
 
-                // 解析 List 元素类型
-                Type elementType = typeof(object);
-                if (underlyingType.IsGenericType) elementType = underlyingType.GetGenericArguments()[0];
-                else if (underlyingType.IsArray) elementType = underlyingType.GetElementType()!;
-                bool isFSharpList = underlyingType.IsGenericType && 
-                                    (underlyingType.GetGenericTypeDefinition().FullName == "Microsoft.FSharp.Collections.FSharpList`1");
-
-                // [递归] 为元素创建读取器
                 var childGetter = CreateAccessor(valuesArray, elementType);
 
                 baseAccessor = idx =>
@@ -183,6 +187,7 @@ namespace Polars.NET.Core.Arrow
 
                     for (int k = 0; k < count; k++)
                     {
+                        // 这里的 start 已经是绝对物理地址
                         var val = childGetter((int)(start + k));
                         list.Add(val);
                     }

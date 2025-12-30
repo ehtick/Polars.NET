@@ -75,6 +75,7 @@ define_pl_datatype_kind! {
         // Categorical 逻辑较复杂，直接内联你的构造代码
         Categorical = 21 <=> DataType::Categorical(_, _) => DataType::Categorical(Categories::random(PlSmallStr::EMPTY, CategoricalPhysical::U32),Categories::random(PlSmallStr::EMPTY, CategoricalPhysical::U32).mapping()),
         Decimal     = 22 <=> DataType::Decimal(_, _)   => DataType::Decimal(None, None),
+        Array       = 23 <=> DataType::Array(_, _)     => DataType::Array(Box::new(DataType::Null), 0),
     }
 }
 // --- Constructors ---
@@ -182,6 +183,28 @@ pub extern "C" fn pl_datatype_new_datetime(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn pl_datatype_new_array(
+    inner_ptr: *mut DataTypeContext, 
+    width: usize
+) -> *mut DataTypeContext {
+    // 1. 检查空指针
+    if inner_ptr.is_null() {
+        // 或者 set_error 并返回 null，视你的错误处理策略而定
+        return std::ptr::null_mut();
+    }
+    
+    // 2. 获取内部类型引用
+    let inner_ctx = unsafe { &*inner_ptr };
+    
+    // 3. 构造 Array 类型
+    // 需要 Clone 内部类型，因为 DataType::Array 拥有其所有权
+    let array_dtype = DataType::Array(Box::new(inner_ctx.dtype.clone()), width);
+    
+    // 4. 返回新的 Context
+    Box::into_raw(Box::new(DataTypeContext { dtype: array_dtype }))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn pl_datatype_new_struct(
     names: *const *const c_char,      // 字段名数组
     types: *const *mut DataTypeContext, // 类型句柄数组
@@ -223,6 +246,10 @@ fn dtype_to_string_verbose(dt: &DataType) -> String {
         // 针对 List：递归展开内部类型
         DataType::List(inner) => {
             format!("list[{}]", dtype_to_string_verbose(inner))
+        },
+        
+        DataType::Array(inner, width) => {
+             format!("array[{}; {}]", dtype_to_string_verbose(inner), width)
         },
         
         // 其他类型：使用 Polars 默认的 Display
@@ -364,10 +391,26 @@ pub unsafe extern "C" fn pl_datatype_get_inner(ptr: *mut DataType) -> *mut DataT
                 // Clone inner type and box it
                 Box::into_raw(Box::new(*inner.clone())) 
             },
+            DataType::Array(inner, _) => {
+                Box::into_raw(Box::new(*inner.clone()))
+            },
             _ => std::ptr::null_mut() // Not a list
         }
     }));
     result.unwrap_or(std::ptr::null_mut())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_datatype_get_array_width(ptr: *mut DataTypeContext) -> usize {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if ptr.is_null() { return 0; }
+        let ctx = unsafe { &*ptr };
+        match &ctx.dtype {
+            DataType::Array(_, width) => *width,
+            _ => 0
+        }
+    }));
+    result.unwrap_or(0)
 }
 
 // 获取 Struct 的字段数量

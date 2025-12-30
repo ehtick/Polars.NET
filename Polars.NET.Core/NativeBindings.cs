@@ -573,6 +573,72 @@ unsafe internal partial class NativeBindings
     );
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_contains(ExprHandle expr, ExprHandle item);
     [LibraryImport(LibName)] public static partial ExprHandle pl_concat_list(IntPtr[] exprs,UIntPtr exprLen);
+    // Array Ops
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_max(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_min(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_sum(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_unique(ExprHandle expr,[MarshalAs(UnmanagedType.U1)] bool stable);
+    [LibraryImport(LibName)] 
+    public static partial ExprHandle pl_expr_array_join(
+        ExprHandle expr, 
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string sep,
+        [MarshalAs(UnmanagedType.U1)] bool ignoreNulls);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_contains(
+        ExprHandle expr, 
+        ExprHandle item,
+        [MarshalAs(UnmanagedType.U1)] bool nullsEqual
+    );
+    // [New] Stats
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_mean(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_median(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_std(ExprHandle expr, byte ddof);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_var(ExprHandle expr, byte ddof);
+
+    // [New] Boolean
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_any(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_all(ExprHandle expr);
+
+    // [New] Sort & Args
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_sort(
+        ExprHandle expr, 
+        [MarshalAs(UnmanagedType.U1)] bool descending, 
+        [MarshalAs(UnmanagedType.U1)] bool nullsLast,
+        [MarshalAs(UnmanagedType.U1)] bool maintainOrder
+    );
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_reverse(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_arg_min(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_arg_max(ExprHandle expr);
+
+    // [New] Structure
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_get(
+        ExprHandle expr, 
+        ExprHandle index, 
+        [MarshalAs(UnmanagedType.I1)] bool nullOnOob
+    );
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_explode(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_to_list(ExprHandle expr);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_array_to_struct(ExprHandle expr);
+
+
     // Naming
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_prefix(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string prefix);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_suffix(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string suffix);
@@ -877,6 +943,16 @@ unsafe internal partial class NativeBindings
     public static partial DataTypeHandle pl_datatype_new_datetime(int unit, string? timezone);
     [LibraryImport(LibName)]
     public static partial DataTypeHandle pl_datatype_new_duration(int unit);
+    [LibraryImport(LibName)]
+    public static partial DataTypeHandle pl_datatype_new_array(
+        DataTypeHandle inner, 
+        UIntPtr width
+    );
+
+    [LibraryImport(LibName)]
+    public static partial UIntPtr pl_datatype_get_array_width(
+        DataTypeHandle dtype
+    );
     [LibraryImport(LibName)]
     public static partial DataTypeHandle pl_datatype_new_struct(
     [In] IntPtr[] names, 

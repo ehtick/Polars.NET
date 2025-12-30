@@ -58,6 +58,7 @@ public enum DataTypeKind
     Null=18,
     Struct=19,List=20,Categorical=21,
     Decimal=22,
+    Array=23,
     Unknown = 0,
     SameAsInput=0
 }

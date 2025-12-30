@@ -401,6 +401,65 @@ public static partial class PolarsWrapper
             (UIntPtr)exprs.Length
         ));
     }
+    // --- Array ---
+    public static ExprHandle ArraySum(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_sum, e);
+    public static ExprHandle ArrayMin(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_min, e);
+    public static ExprHandle ArrayMax(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_max, e);
+    public static ExprHandle ArrayMean(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_mean, e);
+    public static ExprHandle ArrayMedian(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_median, e);
+    public static ExprHandle ArrayStd(ExprHandle e,byte ddof)
+    {
+        var h = NativeBindings.pl_expr_array_std(e,ddof);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle ArrayVar(ExprHandle e,byte ddof)
+    {
+        var h = NativeBindings.pl_expr_array_var(e,ddof);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }    
+    public static ExprHandle ArrayUnique(ExprHandle e,bool stable)   
+    {
+        var h = NativeBindings.pl_expr_array_unique(e, stable);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle ArrayJoin(ExprHandle e,string sep,bool ignoreNulls)
+    {
+        var h = NativeBindings.pl_expr_array_join(e, sep,ignoreNulls);
+        e.TransferOwnership(); 
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle ArrayContains(ExprHandle expr, ExprHandle item, bool nullsEqual)
+    {
+        var h = NativeBindings.pl_expr_array_contains(expr, item, nullsEqual);
+        expr.TransferOwnership();
+        item.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+
+    public static ExprHandle ArrayAny(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_any, e);
+    public static ExprHandle ArrayAll(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_all, e);
+    public static ExprHandle ArraySort(ExprHandle e, bool descending, bool nullsLast, bool maintainOrder)
+    {
+        var h = NativeBindings.pl_expr_array_sort(e, descending, nullsLast, maintainOrder);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle ArrayGet(ExprHandle expr, ExprHandle index, bool nullOnOob)
+    {
+        var h = NativeBindings.pl_expr_array_get(expr, index, nullOnOob);
+        expr.TransferOwnership();
+        index.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle ArrayReverse(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_reverse, e);
+    public static ExprHandle ArrayArgMin(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_arg_min, e);
+    public static ExprHandle ArrayArgMax(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_arg_max, e);
+    public static ExprHandle ArrayExplode(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_explode, e);
+    public static ExprHandle ArrayToList(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_to_list, e);
+    public static ExprHandle ArrayToStruct(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_to_struct, e);
     // --- Struct ---
     public static ExprHandle AsStruct(ExprHandle[] exprs)
     {
