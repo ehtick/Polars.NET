@@ -352,6 +352,10 @@ public partial class Series : IDisposable
     /// </summary>
     public Series Sqrt() => ApplyExpr(Polars.Col(Name).Sqrt());
     /// <summary>
+    /// Calculate the cube root of the expression.
+    /// </summary>
+    public Series Cbrt() => ApplyExpr(Polars.Col(Name).Cbrt());
+    /// <summary>
     /// Calculate exponent value.
     /// <para>Implemented via Expr composition.</para>
     /// </summary>
@@ -372,6 +376,66 @@ public partial class Series : IDisposable
     /// <param name="decimals"></param>
     /// <returns></returns>
     public Series Round(uint decimals) => ApplyExpr(Polars.Col(Name).Round(decimals));
+    /// <summary>Compute the element-wise sign (-1, 0, 1).</summary>
+    public Series Sign() => ApplyExpr(Polars.Col(Name).Sign());
+
+    /// <summary>Rounds up to the nearest integer.</summary>
+    public Series Ceil() => ApplyExpr(Polars.Col(Name).Ceil());
+
+    /// <summary>Rounds down to the nearest integer.</summary>
+    public Series Floor() => ApplyExpr(Polars.Col(Name).Floor());
+    // ==========================================
+    // Trigonometry (三角函数)
+    // ==========================================
+
+    /// <summary>Compute the element-wise sine.</summary>
+    public Series Sin() => ApplyExpr(Polars.Col(Name).Sin());
+
+    /// <summary>Compute the element-wise cosine.</summary>
+    public Series Cos() => ApplyExpr(Polars.Col(Name).Cos());
+
+    /// <summary>Compute the element-wise tangent.</summary>
+    public Series Tan() => ApplyExpr(Polars.Col(Name).Tan());
+
+    /// <summary>Compute the element-wise inverse sine.</summary>
+    public Series ArcSin() => ApplyExpr(Polars.Col(Name).ArcSin());
+
+    /// <summary>Compute the element-wise inverse cosine.</summary>
+    public Series ArcCos() => ApplyExpr(Polars.Col(Name).ArcCos());
+
+    /// <summary>Compute the element-wise inverse tangent.</summary>
+    public Series ArcTan() => ApplyExpr(Polars.Col(Name).ArcTan());
+
+    // Hyperbolic
+    /// <summary>
+    /// Compute the element-wise hyperbolic sine.
+    /// </summary>
+    public Series Sinh() => ApplyExpr(Polars.Col(Name).Sinh());
+
+    /// <summary>
+    /// Compute the element-wise hyperbolic cosine.
+    /// </summary>
+    public Series Cosh() => ApplyExpr(Polars.Col(Name).Cosh());
+
+    /// <summary>
+    /// Compute the element-wise hyperbolic tangent.
+    /// </summary>
+    public Series Tanh() => ApplyExpr(Polars.Col(Name).Tanh());
+
+    /// <summary>
+    /// Compute the element-wise inverse hyperbolic sine.
+    /// </summary>
+    public Series ArcSinh() => ApplyExpr(Polars.Col(Name).ArcSinh());
+
+    /// <summary>
+    /// Compute the element-wise inverse hyperbolic cosine.
+    /// </summary>
+    public Series ArcCosh() => ApplyExpr(Polars.Col(Name).ArcCosh());
+
+    /// <summary>
+    /// Compute the element-wise inverse hyperbolic tangent.
+    /// </summary>
+    public Series ArcTanh() => ApplyExpr(Polars.Col(Name).ArcTanh());
 
     // ==========================================
     // Comparison Methods & Operators (比较)
