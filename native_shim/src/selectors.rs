@@ -53,6 +53,34 @@ pub extern "C" fn pl_selector_exclude(
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_selector_cols(
+    names_ptr: *const *const c_char,
+    len: usize
+) -> *mut SelectorContext {
+    ffi_try!({
+        // 1. 构造 Vec<PlSmallStr>
+        let mut names_vec = Vec::with_capacity(len);
+        if len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(names_ptr, len) };
+            for &p in slice {
+                let s = ptr_to_str(p).unwrap();
+                names_vec.push(PlSmallStr::from_string(s.to_string()));
+            }
+        }
+
+        // 2. 构造 Selector::ByName
+        // 需要将 Vec 转为 Arc<[T]>
+        let names_arc: Arc<[PlSmallStr]> = names_vec.into();
+
+        let s = Selector::ByName {
+            names: names_arc,
+            strict: true, 
+        };
+        
+        Ok(Box::into_raw(Box::new(SelectorContext { inner: s })))
+    })
+}
 // =================================================================
 // 2. String Matchers (StartsWith, EndsWith, Contains, Regex)
 // =================================================================

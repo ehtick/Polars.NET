@@ -22,6 +22,7 @@ namespace Polars.CSharp
         {
             return PolarsWrapper.CloneSelector(Handle);
         }
+
         // --- Int ---
         public static Expr operator *(Selector s, int other) => s.ToExpr() * other;
         public static Expr operator +(Selector s, int other) => s.ToExpr() + other;
@@ -154,7 +155,14 @@ namespace Polars.CSharp
             var newHandle = PolarsWrapper.SelectorExclude(Handle, names);
             return new Selector(newHandle);
         }
-
+        /// <summary>
+        /// Select columns by name.
+        /// </summary>
+        public static Selector Cols(params string[] names)
+        {
+            var newHandle = PolarsWrapper.SelectorCols(names);
+            return new Selector(newHandle);
+        }
         /// <summary>
         /// Convert the selector to an Expression.
         /// This allows using selectors inside Select(), WithColumns(), etc.

@@ -494,4 +494,129 @@ HR,50";
             Console.WriteLine($"Column: {kvp.Key,-10} | Kind: {dt.Kind,-10} | {dt} {extraInfo}");
         }
     }
+    // 辅助方法：构造一个包含 Struct 列的 DataFrame
+    // 结构: 
+    //   raw: List<int> -> Array(2) -> Struct { field_0, field_1 }
+    private DataFrame CreateStructDataFrame()
+    {
+        var data = new[] 
+        { 
+            new[] { 1, 2 }, 
+            new[] { 10, 20 },
+            new[] { 100, 200 }
+        };
+
+        var df = DataFrame.FromColumns(new { raw = data });
+        
+        // 构造 "my_struct" 列
+        return df.Select(
+            Col("raw")
+                .Cast(DataType.Array(DataType.Int32, 2))
+                .Array.ToStruct()
+                .Alias("my_struct")
+        );
+    }
+
+    [Fact]
+    public void Test_LazyFrame_Unnest_With_Strings()
+    {
+        // 测试目标: public LazyFrame Unnest(params string[] columns)
+        // 验证点: 语法糖是否正确调用了底层的 Selector 逻辑
+        
+        using var df = CreateStructDataFrame();
+
+        // Action
+        using var res = df.Lazy()
+            .Unnest("my_struct")
+            .Collect();
+
+        // Assert
+        // Struct 应该被展平成 'field_0' 和 'field_1'
+        Assert.True(res.Columns.Contains("field_0"), "Result should contain field_0");
+        Assert.True(res.Columns.Contains("field_1"), "Result should contain field_1");
+
+        // 验证数据正确性 (Row 0: [1, 2])
+        Assert.Equal(1, (int)res["field_0"][0]);
+        Assert.Equal(2, (int)res["field_1"][0]);
+        
+        // 验证数据正确性 (Row 1: [10, 20])
+        Assert.Equal(10, (int)res["field_0"][1]);
+        Assert.Equal(20, (int)res["field_1"][1]);
+    }
+
+    [Fact]
+    public void Test_LazyFrame_Unnest_With_Selector()
+    {
+        // 测试目标: public LazyFrame Unnest(Selector selector)
+        // 验证点: 显式 Selector 传递是否正常工作，且 Handle Clone 机制未导致 Crash
+        
+        using var df = CreateStructDataFrame();
+
+        // 显式构造 Selector
+        using var selector = Selector.Cols("my_struct");
+
+        // Action
+        using var res = df.Lazy()
+            .Unnest(selector)
+            .Collect();
+
+        // Assert
+        Assert.Equal(3, res.Height); // 3行数据
+        Assert.Equal(100, (int)res["field_0"][2]);
+        Assert.Equal(200, (int)res["field_1"][2]);
+    }
+
+    [Fact]
+    public void Test_LazyFrame_Unnest_Reuse_Selector()
+    {
+        // 验证你的 CloneHandle 逻辑是否允许 Selector 重用
+        // 如果 API 实现里把 selector 消费了且导致 C# 端 handle 无效，这里第二次调用就会崩
+        
+        using var df = CreateStructDataFrame();
+        using var selector = Selector.Cols("my_struct");
+
+        // 第一次使用
+        using var lf1 = df.Lazy().Unnest(selector); 
+        using var res1 = lf1.Collect();
+        Assert.True(res1.Columns.Contains("field_0"));
+
+        // 第二次使用 (验证 selector 对象依然存活)
+        using var lf2 = df.Lazy().Unnest(selector);
+        using var res2 = lf2.Collect();
+        Assert.True(res2.Columns.Contains("field_0"));
+    }
+    
+    [Fact]
+    public void Test_LazyFrame_Unnest_Multiple_Cols()
+    {
+        // 准备双 Struct 列数据
+        var data1 = new[] { new[] { 1, 2 } };
+        var data2 = new[] { new[] { 3, 4 } };
+        
+        using var df = DataFrame.FromColumns(new { raw1 = data1, raw2 = data2 })
+            .Select(
+                // s1 保持默认字段名: field_0, field_1
+                Col("raw1").Cast(DataType.Array(DataType.Int32, 2)).Array.ToStruct().Alias("s1"),
+                
+                // s2 改名: field_0 -> other_0, field_1 -> other_1
+                // [修复] 使用 RenameFields 避免 Unnest 后的列名冲突
+                Col("raw2").Cast(DataType.Array(DataType.Int32, 2)).Array.ToStruct()
+                    .Struct.RenameFields("other_0", "other_1") 
+                    .Alias("s2")
+            );
+
+        // 同时 Unnest 两个结构体列
+        using var res = df.Lazy()
+            .Unnest("s1", "s2") 
+            .Collect();
+
+        // 验证列数扩展
+        // s1 展开为: field_0, field_1
+        // s2 展开为: other_0, other_1
+        Assert.True(res.Columns.Contains("field_0"));
+        Assert.True(res.Columns.Contains("other_0"));
+        
+        Assert.Equal(1, (int)res["field_0"][0]);
+        Assert.Equal(3, (int)res["other_0"][0]);
+    }
 }

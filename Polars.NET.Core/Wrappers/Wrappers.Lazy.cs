@@ -111,7 +111,14 @@ public static partial class PolarsWrapper
             }
         }
     }
-
+    public static LazyFrameHandle LazyFrameUnnest(LazyFrameHandle lf, SelectorHandle selector)
+    {
+        // 这里的逻辑变得非常简单，因为复杂的列名处理已经移交给了 Selector
+        var h = ErrorHelper.Check(NativeBindings.pl_lazyframe_unnest(lf, selector));
+        lf.TransferOwnership();
+        selector.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
     public static LazyFrameHandle LazyLimit(LazyFrameHandle lf, uint n)
     {
         var h = NativeBindings.pl_lazy_limit(lf, n);

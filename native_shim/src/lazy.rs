@@ -293,6 +293,22 @@ pub extern "C" fn pl_lazy_explode(
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_unnest(
+    lf_ptr: *mut LazyFrameContext,
+    sel_ptr: *mut SelectorContext // 接收 Selector 句柄
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+        let sel_ctx = unsafe {  Box::from_raw(sel_ptr) }; // 借用 Selector，不消耗它
+
+        // 调用 unnest(Selector)
+        let new_lf = lf_ctx.inner.unnest(sel_ctx.inner);
+        
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
+    })
+}
+
 // ==========================================
 // Collect (出口：LazyFrame -> DataFrame)
 // ==========================================

@@ -6,6 +6,18 @@ public static partial class PolarsWrapper
         => ErrorHelper.Check(NativeBindings.pl_selector_all());
     public static SelectorHandle CloneSelector(SelectorHandle sel)
         => ErrorHelper.Check(NativeBindings.pl_selector_clone(sel));
+    /// <summary>
+    /// Select columns by name.
+    /// </summary>
+    public static SelectorHandle SelectorCols(string[] names)
+    {
+        // 使用 Helper 将 string[] 转换为 IntPtr[] (UTF-8 pointers)
+        return UseUtf8StringArray(names, ptrs => 
+        {
+            return ErrorHelper.Check(NativeBindings.pl_selector_cols(ptrs, (UIntPtr)ptrs.Length));
+        });
+    }
+
     public static SelectorHandle SelectorExclude(SelectorHandle sel, string[] names)
     {
         // 使用 Helper 自动处理内存分配和释放

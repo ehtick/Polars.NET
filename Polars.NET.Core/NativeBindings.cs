@@ -499,6 +499,11 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool rechunk,
         [MarshalAs(UnmanagedType.U1)] bool parallel
     );
+    [LibraryImport(LibName)]
+    public static partial LazyFrameHandle pl_lazyframe_unnest(
+        LazyFrameHandle lf, 
+        SelectorHandle selector
+    );
     // --- Streaming & Sink ---
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_lazy_collect_streaming(LazyFrameHandle lf);
@@ -692,7 +697,11 @@ unsafe internal partial class NativeBindings
     public static partial SelectorHandle pl_selector_clone(SelectorHandle sel);
     // Selectors
     [LibraryImport(LibName)] public static partial SelectorHandle pl_selector_all();
-    
+    [LibraryImport(LibName)]
+    public static partial SelectorHandle pl_selector_cols(
+        IntPtr[] names,
+        UIntPtr len
+    );
     [LibraryImport(LibName)] 
     public static partial SelectorHandle pl_selector_exclude(
         SelectorHandle sel, 
