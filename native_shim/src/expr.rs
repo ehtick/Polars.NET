@@ -222,7 +222,29 @@ gen_unary_op!(pl_expr_is_duplicated, is_duplicated);
 gen_unary_op!(pl_expr_is_unique, is_unique);
 // Math Ops
 gen_unary_op!(pl_expr_sqrt,sqrt);
+gen_unary_op!(pl_expr_cbrt, cbrt);
 gen_unary_op!(pl_expr_exp,exp);
+// --- Trigonometry (三角函数) ---
+gen_unary_op!(pl_expr_sin, sin);
+gen_unary_op!(pl_expr_cos, cos);
+gen_unary_op!(pl_expr_tan, tan);
+
+gen_unary_op!(pl_expr_arcsin, arcsin);
+gen_unary_op!(pl_expr_arccos, arccos);
+gen_unary_op!(pl_expr_arctan, arctan);
+
+gen_unary_op!(pl_expr_sinh, sinh);
+gen_unary_op!(pl_expr_cosh, cosh);
+gen_unary_op!(pl_expr_tanh, tanh);
+
+gen_unary_op!(pl_expr_arcsinh, arcsinh);
+gen_unary_op!(pl_expr_arccosh, arccosh);
+gen_unary_op!(pl_expr_arctanh, arctanh);
+
+// 补充一些常用的数学函数
+gen_unary_op!(pl_expr_sign, sign); // 符号函数 (-1, 0, 1)
+gen_unary_op!(pl_expr_ceil, ceil); // 向上取整
+gen_unary_op!(pl_expr_floor, floor); // 向下取整
 
 // --- Group 4: 二元操作 ---
 gen_binary_op!(pl_expr_eq, eq); // ==

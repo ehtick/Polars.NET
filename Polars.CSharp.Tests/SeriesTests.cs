@@ -3,6 +3,7 @@
 using Apache.Arrow;
 using Apache.Arrow.Types;
 
+
 namespace Polars.CSharp.Tests;
 
 public class SeriesTests
@@ -538,35 +539,35 @@ public class SeriesTests
         Assert.Equal("c", sorted[2]);
     }
     [Fact]
-        public void Test_Series_Struct_Unnest()
-        {
-            // 1. 准备数据：Array(Int32, 2)
-            // Row 0: [1, 2]
-            // Row 1: [3, 4]
-            var data = new[] { [1, 2], new[] { 3, 4 } };
-            using var df = DataFrame.FromColumns(new { raw = data })
-                .Select(Polars.Col("raw").Cast(DataType.Array(DataType.Int32, 2)).Alias("arr"));
+    public void Test_Series_Struct_Unnest()
+    {
+        // 1. 准备数据：Array(Int32, 2)
+        // Row 0: [1, 2]
+        // Row 1: [3, 4]
+        var data = new[] { [1, 2], new[] { 3, 4 } };
+        using var df = DataFrame.FromColumns(new { raw = data })
+            .Select(Polars.Col("raw").Cast(DataType.Array(DataType.Int32, 2)).Alias("arr"));
 
-            // 2. 取出 Series
-            var arrSeries = df["arr"];
+        // 2. 取出 Series
+        var arrSeries = df["arr"];
 
-            // 3. 连招：ToStruct() -> Unnest()
-            // 先把 Array 转为 Struct Series
-            using var structSeries = arrSeries.Array.ToStruct();
-            
-            // 再把 Struct Series 炸开成 DataFrame
-            using var unnestedDf = structSeries.Struct.Unnest();
+        // 3. 连招：ToStruct() -> Unnest()
+        // 先把 Array 转为 Struct Series
+        using var structSeries = arrSeries.Array.ToStruct();
+        
+        // 再把 Struct Series 炸开成 DataFrame
+        using var unnestedDf = structSeries.Struct.Unnest();
 
-            // 4. 验证
-            // 应该有两列：field_0, field_1
-            Assert.Equal(2, unnestedDf.Width);
-            Assert.True(unnestedDf.Columns.Contains("field_0"));
-            Assert.True(unnestedDf.Columns.Contains("field_1"));
+        // 4. 验证
+        // 应该有两列：field_0, field_1
+        Assert.Equal(2, unnestedDf.Width);
+        Assert.True(unnestedDf.Columns.Contains("field_0"));
+        Assert.True(unnestedDf.Columns.Contains("field_1"));
 
-            // 验证数据
-            Assert.Equal(1, unnestedDf["field_0"][0]);
-            Assert.Equal(2, unnestedDf["field_1"][0]);
-            Assert.Equal(3, unnestedDf["field_0"][1]);
-            Assert.Equal(4, unnestedDf["field_1"][1]);
-}
+        // 验证数据
+        Assert.Equal(1, unnestedDf["field_0"][0]);
+        Assert.Equal(2, unnestedDf["field_1"][0]);
+        Assert.Equal(3, unnestedDf["field_0"][1]);
+        Assert.Equal(4, unnestedDf["field_1"][1]);
+    }
 }

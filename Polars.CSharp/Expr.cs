@@ -373,6 +373,11 @@ public class Expr : IDisposable
     public Expr Sqrt() => new(PolarsWrapper.Sqrt(CloneHandle()));
 
     /// <summary>
+    /// Calculate the cube root of the expression.
+    /// </summary>
+    public Expr Cbrt() => new(PolarsWrapper.Cbrt(CloneHandle()));
+
+    /// <summary>
     /// Calculate the power of the expression with a given exponent expression.
     /// </summary>
     public Expr Pow(Expr exponent) => new(PolarsWrapper.Pow(CloneHandle(), exponent.CloneHandle()));
@@ -393,12 +398,55 @@ public class Expr : IDisposable
     /// <param name="baseVal"></param>
     /// <returns></returns>
     public Expr Ln(double baseVal = Math.E) => new(PolarsWrapper.Log(CloneHandle(), baseVal));
+
+    // ==========================================
+    // Trigonometry (三角函数)
+    // ==========================================
+
+    /// <summary>Compute the element-wise sine.</summary>
+    public Expr Sin() => new(PolarsWrapper.Sin(CloneHandle()));
+
+    /// <summary>Compute the element-wise cosine.</summary>
+    public Expr Cos() => new(PolarsWrapper.Cos(CloneHandle()));
+
+    /// <summary>Compute the element-wise tangent.</summary>
+    public Expr Tan() => new(PolarsWrapper.Tan(CloneHandle()));
+
+    /// <summary>Compute the element-wise inverse sine.</summary>
+    public Expr ArcSin() => new(PolarsWrapper.ArcSin(CloneHandle()));
+
+    /// <summary>Compute the element-wise inverse cosine.</summary>
+    public Expr ArcCos() => new(PolarsWrapper.ArcCos(CloneHandle()));
+
+    /// <summary>Compute the element-wise inverse tangent.</summary>
+    public Expr ArcTan() => new(PolarsWrapper.ArcTan(CloneHandle()));
+
+    // Hyperbolic
+    public Expr Sinh() => new(PolarsWrapper.Sinh(CloneHandle()));
+    public Expr Cosh() => new(PolarsWrapper.Cosh(CloneHandle()));
+    public Expr Tanh() => new(PolarsWrapper.Tanh(CloneHandle()));
+
+    public Expr ArcSinh() => new(PolarsWrapper.ArcSinh(CloneHandle()));
+    public Expr ArcCosh() => new(PolarsWrapper.ArcCosh(CloneHandle()));
+    public Expr ArcTanh() => new(PolarsWrapper.ArcTanh(CloneHandle()));
+
+    // ==========================================
+    // Rounding & Sign
+    // ==========================================
     /// <summary>
     /// Round the number
     /// </summary>
     /// <param name="decimals"></param>
     /// <returns></returns>
     public Expr Round(uint decimals) => new(PolarsWrapper.Round(CloneHandle(), decimals));
+    /// <summary>Compute the element-wise sign (-1, 0, 1).</summary>
+    public Expr Sign() => new(PolarsWrapper.Sign(CloneHandle()));
+
+    /// <summary>Rounds up to the nearest integer.</summary>
+    public Expr Ceil() => new(PolarsWrapper.Ceil(CloneHandle()));
+
+    /// <summary>Rounds down to the nearest integer.</summary>
+    public Expr Floor() => new(PolarsWrapper.Floor(CloneHandle()));
 
     // ==========================================
     // Null Handling

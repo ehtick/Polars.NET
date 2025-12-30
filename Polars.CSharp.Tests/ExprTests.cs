@@ -214,6 +214,75 @@ TooShort,1990-05-20,1.60";
         // Alice 是第一行 (index 0)
         Assert.True(res.GetValue<double>(0, "sqrt_h") > 1.28 && res.GetValue<double>(0, "sqrt_h") < 1.29);
     }
+        [Fact]
+    public void Test_Trigonometry_Basic()
+    {
+        // 准备数据: [0, PI/2, PI]
+        var data = new[] { 0.0, Math.PI / 2.0, Math.PI };
+        using var df = DataFrame.FromColumns(new { theta = data });
+
+        // 计算 Sin, Cos, Tan
+        using var res = df.Select(
+            Col("theta").Sin().Alias("sin"),
+            Col("theta").Cos().Alias("cos"),
+            Col("theta").Tan().Alias("tan")
+        );
+
+        // 验证 Row 0 (theta = 0)
+        // Sin(0)=0, Cos(0)=1, Tan(0)=0
+        Assert.Equal(0.0, (double)res["sin"][0], 1e-6);
+        Assert.Equal(1.0, (double)res["cos"][0], 1e-6);
+        Assert.Equal(0.0, (double)res["tan"][0], 1e-6);
+
+        // 验证 Row 1 (theta = PI/2)
+        // Sin(PI/2)=1, Cos(PI/2)=0 (approx)
+        Assert.Equal(1.0, (double)res["sin"][1], 1e-6);
+        Assert.Equal(0.0, (double)res["cos"][1], 1e-6); // 极小值
+    }
+
+    [Fact]
+    public void Test_Trigonometry_Inverse()
+    {
+        // 准备数据: [-1, 0, 1]
+        var data = new[] { -1.0, 0.0, 1.0 };
+        using var df = DataFrame.FromColumns(new { val = data });
+
+        using var res = df.Select(
+            Col("val").ArcSin().Alias("asin"),
+            Col("val").ArcCos().Alias("acos")
+        );
+
+        // ArcSin(-1) = -PI/2
+        Assert.Equal(-Math.PI / 2, (double)res["asin"][0], 1e-6);
+        // ArcCos(1) = 0
+        Assert.Equal(0.0, (double)res["acos"][2], 1e-6);
+    }
+
+    [Fact]
+    public void Test_Rounding_And_Sign()
+    {
+        // 数据: [-1.5, 1.5, 2.0]
+        var data = new[] { -1.5, 1.5, 2.0 };
+        using var df = DataFrame.FromColumns(new { val = data });
+
+        using var res = df.Select(
+            Col("val").Ceil().Alias("ceil"),   // [-1, 2, 2]
+            Col("val").Floor().Alias("floor"), // [-2, 1, 2]
+            Col("val").Sign().Alias("sign")    // [-1, 1, 1]
+        );
+
+        // Ceil
+        Assert.Equal(-1.0, (double)res["ceil"][0]);
+        Assert.Equal(2.0, (double)res["ceil"][1]);
+
+        // Floor
+        Assert.Equal(-2.0, (double)res["floor"][0]);
+        Assert.Equal(1.0, (double)res["floor"][1]);
+
+        // Sign
+        Assert.Equal(-1, Convert.ToInt32(res["sign"][0])); // Sign 返回的可能是 Int 或 Float，视 Polars 版本
+        Assert.Equal(1, Convert.ToInt32(res["sign"][1]));
+    }  
     // ==========================================
     // String Operations
     // ==========================================

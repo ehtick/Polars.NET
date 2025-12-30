@@ -305,7 +305,27 @@ public static partial class PolarsWrapper
     // Math
     public static ExprHandle Pow(ExprHandle b, ExprHandle e) => BinaryOp(NativeBindings.pl_expr_pow, b, e);
     public static ExprHandle Sqrt(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_sqrt, e);
+    public static ExprHandle Cbrt(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_cbrt, e);
     public static ExprHandle Exp(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_exp, e);
+    public static ExprHandle Sin(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_sin,e);
+    public static ExprHandle Cos(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_cos,e);
+    public static ExprHandle Tan(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_tan,e);
+    
+    public static ExprHandle ArcSin(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_arcsin,e);
+    public static ExprHandle ArcCos(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_arccos,e);
+    public static ExprHandle ArcTan(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_arctan,e);
+
+    public static ExprHandle Sinh(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_sinh,e);
+    public static ExprHandle Cosh(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_cosh,e);
+    public static ExprHandle Tanh(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_tanh,e);
+
+    public static ExprHandle ArcSinh(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_arcsinh,e);
+    public static ExprHandle ArcCosh(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_arccosh,e);
+    public static ExprHandle ArcTanh(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_arctanh,e);
+
+    public static ExprHandle Sign(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_sign,e);
+    public static ExprHandle Ceil(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_ceil,e);
+    public static ExprHandle Floor(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_floor,e);
     public static ExprHandle Log(ExprHandle expr, double baseVal)
     {
         var h = NativeBindings.pl_expr_log(expr, baseVal);

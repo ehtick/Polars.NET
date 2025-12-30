@@ -200,10 +200,29 @@ unsafe internal partial class NativeBindings
     // Math ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_pow(ExprHandle baseExpr, ExprHandle exponent);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sqrt(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cbrt(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_exp(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_log(ExprHandle expr, double baseVal);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_round(ExprHandle expr, uint decimals);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sin(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cos(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_tan(ExprHandle expr);
+    
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_arcsin(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_arccos(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_arctan(ExprHandle expr);
+    
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sinh(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cosh(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_tanh(ExprHandle expr);
 
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_arcsinh(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_arccosh(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_arctanh(ExprHandle expr);
+
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sign(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_ceil(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_floor(ExprHandle expr);
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_is_between(ExprHandle expr, ExprHandle lower, ExprHandle upper);
 
