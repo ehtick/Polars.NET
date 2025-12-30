@@ -187,8 +187,6 @@ public static partial class PolarsWrapper
             
             // Int128 -> Decimal 转换
             // Decimal 构造函数不支持 Int128，但支持 int[] bits
-            // 简单做法：(decimal)val / 10^scale
-            // 但这样会转 double 丢精度。
             
             // 正确做法：直接构造 decimal
             // decimal 布局: flags, hi, lo, mid
@@ -381,5 +379,10 @@ public static partial class PolarsWrapper
             multithreaded, 
             maintainOrder
         ));
+    }
+    public static DataFrameHandle SeriesStructUnnest(SeriesHandle series)
+    {
+        // 这是一个只读操作，不会消耗 Series，所以只传 Handle
+        return ErrorHelper.Check(NativeBindings.pl_series_struct_unnest(series));
     }
 }

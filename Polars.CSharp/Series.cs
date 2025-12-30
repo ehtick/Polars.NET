@@ -43,6 +43,10 @@ public partial class Series : IDisposable
     /// </summary>
     public SeriesListOps List => new(this);
     /// <summary>
+    /// Access Fixed-Size List (Array) operations.
+    /// </summary>
+    public SeriesArrayOps Array => new(this);
+    /// <summary>
     /// Access struct operations.
     /// </summary>
     public SeriesStructOps Struct => new(this);
@@ -880,6 +884,16 @@ public partial class Series : IDisposable
     {
         return ApplyExpr(Polars.Col(Name).Explode());
     }
+    /// <summary>
+    /// Aggregate values into a list.
+    /// Result is a Series with 1 row containing a List of all values.
+    /// </summary>
+    public Series Implode() => ApplyExpr(Polars.Col(Name).Implode());
+    /// <summary>
+    /// Unnest a Struct column into a DataFrame.
+    /// Shortcut for <see cref="SeriesStructOps.Unnest"/>.
+    /// </summary>
+    public DataFrame Unnest() => Struct.Unnest();
     // ==========================================
     // Conversions (Arrow / DataFrame)
     // ==========================================
@@ -898,6 +912,111 @@ public partial class Series : IDisposable
     {
         var handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
         return new Series(handle);
+    }
+    // ==========================================
+    // Window & Rolling
+    // ==========================================
+    /// <summary>
+    /// Calculate the difference with the previous value (n-th lag).
+    /// </summary>
+    public Series Diff(long n = 1) => ApplyExpr(Polars.Col(Name).Diff(n));
+
+    /// <summary>
+    /// Shift values by the given number of indices.
+    /// </summary>
+    public Series Shift(long n = 1) => ApplyExpr(Polars.Col(Name).Shift(n));
+
+    /// <summary>
+    /// Check if values are between lower and upper bounds.
+    /// </summary>
+    public Series IsBetween(object lower, object upper) 
+    {
+        // 支持传入字面量，更符合直觉
+        return ApplyExpr(Polars.Col(Name).IsBetween(Expr.MakeLit(lower), Expr.MakeLit(upper)));
+    }
+    /// <summary>
+    /// Static Rolling Minimum
+    /// </summary>
+    /// <param name="windowSize"></param>
+    /// <param name="minPeriods"></param>
+    /// <returns></returns>
+    public Series RollingMin(string windowSize, int minPeriods = 1) 
+            => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods));
+    /// <summary>
+    /// Static Rolling Minimum, windowSize is timespan
+    /// </summary>
+    /// <param name="windowSize"></param>
+    /// <param name="minPeriods"></param>
+    /// <returns></returns>
+    public Series RollingMin(TimeSpan windowSize, int minPeriods = 1) 
+            => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods));
+    /// <summary>
+    /// Static Rolling Maximum
+    /// </summary>
+    /// <param name="windowSize"></param>
+    /// <param name="minPeriods"></param>
+    /// <returns></returns>
+    public Series RollingMax(string windowSize, int minPeriods = 1) 
+        => ApplyExpr(Polars.Col(Name).RollingMax(windowSize, minPeriods));
+    /// <summary>
+    /// Static Rolling Maximum
+    /// </summary>
+    /// <param name="windowSize"></param>
+    /// <param name="minPeriods"></param>
+    /// <returns></returns>
+    public Series RollingMax(TimeSpan windowSize, int minPeriods = 1) 
+        => ApplyExpr(Polars.Col(Name).RollingMax(windowSize, minPeriods));
+    /// <summary>
+    /// Static Rolling Mean
+    /// </summary>
+    /// <param name="windowSize"></param>
+    /// <param name="minPeriods"></param>
+    /// <returns></returns>
+    public Series RollingMean(string windowSize, int minPeriods = 1) 
+        => ApplyExpr(Polars.Col(Name).RollingMean(windowSize, minPeriods));
+    /// <summary>
+    /// Static Rolling Mean
+    /// </summary>
+    /// <param name="windowSize"></param>
+    /// <param name="minPeriods"></param>
+    /// <returns></returns>
+    public Series RollingMean(TimeSpan windowSize, int minPeriods = 1) 
+        => ApplyExpr(Polars.Col(Name).RollingMean(windowSize, minPeriods));
+    /// <summary>
+    /// Static Rolling Sum
+    /// </summary>
+    /// <param name="windowSize"></param>
+    /// <param name="minPeriods"></param>
+    /// <returns></returns>   
+    public Series RollingSum(string windowSize, int minPeriods = 1) 
+        => ApplyExpr(Polars.Col(Name).RollingSum(windowSize, minPeriods));
+        /// <summary>
+    /// Static Rolling Sum
+    /// </summary>
+    /// <param name="windowSize"></param>
+    /// <param name="minPeriods"></param>
+    /// <returns></returns>   
+    public Series RollingSum(TimeSpan windowSize, int minPeriods = 1) 
+        => ApplyExpr(Polars.Col(Name).RollingSum(windowSize, minPeriods));
+    // ==========================================
+    // UDF
+    // ==========================================
+    /// <summary>
+    /// Apply a custom C# function to the series (element-wise).
+    /// <para>Warning: This is slower than native expressions because it runs in the .NET runtime.</para>
+    /// </summary>
+    public Series Map<TInput, TOutput>(Func<TInput, TOutput> function, DataType outputType)
+    {
+        // 直接复用 Expr 的 Map
+        return ApplyExpr(Polars.Col(Name).Map(function, outputType));
+    }
+
+    /// <summary>
+    /// Apply a raw Arrow-to-Arrow UDF.
+    /// </summary>
+    public Series Map(Func<IArrowArray, IArrowArray> function, DataType outputType)
+    {
+        return ApplyExpr(Polars.Col(Name).Map(function, outputType));
     }
 
     // ==========================================
@@ -1300,7 +1419,107 @@ public class SeriesListOps
         return _series.ApplyBinaryExpr(other, (left, right) => left.List.Concat(right));
     }
 }
+/// <summary>
+/// Wrapper for Array (Fixed-Size List) operations on a Series.
+/// </summary>
+public class SeriesArrayOps
+{
+    private readonly Series _series;
+    internal SeriesArrayOps(Series series) { _series = series; }
 
+    // 复用 ApplyExpr 核心逻辑
+    private Series Apply(Func<Expr, Expr> op) 
+    {
+        return _series.ApplyExpr(op(Polars.Col(_series.Name)));
+    }
+
+    // --- Aggregations (聚合：返回的 Series 长度不变，但类型变为标量) ---
+    
+    /// <summary>Compute the max value of every sub-array.</summary>
+    public Series Max() => Apply(e => e.Array.Max());
+
+    /// <summary>Compute the min value of every sub-array.</summary>
+    public Series Min() => Apply(e => e.Array.Min());
+
+    /// <summary>Compute the sum of every sub-array.</summary>
+    public Series Sum() => Apply(e => e.Array.Sum());
+
+    /// <summary>Compute the mean of every sub-array.</summary>
+    public Series Mean() => Apply(e => e.Array.Mean());
+
+    /// <summary>Compute the median of every sub-array.</summary>
+    public Series Median() => Apply(e => e.Array.Median());
+
+    /// <summary>Compute the standard deviation of every sub-array.</summary>
+    public Series Std(byte ddof = 1) => Apply(e => e.Array.Std(ddof));
+
+    /// <summary>Compute the variance of every sub-array.</summary>
+    public Series Var(byte ddof = 1) => Apply(e => e.Array.Var(ddof));
+
+    // --- Boolean (布尔逻辑) ---
+
+    /// <summary>Check if any element in the sub-array is true.</summary>
+    public Series Any() => Apply(e => e.Array.Any());
+
+    /// <summary>Check if all elements in the sub-array are true.</summary>
+    public Series All() => Apply(e => e.Array.All());
+
+    // --- Sort & Search (排序与搜索) ---
+
+    /// <summary>Sort elements in every sub-array.</summary>
+    public Series Sort(bool descending = false, bool nullsLast = false, bool maintainOrder = false) 
+        => Apply(e => e.Array.Sort(descending, nullsLast, maintainOrder));
+
+    /// <summary>Reverse elements in every sub-array.</summary>
+    public Series Reverse() => Apply(e => e.Array.Reverse());
+
+    /// <summary>Get the index of the minimum value in every sub-array.</summary>
+    public Series ArgMin() => Apply(e => e.Array.ArgMin());
+
+    /// <summary>Get the index of the maximum value in every sub-array.</summary>
+    public Series ArgMax() => Apply(e => e.Array.ArgMax());
+
+    // --- Structure (结构变换) ---
+
+    /// <summary>Get element at index from every sub-array.</summary>
+    public Series Get(int index, bool nullOnOob = true) 
+        => Apply(e => e.Array.Get(index, nullOnOob));
+
+    /// <summary>Join elements with a separator.</summary>
+    public Series Join(string separator, bool ignoreNulls = true) 
+        => Apply(e => e.Array.Join(separator, ignoreNulls));
+
+    /// <summary>
+    /// Explode the array column into multiple rows.
+    /// The resulting Series will be longer than the original.
+    /// </summary>
+    public Series Explode() => Apply(e => e.Array.Explode());
+
+    /// <summary>
+    /// Convert array to struct. Useful for splitting embeddings into feature columns.
+    /// </summary>
+    public Series ToStruct() => Apply(e => e.Array.ToStruct());
+
+    /// <summary>
+    /// Cast to variable-size List.
+    /// </summary>
+    public Series ToList() => Apply(e => e.Array.ToList());
+
+    // --- Logic / Set ---
+
+    /// <summary>Check if sub-array contains a specific item.</summary>
+    public Series Contains(int item, bool nullsEqual = false) 
+        => Apply(e => e.Array.Contains(item, nullsEqual));
+    /// <summary>Check if sub-array contains a specific item.</summary>
+    public Series Contains(double item, bool nullsEqual = false) 
+        => Apply(e => e.Array.Contains(item, nullsEqual));
+    /// <summary>Check if sub-array contains a specific item.</summary>   
+    public Series Contains(Expr item, bool nullsEqual = false) 
+        => Apply(e => e.Array.Contains(item, nullsEqual));
+
+    /// <summary>Get unique elements in every sub-array.</summary>
+    public Series Unique(bool stable = false) => Apply(e => e.Array.Unique(stable));
+}
 /// <summary>
 /// Series Struct Ops Namespace
 /// </summary>
@@ -1332,5 +1551,15 @@ public class SeriesStructOps
     /// Convert struct to JSON string.
     /// </summary>
     public Series JsonEncode() => Apply(e => e.Struct.JsonEncode());
+    /// <summary>
+    /// Unnest the struct column into a DataFrame.
+    /// Each field of the struct becomes a separate column.
+    /// </summary>
+    public DataFrame Unnest()
+    {
+        // 调用底层 Wrapper
+        var dfHandle = PolarsWrapper.SeriesStructUnnest(_series.Handle);
+        return new DataFrame(dfHandle);
+    }
 
 }

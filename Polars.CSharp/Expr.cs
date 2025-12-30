@@ -15,7 +15,7 @@ public class Expr : IDisposable
     {
         Handle = handle;
     }
-    private static Expr MakeLit(object val)
+    internal static Expr MakeLit(object val)
     {
         // 1. 如果传进来的已经是 Expr，直接返回（防止套娃）
         if (val is Expr e) return e;
@@ -791,7 +791,7 @@ public class Expr : IDisposable
     /// <summary>
     /// Aggregate values into a list.
     /// </summary>
-    public Expr Implode() => new Expr(PolarsWrapper.Implode(CloneHandle()));
+    public Expr Implode() => new(PolarsWrapper.Implode(CloneHandle()));
     // ==========================================
     // Namespaces
     // ==========================================
@@ -1540,10 +1540,6 @@ public class ArrayOps
         return new Expr(PolarsWrapper.ArrayUnique(h, stable));
     }
 }
-
-
-
-
 
 // ==========================================
 // StructOps Helper Class

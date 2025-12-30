@@ -2,7 +2,7 @@ use polars::prelude::*;
 use polars_arrow::array::{Array, ListArray};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use crate::types::{DataTypeContext, SeriesContext};
+use crate::types::{DataFrameContext, DataTypeContext, SeriesContext};
 use crate::utils::*;
 
 // ==========================================
@@ -837,5 +837,23 @@ pub extern "C" fn pl_series_sort(
         let out = ctx.series.sort(options)?;
         
         Ok(Box::into_raw(Box::new(SeriesContext { series: out })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_struct_unnest(series_ptr: *mut SeriesContext) -> *mut DataFrameContext {
+    ffi_try!({
+        let ctx = unsafe { &*series_ptr };
+        let s = &ctx.series;
+
+        // 1. 尝试转换为 StructChunked
+        // 如果不是 Struct 类型，这里会报错
+        let ca = s.struct_()?;
+
+        // 2. 调用 unnest
+        // 这会把 Struct 的字段展开成一个 DataFrame
+        let df = ca.clone().unnest();
+
+        Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })
 }
