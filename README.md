@@ -4,6 +4,21 @@
 
 Polars.NET is not just a binding; it is a production-grade data engineering toolkit for the .NET ecosystem. It brings the lightning-fast performance of the Polars Rust engine to C# and F#, while adding unique, enterprise-ready features missing from official bindings—like seamless Database Streaming, Zero-Copy Interop, and AI-native Vector support.
 
+## Why Polars.NET exists
+
+The .NET ecosystem deserves a first-class, production-grade DataFrame engine —
+not a thin wrapper, not a toy binding, and not a Python dependency in disguise.
+
+Polars.NET is designed for engineers who care about:
+
+- predictable performance
+
+- strong typing
+
+- streaming data at scale
+
+- and long-term system evolution
+
 ## Why Polars.NET?
 
 1. ⚡ Unmatched Performance
@@ -119,6 +134,17 @@ pipeline.SinkTo((IDataReader reader) =>
     bulk.WriteToServer(reader);
 });
 ```
+┌──────────────┐     Arrow Batches     ┌────────────┐
+│  Database    │ ───────────────────▶ │ Polars Core│
+│ (IDataReader)│                       │   (Rust)   │
+└─────▲────────┘ ◀─────────────────── │            │
+      │        Zero-Copy Stream        └─────▲──────┘
+      │                                      │
+      │                                      │ FFI
+┌─────┴──────┐                               │
+│   .NET API │ ◀────────────────────────────┘
+│ (C# / F#)  │
+└────────────┘
 
 2. 🧠 Vector / Embedding Operations
 
@@ -178,7 +204,7 @@ We are actively working on detailed API documentation.
 
     - Advanced Recipes (Time Series, Vector Search)
 
-## Contributing
+## 🤝 Contributing
 
 Contributions are welcome! Whether it's adding new expression mappings, improving documentation, or optimizing the FFI layer.
 
