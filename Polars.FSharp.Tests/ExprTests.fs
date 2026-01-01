@@ -612,7 +612,7 @@ type ``String Logic Tests`` () =
         let lf = 
             DataFrame.ofRecords(data).Lazy()
                 .WithColumns([
-                    pl.col("Vals").Cast(DataType.Array(DataType.String, 3UL))
+                    pl.col("Vals").Cast(Array(String, 3UL))
                 ])
 
         let res = 
@@ -629,12 +629,8 @@ type ``String Logic Tests`` () =
         // 原始: ["3", "1", "2"]
         
         // 1. Sort Descending -> "3,2,1"
-        let sorted = res.Cell<Collections.Generic.List<string>>("Sorted_Str",0)
-        Assert.NotNull sorted
-        Assert.Equal(3, sorted.Count)
-        Assert.Equal("3", sorted.[0])
-        Assert.Equal("2", sorted.[1])
-        Assert.Equal("1", sorted.[2])
+        let sorted = res.CellList<string>("Sorted_Str",0)
+        Assert.Equal<string list>(["3"; "2"; "1"], sorted)
         
         // 3. Join -> "3-1-2"
         Assert.Equal("3-1-2", res.Cell<string>("Joined",0))
@@ -643,9 +639,8 @@ type ``String Logic Tests`` () =
         // 原始: ["1", "1", "2"]
         
         // 2. Unique -> "1,2"
-        let unique = res.Cell<Collections.Generic.List<string>>("Unique_Str",1)
-        Assert.NotNull unique
-        Assert.Equal(2, unique.Count)
+        let unique = res.CellList<string>("Unique_Str",1)
+        Assert.Equal<string list>(["1"; "2"],unique)
 
     [<Fact>]
     member _.``Array: Search & Get`` () =

@@ -234,6 +234,7 @@ and DataType =
                 // 因为 NewStructType 内部将这些类型转成了 C 数组传给 Rust
                 // Rust 那边复制完数据后，这边的 Handle 就没用了
                 for h in typeHandles do h.Dispose()
+
         | Array(innerType,width) ->
             use innerHandle = innerType.CreateHandle()
             PolarsWrapper.NewArrayType (innerHandle,width)

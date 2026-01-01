@@ -565,10 +565,24 @@ type Series(handle: SeriesHandle) =
             else
                 // 复杂类型走通用通道
                 use slicedHandle = PolarsWrapper.SeriesSlice(handle, index, 1L)
-                use dfHandle = PolarsWrapper.SeriesToFrame(slicedHandle)
-                use batch = ArrowFfiBridge.ExportDataFrame(dfHandle)
+                use dfHandle = PolarsWrapper.SeriesToFrame slicedHandle
+                use batch = ArrowFfiBridge.ExportDataFrame dfHandle
                 let column = batch.Column(0)
                 ArrowReader.ReadItem<'T>(column, 0)
+    /// <summary>
+    /// Get a value as an F# List ('T list).
+    /// Automatically handles conversion from .NET List (ResizeArray).
+    /// </summary>
+    member this.GetList<'Elem>(index: int64) : 'Elem list =
+        // 1. 先作为 ResizeArray (.NET List) 取出
+        let netList = this.GetValue<ResizeArray<'Elem>> index
+        
+        // 2. 这里的 netList 可能为 null (如果原数据是 null)
+        if isNull netList then 
+            [] // 或者 raise，取决于你的空值策略
+        else 
+            // 3. 转为 F# List
+            netList |> List.ofSeq
                 
     /// <summary>
     /// [Indexer] Access value at specific index as boxed object.
@@ -1233,6 +1247,12 @@ and DataFrame(handle: DataFrameHandle) =
     member this.IsInfinite (col:string) =
         use s = this.Column col
         s.IsInfinite()
+    /// <summary>
+        /// Helper to get a cell value as an F# List directly.
+        /// </summary>
+    member this.CellList<'T>(colName: string,row:int) : 'T list =
+        let s = this.Column colName
+        s.GetList<'T>(int64 row)
     // ==========================================
     // Indexers (Syntax Sugar)
     // ==========================================
