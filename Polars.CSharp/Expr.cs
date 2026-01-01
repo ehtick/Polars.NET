@@ -506,7 +506,7 @@ public class Expr : IDisposable
     public Expr TopKBy(int k, Expr[] by, bool[] reverse)
     {
         if (by.Length != reverse.Length)
-            throw new ArgumentException("The length of 'by' and 'descending' must match.");
+            throw new ArgumentException("The length of 'by' and 'reverse' must match.");
 
         var byHandles = System.Array.ConvertAll(by, e => e.CloneHandle());
         
@@ -516,7 +516,7 @@ public class Expr : IDisposable
     public Expr BottomKBy(int k, Expr[] by, bool[] reverse)
     {
         if (by.Length != reverse.Length)
-            throw new ArgumentException("The length of 'by' and 'descending' must match.");
+            throw new ArgumentException("The length of 'by' and 'reverse' must match.");
 
         var byHandles = System.Array.ConvertAll(by, e => e.CloneHandle());
         

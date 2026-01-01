@@ -186,7 +186,7 @@ type ``Complex Query Tests`` () =
             (pl.col "raw_nums").Str.Split(" ")
                 .List.Sort(true) // Descending
                 .List.First()
-                .Alias("max_char")
+                .Alias "max_char"
         let res = 
             lf
             // 1. Struct 测试: 把 score1, score2 打包成 "scores_struct"

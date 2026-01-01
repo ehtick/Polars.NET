@@ -1235,8 +1235,6 @@ TooShort,1990-05-20,1.60";
             // 验证结果包含 1 和 2
             Assert.Contains(3, list_bottom);
             Assert.Contains(4, list_bottom);
-
-
         }
     }
 }

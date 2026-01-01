@@ -57,7 +57,7 @@ namespace Polars.NET.Core
         public static string? ToPolarsDuration(this TimeSpan? ts) 
             => DurationFormatter.ToPolarsString(ts);
     }
-        public static class ReflectionHelper
+    public static class ReflectionHelper
     {
         // 从 IEnumerable<T> 或 T[] 中提取 T
         public static Type GetEnumerableElementType(Type collectionType)

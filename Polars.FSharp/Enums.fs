@@ -24,7 +24,7 @@ and DataType =
     | Binary
     | Categorical
     | Decimal of precision: int option * scale: int option
-    | Unknown | SameAsInput | Null | List of DataType
+    | Unknown | SameAsInput | Null | List of DataType | Array of DataType * width: uint64
     | Struct of Field list
     member this.Code : int =
         match this with
@@ -51,12 +51,13 @@ and DataType =
         | List _ -> 20
         | Categorical -> 21
         | Decimal _ -> 22
+        | Array _ -> 23
     // 转换 helper
     static member FromHandle (handle: DataTypeHandle) : DataType =
         // 1. 获取类型枚举值 (Kind)
         let kind = PolarsWrapper.GetDataTypeKind handle
 
-    // 2. 匹配 Kind (假设 Rust 端的枚举顺序如下，请根据实际情况校对)
+        // 2. 匹配 Kind (假设 Rust 端的枚举顺序如下，请根据实际情况校对)
         match kind with
         | 1 -> Boolean
         | 2 -> Int8
@@ -124,18 +125,24 @@ and DataType =
         // List (递归)
         | 20 -> 
             // 获取内部类型的 Handle
-            use innerHandle = PolarsWrapper.GetListInnerType handle
+            use innerHandle = PolarsWrapper.GetInnerType handle
             let innerType = DataType.FromHandle innerHandle
             List innerType
 
         | 21 -> Categorical
 
         // Decimal
-        | 22 -> // 假设 22 是 Decimal
+        | 22 -> 
             let mutable prec = 0
             let mutable scale = 0
             PolarsWrapper.GetDecimalInfo(handle, &prec, &scale)
             Decimal(Some prec,Some scale)
+
+        | 23 -> 
+            use innerHandle = PolarsWrapper.GetInnerType handle
+            let width = PolarsWrapper.DataTypeGetArrayWidth handle;
+            let innerType = DataType.FromHandle innerHandle
+            Array(innerType,width)
 
         | _ -> Unknown
 
@@ -227,6 +234,9 @@ and DataType =
                 // 因为 NewStructType 内部将这些类型转成了 C 数组传给 Rust
                 // Rust 那边复制完数据后，这边的 Handle 就没用了
                 for h in typeHandles do h.Dispose()
+        | Array(innerType,width) ->
+            use innerHandle = innerType.CreateHandle()
+            PolarsWrapper.NewArrayType (innerHandle,width)
 
         | Unknown -> PolarsWrapper.NewPrimitiveType 0
         

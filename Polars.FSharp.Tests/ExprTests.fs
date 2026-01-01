@@ -566,3 +566,118 @@ type ``String Logic Tests`` () =
         ])
         
         Assert.False(res.Cell<bool>("Date", 0))
+    [<Fact>]
+    member _.``Array: Basic Aggregation & Operations`` () =
+        // 1. 准备数据: List<Int>
+        // Row 0: [1, 2, 3]
+        // Row 1: [4, 5, 6]
+        let data = [
+            {| Vals = [1; 2; 3] |}
+            {| Vals = [4; 5; 6] |}
+        ]
+        let df = DataFrame.ofRecords data
+        
+        // 2. 转换为 Array(width=3)
+        // 必须先 Cast 成 FixedSizeList 才能使用 .Arr 命名空间
+        // 注意：Array 在 Polars 中对应 DataType.Array(inner, width)
+        let lf = 
+            df.Lazy()
+              .WithColumns([
+                  pl.col("Vals").Cast(DataType.Array(DataType.Int32, 3UL))
+              ])
+
+        // 3. 测试 Arr.Sum, Min, Max
+        let res = 
+            lf.Select([
+                pl.col("Vals").Array.Sum().Alias "Sum"
+                pl.col("Vals").Array.Min().Alias "Min"
+                pl.col("Vals").Array.Max().Alias "Max"
+                pl.col("Vals").Array.Mean().Alias "Mean"
+            ]).Collect()
+
+        // Row 0: Sum=6, Min=1, Max=3, Mean=2.0
+        Assert.Equal(6, res.Cell<int>("Sum",0))
+        Assert.Equal(1, res.Cell<int>("Min",0))
+        Assert.Equal(2.0, res.Cell<double>("Mean",0))
+        
+        // Row 1: Sum=15
+        Assert.Equal(15, res.Cell<int>("Sum",1))
+
+    [<Fact>]
+    member _.``Array: Set Operations & Sort`` () =
+        let data = [
+            {| Vals = ["3"; "1"; "2"] |}
+            {| Vals = ["1"; "1"; "2"] |}
+        ]
+        let lf = 
+            DataFrame.ofRecords(data).Lazy()
+                .WithColumns([
+                    pl.col("Vals").Cast(DataType.Array(DataType.String, 3UL))
+                ])
+
+        let res = 
+            lf.Select([
+                // Sort Descending
+                pl.col("Vals").Array.Sort(descending=true).Alias "Sorted_Str"
+                // Unique
+                pl.col("Vals").Array.Unique().List.Sort().Alias "Unique_Str"
+                // Join
+                pl.col("Vals").Array.Join("-").Alias "Joined"
+            ]).Collect()
+
+        // --- 验证 Row 0 ---
+        // 原始: ["3", "1", "2"]
+        
+        // 1. Sort Descending -> "3,2,1"
+        let sorted = res.Cell<Collections.Generic.List<string>>("Sorted_Str",0)
+        Assert.NotNull sorted
+        Assert.Equal(3, sorted.Count)
+        Assert.Equal("3", sorted.[0])
+        Assert.Equal("2", sorted.[1])
+        Assert.Equal("1", sorted.[2])
+        
+        // 3. Join -> "3-1-2"
+        Assert.Equal("3-1-2", res.Cell<string>("Joined",0))
+
+        // --- 验证 Row 1 ---
+        // 原始: ["1", "1", "2"]
+        
+        // 2. Unique -> "1,2"
+        let unique = res.Cell<Collections.Generic.List<string>>("Unique_Str",1)
+        Assert.NotNull unique
+        Assert.Equal(2, unique.Count)
+
+    [<Fact>]
+    member _.``Array: Search & Get`` () =
+        let data = [
+            {| Vals = [10; 20; 30] |}
+        ]
+        let lf = 
+            DataFrame.ofRecords(data).Lazy()
+                .WithColumns([
+                    pl.col("Vals").Cast(DataType.Array(DataType.Int32, 3UL))
+                ])
+
+        let res = 
+            lf.Select([
+                // Get by Index
+                pl.col("Vals").Array.Get(1).Alias "Get_1"
+                // Contains
+                pl.col("Vals").Array.Contains(20).Alias "Has_20"
+                pl.col("Vals").Array.Contains(99).Alias "Has_99"
+                // ArgMax
+                pl.col("Vals").Array.ArgMax().Alias "ArgMax"
+            ]).Collect()
+
+        // Get(1) -> 20
+        Assert.Equal(20, res.Cell<int>("Get_1",0))
+        
+        // Contains
+        Assert.True(res.Cell<bool>("Has_20",0))
+        Assert.False(res.Cell<bool>("Has_99",0))
+        
+        // ArgMax -> 2 (index of 30)
+        // ArgMax 返回的是 UInt32? 还是 Int? 通常是 UInt32 或 Int64，视 Polars 版本
+        // 我们用 Convert 宽容处理
+        let argMax = res.Cell<int>("ArgMax",0)
+        Assert.Equal(2, argMax)

@@ -608,6 +608,7 @@ type Series(handle: SeriesHandle) =
         // 复杂类型：走通用路径，返回 obj (可能是 F# List, Map 等)
         | DataType.List _ -> this.GetValue<obj> idx
         | DataType.Struct _ -> this.GetValue<obj> idx
+        | DataType.Array _ -> this.GetValue<obj> idx
         
         | _ -> failwithf "Indexer not fully implemented for type: %A" this.DataType
     /// <summary>
