@@ -638,7 +638,58 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     {
         return Join(other, [leftOn], [rightOn], how);
     }
-    
+    /// <summary>
+    /// Perform an As-Of Join (time-series join).
+    /// <para>
+    /// This is an Eager operation that executes via the Lazy engine.
+    /// The keys must be sorted.
+    /// </para>
+    /// </summary>
+    public DataFrame JoinAsOf(
+        DataFrame other, 
+        Expr leftOn, Expr rightOn, 
+        string? tolerance = null,
+        string strategy = "backward",
+        Expr[]? leftBy = null,
+        Expr[]? rightBy = null)
+    {
+        // 核心逻辑: Eager(this/other) -> Lazy -> JoinAsOf -> Collect -> Eager
+        // 注意：我们必须把 'other' 也转成 LazyFrame
+        return this.Lazy()
+            .JoinAsOf(
+                other.Lazy(), 
+                leftOn, 
+                rightOn, 
+                tolerance, 
+                strategy, 
+                leftBy, 
+                rightBy
+            )
+            .Collect();
+    }
+
+    /// <summary>
+    /// Perform an As-Of Join with tolerance as timespan (time-series join).
+    /// </summary>
+    public DataFrame JoinAsOf(
+        DataFrame other, 
+        Expr leftOn, Expr rightOn, 
+        TimeSpan tolerance,
+        string strategy = "backward",
+        Expr[]? leftBy = null,
+        Expr[]? rightBy = null)
+    {
+        // 转发给字符串版本的 JoinAsOf
+        return JoinAsOf(
+            other,
+            leftOn,
+            rightOn,
+            DurationFormatter.ToPolarsString(tolerance),
+            strategy,
+            leftBy,
+            rightBy
+        );
+    }
     /// <summary>
     /// Concatenate multiple DataFrames
     /// </summary>

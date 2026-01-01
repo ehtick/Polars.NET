@@ -723,4 +723,41 @@ B,5";
         Assert.Contains(6, sums);
         Assert.Contains(4, sums);
     }
+    [Fact]
+    public void Test_DataFrame_JoinAsOf_Eager()
+    {
+        // 准备数据
+        // Left: [10:00, 10:02], val_l = [1, 2]
+        var datesL = new[] 
+        { 
+            new DateTime(2023, 1, 1, 10, 0, 0),
+            new DateTime(2023, 1, 1, 10, 2, 0)
+        };
+        using var dfLeft = DataFrame.FromColumns(new { ts = datesL, val_l = new[] { 1, 2 } });
+
+        // Right: [09:59, 10:00, 10:01, 10:03], val_r = [10, 20, 30, 40]
+        var datesR = new[] 
+        { 
+            new DateTime(2023, 1, 1, 9, 59, 0),
+            new DateTime(2023, 1, 1, 10, 0, 0), // Match for 10:00
+            new DateTime(2023, 1, 1, 10, 1, 0), // Match for 10:02 (backward)
+            new DateTime(2023, 1, 1, 10, 3, 0)
+        };
+        using var dfRight = DataFrame.FromColumns(new { ts = datesR, val_r = new[] { 10, 20, 30, 40 } });
+
+        // 执行 JoinAsOf (Backward strategy)
+        using var res = dfLeft.JoinAsOf(
+            dfRight,
+            leftOn: Col("ts"),
+            rightOn: Col("ts"),
+            strategy: "backward"
+        );
+
+        // 验证
+        Assert.Equal(2, res.Height);
+        
+        var rVals = res["val_r"].ToArray<int>();
+        Assert.Equal(20, rVals[0]); // 10:00 matched 10:00
+        Assert.Equal(30, rVals[1]); // 10:02 matched 10:01 (closest previous)
+    }
 }
