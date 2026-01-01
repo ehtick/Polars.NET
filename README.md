@@ -1,81 +1,193 @@
 # Polars.NET
 
-🚀 **Blazingly fast DataFrames for .NET (F# & C#)**, powered by Rust Polars.
+🚀 **High-Performance, AI-Ready DataFrames for .NET, powered by Rust & Apache Arrow.**
 
-Polars.NET brings the power of the [Polars](https://pola.rs/) library to the .NET ecosystem using high-performance Zero-Copy FFI (Arrow Interface).
+Polars.NET is not just a binding; it is a production-grade data engineering toolkit for the .NET ecosystem. It brings the lightning-fast performance of the Polars Rust engine to C# and F#, while adding unique, enterprise-ready features missing from official bindings—like seamless Database Streaming, Zero-Copy Interop, and AI-native Vector support.
 
-## Features
+## Why Polars.NET?
 
-* **⚡ High Performance**: Written in Rust, exposed via C API, wrapped in .NET SafeHandles.
-* **🧠 Lazy Evaluation**: Build query plans and execute them efficiently with query optimization.
-* **🛡️ Type Safe**: Idiomatic F# API with strong typing for joins, aggregations, and expressions.
-* **🔗 Interop**: Seamless conversion between Polars DataFrame, Apache Arrow RecordBatch, and F# Records.
-* **📊 Time Series**: First-class support for `join_asof`, rolling windows, and temporal operations.
-* **🧩 SQL Support**: Run SQL queries directly on your DataFrames.
+1. ⚡ Unmatched Performance
+- Rust Core: Built on the blazing fast Polars query engine (written in Rust).
 
-## Quick Start (F#)
+- Lazy Evaluation: Intelligent query optimizer with predicate pushdown, projection pushdown, and parallel execution.
 
-```fsharp
-open PolarsFSharp
+- Zero-Copy: Built on Apache Arrow, enabling zero-copy data transfer between C#, Python, and databases.
 
-// 1. Scan a CSV file (Lazy)
-let lf = Polars.scanCsv "data.csv" None
+2. 🛡️ Enterprise & AI Ready
+- Database Streaming (Unique):
 
-// 2. Build a query
-let df = 
-    lf
-    |> Polars.filterLazy (Polars.col "age" .> Polars.lit 18)
-    |> Polars.groupByLazy 
-        [ Polars.col "department" ]
-        [ 
-            Polars.col("salary").Mean().Alias("avg_salary")
-            Polars.count().Alias("count")
-        ]
-    |> Polars.sortLazy (Polars.col "avg_salary") true
-    |> Polars.collect
+   - Read: Stream millions of rows from any IDataReader (SQL Server, Postgres, SQLite) directly into Polars without loading everything into RAM.
 
-// 3. Show results
-df |> Polars.show
+   - Write: Stream processed data back to databases via IBulkCopy interfaces using our unique ArrowToDbStream adapter.
+
+- AI / Vector Support: First-class support for FixedSizeList (Array) columns. Perform high-performance vector operations (Dot Product, Cosine Similarity, Aggregations) directly in the engine—perfect for RAG and Embedding workflows.
+
+3. 🧶 .NET Native Experience
+
+    - Fluent API: Intuitive, LINQ-like API design for C#.
+
+    - Functional API: Idiomatic, pipe-forward (|>) API for F# lovers.
+
+    - Type Safety: Leveraging .NET's strong type system to prevent runtime errors.
+
+## 📦 Installation
+
+```Bash
+dotnet add package Polars.NET
 ```
-## Advanced Examples
+## 🏁 Quick Start
 
-Time Series Join (As-Of Join)
-Match trades with the most recent quote before the trade time.
+### C# Example
+
+```C#
+using Polars.CSharp;
+using static Polars.CSharp.Polars; // For Col(), Lit() helpers
+
+// 1. Create a DataFrame
+var data = new[] {
+    new { Name = "Alice", Age = 25, Dept = "IT" },
+    new { Name = "Bob", Age = 30, Dept = "HR" },
+    new { Name = "Charlie", Age = 35, Dept = "IT" }
+};
+using var df = DataFrame.From(data);
+
+// 2. Filter & Aggregate
+using var res = df
+    .Filter(Col("Age") > 28)
+    .GroupBy("Dept")
+    .Agg(
+        Col("Age").Mean().Alias("AvgAge"),
+        Col("Name").Count().Alias("Count")
+    )
+    .Sort("AvgAge", descending: true);
+
+// 3. Output
+res.Show();
+```
+### F# Example
 
 ```F#
 
-// lfTrades: time, price
-// lfQuotes: time, bid, ask
+open Polars.FSharp
 
+// 1. Scan CSV (Lazy)
+let lf = LazyFrame.ScanCsv "users.csv"
+
+// 2. Transform Pipeline
 let res = 
-    lfTrades
-    |> Polars.joinAsOf lfQuotes 
-        (Polars.col "time") (Polars.col "time") // Join keys
-        [] [] // Group by (optional)
-        (Some "backward") // Strategy
-        (Some "2m")       // Tolerance: 2 minutes
-    |> Polars.collect
+    lf
+    |> pl.filterLazy (pl.col "age" .> pl.lit 28)
+    |> pl.groupByLazy 
+        [ pl.col "dept" ]
+        [ 
+            pl.col("age").Mean().Alias "AvgAge" 
+            pl.col("name").Count().Alias "Count"
+        ]
+    |> pl.collect
+    |> pl.sort ("AvgAge", false)
+
+// 3. Output
+res.Show()
+
 ```
-## UDF (User Defined Functions)
-Run custom C# logic on columns with Zero-Copy overhead.
+## 🔥 Killer Features (The "Missing" Parts)
+
+1. 🌊 Streaming ETL: Database -> Polars -> Database
+
+Process millions of rows with constant memory usage using our unique streaming adapters.
+
+```C#
+// 1. Source: Stream from Database (e.g., SqlDataReader)
+// We scan the DB via a factory, pulling 50k rows at a time into Apache Arrow batches.
+var lf = LazyFrame.ScanDb(() => mySqlCommand.ExecuteReader(), batchSize: 50_000);
+
+// 2. Transform: Lazy Evaluation (Rust Engine)
+// No data is loaded yet. We are building a query plan.
+var pipeline = lf
+    .Filter(Col("Region") == Lit("US"))
+    .WithColumn((Col("Amount") * 1.08).Alias("TaxedAmount"))
+    .Select("OrderId", "TaxedAmount", "OrderDate");
+
+// 3. Sink: Stream back to Database (e.g., SqlBulkCopy)
+// We expose the processed stream as an IDataReader implementation!
+pipeline.SinkTo((IDataReader reader) => 
+{
+    // This reader pulls data from the Rust engine on-demand.
+    // Perfect for SqlBulkCopy.WriteToServer(reader)
+    using var bulk = new SqlBulkCopy(connectionString);
+    bulk.DestinationTableName = "ProcessedOrders";
+    bulk.WriteToServer(reader);
+});
+```
+
+2. 🧠 Vector / Embedding Operations
+
+Native support for Array (Fixed-Size List) types, enabling high-performance AI workflows.
+
+```C#
+// Scenario: RAG - Calculate Cosine Similarity between Query and Document Embeddings
+using var df = DataFrame.FromColumns(new { 
+    DocId = new[] { 1, 2 },
+    Embedding = new[] { new[] {0.1, 0.2}, new[] {0.5, 0.8} } // Array<Float64, 2>
+});
+
+var queryVec = new[] { 0.1, 0.2 }; // Query Embedding
+
+var res = df.Lazy()
+    .Select(
+        Col("DocId"),
+        // Calculate Dot Product & Similarity efficiently
+        (Col("Embedding") * Lit(queryVec)).Array.Sum().Alias("Score")
+    )
+    .TopK(1, "Score") // Get Top 1 match
+    .Collect();
+```
+
+3. 🕒 Time Series Intelligence
+
+Robust support for time-series data, including As-Of Joins and Dynamic Rolling Windows.
+
+```C#
+// As-Of Join: Match trades to the nearest quote within 2 seconds
+var trades = dfTrades.Lazy(); // timestamp, ticker, price
+var quotes = dfQuotes.Lazy(); // timestamp, ticker, bid
+
+var enriched = trades.JoinAsOf(
+    quotes, 
+    leftOn: Col("timestamp"), 
+    rightOn: Col("timestamp"),
+    by: [Col("ticker")],      // Match on same Ticker
+    tolerance: "2s",          // Look back max 2 seconds
+    strategy: "backward"      // Find previous quote
+);
+```
 
 ```F#
-
-open PolarsFSharp.Udf
-
-// Define a simple function
-let addOne (x: int) = x + 1
-
-// Apply it to a column
-lf 
-|> Polars.withColumn (
-    Polars.col "value"
-    |> fun e -> e.Map(mapInt32 addOne) // Auto-vectorized via Arrow
-)
+// F# Dynamic Rolling Window
+lf
+|> pl.groupByDynamic "time" (TimeSpan.FromHours 1.0)
+    [ pl.col("value").Mean().Alias("hourly_mean") ]
+|> pl.collect
 ```
-## Architecture
-Polars.NET.Core: C# P/Invoke bindings (LibraryImport) handling memory safety (GC & Rust Drop).
 
-PolarsFSharp: F# functional wrapper providing DSL and type safety.
+## 🗺️ Roadmap & Documentation
 
-Rust Core: A thin shim exposing Polars functionality via C ABI.
+We are actively working on detailed API documentation.
+
+    - Auto-generated API Reference (HTML)
+
+    - Advanced Recipes (Time Series, Vector Search)
+
+## Contributing
+
+Contributions are welcome! Whether it's adding new expression mappings, improving documentation, or optimizing the FFI layer.
+
+1. Fork the repo.
+
+2. Create your feature branch.
+
+3. Submit a Pull Request.
+
+## 📄 License
+
+MIT License. See LICENSE for details.

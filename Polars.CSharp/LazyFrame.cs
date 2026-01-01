@@ -674,7 +674,39 @@ public class LazyFrame : IDisposable
 
     /// <summary>
     /// Perform an As-Of Join (time-series join).
+    /// <para>
+    /// This is similar to a left-join except that we match on nearest key rather than equal keys.
+    /// The keys must be sorted.
+    /// </para>
     /// </summary>
+    /// <param name="other">The LazyFrame to join with.</param>
+    /// <param name="leftOn">Join key of the left LazyFrame.</param>
+    /// <param name="rightOn">Join key of the right LazyFrame.</param>
+    /// <param name="tolerance">
+    /// Numeric tolerance (e.g. "2", "-1") or temporal tolerance (e.g. "2h", "10s").
+    /// Matches that are further away than this tolerance are discarded.
+    /// </param>
+    /// <param name="strategy">
+    /// The strategy to determine which value is "nearest".
+    /// <list type="bullet">
+    /// <item>
+    ///     <term>backward</term>
+    ///     <description>(Default) Search for the last row in the right frame where <c>right_on &lt;= left_on</c>. 
+    ///     Equivalent to "last known value".</description>
+    /// </item>
+    /// <item>
+    ///     <term>forward</term>
+    ///     <description>Search for the first row in the right frame where <c>right_on &gt;= left_on</c>.
+    ///     Equivalent to "next available value".</description>
+    /// </item>
+    /// <item>
+    ///     <term>nearest</term>
+    ///     <description>Search for the row in the right frame where the absolute difference <c>|left_on - right_on|</c> is smallest.</description>
+    /// </item>
+    /// </list>
+    /// </param>
+    /// <param name="leftBy">Join on these columns exactly (equivalence join) before performing as-of join.</param>
+    /// <param name="rightBy">Join on these columns exactly (equivalence join) before performing as-of join.</param>
     public LazyFrame JoinAsOf(
         LazyFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -699,16 +731,19 @@ public class LazyFrame : IDisposable
         ));
     }
     /// <summary>
-    /// Perform an As-Of Join with tolerance as timespan (time-series join)
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/summary"/>
     /// </summary>
-    /// <param name="other"></param>
-    /// <param name="leftOn"></param>
-    /// <param name="rightOn"></param>
-    /// <param name="tolerance"></param>
-    /// <param name="strategy"></param>
-    /// <param name="leftBy"></param>
-    /// <param name="rightBy"></param>
-    /// <returns></returns>
+    /// <param name="other"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='other']"/></param>
+    /// <param name="leftOn"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='leftOn']"/></param>
+    /// <param name="rightOn"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='rightOn']"/></param>
+    /// <param name="tolerance">
+    /// The temporal tolerance as a <see cref="TimeSpan"/>. 
+    /// Matches that are further away than this duration are discarded.
+    /// </param>
+    /// <param name="strategy"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='strategy']"/></param>
+    /// <param name="leftBy"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='leftBy']"/></param>
+    /// <param name="rightBy"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='rightBy']"/></param>
+    /// <returns><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/returns"/></returns>
     public LazyFrame JoinAsOf(
         LazyFrame other, 
         Expr leftOn, Expr rightOn, 
