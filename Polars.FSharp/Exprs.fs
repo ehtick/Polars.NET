@@ -37,8 +37,16 @@ and Expr(handle: ExprHandle) =
         let arr = List.toArray names
         new Expr(PolarsWrapper.Cols arr)
 
-    // --- Helpers ---
+    // --- Rounding & Sign ---
     member this.Round(decimals: int) = new Expr(PolarsWrapper.Round(this.CloneHandle(), uint decimals))
+    /// <summary> Compute the element-wise sign. </summary>
+    member this.Sign() = new Expr(PolarsWrapper.Sign(this.CloneHandle()))
+
+    /// <summary> Round up to the nearest integer. </summary>
+    member this.Ceil() = new Expr(PolarsWrapper.Ceil(this.CloneHandle()))
+
+    /// <summary> Round down to the nearest integer. </summary>
+    member this.Floor() = new Expr(PolarsWrapper.Floor(this.CloneHandle()))
 
     // --- Operators ---
     /// <summary> Greater than. </summary>
@@ -90,6 +98,7 @@ and Expr(handle: ExprHandle) =
     // Math
     member this.Abs() = new Expr(PolarsWrapper.Abs (this.CloneHandle()))
     member this.Sqrt() = new Expr(PolarsWrapper.Sqrt(this.CloneHandle()))
+    member this.Cbrt() = new Expr(PolarsWrapper.Cbrt(this.CloneHandle()))
     member this.Exp() = new Expr(PolarsWrapper.Exp(this.CloneHandle()))
     member this.Pow(exponent: Expr) = 
         new Expr(PolarsWrapper.Pow(this.CloneHandle(), exponent.CloneHandle()))
@@ -127,6 +136,29 @@ and Expr(handle: ExprHandle) =
         new Expr(PolarsWrapper.Rem(this.CloneHandle(), other.CloneHandle()))
     member this.Rem(other: Expr) = 
         this.Mod other
+        
+    // ==========================================
+    // Math: Trigonometry (三角函数)
+    // ==========================================
+    member this.Sin() = new Expr(PolarsWrapper.Sin(this.CloneHandle()))
+    member this.Cos() = new Expr(PolarsWrapper.Cos(this.CloneHandle()))
+    member this.Tan() = new Expr(PolarsWrapper.Tan(this.CloneHandle()))
+    
+    member this.ArcSin() = new Expr(PolarsWrapper.ArcSin(this.CloneHandle()))
+    member this.ArcCos() = new Expr(PolarsWrapper.ArcCos(this.CloneHandle()))
+    member this.ArcTan() = new Expr(PolarsWrapper.ArcTan(this.CloneHandle()))
+
+    // ==========================================
+    // Math: Hyperbolic (双曲函数)
+    // ==========================================
+
+    member this.Sinh() = new Expr(PolarsWrapper.Sinh(this.CloneHandle()))
+    member this.Cosh() = new Expr(PolarsWrapper.Cosh(this.CloneHandle()))
+    member this.Tanh() = new Expr(PolarsWrapper.Tanh(this.CloneHandle()))
+    
+    member this.ArcSinh() = new Expr(PolarsWrapper.ArcSinh(this.CloneHandle()))
+    member this.ArcCosh() = new Expr(PolarsWrapper.ArcCosh(this.CloneHandle()))
+    member this.ArcTanh() = new Expr(PolarsWrapper.ArcTanh(this.CloneHandle()))
     // Stats
     /// <summary>
     /// Count the number of valid (non-null) values.

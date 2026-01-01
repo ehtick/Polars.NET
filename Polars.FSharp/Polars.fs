@@ -138,11 +138,31 @@ module pl =
     let pow (exponent: Expr) (baseExpr: Expr) = baseExpr.Pow exponent
     let sqrt (e: Expr) = e.Sqrt()
     let exp (e: Expr) = e.Exp()
-
     let inline truediv (other: Expr) (e: Expr) = e.Truediv other
     let inline floorDiv (other: Expr) (e: Expr) = e.FloorDiv other
     let inline mod_ (other: Expr) (e: Expr) = e.Mod other
 
+    let inline cbrt (e: Expr) = e.Cbrt()
+    let inline sign (e: Expr) = e.Sign()
+    let inline ceil (e: Expr) = e.Ceil()
+    let inline floor (e: Expr) = e.Floor()
+
+    // Trig
+    let inline sin (e: Expr) = e.Sin()
+    let inline cos (e: Expr) = e.Cos()
+    let inline tan (e: Expr) = e.Tan()
+    let inline arcsin (e: Expr) = e.ArcSin()
+    let inline arccos (e: Expr) = e.ArcCos()
+    let inline arctan (e: Expr) = e.ArcTan()
+    
+    // Hyperbolic
+    let inline sinh (e: Expr) = e.Sinh()
+    let inline cosh (e: Expr) = e.Cosh()
+    let inline tanh (e: Expr) = e.Tanh()
+    let inline arcsinh (e: Expr) = e.ArcSinh()
+    let inline arccosh (e: Expr) = e.ArcCosh()
+    let inline arctanh (e: Expr) = e.ArcTanh()
+    
     // --- Lazy API ---
 
     /// <summary> Explain the LazyFrame execution plan. </summary>

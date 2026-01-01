@@ -676,3 +676,56 @@ type ``String Logic Tests`` () =
         // 我们用 Convert 宽容处理
         let argMax = res.Cell<int>("ArgMax",0)
         Assert.Equal(2, argMax)
+    [<Fact>]
+    member _.``Math: Trig and Rounding`` () =
+        // 准备数据
+        // 0.0, PI/2, PI
+        let data = [
+            {| Val = 0.0 |}
+            {| Val = Math.PI / 2.0 |}
+            {| Val = Math.PI |}
+            {| Val = -1.5 |} // 用于测试 Sign, Ceil, Floor
+        ]
+        
+        let lf = DataFrame.ofRecords(data).Lazy()
+
+        let res = 
+            lf.Select([
+                // Trig
+                pl.col("Val").Sin().Alias "Sin"
+                pl.col("Val").Cos().Alias "Cos"
+                
+                // Rounding
+                pl.col("Val").Ceil().Alias "Ceil"
+                pl.col("Val").Floor().Alias "Floor"
+                
+                // Sign
+                pl.col("Val").Sign().Alias "Sign"
+                
+                // Cbrt (Cube Root of 8 = 2)
+                pl.lit(8.0).Cbrt().Alias "Cbrt_8"
+            ]).Collect()
+
+        // 1. 验证 Sin(PI/2) = 1.0
+        // Row 1 is PI/2
+        Assert.Equal(1.0, res.Cell<double>("Sin",1), 5) // 精度 5 位小数
+
+        // 2. 验证 Cos(PI) = -1.0
+        // Row 2 is PI
+        Assert.Equal(-1.0, res.Cell<double>("Cos",2), 5)
+
+        // 3. 验证 Rounding (-1.5)
+        // Row 3
+        Assert.Equal(-1.0, res.Cell<double>("Ceil",3))  // Ceil(-1.5) -> -1.0
+        Assert.Equal(-2.0, res.Cell<double>("Floor",3)) // Floor(-1.5) -> -2.0
+        
+        // 4. 验证 Sign
+        // Row 0 (0.0) -> 0
+        Assert.Equal(0.0, res.Cell<double>("Sign",0))
+        // Row 1 (Positive) -> 1
+        Assert.Equal(1.0, res.Cell<double>("Sign",1))
+        // Row 3 (Negative) -> -1
+        Assert.Equal(-1.0, res.Cell<double>("Sign",3))
+
+        // 5. 验证 Cbrt
+        Assert.Equal(2.0, res.Cell<double>("Cbrt_8",0))
