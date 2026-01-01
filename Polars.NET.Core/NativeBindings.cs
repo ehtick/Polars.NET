@@ -166,6 +166,30 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lt(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lt_eq(ExprHandle l, ExprHandle r);
 
+    //Top-k & Bottom-k
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_top_k(ExprHandle expr, uint k);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_bottom_k(ExprHandle expr, uint k);
+
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_top_k_by(
+        ExprHandle expr, 
+        uint k, 
+        IntPtr[] by_ptrs,   // 接收 Expr 指针数组
+        UIntPtr by_len,
+        bool* descending,   // [优化] 使用 unsafe 指针接收 bool 数组
+        UIntPtr desc_len
+    );
+
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_bottom_k_by(
+        ExprHandle expr, 
+        uint k, 
+        IntPtr[] by_ptrs,
+        UIntPtr by_len,
+        bool* descending, 
+        UIntPtr desc_len
+    );
+
     // 算术
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_add(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sub(ExprHandle l, ExprHandle r);
@@ -316,7 +340,7 @@ unsafe internal partial class NativeBindings
         string every,
         string period,
         string offset,
-        int label, // [修改] bool -> int
+        int label,
         [MarshalAs(UnmanagedType.I1)] bool includeBoundaries,
         int closedWindow,
         int startBy,
@@ -343,7 +367,7 @@ unsafe internal partial class NativeBindings
         UIntPtr descendingLen,
         bool* nullsLast,
         UIntPtr nullsLastLen,
-        [MarshalAs(UnmanagedType.I1)] bool maintainOrder
+        [MarshalAs(UnmanagedType.U1)] bool maintainOrder
     );
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_explode(DataFrameHandle df, IntPtr[] exprs, UIntPtr len);
@@ -450,6 +474,25 @@ unsafe internal partial class NativeBindings
         bool* nullsLast,
         UIntPtr nullsLastLen,
         [MarshalAs(UnmanagedType.I1)] bool maintainOrder
+    );
+    [LibraryImport(LibName)]
+    public static partial LazyFrameHandle pl_lazyframe_top_k(
+        LazyFrameHandle lf,
+        uint k,
+        IntPtr[] by_ptrs,
+        UIntPtr by_len,
+        bool* reverse,
+        UIntPtr reverse_len
+    );
+
+    [LibraryImport(LibName)]
+    public static partial LazyFrameHandle pl_lazyframe_bottom_k(
+        LazyFrameHandle lf,
+        uint k,
+        IntPtr[] by_ptrs,
+        UIntPtr by_len,
+        bool* reverse,
+        UIntPtr reverse_len
     );
     [LibraryImport(LibName)] 
     public static partial LazyFrameHandle pl_lazy_groupby_agg(

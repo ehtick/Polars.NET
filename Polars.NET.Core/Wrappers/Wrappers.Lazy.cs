@@ -111,6 +111,47 @@ public static partial class PolarsWrapper
             }
         }
     }
+    public static LazyFrameHandle LazyFrameTopK(LazyFrameHandle lf, uint k, ExprHandle[] by, bool[] reverse)
+    {
+        var byPtrs = HandlesToPtrs(by);
+        unsafe
+        {
+            fixed (bool* rPtr = reverse)
+            {
+                var h = NativeBindings.pl_lazyframe_top_k(
+                    lf, 
+                    k, 
+                    byPtrs, 
+                    (UIntPtr)byPtrs.Length, 
+                    rPtr, 
+                    (UIntPtr)reverse.Length
+                );
+                lf.TransferOwnership();
+                return ErrorHelper.Check(h);
+            }
+        }
+    }
+
+    public static LazyFrameHandle LazyFrameBottomK(LazyFrameHandle lf, uint k, ExprHandle[] by, bool[] reverse)
+    {
+        var byPtrs = HandlesToPtrs(by);
+        unsafe
+        {
+            fixed (bool* rPtr = reverse)
+            {
+                var h = NativeBindings.pl_lazyframe_bottom_k(
+                    lf, 
+                    k, 
+                    byPtrs, 
+                    (UIntPtr)byPtrs.Length, 
+                    rPtr, 
+                    (UIntPtr)reverse.Length
+                );
+                lf.TransferOwnership();
+                return ErrorHelper.Check(h);
+            }
+        }
+    }
     public static LazyFrameHandle LazyFrameUnnest(LazyFrameHandle lf, SelectorHandle selector)
     {
         // 这里的逻辑变得非常简单，因为复杂的列名处理已经移交给了 Selector

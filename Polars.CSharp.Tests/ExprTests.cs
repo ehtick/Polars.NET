@@ -1167,5 +1167,76 @@ TooShort,1990-05-20,1.60";
             Assert.Equal(1.1, vec[0], 1);
             Assert.Equal(2.2, vec[1], 1);
         }
+        [Fact]
+        public void Test_Expr_TopK()
+        {
+            // 无序数据
+            var data = new[] { 10, 5, 8, 100, 1, 99 };
+            using var df = DataFrame.FromColumns(new { val = data });
+
+            // TopK(2) 应该是 [100, 99] (顺序不保证，或者是有序的？Polars TopK 返回通常是降序)
+            using var top = df.Select(Col("val").TopK(2).Alias("top"));
+            
+            // BottomK(2) 应该是 [1, 5]
+            using var bottom = df.Select(Col("val").BottomK(2).Alias("bottom"));
+
+            // 验证 Top
+            Assert.Equal(2, top.Height);
+            // Polars TopK 返回通常是有序的，但我们检查集合包含关系最稳妥
+            var topList = top["top"].ToArray<int>();
+            Assert.Contains(100, topList);
+            Assert.Contains(99, topList);
+
+            // 验证 Bottom
+            var bottomList = bottom["bottom"].ToArray<int>();
+            Assert.Contains(1, bottomList);
+            Assert.Contains(5, bottomList);
+        }
+        [Fact]
+        public void Test_Expr_TopKBy_MultiColumn()
+        {
+            // 准备数据：
+            // Group: [A, A, B, B]
+            // Value: [1, 2, 3, 4]
+            // Score: [10, 20, 10, 20]
+            
+            var group = new[] { "A", "A", "B", "B" };
+            var val = new[] { 1, 2, 3, 4 };
+            var score = new[] { 10, 20, 10, 20 };
+
+            using var df = DataFrame.FromColumns(new { group, val, score });
+            
+            using var res_topk = df.Select(
+                Col("val").TopKBy(
+                    k: 2, 
+                    by: [Col("group"), Col("score")], 
+                    reverse: [true, false] // Group 降序, Score 升序
+                ).Alias("top_k")
+            );
+
+            Assert.Equal(2, res_topk.Height);
+            var list_top = res_topk["top_k"].ToArray<int>();
+            
+            // 验证结果包含 1 和 2
+            Assert.Contains(1, list_top);
+            Assert.Contains(2, list_top);
+
+            using var res_bottomk = df.Select(
+                Col("val").BottomKBy(
+                    k: 2,
+                    by: [Col("group"), Col("score")], 
+                    reverse: [true, false] //
+                ).Alias("bottom_k")
+            );
+
+            Assert.Equal(2, res_bottomk.Height);
+            var list_bottom = res_bottomk["bottom_k"].ToArray<int>();
+            
+            // 验证结果包含 1 和 2
+            Assert.Contains(3, list_bottom);
+            Assert.Contains(4, list_bottom);
+
+
+        }
     }
 }

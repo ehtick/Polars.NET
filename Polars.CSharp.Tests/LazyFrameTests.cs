@@ -619,4 +619,30 @@ HR,50";
         Assert.Equal(1, (int)res["field_0"][0]);
         Assert.Equal(3, (int)res["other_0"][0]);
     }
+    [Fact]
+    public void Test_LazyFrame_TopK_BottomK()
+    {
+        var data = new[] { 10, 5, 8, 100, 1 };
+        using var df = DataFrame.FromColumns(new { val = data });
+
+        // 1. 测试 TopK
+        using var top = df.Lazy()
+            .TopK(2, "val") // 取最大的2个: 100, 10
+            .Collect();
+
+        Assert.Equal(2, top.Height);
+        var topVals = top["val"].ToArray<int>();
+        Assert.Contains(100, topVals);
+        Assert.Contains(10, topVals);
+
+        // 2. 测试 BottomK
+        using var bottom = df.Lazy()
+            .BottomK(2, "val") // 取最小的2个: 1, 5
+            .Collect();
+
+        Assert.Equal(2, bottom.Height);
+        var bottomVals = bottom["val"].ToArray<int>();
+        Assert.Contains(1, bottomVals);
+        Assert.Contains(5, bottomVals);
+    }
 }

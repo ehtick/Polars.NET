@@ -1560,3 +1560,98 @@ pub extern "C" fn pl_expr_fill_nan(
         Ok(Box::into_raw(Box::new(ExprContext { inner: out })))
     })
 }
+
+// --- TopK / BottomK ---
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_top_k(expr_ptr: *mut ExprContext, k: u32) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        // Polars: self.top_k(lit(k))
+        let new_expr = ctx.inner.top_k(lit(k));
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_bottom_k(expr_ptr: *mut ExprContext, k: u32) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        // Polars: self.bottom_k(lit(k))
+        let new_expr = ctx.inner.bottom_k(lit(k));
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_top_k_by(
+    expr_ptr: *mut ExprContext, 
+    k: u32, 
+    by_ptrs: *const *mut ExprContext, // Expr 指针数组
+    by_len: usize,
+    descending_ptr: *const bool,      // bool 数组
+    desc_len: usize
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
+        // 1. 处理 by_exprs (消费所有权)
+        let mut by_exprs = Vec::with_capacity(by_len);
+        if by_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(by_ptrs, by_len) };
+            for &p in slice {
+                // 这里的关键是 Box::from_raw，我们接管了 C# 传来的 Expr 所有权
+                let e = unsafe { Box::from_raw(p) };
+                by_exprs.push(e.inner);
+            }
+        }
+
+        // 2. 处理 descending (复制)
+        let mut descending = Vec::with_capacity(desc_len);
+        if desc_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(descending_ptr, desc_len) };
+            descending.extend_from_slice(slice);
+        }
+
+        // 3. 调用 top_k_by
+        let new_expr = ctx.inner.top_k_by(lit(k), by_exprs, descending);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_bottom_k_by(
+    expr_ptr: *mut ExprContext, 
+    k: u32, 
+    by_ptrs: *const *mut ExprContext, 
+    by_len: usize,
+    descending_ptr: *const bool, 
+    desc_len: usize
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
+        // 1. 处理 by_exprs
+        let mut by_exprs = Vec::with_capacity(by_len);
+        if by_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(by_ptrs, by_len) };
+            for &p in slice {
+                let e = unsafe { Box::from_raw(p) };
+                by_exprs.push(e.inner);
+            }
+        }
+
+        // 2. 处理 descending
+        let mut descending = Vec::with_capacity(desc_len);
+        if desc_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(descending_ptr, desc_len) };
+            descending.extend_from_slice(slice);
+        }
+
+        // 3. 调用 bottom_k_by
+        let new_expr = ctx.inner.bottom_k_by(lit(k), by_exprs, descending);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}

@@ -860,7 +860,18 @@ public partial class Series : IDisposable
     /// Note: This is different from FillNull. It only handles IEEE 754 NaN.
     /// </summary>
     public Series FillNan(object value) => ApplyExpr(Polars.Col(Name).FillNan(value));
+    // ==========================================
+    // Top-K & Bottom-K
+    // ==========================================
+    /// <summary>
+    /// Get the top k values.
+    /// </summary>
+    public Series TopK(int k) => ApplyExpr(Polars.Col(Name).TopK(k));
 
+    /// <summary>
+    /// Get the bottom k values.
+    /// </summary>
+    public Series BottomK(int k) => ApplyExpr(Polars.Col(Name).BottomK(k));
     // ==========================================
     // Float Checks
     // ==========================================

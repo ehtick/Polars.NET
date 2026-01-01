@@ -147,6 +147,98 @@ pub extern "C" fn pl_lazyframe_sort(
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: res_lf })))
     })
 }
+
+fn build_sort_options(descending: Vec<bool>) -> SortMultipleOptions {
+    let len = descending.len();
+    SortMultipleOptions {
+        descending,
+        // 根据源码，TopK/BottomK 倾向于把 Null 放到最后，这样 Slice(0, k) 就能取到非空值
+        nulls_last: vec![true; len], 
+        multithreaded: true,
+        maintain_order: false,
+        limit:None
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_top_k(
+    lf_ptr: *mut LazyFrameContext,
+    k: u32,
+    by_ptrs: *const *mut ExprContext,
+    by_len: usize,
+    reverse_ptr: *const bool, // 对应 C# 的 reverse 参数
+    reverse_len: usize
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(lf_ptr) };
+        
+        // 1. 提取 Exprs
+        let mut by_exprs = Vec::with_capacity(by_len);
+        if by_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(by_ptrs, by_len) };
+            for &p in slice {
+                let e = unsafe { Box::from_raw(p) };
+                by_exprs.push(e.inner);
+            }
+        }
+
+        // 2. 提取 reverse (descending) flags
+        let mut reverse = Vec::with_capacity(reverse_len);
+        if reverse_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(reverse_ptr, reverse_len) };
+            reverse.extend_from_slice(slice);
+        }
+
+        // 3. 构建 Options
+        let options = build_sort_options(reverse);
+
+        // 4. 调用 top_k
+        // Polars 的 top_k 内部会自动处理 reverse 逻辑 (with_order_reversed)
+        // 我们只需要传入用户期望的排序方向即可
+        let new_lf = ctx.inner.top_k(k, by_exprs, options);
+        
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_bottom_k(
+    lf_ptr: *mut LazyFrameContext,
+    k: u32,
+    by_ptrs: *const *mut ExprContext,
+    by_len: usize,
+    reverse_ptr: *const bool,
+    reverse_len: usize
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(lf_ptr) };
+        
+        // 1. 提取 Exprs
+        let mut by_exprs = Vec::with_capacity(by_len);
+        if by_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(by_ptrs, by_len) };
+            for &p in slice {
+                let e = unsafe { Box::from_raw(p) };
+                by_exprs.push(e.inner);
+            }
+        }
+
+        // 2. 提取 reverse flags
+        let mut reverse = Vec::with_capacity(reverse_len);
+        if reverse_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(reverse_ptr, reverse_len) };
+            reverse.extend_from_slice(slice);
+        }
+
+        // 3. 构建 Options
+        let options = build_sort_options(reverse);
+
+        // 4. 调用 bottom_k
+        let new_lf = ctx.inner.bottom_k(k, by_exprs, options);
+        
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
+    })
+}
 // ==========================================
 // GroupBy
 // ==========================================

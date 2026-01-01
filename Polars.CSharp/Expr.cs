@@ -490,6 +490,39 @@ public class Expr : IDisposable
         return new Expr(PolarsWrapper.FillNan(CloneHandle(), MakeLit(value).Handle));
     }
     // ==========================================
+    // Top-K & Bottom-K
+    // ==========================================
+    /// <summary>
+    /// Get the top k largest values.
+    /// <para>This is much faster than Sort().Head(k) for large datasets.</para>
+    /// </summary>
+    public Expr TopK(int k) => new(PolarsWrapper.TopK(CloneHandle(), (uint)k));
+
+    /// <summary>
+    /// Get the bottom k smallest values.
+    /// <para>This is much faster than Sort().Tail(k) for large datasets.</para>
+    /// </summary>
+    public Expr BottomK(int k) => new(PolarsWrapper.BottomK(CloneHandle(), (uint)k));
+    public Expr TopKBy(int k, Expr[] by, bool[] reverse)
+    {
+        if (by.Length != reverse.Length)
+            throw new ArgumentException("The length of 'by' and 'descending' must match.");
+
+        var byHandles = System.Array.ConvertAll(by, e => e.CloneHandle());
+        
+        return new Expr(PolarsWrapper.TopKBy(CloneHandle(), (uint)k, byHandles, reverse));
+    }
+
+    public Expr BottomKBy(int k, Expr[] by, bool[] reverse)
+    {
+        if (by.Length != reverse.Length)
+            throw new ArgumentException("The length of 'by' and 'descending' must match.");
+
+        var byHandles = System.Array.ConvertAll(by, e => e.CloneHandle());
+        
+        return new Expr(PolarsWrapper.BottomKBy(CloneHandle(), (uint)k, byHandles, reverse));
+    }
+    // ==========================================
     // Unique and Duplicated
     // ==========================================
     /// <summary>

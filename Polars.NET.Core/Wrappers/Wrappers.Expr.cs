@@ -278,6 +278,71 @@ public static partial class PolarsWrapper
     public static ExprHandle Or(ExprHandle l, ExprHandle r) => BinaryOp(NativeBindings.pl_expr_or, l, r);
     public static ExprHandle Not(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_not, e);
     public static ExprHandle Xor(ExprHandle l, ExprHandle r) => BinaryOp(NativeBindings.pl_expr_xor, l, r);
+    // Top-K & Bottom-K
+    public static ExprHandle TopK(ExprHandle e, uint k) 
+    {
+        var h = NativeBindings.pl_expr_top_k(e, k);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle BottomK(ExprHandle e, uint k) 
+    {
+        var h = NativeBindings.pl_expr_bottom_k(e, k);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }    
+    public static ExprHandle TopKBy(ExprHandle expr, uint k, ExprHandle[] by, bool[] descending)
+    {
+        // 1. 转换并移交所有权 (Move)
+        // 使用你的 HandlesToPtrs 方法，它会调用 TransferOwnership()
+        // 这一步之后，C# 端的 by 数组里的 handle 已经失效 (SetHandleAsInvalid)，
+        // Rust 侧负责这些指针的 Drop。
+        var byPtrs = HandlesToPtrs(by);
+
+        unsafe
+        {
+            // 2. 锁定 bool 数组
+            fixed (bool* descPtr = descending)
+            {
+                // 3. 调用 Native
+                var h = NativeBindings.pl_expr_top_k_by(
+                    expr, 
+                    k, 
+                    byPtrs, 
+                    (UIntPtr)byPtrs.Length, 
+                    descPtr, 
+                    (UIntPtr)descending.Length
+                );
+                expr.TransferOwnership();
+                return ErrorHelper.Check(h);
+            }
+        }
+    }
+
+    public static ExprHandle BottomKBy(ExprHandle expr, uint k, ExprHandle[] by, bool[] descending)
+    {
+        // 1. 移交所有权
+        var byPtrs = HandlesToPtrs(by);
+
+        unsafe
+        {
+            // 2. 锁定 bool 数组
+            fixed (bool* descPtr = descending)
+            {
+                // 3. 调用 Native
+                var h = NativeBindings.pl_expr_bottom_k_by(
+                    expr, 
+                    k, 
+                    byPtrs, 
+                    (UIntPtr)byPtrs.Length, 
+                    descPtr, 
+                    (UIntPtr)descending.Length
+                );
+                expr.TransferOwnership();
+                return ErrorHelper.Check(h);
+            }
+        }
+    }
 
     // Null Handling
     public static ExprHandle FillNull(ExprHandle expr, ExprHandle fillValue) 
