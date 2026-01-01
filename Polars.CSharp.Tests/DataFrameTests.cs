@@ -680,4 +680,18 @@ B,5";
         Assert.Equal(5, sorted["B"][2]);
         Assert.Null(sorted["B"][3]);
     }
+    [Fact]
+    public void Test_DataFrame_TopK_Eager()
+    {
+        var data = new[] { 1, 100, 50, 2 };
+        using var df = DataFrame.FromColumns(new { val = data });
+
+        // 直接在 DataFrame 上调用 TopK
+        using var top = df.TopK(2, "val");
+
+        Assert.Equal(2, top.Height);
+        var arr = top["val"].ToArray<int>();
+        Assert.Contains(100, arr);
+        Assert.Contains(50, arr);
+    }
 }

@@ -437,6 +437,73 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         
         return new DataFrame(h);
     }
+    // ==========================================
+    // TopK / BottomK (Eager Shortcuts)
+    // ==========================================
+
+    /// <summary>
+    /// Get the top k rows according to the given expressions.
+    /// <para>This selects the largest values.</para>
+    /// </summary>
+    public DataFrame TopK(int k, Expr[] by, bool[] reverse)
+    {
+        // 核心逻辑：Lazy -> TopK -> Collect
+        // 注意：Collect() 会执行计算并返回新的 DataFrame
+        return Lazy()
+            .TopK(k, by, reverse)
+            .Collect();
+    }
+
+    /// <summary>
+    /// Get the top k rows according to a single expression.
+    /// </summary>
+    public DataFrame TopK(int k, Expr by, bool reverse = false)
+    {
+        return Lazy()
+            .TopK(k, by, reverse)
+            .Collect();
+    }
+
+    /// <summary>
+    /// Get the top k rows according to a column name.
+    /// </summary>
+    public DataFrame TopK(int k, string colName, bool reverse = false)
+    {
+        return Lazy()
+            .TopK(k, colName, reverse)
+            .Collect();
+    }
+
+    /// <summary>
+    /// Get the bottom k rows according to the given expressions.
+    /// <para>This selects the smallest values.</para>
+    /// </summary>
+    public DataFrame BottomK(int k, Expr[] by, bool[] reverse)
+    {
+        return Lazy()
+            .BottomK(k, by, reverse)
+            .Collect();
+    }
+
+    /// <summary>
+    /// Get the bottom k rows according to a single expression.
+    /// </summary>
+    public DataFrame BottomK(int k, Expr by, bool reverse = false)
+    {
+        return Lazy()
+            .BottomK(k, by, reverse)
+            .Collect();
+    }
+
+    /// <summary>
+    /// Get the bottom k rows according to a column name.
+    /// </summary>
+    public DataFrame BottomK(int k, string colName, bool reverse = false)
+    {
+        return Lazy()
+            .BottomK(k, colName, reverse)
+            .Collect();
+    }
     /// <summary>
     /// Return head lines from a DataFrame
     /// </summary>
