@@ -134,6 +134,7 @@ pipeline.SinkTo((IDataReader reader) =>
     bulk.WriteToServer(reader);
 });
 ```
+```
 ┌──────────────┐     Arrow Batches     ┌────────────┐
 │  Database    │ ───────────────────▶ │ Polars Core│
 │ (IDataReader)│                       │   (Rust)   │
@@ -145,6 +146,7 @@ pipeline.SinkTo((IDataReader reader) =>
 │   .NET API │ ◀────────────────────────────┘
 │ (C# / F#)  │
 └────────────┘
+```
 
 2. 🧠 Vector / Embedding Operations
 
