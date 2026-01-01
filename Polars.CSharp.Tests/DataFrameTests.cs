@@ -694,4 +694,33 @@ B,5";
         Assert.Contains(100, arr);
         Assert.Contains(50, arr);
     }
+    [Fact]
+    public void Test_DataFrame_GroupByDynamic()
+    {
+        // 准备时间序列数据
+        var dates = new[]
+        {
+            new DateTime(2023, 1, 1, 10, 0, 0),
+            new DateTime(2023, 1, 1, 10, 10, 0),
+            new DateTime(2023, 1, 1, 10, 20, 0),
+            new DateTime(2023, 1, 1, 11, 0, 0) // 下一个小时
+        };
+        var values = new[] { 1, 2, 3, 4 };
+
+        using var df = DataFrame.FromColumns(new { ts = dates, val = values });
+
+        // 按 1小时 滚动，计算 sum
+        using var res = df.GroupByDynamic("ts", TimeSpan.FromHours(1))
+            .Agg(Col("val").Sum());
+
+        // 预期结果：
+        // 10:00:00 -> [1, 2, 3] -> Sum = 6
+        // 11:00:00 -> [4]       -> Sum = 4
+        
+        Assert.Equal(2, res.Height);
+        
+        var sums = res["val"].ToArray<int>();
+        Assert.Contains(6, sums);
+        Assert.Contains(4, sums);
+    }
 }

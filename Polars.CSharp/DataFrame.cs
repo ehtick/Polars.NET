@@ -672,6 +672,37 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         var exprs = columns.Select(Polars.Col).ToArray();
         return GroupBy(exprs);
     }
+    /// <summary>
+    /// Group by dynamic windows based on a time index.
+    /// <para>
+    /// This is an Eager operation that executes via the Lazy engine for performance.
+    /// </para>
+    /// </summary>
+    public DynamicGroupBy GroupByDynamic(
+        string indexColumn,
+        TimeSpan every,
+        TimeSpan? period = null,
+        TimeSpan? offset = null,
+        Expr[]? by = null,
+        Label label = Label.Left,
+        bool includeBoundaries = false,
+        ClosedWindow closedWindow = ClosedWindow.Left,
+        StartBy startBy = StartBy.WindowBound
+    )
+    {
+        return new DynamicGroupBy(
+            this,
+            indexColumn,
+            every,
+            period,
+            offset,
+            by,
+            label,
+            includeBoundaries,
+            closedWindow,
+            startBy
+        );
+    }
 
     // ==========================================
     // Pivot / Unpivot
