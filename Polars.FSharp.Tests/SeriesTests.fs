@@ -340,3 +340,73 @@ type ``Series Tests`` () =
         // 验证: [1, 99]
         let l0 = sRes.GetList<int> 0
         Assert.Equal<int list>([1; 99], l0)
+    [<Fact>]
+    member _.``Series: Array Aggregations`` () =
+        // 1. 准备数据并转换为 Array 类型
+        let data = [
+            {| Vals = [1; 2; 3] |}
+            {| Vals = [4; 5; 6] |}
+        ]
+        // 必须先在 DataFrame 层面 Cast 为 Array(Int32, 3)
+        let df = 
+            DataFrame.ofRecords(data)
+                .WithColumns([
+                    pl.col("Vals").Cast(DataType.Array(DataType.Int32, 3UL))
+                ])
+        
+        // 2. 提取 Series (此时它已经是 Array 类型了)
+        let s = df.Column "Vals"
+
+        // 3. 测试 Sum
+        // Row 0: 1+2+3=6
+        // Row 1: 4+5+6=15
+        let sSum = s.Array.Sum()
+        Assert.Equal(6, sSum.GetValue<int> 0)
+        Assert.Equal(15, sSum.GetValue<int> 1)
+
+        // 4. 测试 Min
+        let sMin = s.Array.Min()
+        Assert.Equal(1, sMin.GetValue<int> 0)
+        Assert.Equal(4, sMin.GetValue<int> 1)
+
+    [<Fact>]
+    member _.``Series: Array Operations (Sort & Get)`` () =
+        let data = [
+            {| Vals = [3; 1; 2] |}
+        ]
+        let df = 
+            DataFrame.ofRecords(data)
+                .WithColumns([
+                    pl.col("Vals").Cast(DataType.Array(DataType.Int32, 3UL))
+                ])
+        
+        let s = df.Column "Vals"
+
+        // 1. Sort -> [1, 2, 3]
+        // Series.Array.Sort 返回的是一个新的 Series
+        let sSorted = s.Array.Sort()
+        
+        // 验证: 取出 List 对比
+        let l0 = sSorted.GetList<int>(0)
+        Assert.Equal<int list>([1; 2; 3], l0)
+
+        // 2. Get(Index=1) -> 1 (原始数据是 [3, 1, 2])
+        let sGet = s.Array.Get(1)
+        Assert.Equal(1, sGet.GetValue<int> 0)
+
+    [<Fact>]
+    member _.``Series: Array Join (String)`` () =
+        let data = [
+            {| Vals = ["a"; "b"; "c"] |}
+        ]
+        let df = 
+            DataFrame.ofRecords(data)
+                .WithColumns([
+                    pl.col("Vals").Cast(DataType.Array(DataType.String, 3UL))
+                ])
+        
+        let s = df.Column "Vals"
+
+        // Join -> "a-b-c"
+        let sJoined = s.Array.Join "-"
+        Assert.Equal("a-b-c", sJoined.GetValue<string> 0)
