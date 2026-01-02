@@ -3,6 +3,7 @@ namespace Polars.FSharp.Tests
 open Xunit
 open Polars.FSharp
 open Apache.Arrow
+open System
 
 type ``Series Tests`` () =
 
@@ -119,7 +120,7 @@ type ``Series Tests`` () =
         
         // 2. String -> Decimal (Precision=10, Scale=2)
         // Polars 解析字符串 "4.56" -> 456 (int128) -> 正确
-        use sDec = s.Cast(Decimal(Some 10,Some 2))
+        use sDec = s.Cast(DataType.Decimal(Some 10,Some 2))
         
         // 3. 验证
         let arrow = sDec.ToArrow()
@@ -169,3 +170,51 @@ type ``Series Tests`` () =
         let maskNotNull = s.IsNotNull()
         Assert.Equal(Some true, maskNotNull.Bool(0))
         Assert.Equal(Some false, maskNotNull.Bool(1))
+    [<Fact>]
+    member _.``Series: Dt Extraction`` () =
+        // 2023-01-01 10:30:00
+        let dt = DateTime(2023, 1, 1, 10, 30, 0)
+        let s = Series.create("dates", [dt])
+
+        // 验证 Year
+        let sYear = s.Dt.Year()
+        Assert.Equal(2023, sYear.GetValue<int> 0)
+
+        // 验证 Month
+        let sMonth = s.Dt.Month()
+        Assert.Equal(1, sMonth.GetValue<int> 0)
+
+        // 验证 Hour
+        let sHour = s.Dt.Hour()
+        Assert.Equal(10, sHour.GetValue<int> 0)
+
+    [<Fact>]
+    member _.``Series: Dt Manipulation (Offset & Truncate)`` () =
+        let dt = DateTime(2023, 1, 1, 10, 30, 45)
+        let s = Series.create("dates", [dt])
+
+        // Truncate to 1h -> 10:00:00
+        let sTrunc = s.Dt.Truncate("1h")
+        let valTrunc = sTrunc.GetValue<DateTime>(0)
+        Assert.Equal(DateTime(2023, 1, 1, 10, 0, 0), valTrunc)
+
+        // Offset by 1d -> 2023-01-02
+        let sOffset = s.Dt.OffsetBy("1d")
+        let valOffset = sOffset.GetValue<DateTime>(0)
+        Assert.Equal(DateTime(2023, 1, 2, 10, 30, 45), valOffset)
+
+    [<Fact>]
+    member _.``Series: Dt Business Days`` () =
+        // 2023-01-06 (周五)
+        let d = DateOnly(2023, 1, 6)
+        let s = Series.create("dates", [d])
+
+        // Add 1 Business Day -> Mon 2023-01-09
+        let sNextBiz = s.Dt.AddBusinessDays(1)
+        let valNext = sNextBiz.GetValue<DateOnly>(0)
+        
+        Assert.Equal(DateOnly(2023, 1, 9), valNext)
+
+        // Is Business Day
+        let sIsBiz = s.Dt.IsBusinessDay()
+        Assert.True(sIsBiz.GetValue<bool>(0))

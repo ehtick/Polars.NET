@@ -33,7 +33,7 @@ type Series(handle: SeriesHandle) =
     /// Helper: Wrap this Series in a DataFrame, run an Expr, and extract the result.
     /// This allows Series to use the full power of the Expression engine.
     /// </summary>
-    member private this.ApplyExpr(expr: Expr) : Series =
+    member internal this.ApplyExpr(expr: Expr) : Series =
         // 1. 临时包装成 DataFrame
         // SeriesToFrame 会创建一个单列的 DataFrame
         // 使用 use 确保这个临时 DataFrame 被释放 (Handle 引用计数 -1)
@@ -46,7 +46,9 @@ type Series(handle: SeriesHandle) =
 
         // 3. 提取结果列
         dfRes.[0]
-        
+    
+    member this.Dt = SeriesDtNameSpace this
+
     member this.Rename(name: string) = 
         PolarsWrapper.SeriesRename(handle, name)
         this
@@ -646,6 +648,99 @@ type Series(handle: SeriesHandle) =
         new Series(newHandle)
     member this.ToArrow() : IArrowArray =
         PolarsWrapper.SeriesToArrow handle
+
+and SeriesDtNameSpace(parent: Series) =
+    
+    // Helper: col("Name").Dt.Op(...)
+    let apply (op: Expr -> Expr) =
+        // 构造表达式：对当前列名应用操作
+        let expr = Expr.Col parent.Name |> op
+        // 应用到底层 Series
+        parent.ApplyExpr expr
+
+    // --- Extraction ---
+    
+    member _.Year() = apply (fun e -> e.Dt.Year())
+    member _.Quarter() = apply (fun e -> e.Dt.Quarter())
+    member _.Month() = apply (fun e -> e.Dt.Month())
+    member _.Day() = apply (fun e -> e.Dt.Day())
+    member _.Hour() = apply (fun e -> e.Dt.Hour())
+    member _.Minute() = apply (fun e -> e.Dt.Minute())
+    member _.Second() = apply (fun e -> e.Dt.Second())
+    member _.Millisecond() = apply (fun e -> e.Dt.Millisecond())
+    member _.Microsecond() = apply (fun e -> e.Dt.Microsecond())
+    member _.Nanosecond() = apply (fun e -> e.Dt.Nanosecond())
+    member _.OrdinalDay() = apply (fun e -> e.Dt.OrdinalDay())
+    member _.Weekday() = apply (fun e -> e.Dt.Weekday())
+    member _.Date() = apply (fun e -> e.Dt.Date())
+    member _.Time() = apply (fun e -> e.Dt.Time())
+
+    // --- Formatting ---
+
+    /// <summary> Format datetime to string using the given format string (strftime). </summary>
+    member _.ToString(format: string) = 
+        apply (fun e -> e.Dt.ToString(format))
+
+    /// <summary> Default ISO format. </summary>
+    member this.ToString() = 
+        this.ToString "%Y-%m-%dT%H:%M:%S%.f"
+
+    // --- Manipulation ---
+
+    member _.Truncate(every: string) = 
+        apply (fun e -> e.Dt.Truncate every)
+
+    member _.Round(every: string) = 
+        apply (fun e -> e.Dt.Round every)
+
+    member _.OffsetBy(duration: string) =
+        apply (fun e -> e.Dt.OffsetBy duration)
+
+    // 注意：Series.OffsetBy(Expr) 比较棘手
+    // 因为 ApplyExpr 创建的临时 DataFrame 只有当前这一列。
+    // 如果传入的 Expr 引用了其他列，这里会报错。
+    // 但如果传入的是 pl.lit(...)，则没问题。
+    member _.OffsetBy(duration: Expr) =
+        apply (fun e -> e.Dt.OffsetBy duration)
+
+    // --- Conversion ---
+
+    member _.TimestampMicros() = apply (fun e -> e.Dt.TimestampMicros())
+    member _.TimestampMillis() = apply (fun e -> e.Dt.TimestampMillis())
+
+    // --- TimeZone ---
+
+    member _.ConvertTimeZone(timeZone: string) =
+        apply (fun e -> e.Dt.ConvertTimeZone timeZone)
+
+    member _.ReplaceTimeZone(timeZone: string option, ?ambiguous: string, ?nonExistent: string) =
+        apply (fun e -> e.Dt.ReplaceTimeZone(timeZone, ?ambiguous=ambiguous, ?nonExistent=nonExistent))
+
+    member this.ReplaceTimeZone(timeZone: string, ?ambiguous, ?nonExistent) =
+        this.ReplaceTimeZone(Some timeZone, ?ambiguous=ambiguous, ?nonExistent=nonExistent)
+
+    // --- Business Days ---
+
+    /// <summary>
+    /// Add business days (using integer).
+    /// </summary>
+    member _.AddBusinessDays(n: int, ?weekMask, ?holidays, ?roll) =
+        apply (fun e -> 
+            e.Dt.AddBusinessDays(
+                n, 
+                ?weekMask=weekMask, 
+                ?holidays=holidays, 
+                ?roll=roll
+            )
+        )
+
+    /// <summary>
+    /// Is Business Day check.
+    /// </summary>
+    member _.IsBusinessDay(?weekMask, ?holidays) =
+        apply (fun e -> 
+            e.Dt.IsBusinessDay(?weekMask=weekMask, ?holidays=holidays)
+        )
 
 // --- Frames ---
 

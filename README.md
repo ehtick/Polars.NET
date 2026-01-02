@@ -50,6 +50,11 @@ Polars.NET is designed for engineers who care about:
 ```Bash
 dotnet add package Polars.NET
 ```
+
+## Target Framework
+
+.NET 8 and 
+
 ## 🏁 Quick Start
 
 ### C# Example
