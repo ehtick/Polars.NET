@@ -729,3 +729,88 @@ type ``String Logic Tests`` () =
 
         // 5. 验证 Cbrt
         Assert.Equal(2.0, res.Cell<double>("Cbrt_8",0))
+    [<Fact>]
+    member _.``List: ConcatList (Explicit Columns)`` () =
+        // Data:
+        // A: 1, 2
+        // B: 3, 4
+        let data = [
+            {| A = 1; B = 3 |}
+            {| A = 2; B = 4 |}
+        ]
+        let df = DataFrame.ofRecords data
+
+        // 合并 A 和 B -> List
+        let res = 
+            df.Select([
+                pl.concatList([ pl.col "A"; pl.col "B" ]).Alias "Merged"
+            ])
+        
+        // Row 0: [1, 3]
+        let l0 = res.CellList<int>("Merged", 0)
+        Assert.Equal<int list>([1; 3], l0)
+
+        // Row 1: [2, 4]
+        let l1 = res.CellList<int>("Merged", 1)
+        Assert.Equal<int list>([2; 4], l1)
+
+    [<Fact>]
+    member _.``List: ConcatList with Selector (The Magic)`` () =
+        // Data:
+        // A(int): 1
+        // B(int): 10
+        // C(str): "ignore"
+        let data = [
+            {| A = 1; B = 10; C = "ignore" |}
+            {| A = 2; B = 20; C = "skip" |}
+        ]
+        let df = DataFrame.ofRecords data
+
+        // 需求：把所有数值类型的列合并成一个 List 列
+        // 这在特征工程中非常常见（把特征列打包送进模型）
+        let res = 
+            df.Select([
+                // !> 是之前定义的转换符，或者如果 concatList 接受 seq<#IColumnExpr>，
+                // 且 cs.numeric() 实现了它，直接传列表即可。
+                // 注意：F# 列表是同质的，如果只传 Selector，直接写 list 即可。
+                pl.concatList([ pl.cs.numeric() ]).Alias "Features"
+            ])
+        
+        // Row 0: A=1, B=10 -> [1, 10]
+        let l0 = res.CellList<int>("Features", 0)
+        Assert.Equal<int list>([1; 10], l0)
+        
+        // Row 1: A=2, B=20 -> [2, 20]
+        let l1 = res.CellList<int>("Features", 1)
+        Assert.Equal<int list>([2; 20], l1)
+    [<Fact>]
+    member _.``List: Concat (Fluent API)`` () =
+        // Data: A=1, B=2, C=3
+        let data = [
+            {| A = 1; B = 2; C = 3 |}
+        ]
+        let df = DataFrame.ofRecords data
+
+        let res = 
+            df.Select([
+                // 方式 1: pl.concatList (函数式)
+                pl.concatList([ pl.col "A"; pl.col "B"; pl.col "C" ]).Alias "Func"
+
+                // 方式 2: col("A").List.Concat (链式)
+                // 语意：以 A 为头，拼接 B 和 C
+                pl.col("A").List.Concat([ pl.col "B"; pl.col "C" ]).Alias "Fluent_List"
+                
+                // 方式 3: 链式单列
+                pl.col("A").List.Concat(pl.col "B").Alias "Fluent_Single"
+            ])
+        
+        // 验证 1 & 2 结果一致: [1, 2, 3]
+        let lFunc = res.CellList<int>("Func", 0)
+        let lFluent = res.CellList<int>("Fluent_List", 0)
+        
+        Assert.Equal<int list>([1; 2; 3], lFunc)
+        Assert.Equal<int list>([1; 2; 3], lFluent)
+
+        // 验证 3: [1, 2]
+        let lSingle = res.CellList<int>("Fluent_Single", 0)
+        Assert.Equal<int list>([1; 2], lSingle)

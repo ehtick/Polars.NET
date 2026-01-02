@@ -640,6 +640,8 @@ unsafe internal partial class NativeBindings
     );
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_contains(ExprHandle expr, ExprHandle item);
     [LibraryImport(LibName)] public static partial ExprHandle pl_concat_list(IntPtr[] exprs,UIntPtr exprLen);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_list_reverse(ExprHandle expr);
     // Array Ops
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_array_max(ExprHandle expr);

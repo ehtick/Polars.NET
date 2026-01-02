@@ -486,6 +486,7 @@ public static partial class PolarsWrapper
             (UIntPtr)exprs.Length
         ));
     }
+    public static ExprHandle ListReverse(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_list_reverse, e);
     // --- Array ---
     public static ExprHandle ArraySum(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_sum, e);
     public static ExprHandle ArrayMin(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_min, e);

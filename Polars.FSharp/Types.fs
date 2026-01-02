@@ -46,10 +46,61 @@ type Series(handle: SeriesHandle) =
 
         // 3. 提取结果列
         dfRes.[0]
+    // ==========================================
+    // Binary Op Helper (The "ApplyBinaryExpr" Pattern)
+    // ==========================================
+
+    /// <summary>
+    /// Apply a binary expression using two Series.
+    /// Handles name collision by creating a temporary renamed series if necessary.
+    /// </summary>
+    member internal this.ApplyBinaryExpr(other: Series, op: Expr -> Expr -> Expr) : Series =
+        let leftName = this.Name
+        let rightNameRaw = other.Name
+        
+        // 1. 检查命名冲突
+        // 如果名字相同，我们需要 Clone 并重命名 'other'，否则 Polars 创建 DataFrame 会报错
+        let rightName, rightSeries, tempToDispose =
+            if leftName = rightNameRaw then
+                let newName = "__other_temp__"
+                // Clone Series (Wrapper.CloneSeries 应该存在，或者通过 pl_series_clone binding)
+                // 假设 PolarsWrapper.CloneSeries(handle) 可用
+                let cloneHandle = PolarsWrapper.CloneSeries other.Handle 
+                let clone = (new Series(cloneHandle)).Rename(newName)// Rename 只是修改 Series 内部元数据
+                newName, clone, Some clone
+            else
+                rightNameRaw, other, None
+
+        try
+            // 2. 构建包含两个 Series 的 DataFrame
+            // 使用底层 binding: pl_data_frame_new(SeriesHandle[])
+            let handles = [| this.Handle; rightSeries.Handle |]
+            use dfHandle = PolarsWrapper.DataFrameNew(handles)
+            use df = new DataFrame(dfHandle)
+
+            // 3. 执行表达式
+            // op 接收两个 Expr: col("Left") 和 col("Right")
+            let expr = op (Expr.Col leftName) (Expr.Col rightName)
+            
+            use resDf = df.Select([expr])
+
+            // 4. 提取结果
+            // 结果 DataFrame 的第 0 列就是我们需要的 Series
+            // 强转并返回 (ResDf Dispose 时不会释放 Series，因为它是通过 Column 方法获取的，会增加引用)
+            // 这里我们用索引器获取
+            resDf.[0]
+
+        finally
+            // 5. 清理临时对象
+            match tempToDispose with
+            | Some s -> s.Handle.Dispose()
+            | None -> ()
     
     member this.Dt = SeriesDtNameSpace this
 
     member this.Str = SeriesStrNameSpace this
+
+    member this.List = SeriesListNameSpace this
 
     member this.Rename(name: string) = 
         PolarsWrapper.SeriesRename(handle, name)
@@ -817,6 +868,44 @@ and SeriesStrNameSpace(parent: Series) =
     /// <summary> Parse string to Datetime. </summary>
     member _.ToDatetime(format: string) = 
         apply (fun e -> e.Str.ToDatetime format)
+
+and SeriesListNameSpace(parent: Series) =
+    
+    // Unary helper
+    let apply (op: Expr -> Expr) =
+        let expr = Expr.Col parent.Name |> op
+        parent.ApplyExpr expr
+
+    // --- Unary Ops (Forward to Expr.List) ---
+    
+    member _.First() = apply (fun e -> e.List.First())
+    member _.Get(index: int) = apply (fun e -> e.List.Get index)
+    member _.Join(sep: string) = apply (fun e -> e.List.Join sep)
+    member _.Len() = apply (fun e -> e.List.Len())
+    member _.Sum() = apply (fun e -> e.List.Sum())
+    member _.Min() = apply (fun e -> e.List.Min())
+    member _.Max() = apply (fun e -> e.List.Max())
+    member _.Mean() = apply (fun e -> e.List.Mean())
+    member _.Reverse() = apply (fun e -> e.List.Reverse())
+    
+    member _.Sort(?descending, ?nullsLast, ?maintainOrder) =
+        apply (fun e -> e.List.Sort(?descending=descending, ?nullsLast=nullsLast, ?maintainOrder=maintainOrder))
+
+    // --- Binary Ops ---
+
+    /// <summary>
+    /// Concat with another Series.
+    /// Logic: [this_val, other_val]
+    /// </summary>
+    member _.Concat(other: Series) =
+        // 调用我们刚写的 ApplyBinaryExpr
+        // Op: left.List.Concat(right)
+        parent.ApplyBinaryExpr(other, (fun l r -> l.List.Concat r))
+
+    // --- Search ---
+
+    member _.Contains(item: int) = apply (fun e -> e.List.Contains item)
+    member _.Contains(item: string) = apply (fun e -> e.List.Contains item)
 // --- Frames ---
 
 /// <summary>

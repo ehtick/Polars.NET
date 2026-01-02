@@ -616,6 +616,9 @@ public class Expr : IDisposable
     public Expr Map(Func<IArrowArray, IArrowArray> function, DataType outputType)
         => new(PolarsWrapper.Map(CloneHandle(), function, outputType.Handle));
 
+    // ==========================================
+    // Window & Offset
+    // ==========================================
     #region Window & Offset Functions
 
     /// <summary>
@@ -1540,6 +1543,7 @@ public class ListOps
     {
         return Concat([other]);
     }
+    public Expr Reverse() => Wrap(PolarsWrapper.ListReverse); 
 }
 // ==========================================
 // ArrayOps Helper Class

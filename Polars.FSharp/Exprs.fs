@@ -569,20 +569,54 @@ and NameOps(handle: ExprHandle) =
     member _.Suffix(s: string) = wrap PolarsWrapper.Suffix s
 
 and ListOps(handle: ExprHandle) =
+    /// <summary> Get the first element of the list. </summary>
     member _.First() = new Expr(PolarsWrapper.ListFirst handle)
+    /// <summary> Get element at index. </summary>
     member _.Get(index: int) = new Expr(PolarsWrapper.ListGet(handle, int64 index))
+    /// <summary> Join list elements with separator. </summary>
     member _.Join(separator: string) = new Expr(PolarsWrapper.ListJoin(handle, separator))
+    /// <summary> Get list length. </summary>
     member _.Len() = new Expr(PolarsWrapper.ListLen handle)
+    /// <summary> Reverse the list. </summary>
+    member _.Reverse() = new Expr(PolarsWrapper.ListReverse handle)
     // Aggregations within list
     member _.Sum() = new Expr(PolarsWrapper.ListSum handle)
     member _.Min() = new Expr(PolarsWrapper.ListMin handle)
     member _.Max() = new Expr(PolarsWrapper.ListMax handle)
     member _.Mean() = new Expr(PolarsWrapper.ListMean handle)
+    /// <summary> Sort the list. </summary>
     member _.Sort(?descending: bool, ?nullsLast:bool,?maintainOrder: bool) =
         let desc = defaultArg descending false
         let nullsLastOption = defaultArg nullsLast false 
         let maintainOrderOption = defaultArg maintainOrder false 
         new Expr(PolarsWrapper.ListSort(handle, desc,nullsLastOption,maintainOrderOption))
+    /// <summary>
+    /// Combine the current expression with other expressions into a List.
+    /// Result: [parent_val, other_val_1, other_val_2, ...]
+    /// Equivalent to: pl.concatList([parent, others...])
+    /// </summary>
+    member _.Concat(others: seq<#IColumnExpr>) =
+        // 1. 收集所有 Expr Handles
+        let handles = 
+            seq {
+                // 第一个是自己 (Parent)
+                yield handle
+                
+                // 后续是传入的 others (展开 Selector)
+                yield! others 
+                       |> Seq.collect (fun x -> x.ToExprs()) 
+                       |> Seq.map (fun e -> e.CloneHandle())
+            }
+            |> Seq.toArray
+
+        // 2. 调用 Wrapper
+        new Expr(PolarsWrapper.ConcatList(handles))
+
+    /// <summary>
+    /// Overload: Concat a single expression/column.
+    /// </summary>
+    member this.Concat(other: #IColumnExpr) =
+        this.Concat [other]
     // Contains
     member _.Contains(item: Expr) : Expr = 
         new Expr(PolarsWrapper.ListContains(handle, item.CloneHandle()))

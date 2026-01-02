@@ -90,6 +90,20 @@ module pl =
     /// <summary> Concatenate multiple DataFrames. </summary>
     let concat (dfs: DataFrame list) (how:ConcatType) : DataFrame =
         DataFrame.Concat dfs how
+    /// <summary>
+    /// Combine multiple expressions horizontally into a List element.
+    /// Supports Selectors (e.g. pl.concatList([pl.cs.numeric()])).
+    /// </summary>
+    let concatList (columns: seq<#IColumnExpr>) =
+        // 1. 展开所有 IColumnExpr (处理 Selector 匹配多列的情况)
+        let exprHandles = 
+            columns
+            |> Seq.collect (fun x -> x.ToExprs()) 
+            |> Seq.map (fun e -> e.CloneHandle()) // 必须 Clone，因为 Wrapper 会 Move 所有权
+            |> Seq.toArray
+
+        // 2. 调用 Wrapper
+        new Expr(PolarsWrapper.ConcatList exprHandles)
     /// <summary> Get the first n rows of the DataFrame. </summary>
     let head (n: int) (df: DataFrame) : DataFrame =
         df.Head n

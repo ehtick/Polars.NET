@@ -923,21 +923,11 @@ pub extern "C" fn pl_expr_cols(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_explode(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+pub extern "C" fn pl_expr_list_reverse(expr_ptr: *mut ExprContext) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
-        let new_expr = ctx.inner.explode();
+        let new_expr = ctx.inner.list().reverse();
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pl_expr_implode(expr: *mut Expr) -> *mut Expr {
-    ffi_try!({
-        let e = unsafe { Box::from_raw(expr) };
-        // 调用 polars expr 的 implode
-        let new_expr = e.implode();
-        Ok(Box::into_raw(Box::new(new_expr)))
     })
 }
 
@@ -1653,5 +1643,24 @@ pub extern "C" fn pl_expr_bottom_k_by(
         let new_expr = ctx.inner.bottom_k_by(lit(k), by_exprs, descending);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_explode(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.explode();
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_expr_implode(expr: *mut Expr) -> *mut Expr {
+    ffi_try!({
+        let e = unsafe { Box::from_raw(expr) };
+        // 调用 polars expr 的 implode
+        let new_expr = e.implode();
+        Ok(Box::into_raw(Box::new(new_expr)))
     })
 }

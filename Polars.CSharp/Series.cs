@@ -1493,6 +1493,8 @@ public class SeriesListOps
         // 逻辑：Col(this) .List.Concat ( Col(other) )
         return _series.ApplyBinaryExpr(other, (left, right) => left.List.Concat(right));
     }
+    /// <summary>Reverse elements in list.</summary>
+    public Series Reverse() => Apply(e => e.List.Reverse());
 }
 /// <summary>
 /// Wrapper for Array (Fixed-Size List) operations on a Series.

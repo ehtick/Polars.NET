@@ -288,3 +288,55 @@ type ``Series Tests`` () =
         // Strip custom chars
         let sStripCustom = s.Str.Strip("_")
         Assert.Equal("world", sStripCustom.GetValue<string> 1)
+    [<Fact>]
+    member _.``Series: List Basic Ops`` () =
+        // Data: [[1, 2], [3]]
+        let data = [
+            {| Vals = [1; 2] |}
+            {| Vals = [3] |}
+        ]
+        // 必须 Cast 为 List (Variable Length)
+        // 假设 DataFrame.ofRecords 默认生成 List<int>
+        let df = DataFrame.ofRecords data
+        let s = df.Column "Vals"
+
+        // Len
+        let sLen = s.List.Len()
+        Assert.Equal(2u, sLen.GetValue<uint32> 0)
+        Assert.Equal(1u, sLen.GetValue<uint32> 1)
+
+        // Sum
+        let sSum = s.List.Sum()
+        Assert.Equal(3, sSum.GetValue<int> 0) // 1+2
+        Assert.Equal(3, sSum.GetValue<int> 1) // 3
+
+    [<Fact>]
+    member _.``Series: List Concat (Binary Op)`` () =
+        // s1: [1], [2]
+        let s1 = Series.create("A", [1; 2])
+        // s2: [10], [20]
+        let s2 = Series.create("B", [10; 20])
+
+        // Concat: A + B -> [[1, 10], [2, 20]]
+        // 这里 s1, s2 是 Int 类型，ConcatList 会自动把它们视为 Scalar 放入 List
+        // 或者如果它们已经是 List，则合并。
+        // 根据 pl.concat_list 行为，如果输入是 Scalar，它会构造 List。
+        let sRes = s1.List.Concat(s2)
+        
+        // 验证 Row 0: [1, 10]
+        let l0 = sRes.GetList<int>(0)
+        Assert.Equal<int list>([1; 10], l0)
+
+    [<Fact>]
+    member _.``Series: List Concat Name Collision`` () =
+        // 测试 ApplyBinaryExpr 的改名逻辑
+        let s1 = Series.create("SameName", [1])
+        let s2 = Series.create("SameName", [99])
+
+        // 两个 Series 名字一样，直接放在一个 DF 会报错
+        // ApplyBinaryExpr 应该自动处理
+        let sRes = s1.List.Concat s2
+        
+        // 验证: [1, 99]
+        let l0 = sRes.GetList<int> 0
+        Assert.Equal<int list>([1; 99], l0)
