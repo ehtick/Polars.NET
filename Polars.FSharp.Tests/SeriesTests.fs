@@ -410,3 +410,62 @@ type ``Series Tests`` () =
         // Join -> "a-b-c"
         let sJoined = s.Array.Join "-"
         Assert.Equal("a-b-c", sJoined.GetValue<string> 0)
+    [<Fact>]
+    member _.``Series: Struct Field Access (Heterogeneous)`` () =
+        // 1. 准备异构数据
+        let data = [
+            {| ID = 1; Name = "Alice" |}
+            {| ID = 2; Name = "Bob"   |}
+        ]
+        let df = DataFrame.ofRecords data
+
+        // 2. 使用 pl.asStruct 构造 Struct Series
+        // 这次我们可以优雅地把 ID(Int) 和 Name(String) 打包在一起
+        let dfStruct = 
+            df.Select([
+                pl.asStruct([ pl.col "ID"; pl.col "Name" ]).Alias "User"
+            ])
+        
+        let s = dfStruct.Column "User" // Struct<ID: i32, Name: str>
+
+        // 3. 测试 Field (ByName)
+        // 访问 Int 字段
+        let fId = s.Struct.Field "ID"
+        Assert.Equal(1, fId.GetValue<int> 0)
+
+        // 访问 String 字段 (这在之前的 Array hack 里测不了！)
+        let fName = s.Struct.Field "Name"
+        Assert.Equal("Alice", fName.GetValue<string> 0)
+
+        // 4. 测试 Field (ByIndex)
+        let fIndex1 = s.Struct.Field 1 // Index 1 is Name
+        Assert.Equal("Bob", fIndex1.GetValue<string> 1)
+
+    [<Fact>]
+    member _.``Series: Struct Rename & Json`` () =
+        // 1. 构造 Struct
+        let df = 
+            DataFrame.ofRecords([ {| A = 10; B = 20 |} ])
+                .Select([
+                    pl.asStruct([ pl.col "A"; pl.col "B" ]).Alias "Data"
+                ])
+        let s = df.Column "Data"
+
+        // 2. Rename Fields
+        // A -> X, B -> Y
+        let sRenamed = s.Struct.RenameFields ["X"; "Y"]
+        
+        // 验证
+        let valX = sRenamed.Struct.Field("X")
+        Assert.Equal(10, valX.GetValue<int> 0)
+
+        // 3. Json Encode
+        let sJson = sRenamed.Struct.JsonEncode()
+        let jsonStr = sJson.GetValue<string> 0
+        
+        // 验证 JSON 结构
+        // 这里的顺序取决于 Polars 内部实现，通常是保留顺序
+        Assert.Contains("X", jsonStr)
+        Assert.Contains("10", jsonStr)
+        Assert.Contains("Y", jsonStr)
+        Assert.Contains("20", jsonStr)

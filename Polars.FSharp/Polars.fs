@@ -63,6 +63,7 @@ module pl =
     let asStruct (exprs: Expr list) =
         let handles = exprs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         new Expr(PolarsWrapper.AsStruct handles)
+    let struct_ = asStruct
     // --- Eager Ops ---
     /// <summary> Add or replace columns. </summary>
     let withColumn (expr: Expr) (df: DataFrame) : DataFrame =
