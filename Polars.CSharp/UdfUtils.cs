@@ -1,251 +1,57 @@
 using Apache.Arrow;
+using Polars.NET.Core.Arrow; 
+using Polars.NET.Core.Data;
 
 namespace Polars.CSharp;
 
 internal static class UdfUtils
 {
-    private interface IColumnWriter<T>
-    {
-        void Append(T value);
-        void AppendNull();
-        IArrowArray Build();
-    }
-
-    // --- Writers ---
-
-    private class Int32Writer : IColumnWriter<int>
-    {
-        private readonly Int32Array.Builder _builder = new();
-        public void Append(int value) => _builder.Append(value);
-        public void AppendNull() => _builder.AppendNull();
-        public IArrowArray Build() => _builder.Build();
-    }
-    private class NullableInt32Writer : IColumnWriter<int?>
-    {
-        private readonly Int32Array.Builder _builder = new();
-        public void Append(int? value)
-        {
-            if (value.HasValue) _builder.Append(value.Value);
-            else _builder.AppendNull();
-        }
-        public void AppendNull() => _builder.AppendNull();
-        public IArrowArray Build() => _builder.Build();
-    }
-    private class Int64Writer : IColumnWriter<long>
-    {
-        private readonly Int64Array.Builder _builder = new();
-        public void Append(long value) => _builder.Append(value);
-        public void AppendNull() => _builder.AppendNull();
-        public IArrowArray Build() => _builder.Build();
-    }
-    private class NullableInt64Writer : IColumnWriter<long?>
-    {
-        private readonly Int64Array.Builder _builder = new();
-        public void Append(long? value)
-        {
-            if (value.HasValue) _builder.Append(value.Value);
-            else _builder.AppendNull();
-        }
-        public void AppendNull() => _builder.AppendNull();
-        public IArrowArray Build() => _builder.Build();
-    }
-    private class DoubleWriter : IColumnWriter<double>
-    {
-        private readonly DoubleArray.Builder _builder = new();
-        public void Append(double value) => _builder.Append(value);
-        public void AppendNull() => _builder.AppendNull();
-        public IArrowArray Build() => _builder.Build();
-    }
-    private class NullableDoubleWriter : IColumnWriter<double?>
-    {
-        private readonly DoubleArray.Builder _builder = new();
-        public void Append(double? value)
-        {
-            if (value.HasValue) _builder.Append(value.Value);
-            else _builder.AppendNull();
-        }
-        public void AppendNull() => _builder.AppendNull();
-        public IArrowArray Build() => _builder.Build();
-    }
-    private class StringWriter : IColumnWriter<string>
-    {
-        private readonly StringViewArray.Builder _builder = new();
-        public void Append(string value)
-        {
-            if (value == null) _builder.AppendNull();
-            else _builder.Append(value);
-        }
-        public void AppendNull() => _builder.AppendNull();
-        public IArrowArray Build() => _builder.Build();
-    }
-    
-    private class BooleanWriter : IColumnWriter<bool>
-    {
-        private readonly BooleanArray.Builder _builder = new();
-        public void Append(bool value) => _builder.Append(value);
-        public void AppendNull() => _builder.AppendNull();
-        public IArrowArray Build() => _builder.Build();
-    }
-    private class NullableBooleanWriter : IColumnWriter<bool?>
-    {
-        private readonly BooleanArray.Builder _builder = new();
-        public void Append(bool? value)
-        {
-            if (value.HasValue) _builder.Append(value.Value);
-            else _builder.AppendNull();
-        }
-        public void AppendNull() => _builder.AppendNull();
-        public IArrowArray Build() => _builder.Build();
-    }
-
-    // --- Reader Factory (完全复刻 F#) ---
-    
-    private static Func<int, T> CreateReader<T>(IArrowArray array)
-    {
-        // 1. Int
-        if (typeof(T) == typeof(int))
-        {
-            return array switch
-            {
-                Int32Array arr => (Func<int, T>)(object)(Func<int, int>)(i => arr.GetValue(i).GetValueOrDefault()),
-                Int64Array arr => (Func<int, T>)(object)(Func<int, int>)(i => (int)arr.GetValue(i).GetValueOrDefault()),
-                _ => throw new NotSupportedException($"Cannot read {array.GetType().Name} as int")
-            };
-        }
-        if (typeof(T) == typeof(int?))
-        {
-            return array switch
-            {
-                Int32Array arr => (Func<int, T>)(object)(Func<int, int?>)(i => arr.GetValue(i)),
-                Int64Array arr => (Func<int, T>)(object)(Func<int, int?>)(i => (int?)arr.GetValue(i)),
-                _ => throw new NotSupportedException($"Cannot read {array.GetType().Name} as int?")
-            };
-        }
-        // 2. Long
-        if (typeof(T) == typeof(long))
-        {
-            return array switch
-            {
-                Int64Array arr => (Func<int, T>)(object)(Func<int, long>)(i => arr.GetValue(i).GetValueOrDefault()),
-                Int32Array arr => (Func<int, T>)(object)(Func<int, long>)(i => arr.GetValue(i).GetValueOrDefault()),
-                _ => throw new NotSupportedException($"Cannot read {array.GetType().Name} as long")
-            };
-        }
-        if (typeof(T) == typeof(long?))
-        {
-            return array switch
-            {
-                Int64Array arr => (Func<int, T>)(object)(Func<int, long?>)(i => arr.GetValue(i)),
-                Int32Array arr => (Func<int, T>)(object)(Func<int, long?>)(i => arr.GetValue(i)),
-                _ => throw new NotSupportedException($"Cannot read {array.GetType().Name} as long?")
-            };
-        }
-        // 3. Double
-        if (typeof(T) == typeof(double))
-        {
-             return array switch
-            {
-                DoubleArray arr => (Func<int, T>)(object)(Func<int, double>)(i => arr.GetValue(i).GetValueOrDefault()),
-                FloatArray arr => (Func<int, T>)(object)(Func<int, double>)(i => arr.GetValue(i).GetValueOrDefault()),
-                _ => throw new NotSupportedException($"Cannot read {array.GetType().Name} as double")
-            };
-        }
-        if (typeof(T) == typeof(double?))
-        {
-             return array switch
-            {
-                DoubleArray arr => (Func<int, T>)(object)(Func<int, double?>)(i => arr.GetValue(i)),
-                FloatArray arr => (Func<int, T>)(object)(Func<int, double?>)(i => arr.GetValue(i)),
-                _ => throw new NotSupportedException($"Cannot read {array.GetType().Name} as double?")
-            };
-        }
-        // 4. String
-        if (typeof(T) == typeof(string))
-        {
-            return array switch
-            {
-                // F#: | :? StringArray as a -> fun i -> unbox (a.GetString(i))
-                StringArray arr => (Func<int, T>)(object)(Func<int, string?>)(i => arr.GetString(i)),
-                
-                // F#: | :? StringViewArray as a -> fun i -> unbox (a.GetString(i))
-                StringViewArray arr => (Func<int, T>)(object)(Func<int, string?>)(i => arr.GetString(i)),
-                
-                LargeStringArray arr => (Func<int, T>)(object)(Func<int, string?>)(i => arr.GetString(i)),
-
-                _ => throw new NotSupportedException($"Array {array.GetType().Name} cannot be read as string")
-            };
-        }
-
-        // 5. Bool
-        if (typeof(T) == typeof(bool))
-        {
-            return array switch
-            {
-                BooleanArray arr => (Func<int, T>)(object)(Func<int, bool>)(i => arr.GetValue(i).GetValueOrDefault()),
-                _ => throw new NotSupportedException($"Cannot read {array.GetType().Name} as bool")
-            };
-        }
-        if (typeof(T) == typeof(bool?))
-        {
-            return array switch
-            {
-                BooleanArray arr => (Func<int, T>)(object)(Func<int, bool?>)(i => arr.GetValue(i)),
-                _ => throw new NotSupportedException($"Cannot read {array.GetType().Name} as bool?")
-            };
-        }
-
-        throw new NotSupportedException($"Unsupported UDF input type: {typeof(T).Name}");
-    }
-
-    private static IColumnWriter<U> CreateWriter<U>()
-    {
-        if (typeof(U) == typeof(int)) return (IColumnWriter<U>)(object)new Int32Writer();
-        if (typeof(U) == typeof(long)) return (IColumnWriter<U>)(object)new Int64Writer();
-        if (typeof(U) == typeof(double)) return (IColumnWriter<U>)(object)new DoubleWriter();
-        if (typeof(U) == typeof(string)) return (IColumnWriter<U>)(object)new StringWriter();
-        if (typeof(U) == typeof(bool)) return (IColumnWriter<U>)(object)new BooleanWriter();
-
-        if (typeof(U) == typeof(int?)) return (IColumnWriter<U>)(object)new NullableInt32Writer();
-        if (typeof(U) == typeof(long?)) return (IColumnWriter<U>)(object)new NullableInt64Writer();
-        if (typeof(U) == typeof(double?)) return (IColumnWriter<U>)(object)new NullableDoubleWriter();
-        if (typeof(U) == typeof(bool?)) return (IColumnWriter<U>)(object)new NullableBooleanWriter();
-
-        throw new NotSupportedException($"Unsupported UDF output type: {typeof(U).Name}");
-    }
-
     public static Func<IArrowArray, IArrowArray> Wrap<TIn, TOut>(Func<TIn, TOut> userFunc)
     {
         return inputArray =>
         {
-            var reader = CreateReader<TIn>(inputArray);
-            var writer = CreateWriter<TOut>();
-
             int length = inputArray.Length;
+
+            // 1. Reader: 复用 ArrowReader 的强大读取能力
+            // 它能自动处理 Int32 -> int, Int64 -> int (checked), StringView -> string 等转换
+            var rawGetter = ArrowReader.CreateAccessor(inputArray, typeof(TIn));
+
+            // 2. Writer: 复用 DbToArrowStream 中的缓冲池逻辑
+            // 它底层使用 ArrowConverter，支持所有我们已支持的类型 (包括复杂类型)
+            var buffer = ColumnBufferFactory.Create(typeof(TOut), length);
+
+            // 3. Null 处理策略准备
+            // 如果 TIn 是非空值类型 (如 int)，遇到 null 输入时我们无法调用 userFunc
+            bool inputIsValueType = typeof(TIn).IsValueType && Nullable.GetUnderlyingType(typeof(TIn)) == null;
+
             for (int i = 0; i < length; i++)
             {
-                // 如果输入是 Null，我们目前策略是直接写入 Null (Map 语义通常如此)
-                // 除非 TIn 是 Nullable 类型 (如 int?)，这时候我们可能希望让用户自己处理 Null
-                
-                // 为了兼容 Nullable Input，我们需要稍微调整逻辑：
-                // 1. 如果 TIn 是值类型(int)，IsNull 为 true 时必须跳过 userFunc，直接写 null。
-                // 2. 如果 TIn 是可空类型(int?)，IsNull 为 true 时 reader 会返回 null，我们应该调用 userFunc(null)。
-                
-                bool inputIsNull = inputArray.IsNull(i);
-                bool inputIsNullableType = Nullable.GetUnderlyingType(typeof(TIn)) != null || typeof(TIn) == typeof(string);
+                // check null logic
+                bool isNull = inputArray.IsNull(i);
 
-                if (inputIsNull && !inputIsNullableType)
+                if (isNull && inputIsValueType)
                 {
-                    writer.AppendNull();
+                    // 输入是 null，但函数要求 int (非空)。
+                    // 策略：直接输出 null (Skip UDF execution)
+                    // ColumnBuffer.Add(null) 会自动处理 AppendNull
+                    buffer.Add(null!); 
                 }
                 else
                 {
-                    // 正常执行 (包括 int? 接收到 null 的情况)
-                    TIn input = reader(i);
+                    // 正常执行
+                    // getter(i) 会处理好类型转换
+                    TIn input = (TIn)rawGetter(i)!;
+                    
+                    // 执行用户逻辑
                     TOut output = userFunc(input);
-                    writer.Append(output);
+                    
+                    // 写入 Buffer
+                    buffer.Add(output!);
                 }
             }
-            return writer.Build();
+
+            // 4. 构建输出 Array
+            return buffer.BuildArray();
         };
     }
 }

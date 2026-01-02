@@ -75,7 +75,7 @@ namespace Polars.NET.Core.Arrow
         // =============================================================
         // 🧠 核心：支持递归的 Accessor 工厂
         // =============================================================
-        private static Func<int, object?> CreateAccessor(IArrowArray array, Type targetType)
+        public static Func<int, object?> CreateAccessor(IArrowArray array, Type targetType)
         {
             // ---------------------------------------------------------
             // 0. 类型解析 (Type Resolution)

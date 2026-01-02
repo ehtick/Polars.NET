@@ -9,10 +9,10 @@
 
   <ItemGroup>
     <Compile Include="Enums.fs" />
+    <Compile Include="UdfUtils.fs" />
     <Compile Include="Exprs.fs" />
     <Compile Include="Types.fs" />
     <Compile Include="Polars.fs" />
-    <Compile Include="UdfUtils.fs" />
     <Compile Include="Extensions.fs" />
     <Compile Include="Ops.fs" />
     <Compile Include="Display.fs" />

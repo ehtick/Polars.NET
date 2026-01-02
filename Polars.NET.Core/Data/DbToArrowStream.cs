@@ -179,7 +179,7 @@ internal static class DbToArrowStream
 // 胶水层：连接 DataReader(object) 和 ArrowConverter(T)
 // =========================================================
 
-internal interface IColumnBuffer
+public interface IColumnBuffer
 {
     void Add(object value);
     void Clear();
@@ -188,7 +188,7 @@ internal interface IColumnBuffer
     
 }
 
-internal static class ColumnBufferFactory
+public static class ColumnBufferFactory
 {
     public static IColumnBuffer Create(Type netType, int capacity)
     {

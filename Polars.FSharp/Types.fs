@@ -266,7 +266,48 @@ type Series(handle: SeriesHandle) =
     member this.IsDuplicated() =
         let expr = Expr.Col(this.Name).IsDuplicated()
         this.ApplyExpr expr
+    // ==========================================
+    // UDF / Map (Apply Custom C# / F# Functions)
+    // ==========================================
 
+    /// <summary>
+    /// Apply a custom function (UDF) to the Series.
+    /// Uses Apache Arrow arrays for high-performance data transfer.
+    /// </summary>
+    /// <param name="func">The compiled UDF (created via Udf.map or Udf.mapOption).</param>
+    /// <param name="returnType">The expected output DataType. Required for Polars query planning.</param>
+    member this.Map(func: Func<IArrowArray, IArrowArray>, returnType: DataType) =
+        // col(Name).Map(func, returnType)
+        this.ApplyExpr(Expr.Col(this.Name).Map(func, returnType))
+
+    /// <summary>
+    /// Apply a custom function (UDF) assuming the output type is the same as the input.
+    /// </summary>
+    /// <param name="func">The compiled UDF.</param>
+    member this.Map(func: Func<IArrowArray, IArrowArray>) =
+        this.Map(func, DataType.SameAsInput)
+        
+    // ==========================================
+    // Optional: High-Level F# Overloads (Sugar)
+    // ==========================================
+    // 既然我们有了 Udf 模块，我们可以提供更 F# 风格的重载，
+    // 让用户直接传 lambda，而不需要显式调用 Udf.map
+
+    /// <summary>
+    /// [F# Sugar] Map values using a standard F# function.
+    /// Automatically wraps it using Udf.map.
+    /// </summary>
+    member this.Map<'T, 'U>(f: 'T -> 'U, returnType: DataType) =
+        let udf = Udf.map f
+        this.Map(udf, returnType)
+
+    /// <summary>
+    /// [F# Sugar] Map values using an F# function that handles Options.
+    /// Automatically wraps it using Udf.mapOption.
+    /// </summary>
+    member this.MapOption<'T, 'U>(f: 'T option -> 'U option, returnType: DataType) =
+        let udf = Udf.mapOption f
+        this.Map(udf, returnType)
     // ==========================================
     // Math Operations (Forwarding to Expr)
     // ==========================================

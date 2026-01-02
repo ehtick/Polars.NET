@@ -35,7 +35,6 @@ open Xunit
 open Polars.FSharp
 open Apache.Arrow
 open System
-open Polars.NET.Core
 
 type ``UDF Tests`` () =
 
@@ -107,7 +106,7 @@ type ``UDF Tests`` () =
                 pl.col "num"
                 // 2. 直接调用 Udf.map
                 // 泛型 'T 和 'U 会自动推断为 int 和 string
-                |> fun e -> e.Map(Udf.map myLogic DataType.String, DataType.String) 
+                |> fun e -> e.Map(Udf.map myLogic, DataType.String) 
                 |> pl.alias "res"
             )
             |> pl.selectLazy [ pl.col "res" ]
@@ -140,7 +139,7 @@ type ``UDF Tests`` () =
             |> pl.withColumnLazy (
                 pl.col "val"
                 // 使用 mapOption，显式处理 Option 类型
-                |> fun e -> e.Map(Udf.mapOption logic DataType.Int32, DataType.Int32)
+                |> fun e -> e.Map(Udf.mapOption logic, DataType.Int32)
                 |> pl.alias "res"
             )
             |> pl.collect
@@ -158,39 +157,85 @@ type ``UDF Tests`` () =
         // Row 2: null -> (None) -> None
         Assert.True(col.IsNull 2)
     [<Fact>]
-    member _.``UDF: Decimal Map`` () =
-        // 1. 准备数据: String -> Decimal
-        // 源数据是字符串 "10.50", "20.25"
+    member _.``UDF: Decimal Map (Series Native)`` () =
+        // 1. 准备数据: String ["10.50", "20.25", null]
         let data = ["10.50"; "20.25"; null]
-        use s = Series.create("str_vals", data)
-        use df = s.ToFrame()
+        let s = Series.create("str_vals", data)
 
-        // 2. 定义 Decimal 逻辑
+        // 2. 先 Cast 成 Decimal(10, 2)
+        // Series.Cast 直接返回一个新的 Series
+        let sDec = s.Cast(DataType.Decimal(Some 10, Some 2))
+
+        // 3. 定义业务逻辑
         // 输入: decimal option
         // 输出: decimal option (乘以 2)
         let logic (opt: decimal option) =
             opt |> Option.map (fun d -> d * 2m)
 
-        // 3. 执行 UDF
-        // 先 Cast 成 Decimal，再跑 UDF，再输出 Decimal
-        // 注意：Series.Cast 已经支持了
-        use sDec = s.Cast(DataType.Decimal(Some 10, Some 2))
-        
-        // 这里的 DataType.Decimal(Some 10, 2) 会告诉 createBuilder 创建 Decimal128Array
-        let res = 
-            sDec.ToFrame()
+        // 4. 直接在 Series 上执行 Map!
+        // 彻底告别 ToFrame -> withColumn -> Expr.Map 的绕路写法
+        // 这里利用了我们刚加的 Series.Map 泛型重载 (内部自动调用 Udf.mapOption)
+        let res = sDec.MapOption(logic, DataType.Decimal(Some 10, Some 2))
 
-            // 或者我们可以直接在 Series 上实现 Map? 目前 Series.Map 没暴露，只有 Expr.Map
-            // 我们用 Expr 方式：
-            |> pl.withColumn (
-                pl.col("str_vals")
-                    .Cast(DataType.Decimal(Some 10, Some 2)) // 先转 Decimal
-                    .Map(Udf.mapOption logic (DataType.Decimal(Some 10, Some 2)), DataType.Decimal(Some 10,Some 2)) // 跑 UDF
-                    .Alias "doubled"
-            )// 这里如果源是 Eager DataFrame，withColumn 返回 Eager DataFrame
+        // 5. 验证结果
+        // 咱们现在的 Series.GetValue 已经非常智能了，直接取值即可
         
-        let arrow = res.ToArrow()
-        let col = arrow.Column "doubled" :?> Decimal128Array
-        Assert.Equal(21.00m, col.GetValue(0).Value)
-        Assert.Equal(40.50m, col.GetValue(1).Value)
-        Assert.True(col.IsNull 2)
+        // 10.50 * 2 = 21.00
+        Assert.Equal(21.00m, res.GetValue<decimal> 0)
+        
+        // 20.25 * 2 = 40.50
+        Assert.Equal(40.50m, res.GetValue<decimal> 1)
+        
+        // null -> null
+        // 验证 Option 返回 None
+        Assert.True(res.GetValue<decimal option>(2).IsNone)
+    [<Fact>]
+    member _.``Series: Map (Basic UDF)`` () =
+        // Data: [1, 2, 3]
+        let s = Series.create("nums", [1; 2; 3])
+
+        // Logic: x * 10
+        let doubleFunc (x: int) = x * 10
+        
+        // 1. 编译 UDF (类型推断: int -> int)
+        let udf = Udf.map doubleFunc
+
+        // 2. Apply to Series
+        // 我们明确知道返回是 Int32
+        let sRes = s.Map(udf, DataType.Int32)
+
+        // 3. Verify
+        Assert.Equal(10, sRes.GetValue<int> 0)
+        Assert.Equal(30, sRes.GetValue<int> 2)
+
+    [<Fact>]
+    member _.``Series: Map (Option Handling)`` () =
+        // Data: [10, null, 30]
+        let s = Series.create("vals", [Some 10; None; Some 30])
+
+        // Logic: Some(x) -> Some(x + 1), None -> Some(-1)
+        // 这是一个只有 mapOption 才能做到的 "FillNull with Logic"
+        let logic (opt: int option) =
+            match opt with
+            | Some x -> Some (x + 1)
+            | None -> Some -1
+
+        // Apply
+        let sRes = s.Map(Udf.mapOption logic, DataType.Int32)
+
+        // Verify
+        Assert.Equal(11, sRes.GetValue<int> 0)
+        Assert.Equal(-1, sRes.GetValue<int> 1) // None became -1
+
+    [<Fact>]
+    member _.``Series: Map (F# Lambda Sugar)`` () =
+        // Data: ["a", "b"]
+        let s = Series.create("txt", ["a"; "b"])
+
+        // 直接传 lambda，享受 F# 的丝滑
+        // 逻辑: string -> string (加后缀)
+        // 注意：这里需要显式指明泛型参数，或者通过类型注解让编译器推断 'T 和 'U
+        // 因为 Series 本身不知道自己存的是 string，所以 'T 必须匹配物理类型
+        let sRes = s.Map<string, string>((fun x -> x + "_suffix"), DataType.String)
+        
+        Assert.Equal("a_suffix", sRes.GetValue<string>(0))
