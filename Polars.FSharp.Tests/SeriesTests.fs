@@ -469,3 +469,26 @@ type ``Series Tests`` () =
         Assert.Contains("10", jsonStr)
         Assert.Contains("Y", jsonStr)
         Assert.Contains("20", jsonStr)
+    [<Fact>]
+    member _.``Series: Trig & Hyperbolic`` () =
+        // 准备数据: [0, PI/2, PI]
+        let data = [0.0; System.Math.PI / 2.0; System.Math.PI]
+        let s = Series.create("angle", data)
+
+        // 1. 测试 Sin
+        // Sin(0)=0, Sin(PI/2)=1, Sin(PI)~0
+        let sSin = s.Sin()
+        Assert.Equal(0.0, sSin.GetValue<double> 0, 5)
+        Assert.Equal(1.0, sSin.GetValue<double> 1, 5)
+
+        // 2. 测试往返: ArcSin(Sin(x))
+        // 注意 ArcSin 定义域在 [-1, 1]，值域 [-PI/2, PI/2]
+        // 所以只有前两个点能完美还原
+        let sRoundTrip = sSin.ArcSin()
+        Assert.Equal(0.0, sRoundTrip.GetValue<double> 0, 5)
+        Assert.Equal(System.Math.PI / 2.0, sRoundTrip.GetValue<double> 1, 5)
+
+        // 3. 测试 Cosh (双曲余弦)
+        // Cosh(0) = 1
+        let sCosh = s.Cosh()
+        Assert.Equal(1.0, sCosh.GetValue<double> 0, 5)

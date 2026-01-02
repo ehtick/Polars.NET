@@ -216,6 +216,135 @@ type Series(handle: SeriesHandle) =
     member this.IsDuplicated() =
         let expr = Expr.Col(this.Name).IsDuplicated()
         this.ApplyExpr expr
+
+    // ==========================================
+    // Math Operations (Forwarding to Expr)
+    // ==========================================
+
+    // --- 1. Unary Operations (Scalar / Self) ---
+
+    /// <summary> Round to given decimals. </summary>
+    member this.Round(decimals: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).Round decimals)
+
+    /// <summary> Round up to the nearest integer. </summary>
+    member this.Ceil() = this.ApplyExpr(Expr.Col(this.Name).Ceil())
+
+    /// <summary> Round down to the nearest integer. </summary>
+    member this.Floor() = this.ApplyExpr(Expr.Col(this.Name).Floor())
+
+    /// <summary> Absolute value. </summary>
+    member this.Abs() = this.ApplyExpr(Expr.Col(this.Name).Abs())
+
+    /// <summary> Element-wise sign. </summary>
+    member this.Sign() = this.ApplyExpr(Expr.Col(this.Name).Sign())
+
+    /// <summary> Square root. </summary>
+    member this.Sqrt() = this.ApplyExpr(Expr.Col(this.Name).Sqrt())
+
+    /// <summary> Cube root. </summary>
+    member this.Cbrt() = this.ApplyExpr(Expr.Col(this.Name).Cbrt())
+
+    /// <summary> Exponential (e^x). </summary>
+    member this.Exp() = this.ApplyExpr(Expr.Col(this.Name).Exp())
+
+    /// <summary> Natural logarithm (ln). </summary>
+    member this.Ln() = this.ApplyExpr(Expr.Col(this.Name).Ln())
+
+    // --- 2. Binary Operations with Scalar (Treated as Unary Expr) ---
+
+    /// <summary> Power with scalar exponent. </summary>
+    member this.Pow(exponent: double) = 
+        this.ApplyExpr(Expr.Col(this.Name).Pow exponent)
+
+    /// <summary> Power with integer exponent. </summary>
+    member this.Pow(exponent: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).Pow exponent)
+
+    /// <summary> Logarithm with scalar base. </summary>
+    member this.Log(baseVal: double) = 
+        this.ApplyExpr(Expr.Col(this.Name).Log baseVal)
+
+    // --- 3. Binary Operations with Series (Using ApplyBinaryExpr) ---
+
+    /// <summary> Power with Series exponent. </summary>
+    member this.Pow(exponent: Series) = 
+        this.ApplyBinaryExpr(exponent, fun l r -> l.Pow r)
+
+    /// <summary> Logarithm with Series base. </summary>
+    member this.Log(baseVal: Series) = 
+        this.ApplyBinaryExpr(baseVal, fun l r -> l.Log r)
+
+    /// <summary> True division (float result). </summary>
+    member this.Truediv(other: Series) = 
+        this.ApplyBinaryExpr(other, fun l r -> l.Truediv r)
+    
+    /// <summary> True division (scalar). </summary>
+    member this.Truediv(other: double) = 
+        this.ApplyExpr(Expr.Col(this.Name).Truediv(new Expr(PolarsWrapper.Lit other)))
+
+    /// <summary> Floor division (integer result). </summary>
+    member this.FloorDiv(other: Series) = 
+        this.ApplyBinaryExpr(other, fun l r -> l.FloorDiv(r))
+
+    /// <summary> Floor division (scalar). </summary>
+    member this.FloorDiv(other: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).FloorDiv(new Expr(PolarsWrapper.Lit other)))
+
+    /// <summary> Modulo (remainder). </summary>
+    member this.Mod(other: Series) = 
+        this.ApplyBinaryExpr(other, fun l r -> l.Mod r)
+
+    /// <summary> Modulo (scalar). </summary>
+    member this.Mod(other: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).Mod(new Expr(PolarsWrapper.Lit other)))
+
+    // Alias for Mod
+    member this.Rem(other: Series) = this.Mod other
+    member this.Rem(other: int) = this.Mod other
+    // ==========================================
+    // Math: Trigonometry (三角函数)
+    // ==========================================
+
+    /// <summary> Compute the element-wise sine. </summary>
+    member this.Sin() = this.ApplyExpr(Expr.Col(this.Name).Sin())
+
+    /// <summary> Compute the element-wise cosine. </summary>
+    member this.Cos() = this.ApplyExpr(Expr.Col(this.Name).Cos())
+
+    /// <summary> Compute the element-wise tangent. </summary>
+    member this.Tan() = this.ApplyExpr(Expr.Col(this.Name).Tan())
+
+    /// <summary> Compute the element-wise inverse sine. </summary>
+    member this.ArcSin() = this.ApplyExpr(Expr.Col(this.Name).ArcSin())
+
+    /// <summary> Compute the element-wise inverse cosine. </summary>
+    member this.ArcCos() = this.ApplyExpr(Expr.Col(this.Name).ArcCos())
+
+    /// <summary> Compute the element-wise inverse tangent. </summary>
+    member this.ArcTan() = this.ApplyExpr(Expr.Col(this.Name).ArcTan())
+
+    // ==========================================
+    // Math: Hyperbolic (双曲函数)
+    // ==========================================
+
+    /// <summary> Compute the element-wise hyperbolic sine. </summary>
+    member this.Sinh() = this.ApplyExpr(Expr.Col(this.Name).Sinh())
+
+    /// <summary> Compute the element-wise hyperbolic cosine. </summary>
+    member this.Cosh() = this.ApplyExpr(Expr.Col(this.Name).Cosh())
+
+    /// <summary> Compute the element-wise hyperbolic tangent. </summary>
+    member this.Tanh() = this.ApplyExpr(Expr.Col(this.Name).Tanh())
+
+    /// <summary> Compute the element-wise inverse hyperbolic sine. </summary>
+    member this.ArcSinh() = this.ApplyExpr(Expr.Col(this.Name).ArcSinh())
+
+    /// <summary> Compute the element-wise inverse hyperbolic cosine. </summary>
+    member this.ArcCosh() = this.ApplyExpr(Expr.Col(this.Name).ArcCosh())
+
+    /// <summary> Compute the element-wise inverse hyperbolic tangent. </summary>
+    member this.ArcTanh() = this.ApplyExpr(Expr.Col(this.Name).ArcTanh())
     // ==========================================
     // Static Constructors
     // ==========================================
@@ -498,6 +627,7 @@ type Series(handle: SeriesHandle) =
     static member (-) (lhs: Series, rhs: Series) = new Series(PolarsWrapper.SeriesSub(lhs.Handle, rhs.Handle))
     static member (*) (lhs: Series, rhs: Series) = new Series(PolarsWrapper.SeriesMul(lhs.Handle, rhs.Handle))
     static member (/) (lhs: Series, rhs: Series) = new Series(PolarsWrapper.SeriesDiv(lhs.Handle, rhs.Handle))
+    static member (%) (lhs: Series, rhs: Series) = lhs.Mod rhs
 
     // --- Operators (Comparison) ---
 
@@ -523,6 +653,7 @@ type Series(handle: SeriesHandle) =
     
     static member (/) (lhs: Series, rhs: int) = lhs / Series.create("lit", [rhs])
     static member (/) (lhs: Series, rhs: double) = lhs / Series.create("lit", [rhs])
+    static member (%) (lhs: Series, rhs: int) = lhs.Mod rhs
 
     // Comparison with Scalar
     static member (.>) (lhs: Series, rhs: int) = lhs .> Series.create("lit", [rhs])
