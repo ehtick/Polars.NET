@@ -146,6 +146,56 @@ type Series(handle: SeriesHandle) =
         
         // 2. 递归构建 F# 类型
         DataType.FromHandle typeHandle
+        
+    // ==========================================
+    // Missing Data Handling (FillNull & FillNan)
+    // ==========================================
+
+    // --- 1. Fill with Scalar (ApplyExpr) ---
+
+    /// <summary>
+    /// Fill null values with a literal value.
+    /// </summary>
+    member this.FillNull(fillValue: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
+
+    member this.FillNull(fillValue: double) = 
+        this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
+
+    member this.FillNull(fillValue: string) = 
+        this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
+
+    member this.FillNull(fillValue: bool) = 
+        this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
+
+    /// <summary>
+    /// Fill floating point NaN values with a literal value.
+    /// </summary>
+    member this.FillNan(fillValue: double) =
+        this.ApplyExpr(Expr.Col(this.Name).FillNan(new Expr(PolarsWrapper.Lit fillValue)))
+
+    // --- 2. Fill with Series (ApplyBinaryExpr) ---
+
+    /// <summary>
+    /// Fill null values with values from another Series.
+    /// Useful for coalescing.
+    /// </summary>
+    member this.FillNull(fillValue: Series) =
+        this.ApplyBinaryExpr(fillValue, fun l r -> l.FillNull r)
+
+    /// <summary>
+    /// Fill NaN values with values from another Series.
+    /// </summary>
+    member this.FillNan(fillValue: Series) =
+        this.ApplyBinaryExpr(fillValue, fun l r -> l.FillNan r)
+    
+    // --- 3. Fill with Expr (Advanced) ---
+    
+    /// <summary>
+    /// Fill nulls using an expression (mostly for internal use or complex literals).
+    /// </summary>
+    member this.FillNull(expr: Expr) =
+        this.ApplyExpr(Expr.Col(this.Name).FillNull expr)
     /// <summary>
     /// Returns a boolean Series indicating which values are null.
     /// </summary>
@@ -620,6 +670,33 @@ type Series(handle: SeriesHandle) =
     member this.Mean() = new Series(PolarsWrapper.SeriesMean handle)
     member this.Min() = new Series(PolarsWrapper.SeriesMin handle)
     member this.Max() = new Series(PolarsWrapper.SeriesMax handle)
+    /// <summary>
+    /// Get the standard deviation.
+    /// </summary>
+    /// <param name="ddof">Delta Degrees of Freedom. Default is 1.</param>
+    member this.Std(?ddof: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).Std(?ddof=ddof))
+
+    /// <summary>
+    /// Get the variance.
+    /// </summary>
+    /// <param name="ddof">Delta Degrees of Freedom. Default is 1.</param>
+    member this.Var(?ddof: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).Var(?ddof=ddof))
+
+    /// <summary>
+    /// Get the median.
+    /// </summary>
+    member this.Median() = 
+        this.ApplyExpr(Expr.Col(this.Name).Median())
+
+    /// <summary>
+    /// Get the quantile.
+    /// </summary>
+    /// <param name="q">Quantile between 0.0 and 1.0.</param>
+    /// <param name="interpolation">Interpolation method ("nearest", "higher", "lower", "midpoint", "linear"). Default "linear".</param>
+    member this.Quantile(q: float, ?interpolation: string) =
+        this.ApplyExpr(Expr.Col(this.Name).Quantile(q, ?interpolation=interpolation))
 
     // --- Operators (Arithmetic) ---
 

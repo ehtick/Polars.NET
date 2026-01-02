@@ -492,3 +492,50 @@ type ``Series Tests`` () =
         // Cosh(0) = 1
         let sCosh = s.Cosh()
         Assert.Equal(1.0, sCosh.GetValue<double> 0, 5)
+    [<Fact>]
+    member _.``Series: Statistics (Std, Var, Quantile)`` () =
+        let s = Series.create("vals", [1.0; 2.0; 3.0])
+
+        // Std (ddof=1): sqrt((1+0+1)/2) = 1.0
+        Assert.Equal(1.0, s.Std().GetValue<double> 0)
+
+        // Var (ddof=1): 1.0
+        Assert.Equal(1.0, s.Var().GetValue<double> 0)
+
+        // Median: 2.0
+        Assert.Equal(2.0, s.Median().GetValue<double> 0)
+
+        // Quantile (0.5) == Median
+        Assert.Equal(2.0, s.Quantile(0.5).GetValue<double> 0)
+
+    [<Fact>]
+    member _.``Series: FillNull (Scalar vs Series)`` () =
+        // s1: [1, null, 3]
+        let s1 = Series.create("A", [Some 1; None; Some 3])
+        
+        // 1. Fill with Scalar (0)
+        let sFilledScalar = s1.FillNull(0)
+        // [1, 0, 3]
+        Assert.Equal(0, sFilledScalar.GetValue<int> 1)
+
+        // 2. Fill with Series
+        // s2: [10, 20, 30]
+        let s2 = Series.create("B", [10; 20; 30])
+        
+        // s1 null 的位置用 s2 填
+        // [1, 20, 3]
+        let sFilledSeries = s1.FillNull s2
+        
+        Assert.Equal(1, sFilledSeries.GetValue<int> 0)
+        Assert.Equal(20, sFilledSeries.GetValue<int> 1) // Filled from s2
+        Assert.Equal(3, sFilledSeries.GetValue<int> 2)
+
+    [<Fact>]
+    member _.``Series: FillNan`` () =
+        // [1.0, NaN, 3.0]
+        let s = Series.create("vals", [1.0; Double.NaN; 3.0])
+        
+        // Fill Nan with 0.0
+        let sNoNan = s.FillNan 0.0
+        
+        Assert.Equal(0.0, sNoNan.GetValue<double> 1)
