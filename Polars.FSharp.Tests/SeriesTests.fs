@@ -163,13 +163,13 @@ type ``Series Tests`` () =
         // 1. IsNull -> [false, true, false]
         let maskNull = s.IsNull()
         Assert.Equal("bool", maskNull.DtypeStr)
-        Assert.Equal(Some false, maskNull.Bool(0))
-        Assert.Equal(Some true, maskNull.Bool(1))
+        Assert.Equal(Some false, maskNull.Bool 0)
+        Assert.Equal(Some true, maskNull.Bool 1)
 
         // 2. IsNotNull -> [true, false, true]
         let maskNotNull = s.IsNotNull()
-        Assert.Equal(Some true, maskNotNull.Bool(0))
-        Assert.Equal(Some false, maskNotNull.Bool(1))
+        Assert.Equal(Some true, maskNotNull.Bool 0)
+        Assert.Equal(Some false, maskNotNull.Bool 1)
     [<Fact>]
     member _.``Series: Dt Extraction`` () =
         // 2023-01-01 10:30:00
@@ -218,3 +218,73 @@ type ``Series Tests`` () =
         // Is Business Day
         let sIsBiz = s.Dt.IsBusinessDay()
         Assert.True(sIsBiz.GetValue<bool>(0))
+    [<Fact>]
+    member _.``Series: Str Basic Ops (Case, Slice, Len)`` () =
+        let s = Series.create("txt", ["Hello"; "World"; "Polars"])
+
+        // ToUpper
+        let sUpper = s.Str.ToUpper()
+        Assert.Equal("HELLO", sUpper.GetValue<string>(0))
+
+        // Slice (Offset 1, Len 2) -> "el", "or", "ol"
+        let sSlice = s.Str.Slice(1L, 2UL)
+        Assert.Equal("el", sSlice.GetValue<string> 0)
+        Assert.Equal("or", sSlice.GetValue<string> 1)
+        
+        // Len
+        let sLen = s.Str.Len()
+        Assert.Equal(5u, sLen.GetValue<uint32> 0) // Polars len returns uint32
+
+    [<Fact>]
+    member _.``Series: Str Regex & Replace`` () =
+        let s = Series.create("txt", ["a1b"; "c2d"])
+
+        // Replace Digit with * (Regex)
+        let sRep = s.Str.ReplaceAll("\d", "*", useRegex=true)
+        Assert.Equal("a*b", sRep.GetValue<string> 0)
+        Assert.Equal("c*d", sRep.GetValue<string> 1)
+
+        // Contains "b"
+        let sHasB = s.Str.Contains "b"
+        Assert.True(sHasB.GetValue<bool> 0)
+        Assert.False(sHasB.GetValue<bool> 1)
+
+    [<Fact>]
+    member _.``Series: Str Split (Returns List)`` () =
+        let s = Series.create("csv", ["a,b,c"; "x,y"])
+        
+        // Split -> List<String>
+        let sList = s.Str.Split(",")
+        
+        // 验证 Row 0: ["a", "b", "c"]
+        // 利用我们之前加的 GetList 方法
+        let l0 = sList.GetList<string>(0)
+        Assert.Equal<string list>(["a"; "b"; "c"], l0)
+
+        // 验证 Row 1: ["x", "y"]
+        let l1 = sList.GetList<string>(1)
+        Assert.Equal<string list>(["x"; "y"], l1)
+
+    [<Fact>]
+    member _.``Series: Str Parsing (ToDate)`` () =
+        let s = Series.create("dates", ["2023-01-01"; "2023-12-31"])
+        
+        // Parse String to Date
+        let sDate = s.Str.ToDate("%Y-%m-%d")
+        
+        // 验证类型是否变成了 Date (DateOnly)
+        // 这里的 GetValue 应该能自动拆箱
+        Assert.Equal(DateOnly(2023, 1, 1), sDate.GetValue<DateOnly> 0)
+        Assert.Equal(DateOnly(2023, 12, 31), sDate.GetValue<DateOnly> 1)
+
+    [<Fact>]
+    member _.``Series: Str Strip & Trim`` () =
+        let s = Series.create("txt", ["  hello  "; "__world__"])
+
+        // Strip Whitespace
+        let sTrim = s.Str.Strip()
+        Assert.Equal("hello", sTrim.GetValue<string> 0)
+
+        // Strip custom chars
+        let sStripCustom = s.Str.Strip("_")
+        Assert.Equal("world", sStripCustom.GetValue<string> 1)
