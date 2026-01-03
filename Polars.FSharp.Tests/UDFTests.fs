@@ -72,7 +72,7 @@ type ``UDF Tests`` () =
         use csv = new TempCsv("num\n1")
         let lf = LazyFrame.ScanCsv csv.Path
         
-        let udf = System.Func<IArrowArray, IArrowArray> UdfLogic.alwaysFail
+        let udf = Func<IArrowArray, IArrowArray> UdfLogic.alwaysFail
 
         // 2. 断言会抛出异常
         let ex = Assert.Throws<Exception>(fun () -> 
@@ -238,4 +238,4 @@ type ``UDF Tests`` () =
         // 因为 Series 本身不知道自己存的是 string，所以 'T 必须匹配物理类型
         let sRes = s.Map<string, string>((fun x -> x + "_suffix"), DataType.String)
         
-        Assert.Equal("a_suffix", sRes.GetValue<string>(0))
+        Assert.Equal("a_suffix", sRes.GetValue<string> 0)

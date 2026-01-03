@@ -75,6 +75,7 @@ and Expr(handle: ExprHandle) =
     static member (.||) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Or(lhs.CloneHandle(), rhs.CloneHandle()))
     /// <summary> Logical NOT. </summary>
     static member (!!) (e: Expr) = new Expr(PolarsWrapper.Not (e.CloneHandle()))
+    static member (.^) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Xor(lhs.CloneHandle(), rhs.CloneHandle()))
     // --- Methods ---
     /// <summary> Rename the output column. </summary>
     member this.Alias(name: string) = new Expr(PolarsWrapper.Alias(this.CloneHandle(), name))
@@ -191,7 +192,7 @@ and Expr(handle: ExprHandle) =
         new Expr(PolarsWrapper.IsNotNull(this.CloneHandle()))
     // UDF
     /// <summary>
-    /// Apply a custom C# function (UDF) to the expression.
+    /// Apply a custom C#/F# function (UDF) to the expression.
     /// The function receives an Apache Arrow Array and returns an Arrow Array.
     /// </summary>
     member this.Map(func: Func<IArrowArray, IArrowArray>, outputType: DataType) =
