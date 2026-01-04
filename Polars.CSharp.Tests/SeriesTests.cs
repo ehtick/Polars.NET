@@ -570,4 +570,31 @@ public class SeriesTests
         Assert.Equal(3, unnestedDf["field_0"][1]);
         Assert.Equal(4, unnestedDf["field_1"][1]);
     }
+    [Fact]
+    public void Test_Series_Bitwise_Shift()
+    {
+        // 1. Signed Int32 (算术右移测试)
+        // -8 (111...1000) >> 2 = -2 (111...1110)
+        using var sInt = Series.From("signed", new[] { 1, -8 });
+        
+        using var sIntShl = sInt << 2; // 1<<2=4, -8<<2=-32
+        using var sIntShr = sInt >> 2; // 1>>2=0, -8>>2=-2
+
+        Assert.Equal(4, sIntShl[0]);
+        Assert.Equal(-32, sIntShl[1]);
+        
+        Assert.Equal(0, sIntShr[0]);
+        Assert.Equal(-2, sIntShr[1]); // 验证保留符号位
+
+        // 2. Unsigned UInt32 (逻辑右移测试)
+        // 0xF0000000 >> 4 = 0x0F000000 (高位补0)
+        uint bigNum = 0xF0000000;
+        using var sUint = Series.From("unsigned", new[] { bigNum });
+        
+        using var sUintShr = sUint >> 4;
+        
+        // 验证逻辑右移 (0x0F000000 = 251658240)
+        uint expected = 0x0F000000;
+        Assert.Equal(expected, sUintShr.Cast(DataType.UInt32)[0]);
+    }
 }

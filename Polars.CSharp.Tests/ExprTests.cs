@@ -1237,4 +1237,46 @@ TooShort,1990-05-20,1.60";
             Assert.Contains(4, list_bottom);
         }
     }
+    [Fact]
+    public void Test_Bitwise_Shift_Operators()
+    {
+        // 准备数据
+        // Signed: 1, 2, -4, null
+        // Unsigned: 1, 2, 0xFFFFFFFF, null
+        var iData = new int?[] { 1, 2, -4, null };
+        var uData = new uint?[] { 1, 2, 0xFFFFFFFF, null };
+
+        using var df = DataFrame.FromColumns(new 
+        { 
+            i_val = iData,
+            u_val = uData
+        });
+
+        // 执行移位
+        using var res = df.Select(
+            // 1 << 1 = 2
+            (Col("i_val") << 1).Alias("i_shl"),
+            
+            // -4 >> 1 = -2 (算术右移，保留符号)
+            (Col("i_val") >> 1).Alias("i_shr"),
+
+            // 0xFFFFFFFF >> 4 = 0x0FFFFFFF (逻辑右移)
+            (Col("u_val") >> 4).Alias("u_shr")
+        );
+
+        // 验证 Signed Left Shift
+        // 1 << 1 = 2
+        Assert.Equal(2, res.GetValue<int>(0, "i_shl"));
+        // null << 1 = null
+        Assert.Null(res.GetValue<int?>(3, "i_shl"));
+
+        // 验证 Signed Right Shift (Arithmetic)
+        // -4 (111...100) >> 1 = -2 (111...110)
+        Assert.Equal(-2, res.GetValue<int>(2, "i_shr"));
+
+        // 验证 Unsigned Right Shift (Logical)
+        // UInt Max >> 4
+        uint expected = 0xFFFFFFFF >> 4; // C# 也是逻辑右移
+        Assert.Equal(expected, res.GetValue<uint>(2, "u_shr"));
+    }
 }

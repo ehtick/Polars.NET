@@ -253,6 +253,7 @@ gen_binary_op!(pl_expr_gt, gt); // >
 gen_binary_op!(pl_expr_gt_eq, gt_eq); // >=
 gen_binary_op!(pl_expr_lt, lt);       // <
 gen_binary_op!(pl_expr_lt_eq, lt_eq); // <=
+
 // 算术运算
 gen_binary_op!(pl_expr_add, add); // +
 gen_binary_op!(pl_expr_sub, sub); // -
@@ -323,6 +324,81 @@ pub extern "C" fn pl_expr_lit_null() -> *mut Expr {
     ffi_try!({
     let e = lit(Null {});
     Ok(Box::into_raw(Box::new(e)))
+    })
+}
+
+// ==========================================
+// Bitwise Operations (Shift)
+// ==========================================
+
+// 定义一个宏来简化 shift 逻辑
+macro_rules! impl_shift_op {
+    ($s:ident, $n:ident, $op:tt) => {{
+        match $s.dtype() {
+            // Signed Integers
+            DataType::Int8 => {
+                let ca = $s.i8()?;
+                // apply_values 是最快的，它直接操作底层 value buffer，自动保留 Validity Mask (Nulls)
+                // 这里的 $n 是 i32，Rust shift 右侧通常接受基本整型
+                Ok(ca.apply_values(|v| v $op $n).into_series())
+            },
+            DataType::Int16 => Ok($s.i16()?.apply_values(|v| v $op $n).into_series()),
+            DataType::Int32 => Ok($s.i32()?.apply_values(|v| v $op $n).into_series()),
+            DataType::Int64 => Ok($s.i64()?.apply_values(|v| v $op $n).into_series()),
+            
+            // Unsigned Integers
+            DataType::UInt8 => Ok($s.u8()?.apply_values(|v| v $op $n).into_series()),
+            DataType::UInt16 => Ok($s.u16()?.apply_values(|v| v $op $n).into_series()),
+            DataType::UInt32 => Ok($s.u32()?.apply_values(|v| v $op $n).into_series()),
+            DataType::UInt64 => Ok($s.u64()?.apply_values(|v| v $op $n).into_series()),
+            
+            // 其他类型不支持
+            dt => polars_bail!(ComputeError: "Bitwise shift not supported for dtype: {}", dt),
+        }
+    }}
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_bit_shl(expr_ptr: *mut ExprContext, n: i32) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
+        // [修复] 闭包接收 Column，返回 PolarsResult<Option<Column>>
+        let function = move |c: Column| {
+            // 1. 获取底层 Series 引用
+            let s = c.as_materialized_series();
+            
+            // 2. 调用宏进行计算 (返回 Series)
+            let op_result: PolarsResult<Series> = impl_shift_op!(s, n, <<);
+            let res_series = op_result?;
+            
+            // 3. 包装回 Column
+            Ok(Some(Column::from(res_series)))
+        };
+
+        let new_expr = ctx.inner.map(function, GetOutput::same_type());
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_bit_shr(expr_ptr: *mut ExprContext, n: i32) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
+        // [修复] 同上
+        let function = move |c: Column| {
+            let s = c.as_materialized_series();
+            let op_result: PolarsResult<Series> = impl_shift_op!(s, n, >>);
+            let res_series = op_result?;
+
+            Ok(Some(Column::from(res_series)))
+        };
+
+        let new_expr = ctx.inner.map(function, GetOutput::same_type());
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
 

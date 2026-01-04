@@ -197,6 +197,13 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_floor_div(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rem(ExprHandle l, ExprHandle r);
 
+    // Bitwise Shift
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_bit_shl(ExprHandle expr, int n);
+    
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_bit_shr(ExprHandle expr, int n);
+
     // 逻辑
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_and(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_or(ExprHandle l, ExprHandle r);

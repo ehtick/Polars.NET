@@ -384,6 +384,31 @@ public partial class Series : IDisposable
 
     /// <summary>Rounds down to the nearest integer.</summary>
     public Series Floor() => ApplyExpr(Polars.Col(Name).Floor());
+    
+    // ==========================================
+    // Bitwise Operators (<<, >>)
+    // ==========================================
+
+    /// <summary>
+    /// Bitwise left shift operation.
+    /// </summary>
+    public static Series operator <<(Series left, int right)
+    {
+        // 逻辑：将 Series 视为一个列表达式，应用移位，然后立即求值返回新 Series
+        return left.ApplyExpr(Polars.Col(left.Name) << right);
+    }
+
+    /// <summary>
+    /// Bitwise right shift operation.
+    /// <para>
+    /// For signed integers, this is arithmetic shift.
+    /// For unsigned integers, this is logical shift.
+    /// </para>
+    /// </summary>
+    public static Series operator >>(Series left, int right)
+    {
+        return left.ApplyExpr(Polars.Col(left.Name) >> right);
+    }
     // ==========================================
     // Trigonometry (三角函数)
     // ==========================================

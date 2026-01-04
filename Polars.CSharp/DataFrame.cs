@@ -268,6 +268,19 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         // 2. 委托给 Series.GetValue<T>
         return series.GetValue<T>(rowIndex);
     }
+    /// <summary>
+    /// Get a value from the DataFrame at the specified row and column.
+    /// This is efficient for single-value lookups (no Arrow conversion).
+    /// </summary>
+    public T? GetValue<T>(string colName,long rowIndex)
+    {
+        // 1. 获取 Series (假设已有索引器 this[string column])
+        // 注意：这里不要用 using，因为 Series 的所有权属于 DataFrame，不能 Dispose
+        var series = this[colName];
+        
+        // 2. 委托给 Series.GetValue<T>
+        return series.GetValue<T>(rowIndex);
+    }
 
     /// <summary>
     /// Get value by row index and column name (object type).
@@ -283,7 +296,21 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             return series[rowIndex]; // 委托给 Series 的 object 索引器
         }
     }
-
+    
+    /// <summary>
+    /// Get value by row index and column name (object type).
+    /// </summary>
+    /// <param name="rowIndex"></param>
+    /// <param name="colName"></param>
+    /// <returns></returns>
+    public object? this[string colName,int rowIndex]
+    {
+        get
+        {
+            var series = this[colName];
+            return series[rowIndex]; // 委托给 Series 的 object 索引器
+        }
+    }
     // ==========================================
     // DataFrame Operations
     // ==========================================

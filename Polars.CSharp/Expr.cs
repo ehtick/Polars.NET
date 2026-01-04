@@ -264,6 +264,33 @@ public class Expr : IDisposable
         return new Expr(PolarsWrapper.FloorDiv(this.CloneHandle(), MakeLit(other).Handle));
     }
     // ==========================================
+    // Bitwise Operators (<<, >>)
+    // ==========================================
+
+    /// <summary>
+    /// Bitwise left shift operation.
+    /// <para>Equivalent to Rust/C# `&lt;&lt;` operator.</para>
+    /// </summary>
+    public static Expr operator <<(Expr left, int right)
+    {
+        var h = left.CloneHandle();
+        return new Expr(PolarsWrapper.BitLeftShift(h, right));
+    }
+
+    /// <summary>
+    /// Bitwise right shift operation.
+    /// <para>
+    /// For signed integers, this is an arithmetic shift (preserves sign).
+    /// For unsigned integers, this is a logical shift (fills with zeros).
+    /// </para>
+    /// </summary>
+    public static Expr operator >>(Expr left, int right)
+    {
+        var h = left.CloneHandle();
+        return new Expr(PolarsWrapper.BitRightShift(h, right));
+    }
+    
+    // ==========================================
     // Logical Operators
     // ==========================================
 

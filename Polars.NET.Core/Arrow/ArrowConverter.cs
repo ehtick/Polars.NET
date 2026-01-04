@@ -79,9 +79,15 @@ public static class ArrowConverter
         // 1. 基础类型 (Primitives & String)
         if (checkType == typeof(Half)) return BuildFloat16(data.Cast<Half?>());
         if (checkType == typeof(float)) return BuildFloat32(data.Cast<float?>());
+        if (checkType == typeof(double)) return BuildDouble(data.Cast<double?>());
+        if (checkType == typeof(sbyte)) return BuildInt8(data.Cast<sbyte?>());
+        if (checkType == typeof(byte)) return BuildUInt8(data.Cast<byte?>());
+        if (checkType == typeof(short)) return BuildInt16(data.Cast<short?>());
+        if (checkType == typeof(ushort)) return BuildUInt16(data.Cast<ushort?>());
         if (checkType == typeof(int)) return BuildInt32(data.Cast<int?>());
         if (checkType == typeof(long)) return BuildInt64(data.Cast<long?>());
-        if (checkType == typeof(double)) return BuildDouble(data.Cast<double?>());
+        if (checkType == typeof(uint)) return BuildUInt32(data.Cast<uint?>());
+        if (checkType == typeof(ulong)) return BuildUInt64(data.Cast<ulong?>());
         if (checkType == typeof(bool)) return BuildBoolean(data.Cast<bool?>());
         if (checkType == typeof(string)) return BuildString(data.Cast<string?>());
         if (checkType == typeof(DateOnly)) return BuildDate32(data.Cast<DateOnly?>());
@@ -142,7 +148,7 @@ public static class ArrowConverter
             // 这会将 Key 和 Value 映射为 Struct 的两个字段
             return StructBuilderHelper.BuildStructArray(data);
         }
-        throw new NotSupportedException($"Type {type.Name} is not supported yet.");
+        throw new NotSupportedException($"Type {type.FullName} (Underlying: {checkType.FullName}) is not supported yet.");
     }
 
     private static bool IsKeyValuePair(Type t)
@@ -349,7 +355,34 @@ public static class ArrowConverter
         }
         return b.Build();
     }
-    
+    private static Int8Array BuildInt8(IEnumerable<sbyte?> data)
+    {
+        var b = new Int8Array.Builder();
+        foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
+        return b.Build();
+    }
+
+    private static UInt8Array BuildUInt8(IEnumerable<byte?> data)
+    {
+        var b = new UInt8Array.Builder();
+        foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
+        return b.Build();
+    }
+
+    private static Int16Array BuildInt16(IEnumerable<short?> data)
+    {
+        var b = new Int16Array.Builder();
+        foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
+        return b.Build();
+    }
+
+    private static UInt16Array BuildUInt16(IEnumerable<ushort?> data)
+    {
+        var b = new UInt16Array.Builder();
+        foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
+        return b.Build();
+    }    
+
     private static Int32Array BuildInt32(IEnumerable<int?> data)
     {
         var b = new Int32Array.Builder();
@@ -360,6 +393,19 @@ public static class ArrowConverter
     private static Int64Array BuildInt64(IEnumerable<long?> data)
     {
         var b = new Int64Array.Builder();
+        foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
+        return b.Build();
+    }
+    private static UInt32Array BuildUInt32(IEnumerable<uint?> data)
+    {
+        var b = new UInt32Array.Builder();
+        foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
+        return b.Build();
+    }
+    
+    private static UInt64Array BuildUInt64(IEnumerable<ulong?> data)
+    {
+        var b = new UInt64Array.Builder();
         foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
         return b.Build();
     }

@@ -273,6 +273,19 @@ public static partial class PolarsWrapper
     public static ExprHandle FloorDiv(ExprHandle l, ExprHandle r) => BinaryOp(NativeBindings.pl_expr_floor_div, l, r);
     public static ExprHandle Rem(ExprHandle l, ExprHandle r) => BinaryOp(NativeBindings.pl_expr_rem, l, r);
     public static ExprHandle Mul(ExprHandle l, ExprHandle r) => BinaryOp(NativeBindings.pl_expr_mul, l, r);
+    public static ExprHandle BitLeftShift(ExprHandle expr, int n)
+    {
+        var h = NativeBindings.pl_expr_bit_shl(expr, n);
+        expr.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+
+    public static ExprHandle BitRightShift(ExprHandle expr, int n)
+    {
+        var h = NativeBindings.pl_expr_bit_shr(expr, n);
+        expr.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
     // Logic
     public static ExprHandle And(ExprHandle l, ExprHandle r) => BinaryOp(NativeBindings.pl_expr_and, l, r);
     public static ExprHandle Or(ExprHandle l, ExprHandle r) => BinaryOp(NativeBindings.pl_expr_or, l, r);
