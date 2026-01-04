@@ -1,3 +1,6 @@
+[![NuGet](https://img.shields.io/nuget/v/Polars.NET.svg)](https://www.nuget.org/packages/Polars.NET)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/Polars.NET.svg)](https://www.nuget.org/packages/Polars.NET)
+
 # Polars.NET
 
 🚀 **High-Performance, AI-Ready DataFrames for .NET, powered by Rust & Apache Arrow.**

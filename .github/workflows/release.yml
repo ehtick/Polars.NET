@@ -6,6 +6,12 @@ name: Build and Publish NuGet
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'         # 忽略所有 .md 文件
+      - 'LICENSE'       # 忽略 License
+      - '.gitignore'    # 忽略 gitignore
+      - 'docs/**'       # 忽略 docs 目录下的所有东西
+      - 'icon.png'      # 忽略图标更新
   workflow_dispatch:
 
 jobs:
