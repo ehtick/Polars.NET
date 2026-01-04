@@ -47,6 +47,21 @@ and Expr(handle: ExprHandle) =
 
     /// <summary> Round down to the nearest integer. </summary>
     member this.Floor() = new Expr(PolarsWrapper.Floor(this.CloneHandle()))
+    // ==========================================
+    // Bitwise Operations (Custom Extension)
+    // ==========================================
+
+    /// <summary>
+    /// Bitwise left shift (<<).
+    /// </summary>
+    member this.BitLeftShift(n: int) = 
+        new Expr(PolarsWrapper.BitLeftShift(this.CloneHandle(), n))
+
+    /// <summary>
+    /// Bitwise right shift (>>).
+    /// </summary>
+    member this.BitRightShift(n: int) = 
+        new Expr(PolarsWrapper.BitRightShift(this.CloneHandle(), n))
 
     // --- Operators ---
     /// <summary> Greater than. </summary>
@@ -76,6 +91,12 @@ and Expr(handle: ExprHandle) =
     /// <summary> Logical NOT. </summary>
     static member (!!) (e: Expr) = new Expr(PolarsWrapper.Not (e.CloneHandle()))
     static member (.^) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Xor(lhs.CloneHandle(), rhs.CloneHandle()))
+    
+    /// <summary> Bitwise left shift operator (expr <<< n). </summary>
+    static member (<<<) (lhs: Expr, rhs: int) = lhs.BitLeftShift rhs
+
+    /// <summary> Bitwise right shift operator (expr >>> n). </summary>
+    static member (>>>) (lhs: Expr, rhs: int) = lhs.BitRightShift rhs
     // --- Methods ---
     /// <summary> Rename the output column. </summary>
     member this.Alias(name: string) = new Expr(PolarsWrapper.Alias(this.CloneHandle(), name))

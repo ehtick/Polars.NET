@@ -356,6 +356,12 @@ type Series(handle: SeriesHandle) =
     member this.Log(baseVal: double) = 
         this.ApplyExpr(Expr.Col(this.Name).Log baseVal)
 
+    member this.BitLeftShift(n: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).BitLeftShift n)
+
+    member this.BitRightShift(n: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).BitRightShift n)
+
     // --- 3. Binary Operations with Series (Using ApplyBinaryExpr) ---
 
     /// <summary> Power with Series exponent. </summary>
@@ -847,6 +853,8 @@ type Series(handle: SeriesHandle) =
     static member (/) (lhs: Series, rhs: int) = lhs / Series.create("lit", [rhs])
     static member (/) (lhs: Series, rhs: double) = lhs / Series.create("lit", [rhs])
     static member (%) (lhs: Series, rhs: int) = lhs.Mod rhs
+    static member (<<<) (lhs: Series, rhs: int) = lhs.BitLeftShift rhs
+    static member (>>>) (lhs: Series, rhs: int) = lhs.BitRightShift rhs
 
     // Comparison with Scalar
     static member (.>) (lhs: Series, rhs: int) = lhs .> Series.create("lit", [rhs])

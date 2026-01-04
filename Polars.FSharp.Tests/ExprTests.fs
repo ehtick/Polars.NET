@@ -814,3 +814,36 @@ type ``String Logic Tests`` () =
         // 验证 3: [1, 2]
         let lSingle = res.CellList<int>("Fluent_Single", 0)
         Assert.Equal<int list>([1; 2], lSingle)
+    [<Fact>]
+    member _.``Bitwise: Left Shift (<<<)`` () =
+        // Data: [1, 2, 4] (Binary: 001, 010, 100)
+        let s = Series.create("vals", [1; 2; 4])
+
+        // Operation: << 1
+        // Expr style via DataFrame
+        let df = s.ToFrame()
+        let resDf = 
+            df.Select([
+                (pl.col "vals" <<< 1).Alias "shifted"
+            ])
+        
+        // Expected: [2, 4, 8]
+        let sRes = resDf.Column "shifted"
+        Assert.Equal(2, sRes.GetValue<int> 0)
+        Assert.Equal(4, sRes.GetValue<int> 1)
+        Assert.Equal(8, sRes.GetValue<int> 2)
+
+    [<Fact>]
+    member _.``Bitwise: Right Shift (>>>)`` () =
+        // Data: [8, 4, 2]
+        let s = Series.create("vals", [8; 4; 2])
+
+        // Operation: >> 2 (Series direct op)
+        // 8 (1000) >> 2 = 2 (0010)
+        // 4 (0100) >> 2 = 1 (0001)
+        // 2 (0010) >> 2 = 0 (0000)
+        let sRes = s >>> 2
+        
+        Assert.Equal(2, sRes.GetValue<int> 0)
+        Assert.Equal(1, sRes.GetValue<int> 1)
+        Assert.Equal(0, sRes.GetValue<int> 2)
