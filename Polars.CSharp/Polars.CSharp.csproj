@@ -4,9 +4,22 @@
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile> 
+
+    <PackageId>Polars.NET</PackageId> <Version>0.1.0-alpha1</Version>
+    <Authors>ErrorLSC</Authors>
+    <Description>Idiomatic C# API Frontend for Polars DataFrame library.</Description>
+    <PackageTags>polars;dataframe;data-analysis;csharp</PackageTags>
+    <PackageIcon>icon.png</PackageIcon>
+    <RepositoryUrl>https://github.com/ErrorLSC/Polars.NET</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\icon.png" Pack="true" PackagePath="\" />
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Polars.NET.Core\Polars.NET.Core.csproj" />

@@ -336,7 +336,7 @@ module pl =
     /// </summary>
     let showSeries (s: Series) : Series =
         // 临时转为 DataFrame 打印，最省事
-        let h = PolarsWrapper.SeriesToFrame(s.Handle)
+        let h = PolarsWrapper.SeriesToFrame s.Handle
         use df = new DataFrame(h)
         df.Show()
         s

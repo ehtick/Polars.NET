@@ -5,8 +5,23 @@
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Nullable>disable</Nullable>
-  </PropertyGroup>
 
+    <PackageId>Polars.FSharp</PackageId>
+    <Version>0.1.0-alpha1</Version>
+    <Authors>ErrorLSC</Authors>
+    <Description>Idiomatic F# API for Polars DataFrame library with strict type safety and pipeline support.</Description>
+    <PackageTags>polars;dataframe;fsharp;functional;data-science</PackageTags>
+    <PackageIcon>icon.png</PackageIcon>
+    <RepositoryUrl>https://github.com/ErrorLSC/Polars.NET</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <None Include="..\icon.png" Pack="true" PackagePath="\" />
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  
   <ItemGroup>
     <Compile Include="Enums.fs" />
     <Compile Include="UdfUtils.fs" />
