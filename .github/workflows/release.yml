@@ -23,22 +23,16 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: libnative_shim.so
-            asset_path: target/release/libnative_shim.so
-            final_name: libnative_shim.so
           
           # Windows x64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: native_shim.dll
-            asset_path: target/release/native_shim.dll
-            final_name: native_shim.dll
 
           # MacOS ARM64 (Apple Silicon) - 目前 GitHub macos-latest 默认是 ARM64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: libnative_shim.dylib
-            asset_path: target/release/libnative_shim.dylib
-            final_name: libnative_shim.dylib
 
     steps:
       - uses: actions/checkout@v4
@@ -61,12 +55,20 @@ jobs:
         working-directory: ./native_shim
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Prepare Artifact
+        shell: bash
+        working-directory: ./native_shim
+        run: |
+          # 不管原来的路径有多深，直接把它复制到当前目录
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} .
+          echo "✅ Moved artifact to root: ${{ matrix.artifact_name }}"
+
       # 上传构建产物 (暂存到 GitHub Actions)
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: native-lib-${{ matrix.os }} #以此区分不同系统的包
-          path: native_shim/${{ matrix.asset_path }}
+          path: native_shim/${{ matrix.artifact_name }}
           if-no-files-found: error
 
   # ===================================================
