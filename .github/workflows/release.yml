@@ -138,7 +138,73 @@ jobs:
         with:
           name: polars-net-nugets
           path: nupkgs/*.nupkg
+  # ===================================================
+  # 第三阶段：全平台冒烟测试 (Smoke Test)
+  # ===================================================
+  smoke-test:
+    needs: package-dotnet # 必须等包打完
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false # 一个平台挂了不影响其他平台
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # 1. 下载刚才打包阶段生成的 NuGet 包
+      - uses: actions/download-artifact@v4
+        with:
+          name: polars-net-nugets
+          path: local_feed
+
+      # 2. 运行测试 (使用 Bash，在 Windows 上也能跑)
+      - name: Run Smoke Test
+        shell: bash
+        run: |
+          dotnet new console -n SmokeTest
+          cd SmokeTest
+          
+          dotnet new nugetconfig
+          dotnet nuget add source ../local_feed --name LocalFeed
+          
+          dotnet add package Polars.NET --version 0.1.0-alpha1
+          
+          cat <<EOF > Program.cs
+          using System;
+          using Polars.CSharp; 
+          using static Polars.CSharp.Polars;
+
+          class Program {
+              static void Main() {
+                  Console.WriteLine("🚀 Starting Polars.NET Smoke Test on $RUNNER_OS...");
+                  try {
+                      var df = DataFrame.FromColumns(new {
+                          Id = new[] { 1, 2, 3, 4, 5 },
+                          Name = new[] { "Alice", "Bob", "Charlie", "David", "Eve" },
+                          Score = new double?[] { 85.5, 90.0, null, 88.5, 92.0 }
+                      });
+                      Console.WriteLine($"[Success] DataFrame Created: {df.Height} rows");
+
+                      var filtered = df.Lazy()
+                          .Filter(Col("Score") > 88.0)
+                          .Collect();
+
+                      Console.WriteLine($"[Success] Native Filter Executed. Result Rows: {filtered.Height}");
+                      Console.WriteLine(filtered);
+                      Console.WriteLine("✅ All Tests Passed!");
+                  } catch (Exception ex) {
+                      Console.Error.WriteLine("❌ Error: " + ex.ToString());
+                      Environment.Exit(1);
+                  }
+              }
+          }
+          EOF
+          
+          dotnet run
       # (可选) 9. 自动发布到 NuGet.org
       # 如果你在 GitHub Secrets 里配置了 NUGET_API_KEY，取消下面的注释即可自动发布
       # - name: Push to NuGet
