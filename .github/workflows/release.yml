@@ -48,12 +48,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-          
+
       # [新增步骤] 针对 Linux，移除 mold 配置，使用默认链接器
       # 这样能避免 CI 报错，同时不影响你本地开发
       - name: Remove Local Config (Linux)
         if: runner.os == 'Linux'
-        run: rm -f .cargo/config.toml
+        run: rm -rf native_shim/.cargo
 
       # 编译 Rust (Release 模式)
       # 这里的 native_shim 是你的 Rust 目录名，如果改了名字记得调整
