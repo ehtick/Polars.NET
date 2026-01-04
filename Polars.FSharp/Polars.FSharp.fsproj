@@ -17,10 +17,6 @@
   </PropertyGroup>
   
   <ItemGroup>
-    <None Include="..\README.md" Pack="true" PackagePath="\" />
-  </ItemGroup>
-  
-  <ItemGroup>
     <Compile Include="Enums.fs" />
     <Compile Include="UdfUtils.fs" />
     <Compile Include="Exprs.fs" />
