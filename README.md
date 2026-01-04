@@ -1,5 +1,7 @@
 [![NuGet](https://img.shields.io/nuget/v/Polars.NET.svg)](https://www.nuget.org/packages/Polars.NET)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/Polars.NET.svg)](https://www.nuget.org/packages/Polars.NET)
+[![NuGet](https://img.shields.io/nuget/v/Polars.FSharp.svg)](https://www.nuget.org/packages/Polars.FSharp)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/Polars.FSharp.svg)](https://www.nuget.org/packages/Polars.FSharp)
 
 # Polars.NET
 
@@ -50,13 +52,18 @@ Polars.NET is designed for engineers who care about:
 
 ## 📦 Installation
 
+C# Users:
 ```Bash
 dotnet add package Polars.NET
+```
+F# Users:
+```Bash
+dotnet add package Polars.FSharp
 ```
 
 ## Target Framework
 
-.NET 8 and 
+.NET 8 and later
 
 ## 🏁 Quick Start
 
