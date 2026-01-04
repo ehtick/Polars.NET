@@ -437,6 +437,81 @@ type Series(handle: SeriesHandle) =
     /// <summary> Compute the element-wise inverse hyperbolic tangent. </summary>
     member this.ArcTanh() = this.ApplyExpr(Expr.Col(this.Name).ArcTanh())
     // ==========================================
+    // Shift, Diff & Fill
+    // ==========================================
+
+    /// <summary>
+    /// Shift the values by a given period.
+    /// </summary>
+    member this.Shift(n: int64) = 
+        this.ApplyExpr(Expr.Col(this.Name).Shift n)
+
+    member this.Shift(n: int) = this.Shift(int64 n)
+    
+    /// <summary> Shift by 1. </summary>
+    member this.Shift() = this.Shift(1L)
+
+    /// <summary>
+    /// Calculate the difference with a given period.
+    /// </summary>
+    member this.Diff(n: int64) = 
+        this.ApplyExpr(Expr.Col(this.Name).Diff n)
+
+    member this.Diff(n: int) = this.Diff(int64 n)
+    
+    /// <summary> Diff by 1. </summary>
+    member this.Diff() = this.Diff(1L)
+
+    /// <summary>
+    /// Fill null values with the previous non-null value.
+    /// </summary>
+    /// <param name="limit">Max number of consecutive nulls to fill.</param>
+    member this.ForwardFill(?limit: int) =
+        this.ApplyExpr(Expr.Col(this.Name).ForwardFill(?limit=limit))
+
+    /// <summary>
+    /// Fill null values with the next non-null value.
+    /// </summary>
+    /// <param name="limit">Max number of consecutive nulls to fill.</param>
+    member this.BackwardFill(?limit: int) =
+        this.ApplyExpr(Expr.Col(this.Name).BackwardFill(?limit=limit))
+
+    // Alias
+    member this.FFill ?limit = this.ForwardFill(?limit=limit)
+    member this.BFill ?limit = this.BackwardFill(?limit=limit)
+
+    // ==========================================
+    // Rolling Window Functions
+    // ==========================================
+
+    // --- Rolling Min ---
+    member this.RollingMin(windowSize: string, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMin(windowSize, ?minPeriod=minPeriod))
+    
+    member this.RollingMin(windowSize: TimeSpan, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMin(windowSize, ?minPeriod=minPeriod))
+
+    // --- Rolling Max ---
+    member this.RollingMax(windowSize: string, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMax(windowSize, ?minPeriod=minPeriod))
+
+    member this.RollingMax(windowSize: TimeSpan, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMax(windowSize, ?minPeriod=minPeriod))
+
+    // --- Rolling Mean ---
+    member this.RollingMean(windowSize: string, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMean(windowSize, ?minPeriod=minPeriod))
+
+    member this.RollingMean(windowSize: TimeSpan, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMean(windowSize, ?minPeriod=minPeriod))
+
+    // --- Rolling Sum ---
+    member this.RollingSum(windowSize: string, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingSum(windowSize, ?minPeriod=minPeriod))
+
+    member this.RollingSum(windowSize: TimeSpan, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingSum(windowSize, ?minPeriod=minPeriod))
+    // ==========================================
     // Static Constructors
     // ==========================================
     

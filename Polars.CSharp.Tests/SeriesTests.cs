@@ -595,6 +595,6 @@ public class SeriesTests
         
         // 验证逻辑右移 (0x0F000000 = 251658240)
         uint expected = 0x0F000000;
-        Assert.Equal(expected, sUintShr.Cast(DataType.UInt32)[0]);
+        Assert.Equal(expected, sUintShr[0]);
     }
 }

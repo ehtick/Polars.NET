@@ -539,3 +539,54 @@ type ``Series Tests`` () =
         let sNoNan = s.FillNan 0.0
         
         Assert.Equal(0.0, sNoNan.GetValue<double> 1)
+    [<Fact>]
+    member _.``Series: Shift and Diff`` () =
+        // [10, 20, 30]
+        let s = Series.create("vals", [10; 20; 30])
+
+        // Shift(1) -> [null, 10, 20]
+        let sShift = s.Shift(1)
+        Assert.True(sShift.IsNullAt 0)
+        Assert.Equal(10, sShift.GetValue<int> 1)
+
+        // Diff(1) -> [null, 10, 10]
+        // 20-10=10, 30-20=10
+        let sDiff = s.Diff(1)
+        Assert.True(sDiff.IsNullAt 0)
+        Assert.Equal(10, sDiff.GetValue<int> 1)
+        Assert.Equal(10, sDiff.GetValue<int> 2)
+
+    [<Fact>]
+    member _.``Series: Forward Fill`` () =
+        // [1, null, null, 4]
+        let s = Series.create("vals", [Some 1; None; None; Some 4])
+
+        // FFill -> [1, 1, 1, 4]
+        let sFill = s.ForwardFill()
+        
+        Assert.Equal(1, sFill.GetValue<int> 1)
+        Assert.Equal(1, sFill.GetValue<int> 2)
+        Assert.Equal(4, sFill.GetValue<int> 3)
+
+        // FFill(limit=1) -> [1, 1, null, 4]
+        let sLimit = s.ForwardFill(limit=1)
+        Assert.Equal(1, sLimit.GetValue<int> 1)
+        Assert.True(sLimit.IsNullAt 2)
+
+    [<Fact>]
+    member _.``Series: Rolling Sum (Index Based)`` () =
+        // [1, 2, 3, 4]
+        let s = Series.create("vals", [1; 2; 3; 4])
+
+        // Window size "2i" (2 rows based on index)
+        // Rolling Sum:
+        // 0: 1 (null? depends on min_periods) -> min_periods=1 -> 1
+        // 1: 1+2=3
+        // 2: 2+3=5
+        // 3: 3+4=7
+        let sRoll = s.RollingSum("2i", minPeriod=1)
+        
+        Assert.Equal(1, sRoll.GetValue<int> 0)
+        Assert.Equal(3, sRoll.GetValue<int> 1)
+        Assert.Equal(5, sRoll.GetValue<int> 2)
+        Assert.Equal(7, sRoll.GetValue<int> 3)
