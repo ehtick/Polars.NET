@@ -304,7 +304,7 @@ public static partial class PolarsWrapper
         e.TransferOwnership();
         return ErrorHelper.Check(h);
     }    
-    public static ExprHandle TopKBy(ExprHandle expr, uint k, ExprHandle[] by, bool[] descending)
+    public static ExprHandle TopKBy(ExprHandle expr, uint k, ExprHandle[] by, bool[] reverse)
     {
         // 1. 转换并移交所有权 (Move)
         // 使用你的 HandlesToPtrs 方法，它会调用 TransferOwnership()
@@ -315,7 +315,7 @@ public static partial class PolarsWrapper
         unsafe
         {
             // 2. 锁定 bool 数组
-            fixed (bool* descPtr = descending)
+            fixed (bool* descPtr = reverse)
             {
                 // 3. 调用 Native
                 var h = NativeBindings.pl_expr_top_k_by(
@@ -324,7 +324,7 @@ public static partial class PolarsWrapper
                     byPtrs, 
                     (UIntPtr)byPtrs.Length, 
                     descPtr, 
-                    (UIntPtr)descending.Length
+                    (UIntPtr)reverse.Length
                 );
                 expr.TransferOwnership();
                 return ErrorHelper.Check(h);
@@ -332,7 +332,7 @@ public static partial class PolarsWrapper
         }
     }
 
-    public static ExprHandle BottomKBy(ExprHandle expr, uint k, ExprHandle[] by, bool[] descending)
+    public static ExprHandle BottomKBy(ExprHandle expr, uint k, ExprHandle[] by, bool[] reverse)
     {
         // 1. 移交所有权
         var byPtrs = HandlesToPtrs(by);
@@ -340,7 +340,7 @@ public static partial class PolarsWrapper
         unsafe
         {
             // 2. 锁定 bool 数组
-            fixed (bool* descPtr = descending)
+            fixed (bool* descPtr = reverse)
             {
                 // 3. 调用 Native
                 var h = NativeBindings.pl_expr_bottom_k_by(
@@ -349,7 +349,7 @@ public static partial class PolarsWrapper
                     byPtrs, 
                     (UIntPtr)byPtrs.Length, 
                     descPtr, 
-                    (UIntPtr)descending.Length
+                    (UIntPtr)reverse.Length
                 );
                 expr.TransferOwnership();
                 return ErrorHelper.Check(h);

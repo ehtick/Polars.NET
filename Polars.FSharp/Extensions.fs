@@ -197,3 +197,8 @@ module Serialization =
             // 利用 Series.GetValue<'T> 的高性能路径
             let s = this.Column colName
             s.GetValue<'T>(int64 rowIndex)
+
+        member this.Cell<'T>(rowIndex: int,colName: string ) : 'T =
+            // 利用 Series.GetValue<'T> 的高性能路径
+            let s = this.Column colName
+            s.GetValue<'T>(int64 rowIndex)

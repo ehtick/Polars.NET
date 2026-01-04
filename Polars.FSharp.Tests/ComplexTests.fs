@@ -721,3 +721,62 @@ type ``Complex Query Tests`` () =
         Assert.Equal("B", res.Cell<string>("Category",2))
         Assert.Equal(1, res.Cell<int>("Count",2))
         Assert.Equal(100.0, res.Cell<double>("Mean",2))
+    [<Fact>]
+    member _.``LazyFrame: Unnest Struct`` () =
+        // 1. 准备数据: [Struct(A=1, B=2)]
+        let data = [
+            {| ID = 1; Val1 = 10; Val2 = 20 |}
+        ]
+        
+        let lf = 
+            DataFrame.ofRecords(data).Lazy()
+                // 先构造一个 Struct 列 "MyStruct"
+                .Select([
+                    pl.col "ID"
+                    pl.asStruct([ pl.col "Val1"; pl.col "Val2" ]).Alias "MyStruct"
+                ])
+        
+        // Schema Check: ID, MyStruct
+        
+        // 2. Unnest "MyStruct"
+        let res = 
+            lf.Unnest("MyStruct") // 展开 MyStruct
+              .Collect()
+
+        // 3. 验证
+        // Unnest 后，列名应该是 ID, Val1, Val2
+
+        
+        // 验证数据
+        Assert.Equal(10, res.Cell<int>("Val1",0))
+        Assert.Equal(20, res.Cell<int>("Val2",0))
+
+    [<Fact>]
+    member _.``LazyFrame: TopK & BottomK`` () =
+        // Data: 1..5
+        let data = [
+            {| V = 1 |}; {| V = 3 |}; {| V = 5 |}; {| V = 2 |}; {| V = 4 |}
+        ]
+        let lf = DataFrame.ofRecords(data).Lazy()
+
+        // --- TopK (by V) ---
+        // 取最大的 2 个 -> 5, 4
+        // 注意：Polars TopK 默认行为是 "Largest k elements"，所以不需要 descending=true
+        let top2 = 
+            lf.TopK(2, [pl.col "V"],reverse=false) // Descending=true 确保大的在前
+              .Collect()
+        
+        // 验证: 应该是 5, 4 (顺序可能取决于具体的 TopK 算法，但数值集合是对的)
+        // Polars TopK 通常返回有序结果
+        Assert.Equal(2L, top2.Rows)
+        Assert.Equal(5, top2.Cell<int>("V",0))
+        Assert.Equal(4, top2.Cell<int>("V",1))
+
+        // --- BottomK (by V) ---
+        // 取最小的 2 个 -> 1, 2
+        let bot2 = 
+            lf.BottomK(2, [pl.col "V"], reverse=false) // Ascending
+              .Collect()
+        
+        Assert.Equal(1, bot2.Cell<int>("V",0))
+        Assert.Equal(2, bot2.Cell<int>("V",1))

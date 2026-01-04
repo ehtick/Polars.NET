@@ -227,6 +227,82 @@ and Expr(handle: ExprHandle) =
     member this.Explode() = new Expr(PolarsWrapper.Explode(this.CloneHandle()))
     /// <summary> Implode multiple rows to a list. </summary>
     member this.Implode() = new Expr(PolarsWrapper.Implode(this.CloneHandle()))
+        // ==========================================
+    // TopK / BottomK
+    // ==========================================
+
+    /// <summary>
+    /// Get the k largest elements.
+    /// Result is sorted descending.
+    /// </summary>
+    member this.TopK(k: int) = 
+        new Expr(PolarsWrapper.TopK(this.CloneHandle(), uint k))
+
+    /// <summary>
+    /// Get the k smallest elements.
+    /// Result is sorted ascending.
+    /// </summary>
+    member this.BottomK(k: int) = 
+        new Expr(PolarsWrapper.BottomK(this.CloneHandle(), uint k))
+
+    // ==========================================
+    // TopKBy / BottomKBy
+    // ==========================================
+
+    /// <summary>
+    /// Get the top k elements determined by the values in the 'by' columns.
+    /// </summary>
+    /// <param name="k">Number of elements to return.</param>
+    /// <param name="by">Columns to sort by.</param>
+    /// <param name="reverse">Reverse the sort order for each by column. Default false.</param>
+    member this.TopKBy(k: int, by: seq<#IColumnExpr>, ?reverse: seq<bool>) =
+        // 1. 准备 By Expr Handles
+        let byHandles = 
+            by 
+            |> Seq.collect (fun x -> x.ToExprs()) 
+            |> Seq.map (fun e -> e.CloneHandle()) 
+            |> Seq.toArray
+        
+        // 2. 准备 Reverse 数组
+        let revArr = 
+            match reverse with
+            | Some r -> r |> Seq.toArray
+            | None -> [| false |] // C# 端会广播
+
+        // 3. 调用 Wrapper
+        // 注意：Wrapper 会接管 byHandles 的所有权
+        new Expr(PolarsWrapper.TopKBy(this.CloneHandle(), uint k, byHandles, revArr))
+
+    /// <summary>
+    /// Get the bottom k elements determined by the values in the 'by' columns.
+    /// </summary>
+    member this.BottomKBy(k: int, by: seq<#IColumnExpr>, ?reverse: seq<bool>) =
+        let byHandles = 
+            by 
+            |> Seq.collect (fun x -> x.ToExprs()) 
+            |> Seq.map (fun e -> e.CloneHandle()) 
+            |> Seq.toArray
+        
+        let revArr = 
+            match reverse with
+            | Some r -> r |> Seq.toArray
+            | None -> [| false |]
+
+        new Expr(PolarsWrapper.BottomKBy(this.CloneHandle(), uint k, byHandles, revArr))
+
+    // --- Sugar Overloads (Single Column By) ---
+
+    member this.TopKBy(k: int, by: #IColumnExpr, reverse: bool) =
+        this.TopKBy(k, [by], [| reverse |])
+    
+    member this.TopKBy(k: int, by: #IColumnExpr) =
+        this.TopKBy(k, [by], [| false |])
+
+    member this.BottomKBy(k: int, by: #IColumnExpr, reverse: bool) =
+        this.BottomKBy(k, [by], [| reverse |])
+
+    member this.BottomKBy(k: int, by: #IColumnExpr) =
+        this.BottomKBy(k, [by], [| false |])
     /// <summary> Apply a window function over specific partition columns. </summary>
     member this.Over(partitionBy: Expr list) =
         let mainHandle = this.CloneHandle()

@@ -836,7 +836,7 @@ type ``String Logic Tests`` () =
     [<Fact>]
     member _.``Bitwise: Right Shift (>>>)`` () =
         // Data: [8, 4, 2]
-        let s = Series.create("vals", [8; 4; 2])
+        let s = Series.create("vals", [Some 8;Some 4; None])
 
         // Operation: >> 2 (Series direct op)
         // 8 (1000) >> 2 = 2 (0010)
@@ -846,4 +846,63 @@ type ``String Logic Tests`` () =
         
         Assert.Equal(2, sRes.GetValue<int> 0)
         Assert.Equal(1, sRes.GetValue<int> 1)
-        Assert.Equal(0, sRes.GetValue<int> 2)
+        Assert.Equal(None,sRes.GetValue<int option> 2)
+    [<Fact>]
+    member _.``Expr: TopK & BottomK`` () =
+        // Data: [1, 5, 2, 4, 3]
+        let s = Series.create("vals", [1; 5; 2; 4; 3])
+
+        // TopK(2) -> [5, 4]
+        let sTop = s.TopK 2
+        
+        Assert.Equal(2L, sTop.Length)
+        Assert.Equal(5, sTop.GetValue<int> 0)
+        Assert.Equal(4, sTop.GetValue<int> 1)
+
+        // BottomK(2) -> [1, 2]
+        let sBot = s.BottomK 2
+        Assert.Equal(2L, sBot.Length)
+        Assert.Equal(1, sBot.GetValue<int> 0)
+        Assert.Equal(2, sBot.GetValue<int> 1)
+
+    [<Fact>]
+    member _.``Expr: TopKBy (Series vs Series)`` () =
+        // Scores: [10, 50, 20]
+        // Names:  ["A", "B", "C"]
+        let sNames = Series.create("Name", ["A"; "B"; "C"])
+        let sScores = Series.create("Score", [10; 50; 20])
+
+        // 需求：根据分数(Score) 取 Top 2 的名字(Name)
+        // 预期：B (50), C (20)
+        let sRes = sNames.TopKBy(2, sScores)
+
+        Assert.Equal(2L, sRes.Length)
+        Assert.Equal("B", sRes.GetValue<string> 0)
+        Assert.Equal("C", sRes.GetValue<string> 1)
+
+    [<Fact>]
+    member _.``Expr: TopKBy with Reverse`` () =
+        // Scores: [10, 50, 20]
+        // Names:  ["A", "B", "C"]
+        let df = 
+            DataFrame.ofRecords [
+                {| Name = "A"; Score = 10 |}
+                {| Name = "B"; Score = 50 |}
+                {| Name = "C"; Score = 20 |}
+            ]
+
+        // TopKBy(Score, reverse=true) 
+        // TopK 本意是取最大的。Reverse=true 后，排序逻辑翻转，变成取最小的？
+        // 让我们验证 Polars 行为：
+        // TopKBy(k, by, reverse=false) -> 按 by 降序 (Large to Small)，取前 k
+        // TopKBy(k, by, reverse=true)  -> 按 by 升序 (Small to Large)，取前 k
+        
+        let res = 
+            df.Select([
+                pl.col("Name").TopKBy(2, pl.col "Score", reverse=true).Alias "Res"
+            ])
+        
+        // Reverse=true，即按 Score 升序取 Top 2 -> 10(A), 20(C)
+        let s = res.Column "Res"
+        Assert.Equal("A", s.GetValue<string> 0)
+        Assert.Equal("C", s.GetValue<string> 1)

@@ -97,9 +97,7 @@ type Series(handle: SeriesHandle) =
             | None -> ()
     
     member this.Dt = SeriesDtNameSpace this
-
     member this.Str = SeriesStrNameSpace this
-
     member this.List = SeriesListNameSpace this
     member this.Array = SeriesArrayNameSpace this
     member this.Struct = SeriesStructNameSpace this
@@ -517,6 +515,33 @@ type Series(handle: SeriesHandle) =
 
     member this.RollingSum(windowSize: TimeSpan, ?minPeriod: int) =
         this.ApplyExpr(Expr.Col(this.Name).RollingSum(windowSize, ?minPeriod=minPeriod))
+    // ==========================================
+    // TopK / BottomK
+    // ==========================================
+
+    member this.TopK(k: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).TopK(k))
+
+    member this.BottomK(k: int) = 
+        this.ApplyExpr(Expr.Col(this.Name).BottomK(k))
+
+    // 注意：TopKBy 涉及其他列，如果是 Series 调用，通常意味着用另一列来排自己。
+    // 这需要使用 ApplyBinaryExpr (如果是单列 by) 或者构建临时 DataFrame (如果是多列 by)。
+    
+    /// <summary>
+    /// Get top k elements of this Series, sorted by another Series.
+    /// </summary>
+    member this.TopKBy(k: int, by: Series, ?reverse: bool) =
+        let r = defaultArg reverse false
+        // 使用 ApplyBinaryExpr 复用逻辑
+        this.ApplyBinaryExpr(by, fun me other -> me.TopKBy(k, other, r))
+
+    /// <summary>
+    /// Get bottom k elements of this Series, sorted by another Series.
+    /// </summary>
+    member this.BottomKBy(k: int, by: Series, ?reverse: bool) =
+        let r = defaultArg reverse false
+        this.ApplyBinaryExpr(by, fun me other -> me.BottomKBy(k, other, r))
     // ==========================================
     // Static Constructors
     // ==========================================
@@ -2334,6 +2359,98 @@ and LazyFrame(handle: LazyFrameHandle) =
     // Alias
     member this.OrderBy(columns: seq<#IColumnExpr>, ?descending: bool, ?nullsLast: bool) = 
         this.Sort(columns, ?descending=descending, ?nullsLast=nullsLast)
+    // ==========================================
+    // TopK / BottomK
+    // ==========================================
+
+    /// <summary>
+    /// Get the top k rows based on the given columns.
+    /// This is often faster than a full sort followed by a head.
+    /// </summary>
+    /// <param name="k">Number of rows to return.</param>
+    /// <param name="by">Columns to sort by.</param>
+    /// <param name="reverse">Sort direction per column. Default is false (no reverse).</param>
+    member this.TopK(k: int, by: seq<#IColumnExpr>, ?reverse: seq<bool>) =
+        // 1. 准备 Expr Handles
+        let exprHandles = 
+            by 
+            |> Seq.collect (fun x -> x.ToExprs()) 
+            |> Seq.map (fun e -> e.CloneHandle()) 
+            |> Seq.toArray
+        
+        // 2. 准备 Reverse (Descending) 数组
+        let descArr = 
+            match reverse with
+            | Some d -> d |> Seq.toArray
+            | None -> [| false |] // 默认升序，C#/Rust 端会广播
+
+        // 3. Clone LF Handle (Wrapper 消耗它)
+        let lfHandle = this.CloneHandle()
+
+        // 4. Call Wrapper
+        // 我们透传 reverse 参数，让用户控制。
+        let h = PolarsWrapper.LazyFrameTopK(lfHandle, uint k, exprHandles, descArr)
+        new LazyFrame(h)
+
+    /// <summary>
+    /// Get the bottom k rows based on the given columns.
+    /// </summary>
+    member this.BottomK(k: int, by: seq<#IColumnExpr>, ?reverse: seq<bool>) =
+        let exprHandles = 
+            by 
+            |> Seq.collect (fun x -> x.ToExprs()) 
+            |> Seq.map (fun e -> e.CloneHandle()) 
+            |> Seq.toArray
+        
+        let descArr = 
+            match reverse with
+            | Some d -> d |> Seq.toArray
+            | None -> [| false |]
+
+        let lfHandle = this.CloneHandle()
+        let h = PolarsWrapper.LazyFrameBottomK(lfHandle, uint k, exprHandles, descArr)
+        new LazyFrame(h)
+
+    // [Overload] Sugar for single boolean reversing
+    member this.TopK(k: int, by: seq<#IColumnExpr>, reverse: bool) =
+        this.TopK(k, by, [| reverse |])
+    
+    member this.BottomK(k: int, by: seq<#IColumnExpr>, reverse: bool) =
+        this.BottomK(k, by, [| reverse |])
+
+
+    // ==========================================
+    // Unnest
+    // ==========================================
+
+    /// <summary>
+    /// Decompose a struct column into multiple columns.
+    /// </summary>
+    member this.Unnest(selector: Selector) =
+        // 1. Clone LF Handle
+        let lfHandle = this.CloneHandle()
+        
+        // 2. Clone Selector Handle (Wrapper 也会消耗 Selector)
+        let selHandle = selector.CloneHandle()
+
+        let h = PolarsWrapper.LazyFrameUnnest(lfHandle, selHandle)
+        new LazyFrame(h)
+
+    /// <summary>
+    /// Helper: Unnest columns by name.
+    /// </summary>
+    member this.Unnest(columns: string list) =
+        // 将字符串列表转换为 Selector (pl.cs.cols)
+        let columnsArray = columns|> List.toArray
+        let handle = PolarsWrapper.SelectorCols columnsArray
+        let sel = new Selector(handle)
+        this.Unnest sel
+
+    /// <summary>
+    /// Helper: Unnest a single column by name.
+    /// </summary>
+    member this.Unnest(column: string) =
+        this.Unnest [column]
     member this.Limit (n: uint) : LazyFrame =
         let lfClone = this.CloneHandle()
         let h = PolarsWrapper.LazyLimit(lfClone, n)
