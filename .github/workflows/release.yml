@@ -49,6 +49,10 @@ jobs:
         if: runner.os == 'Linux'
         run: rm -rf native_shim/.cargo
 
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          workspaces: ./native_shim
       # 编译 Rust (Release 模式)
       # 这里的 native_shim 是你的 Rust 目录名，如果改了名字记得调整
       - name: Cargo Build

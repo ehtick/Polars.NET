@@ -11,7 +11,6 @@
     <Authors>ErrorLSC</Authors>
     <Description>Idiomatic F# API for Polars DataFrame library with strict type safety and pipeline support.</Description>
     <PackageTags>polars;dataframe;fsharp;functional;data-science</PackageTags>
-    <PackageIcon>icon.png</PackageIcon>
     <RepositoryUrl>https://github.com/ErrorLSC/Polars.NET</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -35,6 +34,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Polars.NET.Core\Polars.NET.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>

@@ -10,14 +10,12 @@
     <Authors>ErrorLSC</Authors>
     <Description>Idiomatic C# API Frontend for Polars DataFrame library.</Description>
     <PackageTags>polars;dataframe;data-analysis;csharp</PackageTags>
-    <PackageIcon>icon.png</PackageIcon>
     <RepositoryUrl>https://github.com/ErrorLSC/Polars.NET</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="..\icon.png" Pack="true" PackagePath="\" />
     <None Include="..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
