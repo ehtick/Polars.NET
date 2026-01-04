@@ -1,7 +1,6 @@
 # --- Rust ---
 /native_shim/target/
 **/*.rs.bk
-Cargo.lock
 
 # --- .NET (C# & F#) ---
 **/bin/
