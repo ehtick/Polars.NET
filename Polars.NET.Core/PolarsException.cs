@@ -4,12 +4,10 @@ namespace Polars.NET.Core;
 
 internal static class ErrorHelper
 {
-    // 检查 Handle 是否有效，无效则抛出 Rust 异常
     public static T Check<T>(T handle) where T : PolarsHandle
     {
         if (!handle.IsInvalid) return handle;
 
-        // 获取错误消息
         IntPtr msgPtr = NativeBindings.pl_get_last_error();
         if (msgPtr == IntPtr.Zero)
         {
@@ -27,7 +25,7 @@ internal static class ErrorHelper
         }
     }
 
-    // 针对返回 void 的情况
+    // For situation with void return
     public static void CheckVoid()
     {
         IntPtr msgPtr = NativeBindings.pl_get_last_error();
@@ -48,7 +46,7 @@ internal static class ErrorHelper
     {
         if (ptr == IntPtr.Zero) 
         {
-            CheckVoid(); // 检查是否有 Rust 错误
+            CheckVoid();
             return string.Empty; 
         }
         try { return Marshal.PtrToStringUTF8(ptr) ?? ""; }

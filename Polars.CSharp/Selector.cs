@@ -1,5 +1,5 @@
 using Polars.NET.Core;
-#pragma warning disable CS1591 // 缺少对公共可见类型或成员的 XML 注释
+#pragma warning disable CS1591 
 namespace Polars.CSharp
 {
     /// <summary>
@@ -18,10 +18,7 @@ namespace Polars.CSharp
             Handle = handle;
         }
 
-        internal SelectorHandle CloneHandle()
-        {
-            return PolarsWrapper.CloneSelector(Handle);
-        }
+        internal SelectorHandle CloneHandle() => PolarsWrapper.CloneSelector(Handle);
 
         // --- Int ---
         public static Expr operator *(Selector s, int other) => s.ToExpr() * other;
@@ -149,9 +146,6 @@ namespace Polars.CSharp
         /// </summary>
         public Selector Exclude(params string[] names)
         {
-            // 注意：Wrapper 里的 SelectorExclude 会调用 TransferOwnership
-            // 这意味着当前的 Handle 被 Rust 拿走了，我们得到一个新的 Handle
-            // 所以这里不仅是 fluent API，还是 ownership passing
             var newHandle = PolarsWrapper.SelectorExclude(Handle, names);
             return new Selector(newHandle);
         }
@@ -186,33 +180,19 @@ namespace Polars.CSharp
             => new(PolarsWrapper.SelectorNot(s.CloneHandle()));
 
         // Difference: A - B
-        public static Selector operator -(Selector left, Selector right)
-        {
-            // 实现为: Left & (!Right)
-            return left & (!right);
-        }
+        public static Selector operator -(Selector left, Selector right) => left & (!right);
+        
         /// <summary>
         /// Implicitly convert Selector to Expr.
         /// This is the magic that allows df.Select(Polars.All())
         /// </summary>
         public static implicit operator Expr(Selector selector) => selector.ToExpr();
-        public override bool Equals(object? obj)
-        {
-            // 保持默认的引用比较 (Reference Equality)
-            return base.Equals(obj);
-        }
+        public override bool Equals(object? obj) => base.Equals(obj);
 
-        public override int GetHashCode()
-        {
-            // 保持默认的 HashCode
-            return base.GetHashCode();
-        }
+        public override int GetHashCode() => base.GetHashCode();
         /// <summary>
         /// Dispose unused Selector Handle
         /// </summary>
-        public void Dispose()
-        {
-            Handle?.Dispose();
-        }
+        public void Dispose() => Handle?.Dispose();
     }
 }

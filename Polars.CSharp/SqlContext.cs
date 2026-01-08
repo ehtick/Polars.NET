@@ -23,9 +23,6 @@ public class SqlContext : IDisposable
     /// <param name="lf">The LazyFrame to register.</param>
     public void Register(string tableName, LazyFrame lf)
     {
-        // Wrapper 会调用 TransferOwnership，导致传入的 handle 失效。
-        // 为了保护用户的 C# 对象不被意外销毁，我们 Clone 一个 handle 传进去。
-        // Rust 侧会拥有这个 Clone 的所有权。
         var clonedHandle = lf.CloneHandle();
         PolarsWrapper.SqlRegister(Handle, tableName, clonedHandle);
     }

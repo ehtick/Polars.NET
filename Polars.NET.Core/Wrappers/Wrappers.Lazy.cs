@@ -4,32 +4,24 @@ public static partial class PolarsWrapper
 {
     public static string GetSchemaString(LazyFrameHandle lf)
     {
-        // 借用操作，不 TransferOwnership
         IntPtr ptr = NativeBindings.pl_lazy_schema(lf);
-        return ErrorHelper.CheckString(ptr); // 假设你提取了 CheckString 逻辑，或者手动写 try-finally
+        return ErrorHelper.CheckString(ptr); 
     }
     /// <summary>
-    /// 获取 LazyFrame 的 Schema Handle。
-    /// 这可能会触发 Rust 端的类型推断和 LogicalPlan 优化。
+    /// Get the schema handle for LazyFrame 
     /// </summary>
     public static SchemaHandle GetLazySchema(LazyFrameHandle lf)
-    {
-        // 必须使用 DangerousAddRef 吗？
-        // 对于单个 Handle，LibraryImport 会自动处理。
-        // 但这里 lf 只是传进去获取一个新的 Handle，不用特殊处理。
-        return ErrorHelper.Check(NativeBindings.pl_lazy_frame_get_schema(lf));
-    }
+        => ErrorHelper.Check(NativeBindings.pl_lazy_frame_get_schema(lf));
 
     /// <summary>
-    /// 获取 Schema 长度
+    /// Get the length of Schema
     /// </summary>
     public static ulong GetSchemaLen(SchemaHandle schema)
-    {
-        return (ulong)NativeBindings.pl_schema_len(schema);
-    }
+        => (ulong)NativeBindings.pl_schema_len(schema);
+
 
     /// <summary>
-    /// 获取 Schema 指定索引的字段
+    /// Get Schema Field by Index
     /// </summary>
     public static void GetSchemaFieldAt(SchemaHandle schema, ulong index, out string name, out DataTypeHandle typeHandle)
     {
@@ -77,14 +69,12 @@ public static partial class PolarsWrapper
         bool[] nullsLast,
         bool maintainOrder)
     {
-        // 1. 校验参数
         if ((descending.Length != 1 && descending.Length != exprs.Length) ||
             (nullsLast.Length != 1 && nullsLast.Length != exprs.Length))
         {
                 throw new ArgumentException("Sort options length mismatch.");
         }
 
-        // 2. 转换并移交 Expr 所有权
         var exprPtrs = HandlesToPtrs(exprs);
 
         unsafe
@@ -103,8 +93,6 @@ public static partial class PolarsWrapper
                     maintainOrder
                 );
 
-                // 3. 移交 LazyFrame 自身的所有权
-                // (Exprs 的所有权在 HandlesToPtrs 里已经移交了，这里不用管)
                 lf.TransferOwnership();
 
                 return ErrorHelper.Check(h);
@@ -154,7 +142,6 @@ public static partial class PolarsWrapper
     }
     public static LazyFrameHandle LazyFrameUnnest(LazyFrameHandle lf, SelectorHandle selector)
     {
-        // 这里的逻辑变得非常简单，因为复杂的列名处理已经移交给了 Selector
         var h = ErrorHelper.Check(NativeBindings.pl_lazyframe_unnest(lf, selector));
         lf.TransferOwnership();
         selector.TransferOwnership();
@@ -171,7 +158,6 @@ public static partial class PolarsWrapper
         var keyPtrs = HandlesToPtrs(keys);
         var aggPtrs = HandlesToPtrs(aggs);
         
-        // lf 也会被消耗
         var h = NativeBindings.pl_lazy_groupby_agg(
             lf, 
             keyPtrs, (UIntPtr)keyPtrs.Length, 
@@ -194,8 +180,8 @@ public static partial class PolarsWrapper
         bool includeBoundaries,
         PlClosedWindow closedWindow,
         PlStartBy startBy,
-        ExprHandle[] keys,  // 接收转换好的指针数组
-        ExprHandle[] aggs)  // 接收转换好的指针数组
+        ExprHandle[] keys,  
+        ExprHandle[] aggs)  
     {
         var keyPtrs = HandlesToPtrs(keys);
         var aggPtrs = HandlesToPtrs(aggs);
@@ -228,7 +214,7 @@ public static partial class PolarsWrapper
     {
         var raw = HandlesToPtrs(exprs);
         var newLf = NativeBindings.pl_lazy_explode(lf, raw, (UIntPtr)raw.Length);
-        lf.TransferOwnership(); // 链式调用消耗旧 LF
+        lf.TransferOwnership(); 
         return ErrorHelper.Check(newLf);
     }
     public static LazyFrameHandle LazyUnpivot(LazyFrameHandle lf, string[] index, string[] on, string? variableName, string? valueName)
@@ -250,7 +236,7 @@ public static partial class PolarsWrapper
     }
     public static LazyFrameHandle LazyConcat(LazyFrameHandle[] handles,PlConcatType how, bool rechunk = false, bool parallel = true)
     {
-        var ptrs = HandlesToPtrs(handles); // 转移所有权
+        var ptrs = HandlesToPtrs(handles); 
         var h = NativeBindings.pl_lazy_concat(ptrs, (UIntPtr)ptrs.Length,(int)how, rechunk, parallel);
         foreach (var handle in handles)
         {
@@ -273,7 +259,6 @@ public static partial class PolarsWrapper
             how
         );
 
-        // 两个 LF 都被 Rust 消耗了
         left.TransferOwnership();
         right.TransferOwnership();
         
@@ -282,14 +267,12 @@ public static partial class PolarsWrapper
     public static LazyFrameHandle JoinAsOf(
         LazyFrameHandle left, LazyFrameHandle right,
         ExprHandle leftOn, ExprHandle rightOn,
-        ExprHandle[]? leftBy, ExprHandle[]? rightBy, // 允许为 null
+        ExprHandle[]? leftBy, ExprHandle[]? rightBy, 
         string strategy, string? tolerance)
     {
-        // 1. 处理数组 (HandlesToPtrs 内部已经处理了 null 检查，如果是 null 会返回空数组)
         var lByPtrs = HandlesToPtrs(leftBy ?? Array.Empty<ExprHandle>());
         var rByPtrs = HandlesToPtrs(rightBy ?? Array.Empty<ExprHandle>());
 
-        // 2. 直接调用 Native
         var h = NativeBindings.pl_lazy_join_asof(
             left, right, 
             leftOn, rightOn,
@@ -298,17 +281,14 @@ public static partial class PolarsWrapper
             strategy, tolerance
         );
 
-        // 3. 消耗所有权 (TransferOwnership)
         left.TransferOwnership();
         right.TransferOwnership();
         leftOn.TransferOwnership();
         rightOn.TransferOwnership();
         
-        // leftBy 和 rightBy 已经在 HandlesToPtrs 里被 TransferOwnership 了，不用再管
-
         return ErrorHelper.Check(h);
     }
-    // [新增] Streaming Collect
+    // Streaming Collect
     public static DataFrameHandle CollectStreaming(LazyFrameHandle lf)
     {
         var df = NativeBindings.pl_lazy_collect_streaming(lf);
@@ -321,8 +301,5 @@ public static partial class PolarsWrapper
     }
     // --- Clone Ops ---
     public static LazyFrameHandle LazyClone(LazyFrameHandle lf)
-    {
-        // 注意：这里不需要 Invalidate lf，因为 Rust 侧只是借用
-        return ErrorHelper.Check(NativeBindings.pl_lazy_clone(lf));
-    }
+        => ErrorHelper.Check(NativeBindings.pl_lazy_clone(lf));
 }

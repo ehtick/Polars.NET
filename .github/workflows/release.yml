@@ -177,7 +177,7 @@ jobs:
           dotnet new nugetconfig
           dotnet nuget add source ../local_feed --name LocalFeed
           
-          dotnet add package Polars.NET --version 0.1.0-alpha1
+          dotnet add package Polars.NET --version 0.1.0-alpha2
           
           cat <<EOF > Program.cs
           using System;

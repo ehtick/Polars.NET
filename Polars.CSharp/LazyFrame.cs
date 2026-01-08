@@ -22,7 +22,7 @@ public class LazyFrame : IDisposable
     }
 
     // ==========================================
-    // 工厂方法 (Scan IO)
+    // Scan IO
     // ==========================================
     /// <summary>
     /// Scans a CSV file lazily.
@@ -33,7 +33,7 @@ public class LazyFrame : IDisposable
         bool hasHeader = true,
         char separator = ',',
         ulong skipRows = 0,
-        bool tryParseDates = true) // [新增参数]
+        bool tryParseDates = true) 
     {
         var schemaHandles = schema?.ToDictionary(
             kv => kv.Key, 
@@ -46,7 +46,7 @@ public class LazyFrame : IDisposable
             hasHeader, 
             separator, 
             skipRows,
-            tryParseDates // 传递给 Wrapper
+            tryParseDates
         );
 
         return new LazyFrame(handle);
@@ -57,30 +57,21 @@ public class LazyFrame : IDisposable
     /// <param name="path"></param>
     /// <returns></returns>
     public static LazyFrame ScanParquet(string path)
-    {
-        //
-        return new LazyFrame(PolarsWrapper.ScanParquet(path));
-    }
+        =>  new(PolarsWrapper.ScanParquet(path));
     /// <summary>
     /// Read an IPC (Feather) file as a LazyFrame.
     /// </summary>
     /// <param name="path"></param>
     /// <returns></returns>
     public static LazyFrame ScanIpc(string path)
-    {
-        //
-        return new LazyFrame(PolarsWrapper.ScanIpc(path));
-    }
+        => new(PolarsWrapper.ScanIpc(path));
     /// <summary>
     /// Read a NDJSON file as a LazyFrame.
     /// </summary>
     /// <param name="path"></param>
     /// <returns></returns>
-    public static LazyFrame ScanNdjson(string path)
-    {
-        //
-        return new LazyFrame(PolarsWrapper.ScanNdjson(path));
-    }
+    public static LazyFrame ScanNdjson(string path) 
+        => new(PolarsWrapper.ScanNdjson(path));
     /// <summary>
     /// Scan Arrow Stream As LazyFrame
     /// </summary>
@@ -90,26 +81,17 @@ public class LazyFrame : IDisposable
     /// <returns></returns>
     public static LazyFrame ScanArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000)
     {
-        // 1. 定义流生成器
-        // 注意：这里只是定义，还没开始读
         IEnumerable<RecordBatch> StreamGenerator() => data.ToArrowBatches(batchSize);
 
-        // 2. 预读 Schema (不可避免的开销)
-        // 我们必须先拿出一个枚举器来看看第一帧，从而确定 Schema
         using var probeEnumerator = StreamGenerator().GetEnumerator();
         
         if (!probeEnumerator.MoveNext()) 
         {
-            // 空流兜底：利用 T 反射生成空 DataFrame
             return DataFrame.From(Enumerable.Empty<T>()).Lazy();
         }
         
         var schema = probeEnumerator.Current.Schema;
-        // 探测完毕，关闭这个探测用的枚举器
-        // (假设 data 是可重放的 IEnumerable，如果不是，需要由用户显式传入 Schema 的重载)
-        
-        // 3. 调用 Core 层
-        // 传入一个工厂 lambda，每次 Rust 需要扫描时，都会从头创建一个新的枚举器
+
         var handle = ArrowStreamInterop.ScanStream(
             () => StreamGenerator().GetEnumerator(), 
             schema
@@ -136,17 +118,13 @@ public class LazyFrame : IDisposable
     }
 
     /// <summary>
-    /// 底层入口：直接扫描 RecordBatch 流。
-    /// 如果提供了 schema，则不会尝试读取第一行来探测（避免副作用）。
+    /// Scan RecordBatch Stream
+    /// If schema is provied, first batch won't be consumed for getting schema.
     /// </summary>
     public static LazyFrame ScanRecordBatches(IEnumerable<RecordBatch> stream, Schema schema = null!)
     {
-        // 1. 确定 Schema (防止空流 Peek)
         if (schema == null)
         {
-            // 这里必须短暂 Peek 一下流来获取 Schema
-            // 注意：这假设 stream 是可重放的 (IEnumerable)，
-            // 如果是只读一次的网络流，用户必须显式传递 schema，否则第一帧数据会丢失
             using var enumerator = stream.GetEnumerator();
             
             if (!enumerator.MoveNext())
@@ -155,8 +133,6 @@ public class LazyFrame : IDisposable
             schema = enumerator.Current.Schema;
         }
 
-        // 2. 委托给 Core 层处理所有脏活
-        // 我们只需要提供一个工厂方法，让 Rust 可以在需要时获取新的迭代器
         var handle = ArrowStreamInterop.ScanStream(
             stream.GetEnumerator, 
             schema
@@ -165,20 +141,17 @@ public class LazyFrame : IDisposable
         return new LazyFrame(handle);
     }
     /// <summary>
-    /// 
+    /// Scan Database to LazyFrame
     /// </summary>
     /// <param name="reader"></param>
     /// <param name="batchSize"></param>
     /// <returns></returns>
     public static LazyFrame ScanDatabase(IDataReader reader, int batchSize = 50_000)
     {
-        // 1. 显式获取 Schema (为了传给 ScanRecordBatches，防止它去 Peek)
         var schema = reader.GetArrowSchema();
         
-        // 2. 获取流
         var stream = reader.ToArrowBatches(batchSize);
 
-        // 3. 调用底层，传入 Schema
         return ScanRecordBatches(stream, schema);
     }
     /// <summary>
@@ -189,33 +162,23 @@ public class LazyFrame : IDisposable
     /// <param name="batchSize">Define the size of the batch</param>
     public static LazyFrame ScanDatabase(Func<IDataReader> readerFactory, int batchSize = 50_000)
     {
-        // 1. 预读 Schema (Probe)
-        // 因为我们需要先构建 Logical Plan，所以必须先看一眼元数据
-        // 我们创建一个临时的 Reader，看完 Schema 立刻销毁
         Schema schema;
         using (var probeReader = readerFactory())
         {
             schema = probeReader.GetArrowSchema();
         }
 
-        // 2. 定义可重放的流 (Replayable Stream)
-        // 这是一个本地函数，利用 C# 的迭代器状态机
         IEnumerable<RecordBatch> ReplayableStream()
         {
-            // 每次枚举开始时，调用工厂创建一个全新的 Reader
             using var reader = readerFactory();
             
-            // 转换为 Arrow 流并透传
             foreach (var batch in reader.ToArrowBatches(batchSize))
             {
                 yield return batch;
             }
             
-            // 循环结束，reader 自动 Dispose
         }
 
-        // 3. 调用底层 Scan
-        // 我们显式传入 schema，避免底层再次探测
         return ScanRecordBatches(ReplayableStream(), schema);
     }
     // ==========================================
@@ -236,23 +199,16 @@ public class LazyFrame : IDisposable
     {
         get
         {
-            // 1. 获取 Schema Handle
-            // (这一步在 Rust 内部会调用 collect_schema，缓存 plan)
             using var schemaHandle = PolarsWrapper.GetLazySchema(Handle);
             
-            // 2. 获取 Schema 长度
             ulong len = PolarsWrapper.GetSchemaLen(schemaHandle);
             
-            // 3. 预分配字典
             var result = new Dictionary<string, DataType>((int)len);
 
-            // 4. 遍历并构建对象
             for (ulong i = 0; i < len; i++)
             {
-                // 获取 Name 和 DataTypeHandle
                 PolarsWrapper.GetSchemaFieldAt(schemaHandle, i, out string name, out DataTypeHandle dtHandle);
                 
-                // 构造 DataType 对象 (接管 dtHandle 所有权)
                 result[name] = new DataType(dtHandle);
             }
 
@@ -261,22 +217,15 @@ public class LazyFrame : IDisposable
     }
 
     /// <summary>
-    /// 获取 Schema 的字符串表示。
-    /// <para>
-    /// 这里的实现完全基于 C# 端的强类型 Schema 遍历，
-    /// 复用了 DataType.ToString() (底层调用 Rust Display)，
-    /// 避免了在 Rust 端分配大字符串和额外的 FFI 开销。
-    /// </para>
+    /// Get Schema description string
     /// </summary>
     public string SchemaString
     {
         get
         {
-            // 1. 获取强类型 Schema (触发 Zero-Parse 逻辑)
             var schema = this.Schema;
 
-            // 2. 在 C# 端优雅拼接
-            // 格式示例: {"a": i32, "b": list[str], "c": datetime[ms]}
+            // Format: {"a": i32, "b": list[str], "c": datetime[ms]}
             var parts = schema.Select(kv => $"\"{kv.Key}\": {kv.Value}");
             
             return "{" + string.Join(", ", parts) + "}";
@@ -314,7 +263,6 @@ public class LazyFrame : IDisposable
     {
         var lfClone = CloneHandle();
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
-        // LazySelect 会消耗当前的 Handle
         return new LazyFrame(PolarsWrapper.LazySelect(lfClone, handles));
     }
     /// <summary>
@@ -347,7 +295,6 @@ public class LazyFrame : IDisposable
     {
         var lfClone = CloneHandle();
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
-        //
         return new LazyFrame(PolarsWrapper.LazyWithColumns(lfClone, handles));
     }
     /// <summary>
@@ -358,9 +305,7 @@ public class LazyFrame : IDisposable
         bool descending = false, 
         bool nullsLast = false, 
         bool maintainOrder = false)
-    {
-        return Sort([Polars.Col(column)], [descending], [nullsLast], maintainOrder);
-    }
+        => Sort([Polars.Col(column)], [descending], [nullsLast], maintainOrder);
     /// <summary>
     /// Sort using a single expression.
     /// </summary>
@@ -423,14 +368,12 @@ public class LazyFrame : IDisposable
         bool[] nullsLast, 
         bool maintainOrder = false)
     {
-        // 1. Clone Exprs (保护用户对象)
         var clonedHandles = new ExprHandle[exprs.Length];
         for (int i = 0; i < exprs.Length; i++)
         {
             clonedHandles[i] = PolarsWrapper.CloneExpr(exprs[i].Handle);
         }
 
-        // 2. 调用 Wrapper
         var h = PolarsWrapper.LazyFrameSort(
             Handle, 
             clonedHandles, 
@@ -631,7 +574,6 @@ public class LazyFrame : IDisposable
         var rOn = rightOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         var lfClone = CloneHandle();
         var otherClone = other.CloneHandle();
-        // Join 消耗 left(this) 和 right(other)
         return new LazyFrame(PolarsWrapper.Join(
             lfClone, 
             otherClone, 
@@ -667,10 +609,7 @@ public class LazyFrame : IDisposable
     /// Join with another LazyFrame using a single column pair.
     /// </summary>
     public LazyFrame Join(LazyFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
-    {
-        // 包装成数组调用上面的重载
-        return Join(other, [leftOn], [rightOn], how);
-    }
+        => Join(other, [leftOn], [rightOn], how);
 
     /// <summary>
     /// Perform an As-Of Join (time-series join).
@@ -775,10 +714,7 @@ public class LazyFrame : IDisposable
     /// </para>
     /// </summary>
     public LazyGroupBy GroupBy(string name)
-    {
-        // 关键：显式包装为 Col，截断隐式转换(Lit)的路径
-        return GroupBy([Polars.Col(name)]);
-    }
+        => GroupBy([Polars.Col(name)]);
 
     /// <summary>
     /// Group by multiple column names.
@@ -788,7 +724,6 @@ public class LazyFrame : IDisposable
     /// </summary>
     public LazyGroupBy GroupBy(params string[] names)
     {
-        // 关键：显式包装为 Col
         var exprs = names.Select(n => Polars.Col(n)).ToArray();
         return GroupBy(exprs);
     }
@@ -819,7 +754,7 @@ public class LazyFrame : IDisposable
             periodStr,
             offsetStr,
             keys,
-            label, // [修改]
+            label, 
             includeBoundaries,
             closedWindow,
             startBy
@@ -833,19 +768,13 @@ public class LazyFrame : IDisposable
     /// Execute the query plan and return a DataFrame.
     /// </summary>
     public DataFrame Collect()
-    {
-        //
-        return new DataFrame(PolarsWrapper.LazyCollect(Handle));
-    }
+        => new(PolarsWrapper.LazyCollect(Handle));
 
     /// <summary>
     /// Execute the query plan using the streaming engine.
     /// </summary>
     public DataFrame CollectStreaming()
-    {
-        //
-        return new DataFrame(PolarsWrapper.CollectStreaming(Handle));
-    }
+        => new(PolarsWrapper.CollectStreaming(Handle));
     /// <summary>
     /// Execute the query plan asynchronously and return a DataFrame.
     /// </summary>
@@ -862,97 +791,78 @@ public class LazyFrame : IDisposable
     /// </summary>
     /// <param name="path"></param>
     public void SinkParquet(string path)
-    {
-        //
-        PolarsWrapper.SinkParquet(Handle, path);
-    }
+        => PolarsWrapper.SinkParquet(Handle, path);
     /// <summary>
     /// Sink the LazyFrame to a CSV file.
     /// </summary>
     /// <param name="path"></param>
     public void SinkIpc(string path)
-    {
-        //
-        PolarsWrapper.SinkIpc(Handle, path);
-    }
+       => PolarsWrapper.SinkIpc(Handle, path);
     /// <summary>
     /// Sink the LazyFrame to JSON file.
     /// </summary>
     /// <param name="path"></param>
     public void SinkJson(string path)
-    {
-        //
-        PolarsWrapper.SinkJson(Handle, path);
-    }
+        => PolarsWrapper.SinkJson(Handle, path);
     /// <summary>
     /// Sink the LazyFrame to CSV file.
     /// </summary>
     /// <param name="path"></param>
     public void SinkCsv(string path)
-    {
-        //
-        PolarsWrapper.SinkCsv(Handle, path);
-    }
+        => PolarsWrapper.SinkCsv(Handle, path);
     /// <summary>
-    /// 通用流式 Sink：每计算出一批数据，就触发一次回调。
-    /// 这是实现自定义 Sink（如数据库、网络流、消息队列）的基础。
+    /// Streaming Sink to Batchs
     /// </summary>
     public void SinkBatches(Action<RecordBatch> onBatchReceived)
     {
-        // CloneHandle() 增加引用计数，确保 this 不受影响，
-        // 而 Clone 出来的 handle 会在 Wrapper 里被 TransferOwnership 给 Rust 消耗掉
         using var newLfHandle = PolarsWrapper.SinkBatches(CloneHandle(), onBatchReceived);
 
-        // 驱动流式执行
         using var lfRes = new LazyFrame(newLfHandle);
         using var _ = lfRes.CollectStreaming(); 
     }
     /// <summary>
-    /// 通用流式 Sink 接口：将 LazyFrame 计算结果流式转换为 IDataReader 并交给 writerAction 处理。
-    /// 全程内存占用极低 (O(1))。
-    /// 用户可以在 writerAction 里使用 SqlBulkCopy, NpgsqlBinaryImporter 等工具。
+    /// Generic streaming Sink interface: Streamingly convert LazyFrame calculation results to IDataReader 
+    /// and hand it over to writerAction for processing.
+    /// Users can utilize tools like SqlBulkCopy, NpgsqlBinaryImporter, etc. within writerAction.
     /// </summary>
-    /// <param name="writerAction">接收 IDataReader 的回调 (在独立线程执行)</param>
-    /// <param name="bufferSize">缓冲区大小 (Batch 数量)</param>
+    /// <param name="writerAction">Callback that receives IDataReader (executed in a separate thread)</param>
+    /// <param name="bufferSize">Buffer size (number of Batches)</param>
     /// <param name="typeOverrides">Target Schema</param>
     public void SinkTo(Action<IDataReader> writerAction, int bufferSize = 5,Dictionary<string, Type>? typeOverrides = null)
     {
-        // 1. 生产者-消费者缓冲区
+        // 1. Producer-Consumer buffer
         using var buffer = new BlockingCollection<RecordBatch>(boundedCapacity: bufferSize);
 
-        // 2. 启动消费者 (DB Writer)
+        // 2. Start consumer (DB Writer)
         var consumerTask = Task.Run(() => 
         {
-            // ArrowToDbStream 负责把 Buffer 伪装成 DataReader
-            // 它会自动处理 Dispose，所以 writerAction 读完后 Batch 就会被释放
+            // ArrowToDbStream is responsible for disguising Buffer as DataReader
+            // It automatically handles Dispose, so Batch will be released after writerAction finishes reading
             using var reader = new ArrowToDbStream(buffer.GetConsumingEnumerable(),typeOverrides);
             
-            // [核心] 将 reader 移交给用户逻辑
-            // 用户在这里调用 bulk.WriteToServer(reader)
+            // Hand over the reader to user logic
+            // Users call bulk.WriteToServer(reader) here
             writerAction(reader);
         });
 
-        // 3. 启动生产者 (Polars Engine - 当前线程阻塞执行)
+        // 3. Start producer (Polars Engine - blocking execution in current thread)
         try
         {
-            // 将 Rust 生产的数据推入 Buffer
-            // 如果 Buffer 满了，这里会阻塞，从而自动反压 Rust 引擎
+            // Push data produced by Rust into Buffer
+            // If Buffer is full, this will block, thereby automatically backpressuring the Rust engine
             SinkBatches(buffer.Add);
         }
         finally
         {
-            // 4. 通知消费者：没有更多数据了
+            // 4. Notify consumer: no more data
             buffer.CompleteAdding();
         }
 
-        // 5. 等待消费者写入完成，并抛出可能的异常
+        // 5. Wait for consumer to finish writing and throw possible exceptions
         consumerTask.Wait();
     }
     /// <summary>
     /// Dispose the LazyFrame and release native resources.
     /// </summary>
-    public void Dispose()
-    {
-        Handle?.Dispose();
-    }
+    public void Dispose() => Handle?.Dispose();
 }

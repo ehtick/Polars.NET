@@ -27,8 +27,7 @@ public static partial class PolarsWrapper
         
     public static SeriesHandle SeriesNew(string name, bool[] data, bool[]? validity)
     {
-        // 数据和 Validity 都需要转成 byte[]
-        var dataBytes = ToBytes(data)!; // data 不可能为 null
+        var dataBytes = ToBytes(data)!; 
         var validBytes = ToBytes(validity);
         return ErrorHelper.Check(NativeBindings.pl_series_new_bool(name, dataBytes, validBytes, (UIntPtr)data.Length));
     }
@@ -37,7 +36,6 @@ public static partial class PolarsWrapper
     {
         return UseNullableUtf8StringArray(data, ptrs => 
         {
-            // ptrs 里的 IntPtr.Zero 会被 Rust 正确识别为 Null
             return ErrorHelper.Check(
                 NativeBindings.pl_series_new_str(
                     name, 
@@ -48,7 +46,6 @@ public static partial class PolarsWrapper
         });
     }
     
-    // 预计算 10 的幂次，避免重复 Math.Pow
     private static readonly decimal[] PowersOf10;
 
     static PolarsWrapper()
@@ -69,13 +66,11 @@ public static partial class PolarsWrapper
         }
         var len = data.Length;
         var scaledValues = new Int128[len];
-        var multiplier = PowersOf10[scale]; // 获取乘数 (例如 scale=2 -> 100)
+        var multiplier = PowersOf10[scale];
 
-        // 转换逻辑：将 C# decimal 变成纯整数 Int128
+        // Convert C# decimal to Int128
         for (int i = 0; i < len; i++)
         {
-            // 注意：这里可能会溢出 decimal 的范围，但在金融场景通常还好
-            // 直接乘法会自动处理符号
             scaledValues[i] = (Int128)(data[i] * multiplier);
         }
 
@@ -88,7 +83,7 @@ public static partial class PolarsWrapper
         ));
     }
     
-    // 可空版本 (Option)
+    // Nullable Decimal
     public static SeriesHandle SeriesNewDecimal(string name, decimal?[] data, int scale)
     {
         if (scale < 0 || scale >= PowersOf10.Length)
@@ -134,7 +129,7 @@ public static partial class PolarsWrapper
         return ErrorHelper.CheckString(ptr);
     }
     /// <summary>
-    /// 直接从 Series 获取 DataType Handle (Zero Parse)
+    /// Get DataType Handle from Series
     /// </summary>
     public static DataTypeHandle GetSeriesDataType(SeriesHandle handle)
     {
@@ -185,21 +180,9 @@ public static partial class PolarsWrapper
         {
             int scale = (int)scalePtr;
             
-            // Int128 -> Decimal 转换
-            // Decimal 构造函数不支持 Int128，但支持 int[] bits
-            
-            // 正确做法：直接构造 decimal
-            // decimal 布局: flags, hi, lo, mid
-            // 我们需要先把 Int128 变成 decimal (纯整数)，然后设 scale
-            
-            // 既然 val 是 i128，我们显式强转 decimal (C# 11+ 支持显式转换)
             try 
             {
                 decimal d = (decimal)val; 
-                // 手动应用 scale: d / 10^scale
-                // 或者更高效：创建一个新的 decimal 修改其 flags
-                // 但 C# decimal 是 immutable struct，修改 flags 比较 hacky
-                // 最稳妥： d / PowersOf10[scale] (我们之前算过这个表)
                 
                 if (scale >= 0 && scale < PowersOf10.Length)
                 {
@@ -207,13 +190,12 @@ public static partial class PolarsWrapper
                 }
                 else
                 {
-                    // Fallback using double division if scale is huge (unlikely)
                     return d / (decimal)Math.Pow(10, scale);
                 }
             }
             catch (OverflowException)
             {
-                return null; // 超出 decimal 范围
+                return null;
             }
         }
         return null;
@@ -223,7 +205,8 @@ public static partial class PolarsWrapper
     {
         if (NativeBindings.pl_series_get_date(s, (UIntPtr)idx, out int days))
         {
-            return DateOnly.FromDayNumber(days + 719162); // 719162 is days from 0001-01-01 to 1970-01-01
+            // 719162 is days from 0001-01-01 to 1970-01-01
+            return DateOnly.FromDayNumber(days + 719162); 
         }
         return null;
     }
@@ -267,36 +250,24 @@ public static partial class PolarsWrapper
 
     public static unsafe IArrowArray SeriesToArrow(SeriesHandle h)
     {
-        // 1. 获取 Rust Context
-        // 注意：ArrowArrayContextHandle 也是 PolarsHandle，可以被 ErrorHelper 检查（如果需要的话）
-        // 这里 NativeBindings 直接返回句柄，通常不需要 Check，除非 Rust 可能返回空指针
         using var contextHandle = NativeBindings.pl_series_to_arrow(h);
         
-        // 2. 准备 C Data Interface 结构体
         var cArray = new CArrowArray();
         var cSchema = new CArrowSchema();
         
-        // 3. 导出 (填充结构体)
         NativeBindings.pl_arrow_array_export(contextHandle, &cArray);
         NativeBindings.pl_arrow_schema_export(contextHandle, &cSchema);
         bool ownershipTransferred = false;
-        // 4. 导入 (两步走)
         try
         {
-            // [修复] 第一步：先从 CSchema 导入字段定义 (Field)，获取 DataType
             var importedField = CArrowSchemaImporter.ImportField(&cSchema);
             
-            // [修复] 第二步：使用 DataType 导入 Array
-            // 这样编译器就能匹配到 ImportArray(CArrowArray*, IArrowType)
             var array = CArrowArrayImporter.ImportArray(&cArray, importedField.DataType);
             ownershipTransferred = true;
             return array;
         }
         finally
         {
-            // 注意：CArrowArrayImporter 会接管 cArray 和 cSchema 指向的内部资源 (release 回调)
-            // 所以我们不需要手动释放 cArray/cSchema 结构体本身的内容
-            // 只需要释放 Rust 的 Context 壳子 (由 using contextHandle 自动完成)
             if (!ownershipTransferred)
             {
                 CArrowArray.Free(&cArray);
@@ -308,37 +279,20 @@ public static partial class PolarsWrapper
     /// Imports an Arrow Array via C Data Interface.
     /// </summary>
     public static unsafe SeriesHandle SeriesFromArrow(string name, CArrowArray* cArray, CArrowSchema* cSchema)
-    {
-        return ErrorHelper.Check(NativeBindings.pl_arrow_to_series(name, cArray, cSchema));
-    }
+        => ErrorHelper.Check(NativeBindings.pl_arrow_to_series(name, cArray, cSchema));
     public static SeriesHandle SeriesCast(SeriesHandle s, DataTypeHandle dtype)
-    {
-        return ErrorHelper.Check(NativeBindings.pl_series_cast(s, dtype));
-    }
+        => ErrorHelper.Check(NativeBindings.pl_series_cast(s, dtype));
     public static SeriesHandle SeriesIsNull(SeriesHandle s) => ErrorHelper.Check(NativeBindings.pl_series_is_null(s));
-    
     public static SeriesHandle SeriesIsNotNull(SeriesHandle s) => ErrorHelper.Check(NativeBindings.pl_series_is_not_null(s));
-
-    public static bool SeriesIsNullAt(SeriesHandle s, long idx)
-    {
-        return NativeBindings.pl_series_is_null_at(s, (UIntPtr)idx);
-    }
+    public static bool SeriesIsNullAt(SeriesHandle s, long idx) => NativeBindings.pl_series_is_null_at(s, (UIntPtr)idx);
     public static SeriesHandle SeriesIsNan(SeriesHandle s) => ErrorHelper.Check(NativeBindings.pl_series_is_nan(s));
     public static SeriesHandle SeriesIsNotNan(SeriesHandle s) => ErrorHelper.Check(NativeBindings.pl_series_is_not_nan(s));
     public static SeriesHandle SeriesIsFinite(SeriesHandle s) => ErrorHelper.Check(NativeBindings.pl_series_is_finite(s));
     public static SeriesHandle SeriesIsInfinite(SeriesHandle s) => ErrorHelper.Check(NativeBindings.pl_series_is_infinite(s));
-    public static long SeriesNullCount(SeriesHandle s)
-    {
-        return (long)NativeBindings.pl_series_null_count(s);
-    }
+    public static long SeriesNullCount(SeriesHandle s) => (long)NativeBindings.pl_series_null_count(s);
     public static SeriesHandle SeriesUnique(SeriesHandle handle) => ErrorHelper.Check(NativeBindings.pl_series_unique(handle));
-
     public static SeriesHandle SeriesUniqueStable(SeriesHandle handle) => ErrorHelper.Check(NativeBindings.pl_series_unique_stable(handle));
-    public static ulong SeriesNUnique(SeriesHandle handle)
-    {
-        // 只要 Handle 有效，这个调用就是安全的
-        return NativeBindings.pl_series_n_unique(handle);
-    }
+    public static ulong SeriesNUnique(SeriesHandle handle) => NativeBindings.pl_series_n_unique(handle);
     // Ops
     public static SeriesHandle SeriesAdd(SeriesHandle s1, SeriesHandle s2) => ErrorHelper.Check(NativeBindings.pl_series_add(s1, s2));
     public static SeriesHandle SeriesSub(SeriesHandle s1, SeriesHandle s2) => ErrorHelper.Check(NativeBindings.pl_series_sub(s1, s2));
@@ -359,17 +313,14 @@ public static partial class PolarsWrapper
     public static SeriesHandle SeriesMax(SeriesHandle s) => ErrorHelper.Check(NativeBindings.pl_series_max(s));
     // Slice
     public static SeriesHandle SeriesSlice(SeriesHandle handle, long offset, long length)
-    {
-        // 将 long 长度转为 UIntPtr
-        return ErrorHelper.Check(NativeBindings.pl_series_slice(handle, offset, (UIntPtr)length));
-    }
+        => ErrorHelper.Check(NativeBindings.pl_series_slice(handle, offset, (UIntPtr)length));
     // Sort
     public static SeriesHandle SeriesSort(
         SeriesHandle series, 
         bool descending = false,
         bool nullsLast = false,
-        bool multithreaded = true, // Polars 默认是 true
-        bool maintainOrder = false // Polars 默认是 false
+        bool multithreaded = true, 
+        bool maintainOrder = false
     )
     {
         return ErrorHelper.Check(NativeBindings.pl_series_sort(
@@ -380,9 +331,6 @@ public static partial class PolarsWrapper
             maintainOrder
         ));
     }
-    public static DataFrameHandle SeriesStructUnnest(SeriesHandle series)
-    {
-        // 这是一个只读操作，不会消耗 Series，所以只传 Handle
-        return ErrorHelper.Check(NativeBindings.pl_series_struct_unnest(series));
-    }
+    public static DataFrameHandle SeriesStructUnnest(SeriesHandle series)   
+        => ErrorHelper.Check(NativeBindings.pl_series_struct_unnest(series));
 }

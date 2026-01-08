@@ -55,23 +55,14 @@ public partial class Series : IDisposable
     /// Clone the Series
     /// </summary>
     /// <returns></returns>
-    public Series Clone()
-    {
-        return new(PolarsWrapper.CloneSeries(Handle));
-    }
+    public Series Clone() => new(PolarsWrapper.CloneSeries(Handle));
 
     internal Series ApplyExpr(Expr expr)
     {
-        // 1. 临时包装成 DataFrame
-        // DataFrame.New 会增加 Series 的引用计数，所以是安全的
         using var df = new DataFrame(this);
 
-        // 2. 执行 Select
-        // 这会生成一个新的 DataFrame
         using var dfRes = df.Select(expr);
 
-        // 3. 提取结果列
-        // 索引器 dfRes[0] 会返回一个新的 Series 对象
         return dfRes[0];
     }
 
@@ -80,19 +71,15 @@ public partial class Series : IDisposable
         string leftName = this.Name;
         string rightName = other.Name;
         
-        // 标记是否创建了临时对象，用于 finally 块清理
         Series? tempRight = null;
 
         try
         {
-            // 1. 处理命名冲突
-            // 如果名字一样，Polars 无法在同一个 DF 里放两列同名的
             Series rightSeries;
             
             if (leftName == rightName)
             {
                 rightName = "__other_temp__";
-                // Clone 出来改名，避免修改原始对象
                 tempRight = other.Clone();
                 tempRight.Name = rightName;
                 rightSeries = tempRight;
@@ -102,23 +89,14 @@ public partial class Series : IDisposable
                 rightSeries = other;
             }
 
-            // 2. 构建 DataFrame (关键修正)
-            // 直接将两个 Series 传入构造函数，而不是先创建再 Add
-            // 假设你的 DataFrame.FromColumns 支持 params Series[]
             using var df = new DataFrame([this, rightSeries]);
 
-            // 3. 执行表达式
-            // Op 接收两个 Expr：Col(this.Name) 和 Col(otherName)
             using var resDf = df.Select(op(Polars.Col(leftName), Polars.Col(rightName)));
 
-            // 4. 返回结果 Series
-            // 注意：resDf[0] 返回的新 Series，其 Handle 引用计数 +1，所以 df Dispose 不影响它
             return resDf[0];
         }
         finally
         {
-            // 5. 清理临时 Clone 的 Series
-            // (rightSeries 如果是 other，不需要 Dispose；如果是 tempRight，需要 Dispose)
             tempRight?.Dispose();
         }
     }
@@ -141,11 +119,8 @@ public partial class Series : IDisposable
     {
         get
         {
-            // [重构] 不再进行字符串解析
-            // 1. 直接从底层获取 DataTypeHandle
             var handle = PolarsWrapper.GetSeriesDataType(Handle);
             
-            // 2. 使用 Handle 构造 C# 对象 (Kind 会自动从 Rust 获取)
             return new DataType(handle);
         }
     }
@@ -186,19 +161,13 @@ public partial class Series : IDisposable
         // 3. String
         if (underlying == typeof(string)) 
         {
-            // 1. 先检查 Validity Bitmap (位图)
             if (PolarsWrapper.SeriesIsNullAt(Handle, index))
             {
-                // 这里返回 default! 是为了压制 "可能返回 null" 的警告
-                // 对于 string?，default 是 null；对于 string，default 也是 null (但在非空上下文中需要 !)
                 return default!; 
             }
 
-            // 2. 获取实际字符串
             var strVal = PolarsWrapper.SeriesGetString(Handle, index);
             
-            // 3. 压制警告并返回
-            // strVal! 告诉编译器：根据前面的 IsNullAt 检查，我确信这里 strVal 不会是 null
             return (T)(object)strVal!;
         }
 
@@ -217,29 +186,22 @@ public partial class Series : IDisposable
             return (T?)(object?)PolarsWrapper.SeriesGetDuration(Handle, index);
 
         // ==============================================================
-        // 🐢 慢车道 (Universal Path) - 使用 Arrow Infrastructure
-        // 针对 Struct, List, F# Option, DateTimeOffset 等复杂类型
+        // 🐢 Universal Path - using Arrow Infrastructure
+        // For Struct, List, F# Option, DateTimeOffset .etc
         // ==============================================================
         
-        // 1. 切片：只取这一行
         using var slice = Slice(index, 1);
         
-        // 2. 导出为 Arrow Array
         var column = slice.ToArrow();
 
-        // 3. 使用强大的 ArrowReader 解析
-        // 这里会自动处理 Struct 递归、F# Option 解包、DateTimeOffset 时区归一化
         return ArrowReader.ReadItem<T>(column, 0);
-
-        // throw new NotSupportedException($"Type {type.Name} is not supported for Series.GetValue.");
     }
     
     /// <summary>
     /// Get an item at the specified index as object (boxed).
     /// </summary>
     /// <summary>
-    /// 语法糖 1: s[index]
-    /// 让你可以写: var val = df["Name"][0];
+    /// Syntax sugar: s[index]
     /// </summary>
     /// <param name="index"></param>
     /// <returns></returns>
@@ -248,11 +210,9 @@ public partial class Series : IDisposable
     {
         get
         {
-            // 根据 DataType 分发到具体的泛型实现
-            // 这就是 object 拆箱的代价，为了语法糖是值得的
             return DataType.Kind switch
             {
-                    // 整数家族
+                    // Integer
                     DataTypeKind.Int8 => GetValue<sbyte?>(index),
                     DataTypeKind.Int16 => GetValue<short?>(index),
                     DataTypeKind.Int32 => GetValue<int?>(index),
@@ -263,33 +223,32 @@ public partial class Series : IDisposable
                     DataTypeKind.UInt64 => GetValue<ulong?>(index),
                     DataTypeKind.Decimal => GetValue<decimal?>(index),
 
-                    // 浮点数
+                    // float
                     DataTypeKind.Float32 => GetValue<float?>(index),
                     DataTypeKind.Float64 => GetValue<double?>(index),
 
-                    // 布尔
+                    // bool
                     DataTypeKind.Boolean => GetValue<bool?>(index),
 
-                    // 字符串
+                    // stirng
                     DataTypeKind.String => GetValue<string>(index),
 
                     // Duration
                     DataTypeKind.Duration => GetValue<TimeSpan?>(index),
 
-                    // [补全] 时间点 (Time) -> TimeOnly (如果 .NET 6+) 或 TimeSpan
+                    //  Time -> TimeOnly 
                     DataTypeKind.Time => GetValue<TimeOnly?>(index),
 
-                    // [补全] 日期
+                    // DateTime
                     DataTypeKind.Date => GetValue<DateOnly?>(index), 
                     DataTypeKind.Datetime => string.IsNullOrEmpty(this.DataType.TimeZone) 
                         ? GetValue<DateTime?>(index)      // 无时区：返回 DateTime
                         : (object?)GetValue<DateTimeOffset?>(index),
 
-                    // [补全] 二进制
+                    // Binary
                     DataTypeKind.Binary => GetValue<byte[]>(index),
 
-                    // 复杂类型 (返回 List 或 Struct 的 object 形式)
-                    // 注意：Series.GetValue<object> 需要在内部处理好 List/Struct 的装箱
+                    // Complex Types
                     DataTypeKind.List => GetValue<object>(index), 
                     DataTypeKind.Struct => GetValue<object>(index),
                     DataTypeKind.Array => GetValue<object>(index),
@@ -299,7 +258,7 @@ public partial class Series : IDisposable
         }
     }
     // ==========================================
-    // Arithmetic Operators (算术运算符)
+    // Arithmetic Operators
     // ==========================================
     /// <summary>
     /// Add Series
@@ -393,10 +352,7 @@ public partial class Series : IDisposable
     /// Bitwise left shift operation.
     /// </summary>
     public static Series operator <<(Series left, int right)
-    {
-        // 逻辑：将 Series 视为一个列表达式，应用移位，然后立即求值返回新 Series
-        return left.ApplyExpr(Polars.Col(left.Name) << right);
-    }
+        => left.ApplyExpr(Polars.Col(left.Name) << right);
 
     /// <summary>
     /// Bitwise right shift operation.
@@ -406,11 +362,10 @@ public partial class Series : IDisposable
     /// </para>
     /// </summary>
     public static Series operator >>(Series left, int right)
-    {
-        return left.ApplyExpr(Polars.Col(left.Name) >> right);
-    }
+        => left.ApplyExpr(Polars.Col(left.Name) >> right);
+
     // ==========================================
-    // Trigonometry (三角函数)
+    // Trigonometry
     // ==========================================
 
     /// <summary>Compute the element-wise sine.</summary>
@@ -463,7 +418,7 @@ public partial class Series : IDisposable
     public Series ArcTanh() => ApplyExpr(Polars.Col(Name).ArcTanh());
 
     // ==========================================
-    // Comparison Methods & Operators (比较)
+    // Comparison Methods & Operators
     // ==========================================
     /// <summary>
     /// Compare whether two Series is equal
@@ -483,7 +438,6 @@ public partial class Series : IDisposable
     /// <param name="left"></param>
     /// <param name="right"></param>
     /// <returns></returns>
-    // 大于小于可以用运算符重载，这在 C# 中比较常见用于自定义类型
     public static Series operator >(Series left, Series right) 
         => new(PolarsWrapper.SeriesGt(left.Handle, right.Handle));
     /// <summary>
@@ -511,7 +465,6 @@ public partial class Series : IDisposable
     public static Series operator <=(Series left, Series right) 
         => new(PolarsWrapper.SeriesLtEq(left.Handle, right.Handle));
 
-    // 显式方法别名 (Fluent API 风格)
     /// <summary>
     /// Compare whether left series is greater than right series
     /// </summary>
@@ -538,10 +491,9 @@ public partial class Series : IDisposable
     public Series LtEq(Series other) => this <= other;
 
     // ==========================================
-    // Aggregations (聚合)
+    // Aggregations
     // ==========================================
 
-    // 注意：Polars 的 Series 聚合通常返回一个长度为 1 的新 Series (Scalar)
     /// <summary>
     /// Sum series into 1 length series(Scalar)
     /// </summary>
@@ -563,7 +515,6 @@ public partial class Series : IDisposable
     /// <returns></returns>
     public Series Max() => new(PolarsWrapper.SeriesMax(Handle));
 
-    // 泛型辅助方法：直接获取标量值
     /// <summary>
     /// Sum series into scalar
     /// </summary>
@@ -595,7 +546,6 @@ public partial class Series : IDisposable
 
     // ------------------------------------------
     // 🚀 1. Fast Path (Primitives)
-    // 直接走 P/Invoke，性能最高
     // ------------------------------------------
     
     /// <summary>
@@ -650,7 +600,6 @@ public partial class Series : IDisposable
 
     // ------------------------------------------
     // 🐢 2. Universal Path (Complex Types)
-    // 委托给 ArrowConverter，逻辑统一
     // ------------------------------------------
 
     /// <summary>
@@ -660,9 +609,7 @@ public partial class Series : IDisposable
     /// <param name="data"></param>
     public Series(string name, DateTime[] data)
     {
-        // 1. 转 Arrow
         using var arrowArray = ArrowConverter.Build(data);
-        // 2. 导入 Handle (这一步会自动转移所有权给 Rust)
         Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
     }
 
@@ -810,11 +757,7 @@ public partial class Series : IDisposable
     /// <summary>
     /// Cast the Series to a different DataType.
     /// </summary>
-    public Series Cast(DataType dtype)
-    {
-        // SeriesCast 返回一个新的 Series Handle
-        return new Series(PolarsWrapper.SeriesCast(Handle, dtype.Handle));
-    }
+    public Series Cast(DataType dtype)=> new(PolarsWrapper.SeriesCast(Handle, dtype.Handle));
     /// <summary>
     /// Get a slice of this Series.
     /// </summary>
@@ -833,7 +776,6 @@ public partial class Series : IDisposable
     public T[] ToArray<T>()
     {  
         var col = this.ToArrow();
-        // 3. 读取
         return ArrowReader.ReadColumn<T>(col);
     }
     // ==========================================
@@ -843,11 +785,7 @@ public partial class Series : IDisposable
     /// <summary>
     /// Check whether indexed value is null。
     /// </summary>
-    public bool IsNullAt(long index)
-    {
-        return PolarsWrapper.SeriesIsNullAt(Handle, index);
-    }
-
+    public bool IsNullAt(long index) => PolarsWrapper.SeriesIsNullAt(Handle, index);
     /// <summary>
     /// Return a Boolean series, where null value will be masked as true.
     /// </summary>
@@ -964,7 +902,7 @@ public partial class Series : IDisposable
     public Series Sort(
         bool descending = false, 
         bool nullsLast = false, 
-        bool maintainOrder = false, // 放在这里比较符合直觉
+        bool maintainOrder = false, 
         bool multithreaded = true)
     {
         var h = PolarsWrapper.SeriesSort(
@@ -980,10 +918,7 @@ public partial class Series : IDisposable
     /// Explode a list column into multiple rows.
     /// The resulting Series will be longer than the original.
     /// </summary>
-    public Series Explode()
-    {
-        return ApplyExpr(Polars.Col(Name).Explode());
-    }
+    public Series Explode() => ApplyExpr(Polars.Col(Name).Explode());
     /// <summary>
     /// Aggregate values into a list.
     /// Result is a Series with 1 row containing a List of all values.
@@ -1002,9 +937,7 @@ public partial class Series : IDisposable
     /// Zero-copy convert to Apache Arrow Array.
     /// </summary>
     public IArrowArray ToArrow()
-    {
-        return PolarsWrapper.SeriesToArrow(Handle);
-    }
+        => PolarsWrapper.SeriesToArrow(Handle);
     /// <summary>
     /// Low-level entry point: Create Series from existing Arrow Array.
     /// </summary>
@@ -1030,10 +963,7 @@ public partial class Series : IDisposable
     /// Check if values are between lower and upper bounds.
     /// </summary>
     public Series IsBetween(object lower, object upper) 
-    {
-        // 支持传入字面量，更符合直觉
-        return ApplyExpr(Polars.Col(Name).IsBetween(Expr.MakeLit(lower), Expr.MakeLit(upper)));
-    }
+        => ApplyExpr(Polars.Col(Name).IsBetween(Expr.MakeLit(lower), Expr.MakeLit(upper)));
     /// <summary>
     /// Static Rolling Minimum
     /// </summary>
@@ -1041,7 +971,7 @@ public partial class Series : IDisposable
     /// <param name="minPeriods"></param>
     /// <returns></returns>
     public Series RollingMin(string windowSize, int minPeriods = 1) 
-            => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods));
+        => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods));
     /// <summary>
     /// Static Rolling Minimum, windowSize is timespan
     /// </summary>
@@ -1049,7 +979,7 @@ public partial class Series : IDisposable
     /// <param name="minPeriods"></param>
     /// <returns></returns>
     public Series RollingMin(TimeSpan windowSize, int minPeriods = 1) 
-            => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods));
+        => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods));
     /// <summary>
     /// Static Rolling Maximum
     /// </summary>
@@ -1106,18 +1036,12 @@ public partial class Series : IDisposable
     /// <para>Warning: This is slower than native expressions because it runs in the .NET runtime.</para>
     /// </summary>
     public Series Map<TInput, TOutput>(Func<TInput, TOutput> function, DataType outputType)
-    {
-        // 直接复用 Expr 的 Map
-        return ApplyExpr(Polars.Col(Name).Map(function, outputType));
-    }
-
+        => ApplyExpr(Polars.Col(Name).Map(function, outputType));
     /// <summary>
     /// Apply a raw Arrow-to-Arrow UDF.
     /// </summary>
     public Series Map(Func<IArrowArray, IArrowArray> function, DataType outputType)
-    {
-        return ApplyExpr(Polars.Col(Name).Map(function, outputType));
-    }
+        => ApplyExpr(Polars.Col(Name).Map(function, outputType));
 
     // ==========================================
     // High-Level Factories
@@ -1128,31 +1052,21 @@ public partial class Series : IDisposable
     /// </summary>
     public static Series From<T>(string name, IEnumerable<T> data) 
     {
-        // 1. 调用 Core 层的转换器：IEnumerable<T> -> IArrowArray
-        // (原 ArrowArrayFactory.Build)
         using var arrowArray = ArrowConverter.Build(data);
 
-        // 2. 调用 Core 层的 FFI 桥梁：IArrowArray -> SeriesHandle
-        // (原 Series.FromArrow 的底层逻辑)
         var handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
 
-        // 3. 封装为 C# API 对象
         return new Series(handle);
     }
     /// <summary>
     /// Convert this single Series into a DataFrame.
     /// </summary>
     public DataFrame ToFrame()
-    {
-        return new DataFrame(PolarsWrapper.SeriesToFrame(Handle));
-    }
+        => new(PolarsWrapper.SeriesToFrame(Handle));
     /// <summary>
     /// Dispose the underlying SeriesHandle.
     /// </summary>
-    public void Dispose()
-    {
-        Handle.Dispose();
-    }
+    public void Dispose() => Handle.Dispose();
 }
 
 /// <summary>
@@ -1205,7 +1119,7 @@ public class SeriesDtOps
     /// <returns></returns>
     public Series Time() => Apply(e => e.Dt.Time());
     // ==========================================
-    // Truncate & Round (时间对齐)
+    // Truncate & Round
     // ==========================================
 
     /// <summary>
@@ -1229,7 +1143,7 @@ public class SeriesDtOps
     /// <returns></returns>
     public Series Round(TimeSpan every) => Apply(e => e.Dt.Round(every));
     // ==========================================
-    // Offset (时间平移)
+    // Offset
     // ==========================================
 
     /// <summary>
@@ -1248,7 +1162,7 @@ public class SeriesDtOps
     public Series OffsetBy(TimeSpan duration) => Apply(e => e.Dt.OffsetBy(duration));
 
     // ==========================================
-    // Timestamp (转整数)
+    // Timestamp
     // ==========================================
 
     /// <summary>
@@ -1300,7 +1214,7 @@ public class SeriesDtOps
         bool[]? weekMask = null, 
         Roll roll = Roll.Raise)
         =>Apply(e => e.Dt.AddBusinessDays(n,holidays,weekMask,roll));
-        /// <summary>
+    /// <summary>
     /// Check if the date is a business day.
     /// </summary>
     public Series IsBusinessDay(IEnumerable<DateOnly>? holidays = null, bool[]? weekMask = null)
@@ -1406,7 +1320,7 @@ public class SeriesStrOps
         => Apply(e => e.Str.StripPrefix(suffix));
 
     // ==========================================
-    // Boolean Checks (检查)
+    // Boolean Checks
     // ==========================================
 
     /// <summary>
@@ -1422,7 +1336,7 @@ public class SeriesStrOps
         => Apply(e => e.Str.StripSuffix(suffix ));
 
     // ==========================================
-    // Temporal Parsing (日期转换)
+    // Temporal Parsing
     // ==========================================
 
     /// <summary>
@@ -1446,13 +1360,8 @@ public class SeriesListOps
     private readonly Series _series;
     internal SeriesListOps(Series series) { _series = series; }
 
-    // 复用 ApplyExpr 核心逻辑
     private Series Apply(Func<Expr, Expr> op) 
-    {
-        // 这里的 ApplyExpr 需要是你 Series 类里的 internal/private 方法
-        // 逻辑是: DataFrame.New(this).Select(op(Col(Name)))[0]
-        return _series.ApplyExpr(op(Polars.Col(_series.Name)));
-    }
+        => _series.ApplyExpr(op(Polars.Col(_series.Name)));
 
     /// <summary>
     /// Get the length of the arrays.
@@ -1513,11 +1422,7 @@ public class SeriesListOps
     /// Result is a new Series with the lists concatenated.
     /// </summary>
     public Series Concat(Series other)
-    {
-        // 调用我们刚写的 ApplyBinaryExpr
-        // 逻辑：Col(this) .List.Concat ( Col(other) )
-        return _series.ApplyBinaryExpr(other, (left, right) => left.List.Concat(right));
-    }
+        => _series.ApplyBinaryExpr(other, (left, right) => left.List.Concat(right));
     /// <summary>Reverse elements in list.</summary>
     public Series Reverse() => Apply(e => e.List.Reverse());
 }
@@ -1529,13 +1434,10 @@ public class SeriesArrayOps
     private readonly Series _series;
     internal SeriesArrayOps(Series series) { _series = series; }
 
-    // 复用 ApplyExpr 核心逻辑
     private Series Apply(Func<Expr, Expr> op) 
-    {
-        return _series.ApplyExpr(op(Polars.Col(_series.Name)));
-    }
+        => _series.ApplyExpr(op(Polars.Col(_series.Name)));
 
-    // --- Aggregations (聚合：返回的 Series 长度不变，但类型变为标量) ---
+    // --- Aggregations ---
     
     /// <summary>Compute the max value of every sub-array.</summary>
     public Series Max() => Apply(e => e.Array.Max());
@@ -1558,7 +1460,7 @@ public class SeriesArrayOps
     /// <summary>Compute the variance of every sub-array.</summary>
     public Series Var(byte ddof = 1) => Apply(e => e.Array.Var(ddof));
 
-    // --- Boolean (布尔逻辑) ---
+    // --- Boolean ---
 
     /// <summary>Check if any element in the sub-array is true.</summary>
     public Series Any() => Apply(e => e.Array.Any());
@@ -1566,7 +1468,7 @@ public class SeriesArrayOps
     /// <summary>Check if all elements in the sub-array are true.</summary>
     public Series All() => Apply(e => e.Array.All());
 
-    // --- Sort & Search (排序与搜索) ---
+    // --- Sort & Search ---
 
     /// <summary>Sort elements in every sub-array.</summary>
     public Series Sort(bool descending = false, bool nullsLast = false, bool maintainOrder = false) 
@@ -1581,7 +1483,7 @@ public class SeriesArrayOps
     /// <summary>Get the index of the maximum value in every sub-array.</summary>
     public Series ArgMax() => Apply(e => e.Array.ArgMax());
 
-    // --- Structure (结构变换) ---
+    // --- Structure ---
 
     /// <summary>Get element at index from every sub-array.</summary>
     public Series Get(int index, bool nullOnOob = true) 
@@ -1659,7 +1561,6 @@ public class SeriesStructOps
     /// </summary>
     public DataFrame Unnest()
     {
-        // 调用底层 Wrapper
         var dfHandle = PolarsWrapper.SeriesStructUnnest(_series.Handle);
         return new DataFrame(dfHandle);
     }

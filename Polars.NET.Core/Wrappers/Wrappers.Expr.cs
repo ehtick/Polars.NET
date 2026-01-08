@@ -2,14 +2,14 @@ namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
 {
-    // Unary Nodes (消耗 1 个 Expr)
+    // Unary Nodes
     private static ExprHandle UnaryOp(Func<ExprHandle, ExprHandle> op, ExprHandle expr)
     {
         var h = op(expr);
         expr.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-    // Binary Nodes (消耗 2 个 Expr)
+    // Binary Nodes
     private static ExprHandle BinaryOp(Func<ExprHandle, ExprHandle, ExprHandle> op, ExprHandle l, ExprHandle r)
     {
         var h = op(l, r);
@@ -29,7 +29,6 @@ public static partial class PolarsWrapper
     {
         var h = func(e, arg);
         
-        // [内存模型] Expr 是 Move 语义，必须转移所有权给 Rust
         e.TransferOwnership();
         
         return ErrorHelper.Check(h);
@@ -46,12 +45,11 @@ public static partial class PolarsWrapper
     {
         var h = op(expr, windowSize,(UIntPtr)minPeriods, by, closed);
         expr.TransferOwnership();
-        by.TransferOwnership(); // by 也是 Expr，会被消耗
+        by.TransferOwnership(); 
         return ErrorHelper.Check(h);
     }
-    // --- Expr Ops (工厂方法) ---
-    // 这些方法返回新的 ExprHandle，所有权在 C# 这边，直到传给 Filter/Select
-    // Leaf Nodes (不消耗其他 Expr)
+    // --- Expr Ops ---
+    // Leaf Nodes
     public static ExprHandle Col(string name) => ErrorHelper.Check(NativeBindings.pl_expr_col(name));
     public static ExprHandle Cols(string[] names)
     {
@@ -69,16 +67,15 @@ public static partial class PolarsWrapper
     public static ExprHandle LitNull() => ErrorHelper.Check(NativeBindings.pl_expr_lit_null());
     public static ExprHandle Lit(DateTime dt)
     {
-        // C# DateTime.Ticks 是自 0001-01-01 以来的 100ns 单位
-        // Unix Epoch 是 1970-01-01
+        // C# DateTime.Ticks is from 0001-01-01 
+        // Unix Epoch is 1970-01-01
         long unixEpochTicks = 621355968000000000;
         long ticksSinceEpoch = dt.Ticks - unixEpochTicks;
-        long micros = ticksSinceEpoch / 10; // 100ns -> 1us (除以10)
+        long micros = ticksSinceEpoch / 10; // 100ns -> 1us
         
         return ErrorHelper.Check(NativeBindings.pl_expr_lit_datetime(micros));
     }
     // Alias
-
     public static ExprHandle Alias(ExprHandle expr, string name) 
     {
         var h = NativeBindings.pl_expr_alias(expr, name);
@@ -116,7 +113,7 @@ public static partial class PolarsWrapper
     public static ExprHandle DtTime(ExprHandle e) => UnaryDtOp(NativeBindings.pl_expr_dt_time, e);
     // Truncate / Round (Expr + String)
     public static ExprHandle DtTruncate(ExprHandle e, string every) 
-        => UnaryStrOp(NativeBindings.pl_expr_dt_truncate, e, every); // 注意这里用 UnaryStrOp
+        => UnaryStrOp(NativeBindings.pl_expr_dt_truncate, e, every);
 
     public static ExprHandle DtRound(ExprHandle e, string every)
         => UnaryStrOp(NativeBindings.pl_expr_dt_round, e, every);
@@ -135,8 +132,6 @@ public static partial class PolarsWrapper
     // TimeZone
     public static ExprHandle DtConvertTimeZone(ExprHandle e, string timeZone)
     {
-        // 这是一个 UnaryStrOp，但我们可以直接手写以复用 TransferOwnership 逻辑
-        // 或者复用之前的辅助函数 if you have generic one
         var h = NativeBindings.pl_expr_dt_convert_time_zone(e, timeZone);
         e.TransferOwnership();
         return ErrorHelper.Check(h);
@@ -156,7 +151,7 @@ public static partial class PolarsWrapper
         ExprHandle n, 
         bool[] weekMask, 
         int[] holidays,
-        PlRoll roll) // 接收 API Enum
+        PlRoll roll) 
     {
         if (weekMask.Length != 7) 
             throw new ArgumentException("Week mask must have length 7.");
@@ -164,7 +159,6 @@ public static partial class PolarsWrapper
         var maskBytes = new byte[7];
         for (int i = 0; i < 7; i++) maskBytes[i] = weekMask[i] ? (byte)1 : (byte)0;
 
-        // 直接调用，无需 unsafe，无需 fixed
         var h = ErrorHelper.Check(NativeBindings.pl_expr_add_business_days(
                 expr,
                 n,
@@ -306,18 +300,12 @@ public static partial class PolarsWrapper
     }    
     public static ExprHandle TopKBy(ExprHandle expr, uint k, ExprHandle[] by, bool[] reverse)
     {
-        // 1. 转换并移交所有权 (Move)
-        // 使用你的 HandlesToPtrs 方法，它会调用 TransferOwnership()
-        // 这一步之后，C# 端的 by 数组里的 handle 已经失效 (SetHandleAsInvalid)，
-        // Rust 侧负责这些指针的 Drop。
         var byPtrs = HandlesToPtrs(by);
 
         unsafe
         {
-            // 2. 锁定 bool 数组
             fixed (bool* descPtr = reverse)
             {
-                // 3. 调用 Native
                 var h = NativeBindings.pl_expr_top_k_by(
                     expr, 
                     k, 
@@ -334,15 +322,12 @@ public static partial class PolarsWrapper
 
     public static ExprHandle BottomKBy(ExprHandle expr, uint k, ExprHandle[] by, bool[] reverse)
     {
-        // 1. 移交所有权
         var byPtrs = HandlesToPtrs(by);
 
         unsafe
         {
-            // 2. 锁定 bool 数组
             fixed (bool* descPtr = reverse)
             {
-                // 3. 调用 Native
                 var h = NativeBindings.pl_expr_bottom_k_by(
                     expr, 
                     k, 
@@ -442,7 +427,6 @@ public static partial class PolarsWrapper
     public static ExprHandle IsBetween(ExprHandle expr, ExprHandle lower, ExprHandle upper)
     {
         var h = NativeBindings.pl_expr_is_between(expr, lower, upper);
-        // 记得销毁所有输入 Handle
         expr.TransferOwnership();
         lower.TransferOwnership();
         upper.TransferOwnership();
@@ -465,7 +449,7 @@ public static partial class PolarsWrapper
     public static ExprHandle ListJoin(ExprHandle e, string sep)
     {
         var h = NativeBindings.pl_expr_list_join(e, sep);
-        e.TransferOwnership(); // [关键] 必须转移所有权
+        e.TransferOwnership(); 
         return ErrorHelper.Check(h);
     }
 
@@ -493,7 +477,7 @@ public static partial class PolarsWrapper
     }
     public static ExprHandle ConcatList(ExprHandle[] exprs)
     {
-        var ptrs = HandlesToPtrs(exprs); // 使用之前定义的 Helper
+        var ptrs = HandlesToPtrs(exprs); 
         return ErrorHelper.Check(NativeBindings.pl_concat_list(
             ptrs,
             (UIntPtr)exprs.Length
@@ -537,7 +521,6 @@ public static partial class PolarsWrapper
         item.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-
     public static ExprHandle ArrayAny(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_any, e);
     public static ExprHandle ArrayAll(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_all, e);
     public static ExprHandle ArraySort(ExprHandle e, bool descending, bool nullsLast, bool maintainOrder)
@@ -575,7 +558,7 @@ public static partial class PolarsWrapper
     public static ExprHandle StructFieldByIndex(ExprHandle e, long index)
         {
             var h = NativeBindings.pl_expr_struct_field_by_index(e, index);
-            e.TransferOwnership(); // 链式调用惯例
+            e.TransferOwnership(); 
             return ErrorHelper.Check(h);
         }
 
@@ -608,13 +591,10 @@ public static partial class PolarsWrapper
     // Window
     public static ExprHandle Over(ExprHandle expr, ExprHandle[] partitionBy)
     {
-        // 1. 处理分组列表 (HandlesToPtrs 会自动 TransferOwnership)
         var rawPartition = HandlesToPtrs(partitionBy);
         
-        // 2. 调用 Native
         var h = NativeBindings.pl_expr_over(expr, rawPartition, (UIntPtr)rawPartition.Length);
         
-        // 3. 处理主表达式 (必须 TransferOwnership)
         expr.TransferOwnership();
         
         return ErrorHelper.Check(h);
@@ -623,14 +603,9 @@ public static partial class PolarsWrapper
     public static ExprHandle Len() => ErrorHelper.Check(NativeBindings.pl_expr_len());
     // expr clone
     public static ExprHandle CloneExpr(ExprHandle expr)
-    {
-        return ErrorHelper.Check(NativeBindings.pl_expr_clone(expr));
-    }
+        => ErrorHelper.Check(NativeBindings.pl_expr_clone(expr));
     public static ExprHandle ExprCast(ExprHandle expr, DataTypeHandle dtype, bool strict)
-    {
-        return ErrorHelper.Check(NativeBindings.pl_expr_cast(expr, dtype, strict));
-    }
-
+        => ErrorHelper.Check(NativeBindings.pl_expr_cast(expr, dtype, strict));
     // Shift
     public static ExprHandle Shift(ExprHandle e, long n)
     {
@@ -638,7 +613,6 @@ public static partial class PolarsWrapper
         e.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-
     // Diff
     public static ExprHandle Diff(ExprHandle e, long n)
     {
@@ -646,7 +620,6 @@ public static partial class PolarsWrapper
         e.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-
     // Fill
     public static ExprHandle ForwardFill(ExprHandle e, uint limit)
     {
@@ -654,7 +627,6 @@ public static partial class PolarsWrapper
         e.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-
     public static ExprHandle BackwardFill(ExprHandle e, uint limit)
     {
         var h = NativeBindings.pl_expr_backward_fill(e, limit);
@@ -673,7 +645,6 @@ public static partial class PolarsWrapper
     {
         var h = NativeBindings.pl_expr_if_else(pred, ifTrue, ifFalse);
         
-        // 三个输入都被消耗了
         pred.TransferOwnership();
         ifTrue.TransferOwnership();
         ifFalse.TransferOwnership();

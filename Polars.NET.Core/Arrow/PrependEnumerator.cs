@@ -4,7 +4,7 @@ using Apache.Arrow;
 namespace Polars.NET.Core.Arrow
 {
     /// <summary>
-    /// 缝合枚举器：将预读的 Head (First Batch) 与剩余的 Tail 重新组合成一个完整的流。
+    /// Combining Enumerator: Combine Pre-Read Head (First Batch) with Tail into full stream.
     /// </summary>
     public class PrependEnumerator: IEnumerator<RecordBatch>
     {
@@ -12,7 +12,6 @@ namespace Polars.NET.Core.Arrow
         private readonly RecordBatch _head;
         private readonly IEnumerator<RecordBatch> _tail;
 
-        // [修复] 显式定义构造函数以支持 .NET 7 / C# 11
         public PrependEnumerator(RecordBatch head, IEnumerator<RecordBatch> tail)
         {
             _head = head;
@@ -36,7 +35,6 @@ namespace Polars.NET.Core.Arrow
 
         public void Dispose()
         {
-            // 确保头尾都被释放
             _head.Dispose();
             _tail.Dispose();
         }

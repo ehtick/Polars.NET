@@ -7,14 +7,12 @@ namespace Polars.NET.Core.Arrow
 {
     public static class ArrowReader
     {
-        // ReadRecordBatch 保持不变，它只负责最外层的循环
         public static IEnumerable<T> ReadRecordBatch<T>(RecordBatch batch)
         {
             
             var targetType = typeof(T);
 
-            // [新增] 模式 A: 标量模式 (Scalar Mode)
-            // 解决 Rows<int>, Rows<DateTime>, Rows<string> 等问题
+            // Scalar Mode
             if (IsScalarType(targetType))
             {
                 if (batch.ColumnCount == 0) yield break;
@@ -30,12 +28,12 @@ namespace Polars.NET.Core.Arrow
                 }
                 yield break;
             }
-            // [原有] 模式 B: 对象映射模式 (Object Mapping Mode)
-            // 适用于 POCO (class/struct)
+            // Object Mapping Mode
+            // For POCO (class/struct)
             
             int rowCount = batch.Length;
             
-            // 获取可写属性
+            // Get Can-write properties
             var properties = targetType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
                                        .Where(p => p.CanWrite).ToArray();
             
@@ -48,7 +46,6 @@ namespace Polars.NET.Core.Arrow
 
                 if (col == null) 
                 {
-                    // 可以选择抛错，或者静默跳过（返回 null）
                     columnAccessors[i] = _ => null; 
                     continue; 
                 }
@@ -58,8 +55,6 @@ namespace Polars.NET.Core.Arrow
 
             for (int i = 0; i < rowCount; i++)
             {
-                // 使用 Activator 创建实例，不再依赖 new() 约束
-                // ! 压制可能的 null警告（假设 T 是 POCO）
                 var item = Activator.CreateInstance<T>()!; 
                 
                 for (int p = 0; p < properties.Length; p++)
@@ -73,28 +68,28 @@ namespace Polars.NET.Core.Arrow
         }
 
         // =============================================================
-        // 🧠 核心：支持递归的 Accessor 工厂
+        // Accessor Factory
         // =============================================================
         public static Func<int, object?> CreateAccessor(IArrowArray array, Type targetType)
         {
             // ---------------------------------------------------------
-            // 0. 类型解析 (Type Resolution)
+            // Type Resolution
             // ---------------------------------------------------------
             bool isFSharpOption = FSharpHelper.IsFSharpOption(targetType);
             
-            // 获取 "真实" 的处理类型
-            // 如果是 Option<int> -> int
-            // 如果是 int?        -> int
-            // 如果是 List<T>     -> List<T>
+            // Get Real Underlying Type
+            // Option<int> -> int
+            // int?        -> int
+            // List<T>     -> List<T>
             var underlyingType = isFSharpOption 
                 ? FSharpHelper.GetUnderlyingType(targetType) 
                 : (Nullable.GetUnderlyingType(targetType) ?? targetType);
 
-            // 定义基础读取器 (返回 C# 对象或 null)
+            // Define baseAccessor(return C# object or null)
             Func<int, object?> baseAccessor = null!;
 
             // ---------------------------------------------------------
-            // 1. StructArray -> Class / Struct
+            // StructArray -> Class / Struct
             // ---------------------------------------------------------
             if (array is StructArray structArray)
             {
@@ -106,7 +101,6 @@ namespace Polars.NET.Core.Arrow
 
                 foreach (var prop in props)
                 {
-                    // 手动查找 Arrow 列索引
                     int fieldIndex = -1;
                     for (int k = 0; k < structType.Fields.Count; k++)
                     {
@@ -117,8 +111,6 @@ namespace Polars.NET.Core.Arrow
 
                     var childArray = structArray.Fields[fieldIndex];
                     
-                    // [递归] 这里的 prop.PropertyType 可能是 Option<T>
-                    // 递归调用会自动处理它
                     var childGetter = CreateAccessor(childArray, prop.PropertyType);
 
                     setters.Add((obj, rowIdx) => 
@@ -137,7 +129,7 @@ namespace Polars.NET.Core.Arrow
                 };
             }
             // ---------------------------------------------------------
-            // 2. ListArray / LargeListArray -> List<T> / FixedSizeListArray -> List<T>
+            // ListArray / LargeListArray -> List<T> / FixedSizeListArray -> List<T>
             // ---------------------------------------------------------
             else if (array is ListArray || array is LargeListArray || array is FixedSizeListArray)
             {
@@ -187,7 +179,6 @@ namespace Polars.NET.Core.Arrow
 
                     for (int k = 0; k < count; k++)
                     {
-                        // 这里的 start 已经是绝对物理地址
                         var val = childGetter((int)(start + k));
                         list.Add(val);
                     }
@@ -206,7 +197,7 @@ namespace Polars.NET.Core.Arrow
                 };
             }
             // ---------------------------------------------------------
-            // 3. 基础类型 (Primitives)
+            // Primitives
             // ---------------------------------------------------------
             else
             {
@@ -268,7 +259,6 @@ namespace Polars.NET.Core.Arrow
                 {
                 TimeZoneInfo? tzi = null;
                 
-                // 1. 尝试从 Arrow Schema 获取时区
                 if (array is TimestampArray tsArr && tsArr.Data.DataType is TimestampType tsType)
                 {
                     string? arrowTz = tsType.Timezone;
@@ -276,21 +266,18 @@ namespace Polars.NET.Core.Arrow
                     {
                         try 
                         {
-                            // 只查找一次！
                             tzi = TimeZoneInfo.FindSystemTimeZoneById(arrowTz);
                         }
                         catch 
                         {
-                            // 找不到就降级为 UTC，或者记录日志
+                            Console.WriteLine("No TimeZone Found.");
                         }
                     }
                 }
 
-                // 2. 返回针对该 TimeZone 优化过的读取器
+                // 2. return TimeZone reader
                 return baseAccessor = idx => 
                 {
-                    // 复用 GetDateTimeOffset，但我们把 tzi 传进去（需要重载一下扩展方法）
-                    // 或者直接在这里写逻辑
                     return array.GetDateTimeOffsetOptimized(idx, tzi);
                 };
                 }
@@ -307,7 +294,7 @@ namespace Polars.NET.Core.Arrow
                 {
                     baseAccessor = idx => 
                     {
-                        TimeSpan? v = array.GetTimeSpan(idx); // 调用 ArrowExtensions
+                        TimeSpan? v = array.GetTimeSpan(idx);
                         if (!v.HasValue) return null;
                         return v.Value;
                     };
@@ -315,13 +302,12 @@ namespace Polars.NET.Core.Arrow
             }
 
             // ---------------------------------------------------------
-            // 4. 收尾：F# Option 包装
+            // F# Option Wrap
             // ---------------------------------------------------------
             
-            // 如果没有匹配到任何读取器，返回 null 读取器
             if (baseAccessor == null) return _ => null;
 
-            // 如果目标是 F# Option，我们需要把 null 转为 None，把 value 转为 Some(value)
+            // For F# Option，null -> None，value -> Some(value)
             if (isFSharpOption)
             {
                 var wrapper = FSharpHelper.CreateOptionWrapper(targetType);
@@ -330,7 +316,7 @@ namespace Polars.NET.Core.Arrow
 
             return baseAccessor;
         }
-        // --- 辅助方法：判断是否为标量类型 ---
+        // --- Helper: Check whether is scalartype ---
         private static bool IsScalarType(Type t)
         {
             var underlying = Nullable.GetUnderlyingType(t) ?? t;
@@ -343,19 +329,14 @@ namespace Polars.NET.Core.Arrow
                 || underlying == typeof(TimeOnly)
                 || underlying == typeof(TimeSpan)
                 || underlying == typeof(DateTimeOffset)
-                // F# Option 如果包裹的是标量，也视为标量
                 || FSharpHelper.IsFSharpOption(t); 
         }
         /// <summary>
-        /// [New] Create a high-performance accessor for a single Arrow Array.
+        /// Create a high-performance accessor for a single Arrow Array.
         /// Used by Series.AsSeq().
         /// </summary>
         public static Func<int, object?> GetSeriesAccessor<T>(IArrowArray array)
-        {
-            // 直接复用 CreateAccessor 的强大逻辑
-            // 它支持 DateTime 转换, F# List 转换, 甚至 Struct 递归
-            return CreateAccessor(array, typeof(T));
-        }
+            => CreateAccessor(array, typeof(T));
         public static T[] ReadColumn<T>(IArrowArray array)
         {
             var accessor = CreateAccessor(array, typeof(T));
@@ -365,13 +346,12 @@ namespace Polars.NET.Core.Arrow
             for (int i = 0; i < len; i++)
             {
                 var val = accessor(i);
-                // 处理拆箱和 null
                 result[i] = val == null ? default! : (T)val;
             }
             return result;
         }
         /// <summary>
-        /// [新增] 读取单个 Array 的第 i 个元素
+        /// Read single Array index i item
         /// </summary>
         public static T? ReadItem<T>(IArrowArray array, int index)
         {

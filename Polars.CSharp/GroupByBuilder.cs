@@ -74,8 +74,6 @@ public class DynamicGroupBy
     /// </summary>
     public DataFrame Agg(params Expr[] aggs)
     {
-        // 核心逻辑：Eager -> Lazy -> GroupByDynamic -> Agg -> Collect -> Eager
-        // 这一步非常高效，因为 Lazy 引擎会优化整个聚合计划
         return _df.Lazy()
             .GroupByDynamic(
                 _indexColumn,

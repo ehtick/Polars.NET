@@ -14,13 +14,11 @@ public static partial class PolarsWrapper
         ulong skipRows = 0,
         bool tryParseDates = true)
     {
-        // 使用新的 WithSchemaHandle Helper
         return WithSchemaHandle(schema, (schemaHandle) => 
         {
-            // 现在的调用非常干净，只需要传一个 schemaHandle
             return ErrorHelper.Check(NativeBindings.pl_read_csv(
                 path, 
-                schemaHandle, // <--- 强类型 Handle
+                schemaHandle, 
                 hasHeader, 
                 (byte)separator, 
                 (UIntPtr)skipRows,
@@ -46,13 +44,11 @@ public static partial class PolarsWrapper
         ulong skipRows = 0,
         bool tryParseDates = true)
     {
-        // 使用新的 WithSchemaHandle Helper
         return WithSchemaHandle(schema, (schemaHandle) => 
         {
-            // 现在的调用非常干净，只需要传一个 schemaHandle
             return ErrorHelper.Check(NativeBindings.pl_scan_csv(
                 path, 
-                schemaHandle, // <--- 强类型 Handle
+                schemaHandle, 
                 hasHeader, 
                 (byte)separator, 
                 (UIntPtr)skipRows,
@@ -148,22 +144,18 @@ public static partial class PolarsWrapper
     }
     public static unsafe DataFrameHandle FromArrow(RecordBatch batch)
     {
-        // 1. 在栈上分配 C 结构体 (避免 GC 压力)
-        // 这里的 new 是 C# 的 struct new，分配在栈上
+        // Alloc C struct at stack
         var cArray = new CArrowArray();
         var cSchema = new CArrowSchema();
 
-        // 2. 分两步导出
-        // Step A: 导出数据 (填充 cArray)
+        // Export to C Arrow
+        // Step A: Export Data 
         CArrowArrayExporter.ExportRecordBatch(batch, &cArray);
 
-        // Step B: 导出 Schema (填充 cSchema)
-        // 注意：RecordBatch 有一个 .Schema 属性
+        // Step B: Export Schema 
         CArrowSchemaExporter.ExportSchema(batch.Schema, &cSchema);
 
-        // 3. 传给 Rust
-        // Rust 会执行 import，从而接管 cArray/cSchema 指向的堆内存
-        // 注意：一旦 Rust import 成功，它会把 cArray->release 置空
+        // Transfer to Rust
         var h = NativeBindings.pl_dataframe_from_arrow_record_batch(&cArray, &cSchema);
         
         return ErrorHelper.Check(h);
@@ -179,12 +171,8 @@ public static partial class PolarsWrapper
     }
     public static void ExportBatches(DataFrameHandle dfHandle, Action<Apache.Arrow.RecordBatch> onBatchReceived)
     {
-        // 复用 PrepareSink 逻辑
         var (callback, cleanup, userData) = ArrowStreamInterop.PrepareSink(onBatchReceived);
 
-        // 注意：DataFrameHandle 是 SafeHandle，我们需要传递它的指针
-        // 这里不需要 TransferOwnership，因为 Rust 端只是 &DataFrame (借用)
-        // 使用 DangerousGetHandle 是安全的，只要调用期间 Handle 不被 Dispose
         NativeBindings.pl_dataframe_export_batches(
             dfHandle, 
             callback, 
@@ -201,8 +189,7 @@ public static partial class PolarsWrapper
     /// <returns>新的 LazyFrameHandle (通常是空的，用于驱动执行)</returns>
     public static LazyFrameHandle SinkBatches(LazyFrameHandle lf, Action<Apache.Arrow.RecordBatch> onBatchReceived)
     {
-        // 1. 准备互操作资源 (Delegate, GCHandle, Cleanup)
-        // PrepareSink 逻辑我们在 ArrowStreamInterop 里写好了
+        // Prepare Interop Resource (Delegate, GCHandle, Cleanup)
         var (callback, cleanup, userData) = ArrowStreamInterop.PrepareSink(onBatchReceived);
 
         var handle = NativeBindings.pl_lazy_map_batches(

@@ -33,13 +33,12 @@ public enum PlJoinType
 {
     Inner = 0,
     Left = 1,
-    Outer = 2, // Polars 0.50 叫 Full
+    Outer = 2, 
     Cross = 3,
     Semi = 4,
     Anti = 5
 }
 
-// 对应 Pivot 的聚合方式
 public enum PlPivotAgg
 {
     First = 0,
@@ -53,7 +52,6 @@ public enum PlPivotAgg
     Last = 8
 }
 
-// 对应时间单位 (Cast 用)
 public enum PlTimeUnit
 {
     Nanoseconds = 0,

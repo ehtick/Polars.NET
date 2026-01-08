@@ -83,14 +83,13 @@ public static class ArrowExtensions
             Int32Array i32 => i32.GetValue(index),
             Int64Array i64 => i64.GetValue(index),
             
-            // Unsigned Integers (注意 UInt64 转 long 可能溢出为负数，但在常规数值处理中通常够用)
+            // Unsigned Integers
             UInt8Array  u8  => u8.GetValue(index),
             UInt16Array u16 => u16.GetValue(index),
             UInt32Array u32 => u32.GetValue(index),
             UInt64Array u64 => (long?)u64.GetValue(index),
 
-            // [新增] 兼容时间类型 (返回 Raw Ticks / Days)
-            // 这能防止 POCO 定义为 long 但数据是 Timestamp 时无法读取的问题
+            // DateTime
             TimestampArray ts => ts.GetValue(index),
             Date32Array d32   => d32.GetValue(index), // Days
             Date64Array d64   => d64.GetValue(index), // Milliseconds
@@ -114,7 +113,6 @@ public static class ArrowExtensions
             DoubleArray d => d.GetValue(index),
             FloatArray f => f.GetValue(index),
             HalfFloatArray h => (double?)h.GetValue(index),
-            // 也可以支持整型转浮点
             Int64Array i => i.GetValue(index),
             Int32Array i => i.GetValue(index),
             _ => null
@@ -140,18 +138,16 @@ public static class ArrowExtensions
     }
     private static string? UnpackDictionary(DictionaryArray dictArr, int index)
     {
-        // 1. 获取 Key (索引)
-        // Indices 可能是 Int8, Int16, Int32 等
+        // Get Key (Index)
         var keys = dictArr.Indices;
-        long? key = keys.GetInt64Value(index); // 复用我们写的通用 Int 获取器
+        long? key = keys.GetInt64Value(index); 
 
         if (!key.HasValue) return null;
 
-        // 2. 从 Dictionary (Values) 中查找对应的 String
+        // Get Dictionary (Values)
         var values = dictArr.Dictionary;
         return values.GetStringValue((int)key.Value);
     }
-    // 静态查找表，避免重复计算
     private static readonly char[] HexLookup = new []
         {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
 
@@ -159,7 +155,6 @@ public static class ArrowExtensions
     {
         if (bytes.IsEmpty) return "x''";
 
-        // 如果太长，只取前 20 个字节
         bool truncated = false;
         ReadOnlySpan<byte> target = bytes;
         
@@ -169,18 +164,13 @@ public static class ArrowExtensions
             truncated = true;
         }
 
-        // 手动构造字符串，避免 ToArray 的内存分配
-        // 在 .NET Standard 2.1+ / .NET Core 3.0+ 可以用 string.Create 进一步优化，
-        // 但为了兼容老版本，我们要么用 StringBuilder，要么用 char[]。
-        // char[] 在短字符串场景下通常比 StringBuilder 快。
-        
         char[] chars = new char[target.Length * 2];
         
         for (int i = 0; i < target.Length; i++)
         {
             byte b = target[i];
-            chars[i * 2] = HexLookup[b >> 4];      // 高4位
-            chars[i * 2 + 1] = HexLookup[b & 0xF]; // 低4位
+            chars[i * 2] = HexLookup[b >> 4];      
+            chars[i * 2 + 1] = HexLookup[b & 0xF]; 
         }
 
         string hex = new(chars);
@@ -259,7 +249,6 @@ public static class ArrowExtensions
         int start = index * width;
         int count = width;
         
-        // 遍历子元素并格式化
         var items = Enumerable.Range(start, count)
             .Select(i => arr.Values.FormatValue(i));
             
@@ -330,11 +319,9 @@ public static class ArrowExtensions
         if (array is Date32Array d32)
         {
             int daysSinceEpoch = d32.GetValue(index)!.Value;
-            // C# DateOnly.FromDayNumber 是从 0001-01-01 开始算的
             return DateOnly.FromDayNumber(UnixEpochDayNumber + daysSinceEpoch);
         }
         
-        // Date64 是毫秒，也可以转
         if (array is Date64Array d64)
         {
             var dt = new DateTime(1970, 1, 1).AddMilliseconds(d64.GetValue(index)!.Value);
@@ -355,7 +342,6 @@ public static class ArrowExtensions
             if (ms.HasValue) 
                 return new TimeOnly(0, 0, 0).Add(TimeSpan.FromMilliseconds(ms.Value));
             
-            // 如果单位是秒，可能要手动算，这里简化处理
             return null; 
         }
 
@@ -378,7 +364,7 @@ public static class ArrowExtensions
 
     public static DateTimeOffset? GetDateTimeOffset(this IArrowArray array, int index)
         {
-            // 1. TimestampArray (最常见的情况)
+            // 1. TimestampArray 
             if (array is TimestampArray tsArr)
             {
                 long? v = tsArr.GetValue(index);
@@ -386,9 +372,9 @@ public static class ArrowExtensions
 
                 var type = tsArr.Data.DataType as TimestampType;
                 var unit = type?.Unit;
-                var timezoneId = type?.Timezone; // 获取 Arrow 里的时区 ID (e.g., "Asia/Shanghai")
+                var timezoneId = type?.Timezone; // Get TimeZone ID (e.g., "Asia/Shanghai")
 
-                // A. 计算 UTC Ticks
+                // A. Calculate UTC Ticks
                 long ticks = unit switch
                 {
                     TimeUnit.Nanosecond => v.Value / 100L,
@@ -399,34 +385,29 @@ public static class ArrowExtensions
                 };
                 long utcTicks = DateTime.UnixEpoch.Ticks + ticks;
 
-                // B. 计算 Offset
+                // B. Calculate Offset
                 TimeSpan offset = TimeSpan.Zero;
                 
                 if (!string.IsNullOrEmpty(timezoneId))
                 {
                     try
                     {
-                        // 尝试查找系统时区
-                        // 注意：Polars 输出的是 IANA ID (如 "Asia/Shanghai")
-                        // Windows 上需要 .NET 6+ 且启用 ICU 才能直接识别 IANA，否则可能报错
+                        // Get IANA TimeZone ID
                         var tzi = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
                         
-                        // 计算该时刻的 Offset (考虑夏令时)
+                        // Calculate Offset
                         offset = tzi.GetUtcOffset(new DateTime(utcTicks, DateTimeKind.Utc));
                     }
                     catch (TimeZoneNotFoundException)
                     {
-                        // 如果找不到时区 (比如 Windows 上没装 ICU 且传了 IANA)，回退到 UTC 或抛出
-                        // 这里为了稳健，保持 Zero，但在日志里可能需要记录
                         Console.WriteLine($"Warning: TimeZone '{timezoneId}' not found on this system.");
                     }
                 }
 
-                // C. 构造 DateTimeOffset (先造 UTC，再 ToOffset 转换视角)
                 return new DateTimeOffset(utcTicks, TimeSpan.Zero).ToOffset(offset);
             }
             
-            // 2. 兼容 Date32 (Days)
+            // 2. Date32
             if (array is Date32Array d32)
             {
                 int? days = d32.GetValue(index);
@@ -434,7 +415,7 @@ public static class ArrowExtensions
                 return new DateTimeOffset(new DateTime(1970, 1, 1).AddDays(days.Value), TimeSpan.Zero);
             }
             
-            // 3. 兼容 Date64 (Milliseconds)
+            // 3. Date64
             if (array is Date64Array d64)
             {
                 long? ms = d64.GetValue(index);
@@ -445,7 +426,7 @@ public static class ArrowExtensions
             return null;
         }
         /// <summary>
-        /// 高性能版本：使用预先查找好的 TimeZoneInfo
+        /// Use Pre-Set TimeZoneInfo
         /// </summary>
         public static DateTimeOffset? GetDateTimeOffsetOptimized(this IArrowArray array, int index, TimeZoneInfo? tzi)
         {
@@ -458,7 +439,7 @@ public static class ArrowExtensions
 
                 var unit = (tsArr.Data.DataType as TimestampType)?.Unit;
                 
-                // A. 计算 UTC Ticks
+                // A. Calculate UTC Ticks
                 long ticks = unit switch
                 {
                     TimeUnit.Nanosecond => v.Value / 100L,
@@ -469,18 +450,16 @@ public static class ArrowExtensions
                 };
                 long utcTicks = DateTime.UnixEpoch.Ticks + ticks;
 
-                // B. 如果有时区信息，计算 Offset
+                // Calculate Offset
                 TimeSpan offset = TimeSpan.Zero;
                 if (tzi != null)
                 {
-                    // TimeZoneInfo 已经缓存好了，直接算
                     offset = tzi.GetUtcOffset(new DateTime(utcTicks, DateTimeKind.Utc));
                 }
 
                 return new DateTimeOffset(utcTicks, TimeSpan.Zero).ToOffset(offset);
             }
 
-            // 兼容 Date32/Date64 (它们通常没有时区，默认为 UTC)
             if (array is Date32Array d32)
             {
                 int? days = d32.GetValue(index);
@@ -506,7 +485,7 @@ public static class ArrowExtensions
     {
         long v = arr.GetValue(index).GetValueOrDefault();
         
-        // 获取 Type 信息以检查 Timezone
+        // Check Timezone
         var type = arr.Data.DataType as TimestampType;
         var unit = type?.Unit;
         
@@ -522,26 +501,16 @@ public static class ArrowExtensions
 
         try 
         {
-            // 1. 还原为墙上时间 (Unspecified)
-            // Arrow 里的 v 此时代表 "距离 1970-01-01 00:00:00 的墙上时间差"
+            // 1. Convert to Wall Time (Unspecified)
             var dt = EpochNaive.AddTicks(ticks);
 
-            // 2. 检查时区
-            // 如果 Arrow Schema 里真的带了时区 (比如是通过 CSV 读取带时区的列，或者 dt.convert_time_zone 产生的)
-            // 此时 Polars 物理存储的是 UTC。我们需要把这个 UTC 映射回 Local 吗？
-            // 不，Polars 的逻辑是：有时区 -> 物理存UTC -> 显示时转换。
-            // 但如果我们在 Converter 里存的是 Naive，这里 type.Timezone 应该是 null。
+            // 2. Check TimeZone
             
             if (!string.IsNullOrEmpty(type?.Timezone))
             {
-                // 极端情况：如果 Arrow 里有时区，说明这是个"绝对时间"。
-                // 此时我们需要返回 UTC 吗？
-                // 为了保持一致性，如果 Polars 说是 Aware，我们最好返回 UTC (或者带 Offset)。
-                // 但这里我们主要讨论 Naive 场景。
                 return DateTime.UnixEpoch.AddTicks(ticks); 
             }
 
-            // 绝大多数情况：Naive -> Unspecified
             return dt;
         }
         catch (ArgumentOutOfRangeException)
