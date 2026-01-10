@@ -40,8 +40,6 @@ Polars.NET is designed for engineers who care about:
 
    - Write: Stream processed data back to databases via IBulkCopy interfaces using our unique ArrowToDbStream adapter.
 
-- AI / Vector Support: First-class support for FixedSizeList (Array) columns. Perform high-performance vector operations (Dot Product, Cosine Similarity, Aggregations) directly in the engine—perfect for RAG and Embedding workflows.
-
 3. 🧶 .NET Native Experience
 
     - Fluent API: Intuitive, LINQ-like API design for C#.
@@ -49,6 +47,8 @@ Polars.NET is designed for engineers who care about:
     - Functional API: Idiomatic, pipe-forward (|>) API for F# lovers.
 
     - Type Safety: Leveraging .NET's strong type system to prevent runtime errors.
+
+    - Feel free to use C#/F# native UDF to integrate with your own logic.
 
 ## 📦 Installation
 
@@ -163,27 +163,24 @@ pipeline.SinkTo((IDataReader reader) =>
 └────────────┘
 ```
 
-2. 🧠 Vector / Embedding Operations
+2. 🧠 Native C#/F# UDFs
 
-Native support for Array (Fixed-Size List) types, enabling high-performance AI workflows.
+Run C#/F# functions directly on Expr/Series with Zero-Copy overhead using Apache Arrow memory layout.
 
-```C#
-// Scenario: RAG - Calculate Cosine Similarity between Query and Document Embeddings
-using var df = DataFrame.FromColumns(new { 
-    DocId = new[] { 1, 2 },
-    Embedding = new[] { new[] {0.1, 0.2}, new[] {0.5, 0.8} } // Array<Float64, 2>
-});
+```F#
+// Define logic with Option handling (Safe!)
+let complexLogic (opt: int option) =
+    match opt with
+    | Some x when x % 2 = 0 -> Some (x * 10)
+    | _ -> None
 
-var queryVec = new[] { 0.1, 0.2 }; // Query Embedding
+let s = Series.create("nums", [Some 1; Some 2; None; Some 4])
 
-var res = df.Lazy()
-    .Select(
-        Col("DocId"),
-        // Calculate Dot Product & Similarity efficiently
-        (Col("Embedding") * Lit(queryVec)).Array.Sum().Alias("Score")
-    )
-    .TopK(1, "Score") // Get Top 1 match
-    .Collect();
+// Execute MapOption directly on Series
+// No need to convert to C# objects or slow IEnumerable!
+let result = s.MapOption(complexLogic, DataType.Int32)
+
+// Result: [null, 20, null, 40]
 ```
 
 3. 🕒 Time Series Intelligence
