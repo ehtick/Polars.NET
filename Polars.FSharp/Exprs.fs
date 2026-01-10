@@ -104,13 +104,8 @@ and Expr(handle: ExprHandle) =
     /// <summary> Cast the expression to a different data type. </summary>
     member this.Cast(dtype: DataType, ?strict: bool) =
         let isStrict = defaultArg strict false
-        
-        // 1. 创建 Type Handle
         use typeHandle = dtype.CreateHandle()
-        
-        // 2. 调用更新后的 Wrapper
         let newHandle = PolarsWrapper.ExprCast(this.CloneHandle(), typeHandle, isStrict)
-        
         new Expr(newHandle)
     // Aggregations
     member this.Sum() = new Expr(PolarsWrapper.Sum (this.CloneHandle()))
@@ -142,7 +137,6 @@ and Expr(handle: ExprHandle) =
     /// Result is always a float (True Division).
     /// </summary>
     member this.Truediv(other: Expr) =
-        // 必须 CloneHandle，因为 Wrapper/Rust 会消耗掉它们
         new Expr(PolarsWrapper.Div(this.CloneHandle(), other.CloneHandle()))
 
     /// <summary>
@@ -160,7 +154,7 @@ and Expr(handle: ExprHandle) =
         this.Mod other
         
     // ==========================================
-    // Math: Trigonometry (三角函数)
+    // Math: Trigonometry
     // ==========================================
     member this.Sin() = new Expr(PolarsWrapper.Sin(this.CloneHandle()))
     member this.Cos() = new Expr(PolarsWrapper.Cos(this.CloneHandle()))
@@ -171,7 +165,7 @@ and Expr(handle: ExprHandle) =
     member this.ArcTan() = new Expr(PolarsWrapper.ArcTan(this.CloneHandle()))
 
     // ==========================================
-    // Math: Hyperbolic (双曲函数)
+    // Math: Hyperbolic
     // ==========================================
 
     member this.Sinh() = new Expr(PolarsWrapper.Sinh(this.CloneHandle()))
@@ -256,21 +250,17 @@ and Expr(handle: ExprHandle) =
     /// <param name="by">Columns to sort by.</param>
     /// <param name="reverse">Reverse the sort order for each by column. Default false.</param>
     member this.TopKBy(k: int, by: seq<#IColumnExpr>, ?reverse: seq<bool>) =
-        // 1. 准备 By Expr Handles
         let byHandles = 
             by 
             |> Seq.collect (fun x -> x.ToExprs()) 
             |> Seq.map (fun e -> e.CloneHandle()) 
             |> Seq.toArray
         
-        // 2. 准备 Reverse 数组
         let revArr = 
             match reverse with
             | Some r -> r |> Seq.toArray
             | None -> [| false |] // C# 端会广播
 
-        // 3. 调用 Wrapper
-        // 注意：Wrapper 会接管 byHandles 的所有权
         new Expr(PolarsWrapper.TopKBy(this.CloneHandle(), uint k, byHandles, revArr))
 
     /// <summary>
@@ -391,7 +381,6 @@ and Expr(handle: ExprHandle) =
     member this.RollingSum(windowSize: TimeSpan, ?minPeriod: int) =
         let m = defaultArg minPeriod 1
         this.RollingSum(DurationFormatter.ToPolarsString windowSize,m)
-    // 用法: col("price").RollingMeanBy("1d", col("date"))
     member this.RollingMeanBy(windowSize: string, by: Expr,?closed: string,?minPeriod: int) =
         let c = defaultArg closed "left"
         let m = defaultArg minPeriod 1
@@ -408,7 +397,6 @@ and Expr(handle: ExprHandle) =
         let c = defaultArg closed "left"
         let m = defaultArg minPeriod 1
         this.RollingSumBy(DurationFormatter.ToPolarsString windowSize,by,c,m)
-    // 用法: col("price").RollingMeanBy("1d", col("date"))
     member this.RollingMaxBy(windowSize: string, by: Expr, ?closed: string, ?minPeriod: int) =
         let c = defaultArg closed "left"
         let m = defaultArg minPeriod 1 
@@ -447,11 +435,9 @@ and DtOps(handle: ExprHandle) =
 
     /// <summary> Format datetime to string using the given format string (strftime). </summary>
     member _.ToString(format: string) = 
-        new Expr(PolarsWrapper.DtToString(handle, format)) // 注意这里 handle 是 Clone 进来的，Wrapper 会消耗它
+        new Expr(PolarsWrapper.DtToString(handle, format))
 
-    // col("date").Dt.ToString()
     member this.ToString() = 
-        // 这是一个常见的 ISO 格式，或者你可以选择其他默认值
         this.ToString "%Y-%m-%dT%H:%M:%S%.f"
     // --- Manipulation ---
 
@@ -471,8 +457,7 @@ and DtOps(handle: ExprHandle) =
     /// Offset the date by a given duration string (e.g., "1d", "-2h").
     /// </summary>
     member _.OffsetBy(duration: string) =
-        // 自动创建 lit(duration)
-        let durExpr = PolarsWrapper.Lit(duration) // 假设 Lit(string) wrapper 存在
+        let durExpr = PolarsWrapper.Lit duration
         new Expr(PolarsWrapper.DtOffsetBy(handle, durExpr))
 
     /// <summary>
@@ -531,18 +516,15 @@ and DtOps(handle: ExprHandle) =
         ?holidays: seq<DateOnly>, 
         ?roll: Roll
     ) =
-        // 1. 处理默认参数
         let mask = defaultArg weekMask [| true; true; true; true; true; false; false |]
         let r = defaultArg roll Roll.Raise
         
-        // 2. 处理假期 (DateOnly -> int days since 1970-01-01)
         let epoch = DateOnly(1970, 1, 1).DayNumber
         let holidayInts = 
             match holidays with
             | Some hols -> hols |> Seq.map (fun d -> d.DayNumber - epoch) |> Seq.toArray
             | None -> [||]
 
-        // 3. 调用 Wrapper
         new Expr(PolarsWrapper.DtAddBusinessDays(
             handle, 
             n.CloneHandle(), 
@@ -694,20 +676,16 @@ and ListOps(handle: ExprHandle) =
     /// Equivalent to: pl.concatList([parent, others...])
     /// </summary>
     member _.Concat(others: seq<#IColumnExpr>) =
-        // 1. 收集所有 Expr Handles
         let handles = 
             seq {
-                // 第一个是自己 (Parent)
                 yield handle
                 
-                // 后续是传入的 others (展开 Selector)
                 yield! others 
                        |> Seq.collect (fun x -> x.ToExprs()) 
                        |> Seq.map (fun e -> e.CloneHandle())
             }
             |> Seq.toArray
 
-        // 2. 调用 Wrapper
         new Expr(PolarsWrapper.ConcatList(handles))
 
     /// <summary>
@@ -891,26 +869,22 @@ and Selector(handle: SelectorHandle) =
     /// <summary> subtraction operator: s1 - s2 (Difference) </summary>
     /// <remarks> Some Polars versions support this as a shorthand for Exclude or Difference </remarks>
     static member (-) (l: Selector, r: Selector) =
-        // 逻辑通常等同于: l &&& (~~~r)
-        // 或者如果 Rust 有专门的 diff 接口
          new Selector(PolarsWrapper.SelectorAnd(l.CloneHandle(), PolarsWrapper.SelectorNot(r.CloneHandle())))
 
 /// <summary>
-/// 高级列选择表达式 DSL。
-/// 允许包装 Expr，或者对 Selector 结果应用函数。
+/// Let Expr & Selector in same line possible
 /// </summary>
 type ColumnExpr =
-    /// <summary> 普通表达式 </summary>
+    /// <summary> Expr </summary>
     | Plain of Expr
     
-    /// <summary> 普通 Selector </summary>
+    /// <summary> Selector </summary>
     | Select of Selector
     
-    /// <summary> 带映射的 Selector (先选列，再计算) </summary>
+    /// <summary> Selector with Map </summary>
     /// <example> Map(pl.cs.numeric(), fun e -> e * pl.lit(2)) </example>
     | MapCols of Selector * (Expr -> Expr)
 
-    // 实现接口：这是核心魔法
     interface IColumnExpr with
         member this.ToExprs() =
             match this with
@@ -919,9 +893,6 @@ type ColumnExpr =
             | Select s -> [ s.ToExpr() ]
             
             | MapCols (s, mapper) -> 
-                // 1. Selector -> Wildcard Expr (e.g. col("*"))
                 let wildcard = s.ToExpr()
-                // 2. 应用映射函数 (e.g. col("*") * 2)
                 let mappedExpr = mapper wildcard
-                // 3. 返回列表
                 [ mappedExpr ]

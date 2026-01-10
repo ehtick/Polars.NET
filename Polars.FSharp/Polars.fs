@@ -5,9 +5,6 @@ open System.ComponentModel
 open Polars.NET.Core
 open System.Threading.Tasks
 
-// =========================================================================
-// 1. 核心实现层
-// =========================================================================
 [<EditorBrowsable(EditorBrowsableState.Never)>]
 type LitMechanism = LitMechanism with
     static member ($) (LitMechanism, v: int) = new Expr(PolarsWrapper.Lit v)
@@ -96,14 +93,12 @@ module pl =
     /// Supports Selectors (e.g. pl.concatList([pl.cs.numeric()])).
     /// </summary>
     let concatList (columns: seq<#IColumnExpr>) =
-        // 1. 展开所有 IColumnExpr (处理 Selector 匹配多列的情况)
         let exprHandles = 
             columns
             |> Seq.collect (fun x -> x.ToExprs()) 
-            |> Seq.map (fun e -> e.CloneHandle()) // 必须 Clone，因为 Wrapper 会 Move 所有权
+            |> Seq.map (fun e -> e.CloneHandle())
             |> Seq.toArray
 
-        // 2. 调用 Wrapper
         new Expr(PolarsWrapper.ConcatList exprHandles)
     /// <summary> Get the first n rows of the DataFrame. </summary>
     let head (n: int) (df: DataFrame) : DataFrame =
@@ -277,10 +272,7 @@ module pl =
         
         /// <summary> Select columns by DataType. </summary>
         let inline byType (dt: DataType) = 
-            // 1. 获取 F# DataType 的 Code (int)
             let code = dt.Code
-            // 2. 强转为 C# Wrapper 需要的枚举 (PlDataType)
-            // F# 中 enum<T> 可以把 int 转为枚举
             let kind = enum<PlDataType> code
             
             new Selector(PolarsWrapper.SelectorByDtype kind)
@@ -303,25 +295,20 @@ module pl =
         
         /// <summary> Invert a selector. </summary>
         let not (s: Selector) = 
-            // 注意：CloneHandle 是必须的，因为 Rust 会消耗 Ownership
             new Selector(PolarsWrapper.SelectorNot(s.CloneHandle()))
 
-        // [新增] 专门用于选 List 列的语法糖
         /// <summary> Select all list columns. </summary>
         let list () = 
-            // 构造一个占位的 List<Null>，反正只取 .Code (20)
             let dummy = DataType.List DataType.Null
             byType dummy
             
-        // [新增] 专门用于选 Struct 列的语法糖
         /// <summary> Select all struct columns. </summary>
         let struct_ () = 
-            // 构造一个空的 Struct，只取 .Code (19)
             let dummy = DataType.Struct []
             byType dummy
 
     // ==========================================
-    // Public API (保持简单，返回 DataFrame 以支持管道)
+    // Public API
     // ==========================================
 
     /// <summary>
@@ -335,24 +322,15 @@ module pl =
     /// Print the Series to Console.
     /// </summary>
     let showSeries (s: Series) : Series =
-        // 临时转为 DataFrame 打印，最省事
         let h = PolarsWrapper.SeriesToFrame s.Handle
         use df = new DataFrame(h)
         df.Show()
         s
 
-// =========================================================================
-// 3. AutoOpen 层 (The "Magic" Layer)
-//    只暴露最核心、最不会冲突的东西到全局
-// =========================================================================
 [<AutoOpen>]
 module PolarsAutoOpen =
-
-    // A. 暴露核心原子 col 和 lit
-    // 允许用户直接写: col("A") .> lit(10)
     let inline col name = pl.col name
     let inline lit value = pl.lit value
-
     let inline alias column = pl.alias column    
     /// <summary>
     /// Upcast operator: Converts Expr or Selector to IColumnExpr interface.

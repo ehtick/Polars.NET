@@ -2,19 +2,18 @@ using System.Runtime.InteropServices;
 
 namespace Polars.NET.Core;
 
-// 1. 基类：实现通用的所有权转移逻辑
+// Base Class
 public abstract class PolarsHandle : SafeHandle
 {
     protected PolarsHandle() : base(IntPtr.Zero, true) { }
 
     public override bool IsInvalid => handle == IntPtr.Zero;
 
-    // [通用逻辑] 转移所有权 (SuppressRelease 的语义)
-    // 调用此方法意味着：Rust 已经接管了这块内存，C# 不再负责释放。
+    // This means Rust will take care of this piece of memory，C# won't free this。
     public IntPtr TransferOwnership()
     {
         IntPtr ptr = handle;
-        SetHandleAsInvalid(); // 标记无效，阻止 GC 调用 ReleaseHandle
+        SetHandleAsInvalid();
         return ptr;
     }
 }
@@ -24,7 +23,6 @@ public class ExprHandle : PolarsHandle
 {
     protected override bool ReleaseHandle()
     {
-        // 只有当 TransferOwnership 没被调用时（即 C# 这边用完了但没传给 Rust），才会走到这里
         NativeBindings.pl_expr_free(handle);
         return true;
     }
@@ -71,12 +69,10 @@ public class SqlContextHandle : PolarsHandle
 
 public class SeriesHandle : PolarsHandle
 {
-    // 必须提供无参构造函数给 P/Invoke 使用
     public SeriesHandle() : base() { }
 
     protected override bool ReleaseHandle()
     {
-        // 只有当句柄有效时才释放
         if (!IsInvalid)
         {
             NativeBindings.pl_series_free(handle);

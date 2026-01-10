@@ -1,4 +1,4 @@
-#pragma warning disable CS1591 // 缺少对公共可见类型或成员的 XML 注释
+#pragma warning disable CS1591
 using Polars.NET.Core;
 
 namespace Polars.CSharp;
@@ -34,14 +34,13 @@ public static class Polars
     // --- Literals ---
     public static Expr Lit(string? value)
     {
-        // [关键修正] 如果字符串为 null，返回 Polars 的 Null Literal
         if (value is null)
         {
             return new Expr(PolarsWrapper.LitNull());
         }
         return new Expr(PolarsWrapper.Lit(value));
     }
-    public static Expr Lit(int value)    => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(int value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(double value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(DateTime value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(bool value) => new(PolarsWrapper.Lit(value));
@@ -134,7 +133,6 @@ public static class Polars
     /// </summary>
     public static Expr IfElse(Expr predicate, Expr trueExpr, Expr falseExpr)
     {
-        // 三个输入都需要 Clone，因为底层会消耗它们
         var p = PolarsWrapper.CloneExpr(predicate.Handle);
         var t = PolarsWrapper.CloneExpr(trueExpr.Handle);
         var f = PolarsWrapper.CloneExpr(falseExpr.Handle);
@@ -149,7 +147,6 @@ public static class Polars
     /// </summary>
     public static Expr ConcatList(params Expr[] exprs)
     {
-        // Clone all handles
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         return new Expr(PolarsWrapper.ConcatList(handles));
     }

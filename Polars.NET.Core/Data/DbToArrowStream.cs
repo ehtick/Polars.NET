@@ -13,7 +13,7 @@ internal static class DbToArrowStream
         var schema = GetArrowSchema(reader);
         var colCount = reader.FieldCount;
 
-        // 2. 缓冲池 (Buffer Pool)
+        // 2. Buffer Pool
         var buffers = new IColumnBuffer[colCount];
         for (int i = 0; i < colCount; i++)
         {
@@ -24,7 +24,7 @@ internal static class DbToArrowStream
         int rowCount = 0;
         bool hasYielded = false;
 
-        // 3. 泵
+        // 3. Pump
         while (reader.Read())
         {
             for (int i = 0; i < colCount; i++)
@@ -43,14 +43,14 @@ internal static class DbToArrowStream
         }
 
 
-        // 4. 扫尾
+        // 4. End
         if (rowCount > 0)
         {
             yield return Flush(schema, buffers, rowCount);
             hasYielded = true;
         }
         
-        // 5. 空流兜底
+        // 5. Check null stream
         if (!hasYielded)
         {
             yield return Flush(schema, buffers, 0);
@@ -64,7 +64,6 @@ internal static class DbToArrowStream
         {
             var buffer = buffers[i];
             
-            // [监控点 3] 构建前检查 Buffer 实际大小
             if (buffer.Count != length)
             {
                 Console.WriteLine($"[CRITICAL PANIC PREDICTION] Column {i} ('{schema.GetFieldByIndex(i).Name}') has {buffer.Count} elements, but we are creating a batch of length {length}!");
@@ -72,7 +71,6 @@ internal static class DbToArrowStream
 
             var array = buffer.BuildArray();
             
-            // [监控点 4] 构建后检查 Array 实际长度
             if (array.Length != length)
             {
                 Console.WriteLine($"[CRITICAL ARROW ERROR] Column {i} BuildArray() returned length {array.Length}, expected {length}. ArrowConverter might be adding extras?");
@@ -84,7 +82,7 @@ internal static class DbToArrowStream
         return new RecordBatch(schema, arrays, length);
     }
 
-    // Schema 映射
+    // Get Schema 
     internal static Schema GetArrowSchema(IDataReader reader)
     {
         {
@@ -92,11 +90,8 @@ internal static class DbToArrowStream
             for (int i = 0; i < reader.FieldCount; i++)
             {
                 var name = reader.GetName(i);
-                var type = reader.GetFieldType(i); // 这里可能返回 int[] 或 CustomObj
+                var type = reader.GetFieldType(i); 
                 
-                // [邪修入口]
-                // 1. 基础类型映射
-                // 2. 复杂类型 -> 扔给 ArrowConverter 的反射逻辑去猜 Schema
                 IArrowType arrowType = GetArrowType(type);
                 
                 fields.Add(new Field(name, arrowType, true));
@@ -106,7 +101,7 @@ internal static class DbToArrowStream
     }
     private static IArrowType GetArrowType(Type t)
     {
-        // [注意] 处理 Nullable<T>，比如 int? 应该被识别为 int
+        // For Nullable<T>，like int?, shoule be recongized as int
         Type checkType = Nullable.GetUnderlyingType(t) ?? t;
 
         if (checkType == typeof(int)) return Int32Type.Default;
@@ -120,7 +115,7 @@ internal static class DbToArrowStream
         if (checkType == typeof(TimeSpan)) return DurationType.FromTimeUnit(TimeUnit.Microsecond);
         if (checkType == typeof(DateOnly)) return Date32Type.Default;
         if (checkType == typeof(TimeOnly)) return Time64Type.Default;
-        // 2. [邪修核心]：检测数组/列表 (IEnumerable)
+
         if (checkType != typeof(string) && typeof(IEnumerable).IsAssignableFrom(checkType))
         {
             var elemType = GetEnumerableElementType(checkType);
@@ -128,22 +123,17 @@ internal static class DbToArrowStream
             return new LargeListType(new Field("item", childArrowType, true));
         }
 
-        // 3. [邪修进阶]：检测 Struct (POCO)
-        // 如果不是上述基础类型，也不是数组，那它就是 POCO / Struct
         if (checkType.IsClass || (checkType.IsValueType && !checkType.IsPrimitive && !checkType.IsEnum))
         {
             return ReflectStructSchema(checkType);
         }
 
-        // 真的不认识了，兜底
         return StringViewType.Default;
     }
 
-    // [新增] 递归反射生成 Struct Schema
+    // Recurring reflectiing Struct Schema
     private static StructType ReflectStructSchema(Type t)
     {
-        // 这里必须和 ArrowConverter.BuildStructArray 的反射逻辑保持一致
-        // 比如过滤掉索引器、接口等
         var properties = t.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
             .Where(p => p.GetIndexParameters().Length == 0)
             .Where(p => !p.PropertyType.IsInterface && !p.PropertyType.IsAbstract)
@@ -152,17 +142,15 @@ internal static class DbToArrowStream
         var fields = new List<Field>();
         foreach (var prop in properties)
         {
-            // 递归获取子字段类型
             var childType = GetArrowType(prop.PropertyType);
             
-            // 构造 Field
             fields.Add(new Field(prop.Name, childType, true));
         }
 
         return new StructType(fields);
     }
 
-    // 辅助反射工具
+    // Reflection Helper
     private static Type GetEnumerableElementType(Type type)
     {
         if (type.IsArray) return type.GetElementType()!;
@@ -176,7 +164,7 @@ internal static class DbToArrowStream
 }
 
 // =========================================================
-// 胶水层：连接 DataReader(object) 和 ArrowConverter(T)
+// Glue Layer：Connect DataReader(object) to ArrowConverter(T)
 // =========================================================
 
 public interface IColumnBuffer
@@ -184,29 +172,20 @@ public interface IColumnBuffer
     void Add(object value);
     void Clear();
     IArrowArray BuildArray();
-    int Count { get; } // [新增]
-    
+    int Count { get; }
 }
 
 public static class ColumnBufferFactory
 {
     public static IColumnBuffer Create(Type netType, int capacity)
     {
-        // [关键] 总是创建 Nullable<T>，这能防止 ArrowConverter 误判为 Struct
         Type targetType = netType;
-        // 逻辑微调：
-        // 1. 如果是值类型 (int)，转 Nullable<int>
-        // 2. 如果是引用类型 (string, int[], CustomClass)，保持原样 (它们本身就能存 null)
+
         if (netType.IsValueType && Nullable.GetUnderlyingType(netType) == null)
         {
             targetType = typeof(Nullable<>).MakeGenericType(netType);
         }
         
-        // 动态创建 TypedColumnBuffer<T>
-        // 如果 netType 是 int[]，这里就是 TypedColumnBuffer<int[]>
-        // 它的 BuildArray 会调用 ArrowConverter.Build<int[]>
-        // ArrowConverter 会识别 IEnumerable，进而调用 BuildListArray
-        // 完美闭环！
         var bufferType = typeof(TypedColumnBuffer<>).MakeGenericType(targetType);
         return (IColumnBuffer)Activator.CreateInstance(bufferType, capacity)!;
     }
@@ -220,7 +199,6 @@ internal class TypedColumnBuffer<T> : IColumnBuffer
 
     static TypedColumnBuffer()
     {
-        // 反射 ArrowConverter.Build<T> 并缓存委托
         var method = typeof(ArrowConverter)
             .GetMethod("Build", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
             ?.MakeGenericMethod(typeof(T));

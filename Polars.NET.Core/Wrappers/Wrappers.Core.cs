@@ -4,7 +4,7 @@ namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
 {
-    // 辅助：批量转换 Handle
+    // Helper : Transform Handles
     internal static IntPtr[] HandlesToPtrs(PolarsHandle[] handles)
     {
         if (handles == null || handles.Length == 0) return Array.Empty<IntPtr>();
@@ -12,16 +12,14 @@ public static partial class PolarsWrapper
         var ptrs = new IntPtr[handles.Length];
         for (int i = 0; i < handles.Length; i++)
         {
-            // 这步操作做了两件事：
-            // 1. 获取原始指针传给 Rust
-            // 2. 标记 C# Handle 为无效，防止 GC 二次释放
-            // (因为 Rust 侧的 Vec<Expr> 已经接管了这些指针的生命周期)
+            // 1. Get original pointer for Rust
+            // 2. Set C# Handle as invalid preventing GC double free，
             ptrs[i] = handles[i].TransferOwnership();
         }
         return ptrs;
     }
     /// <summary>
-    /// 封装单个字符串的 Marshaling (针对有返回值的场景)
+    /// Wrap single string Marshaling (with return value)
     /// </summary>
     private static T UseUtf8String<T>(string str, Func<IntPtr, T> action)
     {
@@ -37,7 +35,7 @@ public static partial class PolarsWrapper
     }
 
     /// <summary>
-    /// 封装单个字符串的 Marshaling (针对 void 场景)
+    /// Wrap single string Marshaling (with void return)
     /// </summary>
     private static void UseUtf8String(string str, Action<IntPtr> action)
     {
@@ -62,18 +60,17 @@ public static partial class PolarsWrapper
         var ptrs = new IntPtr[strings.Length];
         try
         {
-            // 分配内存
+            // Alloc memory
             for (int i = 0; i < strings.Length; i++)
             {
                 ptrs[i] = Marshal.StringToCoTaskMemUTF8(strings[i]);
             }
 
-            // 执行操作
             return action(ptrs);
         }
         finally
         {
-            // 清理内存
+            // free memory
             for (int i = 0; i < ptrs.Length; i++)
             {
                 if (ptrs[i] != IntPtr.Zero)
@@ -84,8 +81,8 @@ public static partial class PolarsWrapper
         }
     }
     /// <summary>
-    /// 专门用于处理可能包含 null 的字符串数组（用于 Series 数据）。
-    /// Null 字符串会被转换为 IntPtr.Zero。
+    /// Deal with nullable UTF-8 String
+    /// Null string will be converted to IntPtr.Zero。
     /// </summary>
     internal static T UseNullableUtf8StringArray<T>(string?[]? arr, Func<IntPtr[], T> action)
     {
@@ -101,7 +98,7 @@ public static partial class PolarsWrapper
         {
             for (int i = 0; i < len; i++)
             {
-                // [关键逻辑] Null -> Zero, Non-Null -> Alloc
+                // Null -> Zero, Non-Null -> Alloc
                 if (arr[i] == null)
                 {
                     ptrs[i] = IntPtr.Zero;
@@ -116,7 +113,6 @@ public static partial class PolarsWrapper
         }
         finally
         {
-            // 统一清理
             for (int i = 0; i < len; i++)
             {
                 if (ptrs[i] != IntPtr.Zero)
@@ -127,25 +123,24 @@ public static partial class PolarsWrapper
         }
     }
     /// <summary>
-    /// 安全锁定一组 SafeHandle，并提取其原始指针。
-    /// 使用 ref struct 确保零 GC 开销且只能在栈上使用。
+    /// Lock a set of SafeHandles and get its raw pointer.
+    /// Use ref struct for zero GC and stack only.
     /// </summary>
-    /// <typeparam name="T">具体的 SafeHandle 类型</typeparam>
+    /// <typeparam name="T"> SafeHandle Type</typeparam>
     internal readonly ref struct SafeHandleLock<T> where T : SafeHandle
     {
         private readonly T[] _handles;
         private readonly bool[] _locks;
         
-        // [改进] 直接对外提供指针数组，省去调用方再次遍历的开销
         public readonly IntPtr[] Pointers;
 
         public SafeHandleLock(T[] handles)
         {
             if (handles == null)
             {
-                _handles = Array.Empty<T>();
-                _locks = Array.Empty<bool>();
-                Pointers = Array.Empty<IntPtr>();
+                _handles = [];
+                _locks = [];
+                Pointers = [];
                 return;
             }
 
@@ -159,11 +154,10 @@ public static partial class PolarsWrapper
             {
                 for (int i = 0; i < len; i++)
                 {
-                    // 1. 尝试锁定
+                    // 1. Add ref for handles
                     handles[i].DangerousAddRef(ref _locks[i]);
                     
-                    // 2. 只有锁定成功且未抛出异常，才获取指针
-                    // (虽然 DangerousAddRef 如果失败通常抛异常，或者是 bool ref 为 false，双重保险)
+                    // 2. Only if locked successfully then get its raw pointer
                     if (_locks[i])
                     {
                         Pointers[i] = handles[i].DangerousGetHandle();
@@ -173,8 +167,7 @@ public static partial class PolarsWrapper
             }
             finally
             {
-                // [关键改进] 如果构造过程中发生异常（success == false），
-                // 必须手动回滚，释放那些已经成功锁定的 Handle
+                // If exception occured, we have to release handles which have been locked.
                 if (!success)
                 {
                     Dispose();
@@ -191,7 +184,7 @@ public static partial class PolarsWrapper
                 if (_locks[i])
                 {
                     _handles[i].DangerousRelease();
-                    _locks[i] = false; // 防止多次 Dispose 导致的多次 Release
+                    _locks[i] = false; 
                 }
             }
         }

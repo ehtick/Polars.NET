@@ -13,8 +13,7 @@ namespace Polars.NET.Core
 
             var sb = new StringBuilder();
 
-            // Polars 支持的后缀: ns, us, ms, s, m, h, d, w
-            // 我们按从大到小拼接
+            // Polars suffixs: ns, us, ms, s, m, h, d, w
             
             // 1. Days (d)
             if (ts.Days > 0) sb.Append($"{ts.Days}d");
@@ -32,16 +31,14 @@ namespace Polars.NET.Core
             if (ts.Milliseconds > 0) sb.Append($"{ts.Milliseconds}ms");
 
             // 6. [New in .NET 7+] Microseconds (us)
-            // .NET 10 原生支持，直接拿！
             if (ts.Microseconds > 0) sb.Append($"{ts.Microseconds}us");
 
             // 7. [New in .NET 7+] Nanoseconds (ns)
-            // 注意：TimeSpan 精度是 100ns (1 tick)，所以这里拿到的通常是 100, 200 等整数
             if (ts.Nanoseconds > 0) sb.Append($"{ts.Nanoseconds}ns");
 
             return sb.ToString();
         }
-        [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(ts))] // 这一行是锦上添花，告诉编译器 null 传递关系
+        [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(ts))]
         public static string? ToPolarsString(TimeSpan? ts)
         {
             return ts.HasValue ? ToPolarsString(ts.Value) : null;
@@ -59,7 +56,6 @@ namespace Polars.NET.Core
     }
     public static class ReflectionHelper
     {
-        // 从 IEnumerable<T> 或 T[] 中提取 T
         public static Type GetEnumerableElementType(Type collectionType)
         {
             if (collectionType.IsArray)

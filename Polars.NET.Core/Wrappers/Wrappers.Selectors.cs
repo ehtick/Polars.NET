@@ -11,7 +11,6 @@ public static partial class PolarsWrapper
     /// </summary>
     public static SelectorHandle SelectorCols(string[] names)
     {
-        // 使用 Helper 将 string[] 转换为 IntPtr[] (UTF-8 pointers)
         return UseUtf8StringArray(names, ptrs => 
         {
             return ErrorHelper.Check(NativeBindings.pl_selector_cols(ptrs, (UIntPtr)ptrs.Length));
@@ -20,7 +19,6 @@ public static partial class PolarsWrapper
 
     public static SelectorHandle SelectorExclude(SelectorHandle sel, string[] names)
     {
-        // 使用 Helper 自动处理内存分配和释放
         return UseUtf8StringArray(names, ptrs => 
         {
             var h = NativeBindings.pl_selector_exclude(sel, ptrs, (UIntPtr)ptrs.Length);
@@ -46,7 +44,6 @@ public static partial class PolarsWrapper
 
     public static SelectorHandle SelectorByDtype(PlDataType kind)
     {
-        // Enum 直接转 int 传给 Rust
         return ErrorHelper.Check(NativeBindings.pl_selector_by_dtype((int)kind));
     }
 
@@ -59,7 +56,6 @@ public static partial class PolarsWrapper
     {
         var h = NativeBindings.pl_selector_and(left, right);
         
-        // [Ownership] Rust 端的 Intersect 消耗了 left 和 right
         left.TransferOwnership();
         right.TransferOwnership();
         
@@ -84,7 +80,7 @@ public static partial class PolarsWrapper
     public static ExprHandle SelectorToExpr(SelectorHandle sel)
     {
         var h = NativeBindings.pl_selector_into_expr(sel);
-        sel.TransferOwnership(); // 转换后 Selector 就没用了，变成了 Expr
+        sel.TransferOwnership(); 
         return ErrorHelper.Check(h);
     }
 }

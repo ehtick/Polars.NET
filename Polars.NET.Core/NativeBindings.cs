@@ -37,7 +37,7 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.I1)] bool hasHeader,
         byte separator,
         UIntPtr skipRows,
-        [MarshalAs(UnmanagedType.I1)] bool tryParseDates // [新增]
+        [MarshalAs(UnmanagedType.I1)] bool tryParseDates 
     );
     [LibraryImport(LibName)]
     public static partial void pl_dataframe_free(IntPtr ptr);
@@ -109,15 +109,15 @@ unsafe internal partial class NativeBindings
         DataFrameHandle df, 
         string colName, 
         UIntPtr row, 
-        out double outVal // <--- double 也是 blittable 类型，直接用
+        out double outVal
     );
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_dataframe_clone(DataFrameHandle df);
     [LibraryImport(LibName)]
     public static partial LazyFrameHandle pl_dataframe_lazy(DataFrameHandle df);
 
-
-    [LibraryImport(LibName)] public static partial IntPtr pl_dataframe_get_string(DataFrameHandle df, [MarshalAs(UnmanagedType.LPUTF8Str)] string colName, UIntPtr row);
+    [LibraryImport(LibName)] 
+    public static partial IntPtr pl_dataframe_get_string(DataFrameHandle df, [MarshalAs(UnmanagedType.LPUTF8Str)] string colName, UIntPtr row);
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_head(DataFrameHandle df, UIntPtr n);
     [LibraryImport(LibName)]
@@ -134,11 +134,9 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial DataFrameHandle pl_dataframe_rename(DataFrameHandle df, string oldName, string newName);
 
-    // subset 是字符串指针数组
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_dataframe_drop_nulls(DataFrameHandle df, IntPtr[] subset, UIntPtr len);
 
-    // seed 传 ulong 指针 (nullable)
     [LibraryImport(LibName)]
     public static unsafe partial DataFrameHandle pl_dataframe_sample_n(DataFrameHandle df, UIntPtr n, [MarshalAs(UnmanagedType.U1)] bool replacement, [MarshalAs(UnmanagedType.I1)] bool shuffle, ulong* seed);
 
@@ -158,7 +156,7 @@ unsafe internal partial class NativeBindings
 
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_mul(ExprHandle left, ExprHandle right);
-    // 比较
+    // Comparsion
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_eq(ExprHandle left, ExprHandle right);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_neq(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_gt(ExprHandle left, ExprHandle right);
@@ -174,9 +172,9 @@ unsafe internal partial class NativeBindings
     public static partial ExprHandle pl_expr_top_k_by(
         ExprHandle expr, 
         uint k, 
-        IntPtr[] by_ptrs,   // 接收 Expr 指针数组
+        IntPtr[] by_ptrs,   
         UIntPtr by_len,
-        bool* descending,   // [优化] 使用 unsafe 指针接收 bool 数组
+        bool* descending,  
         UIntPtr desc_len
     );
 
@@ -190,7 +188,7 @@ unsafe internal partial class NativeBindings
         UIntPtr desc_len
     );
 
-    // 算术
+    // Arithmetic
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_add(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sub(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_div(ExprHandle l, ExprHandle r);
@@ -204,12 +202,12 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_bit_shr(ExprHandle expr, int n);
 
-    // 逻辑
+    // Logic
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_and(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_or(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_not(ExprHandle e);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_xor(ExprHandle l, ExprHandle r);
-    // 聚合
+    // Aggregation
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sum(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_mean(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_max(ExprHandle expr);
@@ -354,7 +352,7 @@ unsafe internal partial class NativeBindings
         IntPtr[] keys, UIntPtr keysLen,
         IntPtr[] aggs, UIntPtr aggsLen
     );
-    // Join 签名
+    // Join
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_join(
         DataFrameHandle left,
@@ -368,8 +366,6 @@ unsafe internal partial class NativeBindings
         DataFrameHandle df,
         IntPtr[] exprs,
         UIntPtr exprLen,
-        // bool 数组必须用 byte* 或 bool* 传，LibraryImport 可能会要求 ref/in 或者 unsafe 指针
-        // 为了灵活性，我们这里用 unsafe 指针接收 bool 数组
         bool* descending, 
         UIntPtr descendingLen,
         bool* nullsLast,
@@ -444,8 +440,6 @@ unsafe internal partial class NativeBindings
     // Schema
     [LibraryImport(LibName)]
     public static partial void pl_schema_free(IntPtr ptr);
-    // Get Schema form LazyFrame
-    // 注意：Rust 需要 &mut self，但 C# 只需要传 Handle，不用担心 Mutability
     [LibraryImport(LibName)]
     public static partial SchemaHandle pl_lazy_frame_get_schema(LazyFrameHandle lf);
     [LibraryImport(LibName)]
@@ -570,7 +564,7 @@ unsafe internal partial class NativeBindings
         LazyFrameHandle lf, 
         ArrowStreamInterop.SinkCallback callback,
         ArrowStreamInterop.CleanupCallback cleanup,
-        IntPtr userData // 这里用 IntPtr 接应
+        IntPtr userData 
     );
     // String Ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_str_contains(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string pat);
@@ -775,7 +769,6 @@ unsafe internal partial class NativeBindings
     public static partial SelectorHandle pl_selector_match(string pattern);
 
     // Type Selectors
-    // Rust 端接收的是 i32，C# 传 int 即可
     [LibraryImport(LibName)]
     public static partial SelectorHandle pl_selector_by_dtype(int kind);
 
@@ -918,7 +911,6 @@ unsafe internal partial class NativeBindings
     // Series -> DataFrame
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_series_to_frame(SeriesHandle s);
-    // 数值类型：支持 validity 位图
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_i32(string name, int[] ptr, byte[]? validity, UIntPtr len);
 
@@ -936,13 +928,12 @@ unsafe internal partial class NativeBindings
         UIntPtr len
     );
 
-    // 字符串类型：IntPtr[] 里的 IntPtr.Zero 代表 null
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_str(string name, IntPtr[] strs, UIntPtr len);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_decimal(
         string name, 
-        Int128[] ptr,      // 对应 Rust 的 *const i128
+        Int128[] ptr, 
         byte[]? validity, 
         UIntPtr len,
         UIntPtr scale
@@ -1045,19 +1036,19 @@ unsafe internal partial class NativeBindings
     public static partial IntPtr pl_datatype_to_string(DataTypeHandle handle);
     [LibraryImport(LibName)]
     public static partial DataTypeHandle pl_datatype_clone(DataTypeHandle handle);
-    // 1. GetKind - 返回 i32
+    // 1. GetKind -
     [LibraryImport(LibName)]
     public static partial int pl_datatype_get_kind(DataTypeHandle handle);
 
-    // 2. GetTimeUnit - 返回 i32
+    // 2. GetTimeUnit -
     [LibraryImport(LibName)]
     public static partial int pl_datatype_get_time_unit(DataTypeHandle handle);
 
-    // 3. GetDecimalInfo - out 参数
+    // 3. GetDecimalInfo - 
     [LibraryImport(LibName)]
     public static partial void pl_datatype_get_decimal_info(DataTypeHandle handle, out int precision, out int scale);
 
-    // 4. GetTimeZone - 返回字符串指针
+    // 4. GetTimeZone - 
     [LibraryImport(LibName)]
     public static partial IntPtr pl_datatype_get_timezone(DataTypeHandle handle);
     [LibraryImport(LibName)]
@@ -1066,13 +1057,12 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     public static partial UIntPtr pl_datatype_get_struct_len(DataTypeHandle handle);
 
-    // 注意：这是一个比较复杂的签名，因为我们要返回两个指针
     [LibraryImport(LibName)]
     public static partial void pl_datatype_get_struct_field(
         DataTypeHandle handle, 
         UIntPtr index, 
-        out IntPtr namePtr,       // 输出字符串指针
-        out DataTypeHandle typeHandle // 输出类型句柄
+        out IntPtr namePtr,       
+        out DataTypeHandle typeHandle 
     );
 
     // Arithmetic
@@ -1094,5 +1084,4 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial SeriesHandle pl_series_mean(SeriesHandle s);
     [LibraryImport(LibName)] public static partial SeriesHandle pl_series_min(SeriesHandle s);
     [LibraryImport(LibName)] public static partial SeriesHandle pl_series_max(SeriesHandle s);
-
 }

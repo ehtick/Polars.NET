@@ -18,19 +18,17 @@ namespace Polars.NET.Core.Arrow
             return IsFSharpOption(type) ? type.GetGenericArguments()[0] : type;
         }
         /// <summary>
-        /// [新增] 动态获取 FSharpOption<T> 类型
-        /// 替代 typeof(Microsoft.FSharp.Core.FSharpOption<>)
+        /// Get FSharpOption<T> type dynamically
+        /// Replace typeof(Microsoft.FSharp.Core.FSharpOption<>)
         /// </summary>
         public static Type MakeFSharpOptionType(Type innerType)
         {
-            // 1. 尝试直接获取泛型定义 (Open Type)
-            // 格式: "FullName, AssemblyName"
+            // Try get generic type definition directly
             var openType = Type.GetType($"{OptionTypeName}, {AssemblyName}");
 
             if (openType == null)
             {
-                // 2. 备选方案：遍历已加载的程序集查找 FSharp.Core
-                // 防止 FSharp.Core 版本号差异导致直接 GetType 失败
+                // Check whether FSharp.Core is loaded
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
                     if (asm.GetName().Name == "FSharp.Core")
@@ -46,11 +44,11 @@ namespace Polars.NET.Core.Arrow
                 throw new InvalidOperationException("Could not find FSharpOption type. Ensure FSharp.Core is loaded.");
             }
 
-            // 3. 构造泛型类型 FSharpOption<InnerType>
+            // Build Generic Type for FSharpOption<InnerType>
             return openType.MakeGenericType(innerType);
         }
         /// <summary>
-        /// [Fixed] Create Unwrapper: FSharpOption<T> -> T (or null)
+        /// Create Unwrapper: FSharpOption<T> -> T (or null)
         /// Logic: obj == null ? null : obj.Value
         /// </summary>
         public static Func<object, object?> CreateOptionUnwrapper(Type optionType)

@@ -34,17 +34,11 @@ type Series(handle: SeriesHandle) =
     /// This allows Series to use the full power of the Expression engine.
     /// </summary>
     member internal this.ApplyExpr(expr: Expr) : Series =
-        // 1. 临时包装成 DataFrame
-        // SeriesToFrame 会创建一个单列的 DataFrame
-        // 使用 use 确保这个临时 DataFrame 被释放 (Handle 引用计数 -1)
         use dfHandle = PolarsWrapper.SeriesToFrame handle
         use df = new DataFrame(dfHandle)
 
-        // 2. 执行 Select
-        // 这会生成一个新的 DataFrame
         use dfRes = df.Select [expr]
 
-        // 3. 提取结果列
         dfRes.[0]
     // ==========================================
     // Binary Op Helper (The "ApplyBinaryExpr" Pattern)
@@ -58,36 +52,24 @@ type Series(handle: SeriesHandle) =
         let leftName = this.Name
         let rightNameRaw = other.Name
         
-        // 1. 检查命名冲突
-        // 如果名字相同，我们需要 Clone 并重命名 'other'，否则 Polars 创建 DataFrame 会报错
         let rightName, rightSeries, tempToDispose =
             if leftName = rightNameRaw then
                 let newName = "__other_temp__"
-                // Clone Series (Wrapper.CloneSeries 应该存在，或者通过 pl_series_clone binding)
-                // 假设 PolarsWrapper.CloneSeries(handle) 可用
                 let cloneHandle = PolarsWrapper.CloneSeries other.Handle 
-                let clone = (new Series(cloneHandle)).Rename(newName)// Rename 只是修改 Series 内部元数据
+                let clone = (new Series(cloneHandle)).Rename newName
                 newName, clone, Some clone
             else
                 rightNameRaw, other, None
 
         try
-            // 2. 构建包含两个 Series 的 DataFrame
-            // 使用底层 binding: pl_data_frame_new(SeriesHandle[])
             let handles = [| this.Handle; rightSeries.Handle |]
-            use dfHandle = PolarsWrapper.DataFrameNew(handles)
+            use dfHandle = PolarsWrapper.DataFrameNew handles
             use df = new DataFrame(dfHandle)
 
-            // 3. 执行表达式
-            // op 接收两个 Expr: col("Left") 和 col("Right")
             let expr = op (Expr.Col leftName) (Expr.Col rightName)
             
-            use resDf = df.Select([expr])
+            use resDf = df.Select [expr]
 
-            // 4. 提取结果
-            // 结果 DataFrame 的第 0 列就是我们需要的 Series
-            // 强转并返回 (ResDf Dispose 时不会释放 Series，因为它是通过 Column 方法获取的，会增加引用)
-            // 这里我们用索引器获取
             resDf.[0]
 
         finally
@@ -138,11 +120,8 @@ type Series(handle: SeriesHandle) =
     /// </summary>
     member _.DtypeStr = PolarsWrapper.GetSeriesDtypeString handle
     member this.DataType : DataType =
-        // 1. 获取 Series 的类型 Handle
-        // Wrapper 会调用 pl_series_get_dtype 返回一个新的 Handle
         use typeHandle = PolarsWrapper.GetSeriesDataType handle
         
-        // 2. 递归构建 F# 类型
         DataType.FromHandle typeHandle
         
     // ==========================================
@@ -288,11 +267,8 @@ type Series(handle: SeriesHandle) =
     // ==========================================
     // Optional: High-Level F# Overloads (Sugar)
     // ==========================================
-    // 既然我们有了 Udf 模块，我们可以提供更 F# 风格的重载，
-    // 让用户直接传 lambda，而不需要显式调用 Udf.map
-
     /// <summary>
-    /// [F# Sugar] Map values using a standard F# function.
+    /// Map values using a standard F# function.
     /// Automatically wraps it using Udf.map.
     /// </summary>
     member this.Map<'T, 'U>(f: 'T -> 'U, returnType: DataType) =
@@ -300,7 +276,7 @@ type Series(handle: SeriesHandle) =
         this.Map(udf, returnType)
 
     /// <summary>
-    /// [F# Sugar] Map values using an F# function that handles Options.
+    /// Map values using an F# function that handles Options.
     /// Automatically wraps it using Udf.mapOption.
     /// </summary>
     member this.MapOption<'T, 'U>(f: 'T option -> 'U option, returnType: DataType) =
@@ -398,7 +374,7 @@ type Series(handle: SeriesHandle) =
     member this.Rem(other: Series) = this.Mod other
     member this.Rem(other: int) = this.Mod other
     // ==========================================
-    // Math: Trigonometry (三角函数)
+    // Math: Trigonometry
     // ==========================================
 
     /// <summary> Compute the element-wise sine. </summary>
@@ -420,7 +396,7 @@ type Series(handle: SeriesHandle) =
     member this.ArcTan() = this.ApplyExpr(Expr.Col(this.Name).ArcTan())
 
     // ==========================================
-    // Math: Hyperbolic (双曲函数)
+    // Math: Hyperbolic
     // ==========================================
 
     /// <summary> Compute the element-wise hyperbolic sine. </summary>
@@ -520,20 +496,16 @@ type Series(handle: SeriesHandle) =
     // ==========================================
 
     member this.TopK(k: int) = 
-        this.ApplyExpr(Expr.Col(this.Name).TopK(k))
+        this.ApplyExpr(Expr.Col(this.Name).TopK k)
 
     member this.BottomK(k: int) = 
-        this.ApplyExpr(Expr.Col(this.Name).BottomK(k))
+        this.ApplyExpr(Expr.Col(this.Name).BottomK k)
 
-    // 注意：TopKBy 涉及其他列，如果是 Series 调用，通常意味着用另一列来排自己。
-    // 这需要使用 ApplyBinaryExpr (如果是单列 by) 或者构建临时 DataFrame (如果是多列 by)。
-    
     /// <summary>
     /// Get top k elements of this Series, sorted by another Series.
     /// </summary>
     member this.TopKBy(k: int, by: Series, ?reverse: bool) =
         let r = defaultArg reverse false
-        // 使用 ApplyBinaryExpr 复用逻辑
         this.ApplyBinaryExpr(by, fun me other -> me.TopKBy(k, other, r))
 
     /// <summary>
@@ -549,7 +521,6 @@ type Series(handle: SeriesHandle) =
     // --- Int32 ---
     static member create(name: string, data: int seq) = 
         new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
-
     static member create(name: string, data: int option seq) = 
         let arr = Seq.toArray data
         let vals = Array.zeroCreate<int> arr.Length
@@ -604,13 +575,10 @@ type Series(handle: SeriesHandle) =
 
     // --- String ---
     static member create(name: string, data: string seq) = 
-        // 这里的 string seq 本身可能包含 null (如果源是 C#), 或者 F# string (不可空)
-        // 为了安全，我们转为 string[] 即可
         new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data))
 
     static member create(name: string, data: string option seq) = 
         let arr = Seq.toArray data
-        // 将 Option 转换为 string array (None -> null)
         let vals = arr |> Array.map (fun opt -> match opt with Some s -> s | None -> null)
         new Series(PolarsWrapper.SeriesNew(name, vals))
     // --- DateTime ---
@@ -620,12 +588,9 @@ type Series(handle: SeriesHandle) =
         let epoch = 621355968000000000L
         
         for i in 0 .. arr.Length - 1 do
-            // 转换为 Unix Microseconds
             longs.[i] <- (arr.[i].Ticks - epoch) / 10L
 
-        // 1. 创建 Int64 Series
         let s = Series.create(name, longs)
-        // 2. 转换为 Datetime 类型 (Microseconds, No Timezone)
         s.Cast(Datetime(Microseconds, None))
 
     static member create(name: string, data: DateTime option seq) = 
@@ -643,7 +608,6 @@ type Series(handle: SeriesHandle) =
                 longs.[i] <- 0L
                 valid.[i] <- false
 
-        // 直接调用底层 Wrapper 创建带 Validity 的 Int64 Series
         let s = new Series(PolarsWrapper.SeriesNew(name, longs, valid))
         s.Cast(Datetime(Microseconds, None))
 
@@ -657,8 +621,6 @@ type Series(handle: SeriesHandle) =
 
     static member create(name: string, data: decimal option seq, scale: int) = 
         let arr = Seq.toArray data // decimal option[]
-        // 转换逻辑稍复杂，我们在 Wrapper 里处理了 nullable 数组转换
-        // 这里我们需要把 seq<decimal option> 转为 decimal?[] (Nullable<decimal>[]) 传给 C#
         let nullableArr = 
             arr |> Array.map (function Some v -> Nullable(v) | None -> Nullable())
             
@@ -694,7 +656,6 @@ type Series(handle: SeriesHandle) =
                 days.[i] <- 0
                 valid.[i] <- false
                 
-        // 调用底层 int32 (SeriesNew)
         let s = new Series(PolarsWrapper.SeriesNew(name, days, valid))
         s.Cast DataType.Date
 
@@ -908,19 +869,15 @@ type Series(handle: SeriesHandle) =
         if index < 0L || index >= len then
             raise (IndexOutOfRangeException(sprintf "Index %d is out of bounds for Series length %d." index len))
 
-        // 1. 统一空值检查 (Consistent Null Check)
+        // Consistent Null Check
         if PolarsWrapper.SeriesIsNullAt(handle, index) then
-            // 对于 F# Option 类型，Unchecked.defaultof 实际上就是 null (即 None)
-            // 对于引用类型 (string) 和 Nullable<T>，也是 null
-            // 对于值类型 (int, double)，是 0
             Unchecked.defaultof<'T>
         else
-            // 2. 取值 (此时已知不为空)
+            // 2. Getvalue
             let t = typeof<'T>
             
             // --- Integer Family ---
             if t = typeof<int> || t = typeof<int option> || t = typeof<Nullable<int>> then
-                // 已知不为空，直接取 Value
                 let v = int (PolarsWrapper.SeriesGetInt(handle, index).Value)
                 if t = typeof<int option> then box (Some v) |> unbox<'T>
                 else box v |> unbox<'T>
@@ -977,7 +934,6 @@ type Series(handle: SeriesHandle) =
 
             // --- Complex Types (Arrow Fallback) ---
             else
-                // 复杂类型走通用通道
                 use slicedHandle = PolarsWrapper.SeriesSlice(handle, index, 1L)
                 use dfHandle = PolarsWrapper.SeriesToFrame slicedHandle
                 use batch = ArrowFfiBridge.ExportDataFrame dfHandle
@@ -988,14 +944,11 @@ type Series(handle: SeriesHandle) =
     /// Automatically handles conversion from .NET List (ResizeArray).
     /// </summary>
     member this.GetList<'Elem>(index: int64) : 'Elem list =
-        // 1. 先作为 ResizeArray (.NET List) 取出
         let netList = this.GetValue<ResizeArray<'Elem>> index
         
-        // 2. 这里的 netList 可能为 null (如果原数据是 null)
         if isNull netList then 
-            [] // 或者 raise，取决于你的空值策略
+            []
         else 
-            // 3. 转为 F# List
             netList |> List.ofSeq
                 
     /// <summary>
@@ -1005,7 +958,6 @@ type Series(handle: SeriesHandle) =
     member this.Item (index: int) : obj =
         let idx = int64 index
         
-        // 利用我们强大的 DataType DU 进行分发
         match this.DataType with
         | DataType.Boolean -> box (this.GetValue<bool option> idx) // 使用 Option 以便显示 Some/None
         
@@ -1024,7 +976,7 @@ type Series(handle: SeriesHandle) =
         
         | DataType.Decimal _ -> box (this.GetValue<decimal option> idx)
         
-        | DataType.String -> box (this.GetValue<string option> idx) // F# 习惯用 string option
+        | DataType.String -> box (this.GetValue<string option> idx)
         
         | DataType.Date -> box (this.GetValue<DateOnly option> idx)
         | DataType.Time -> box (this.GetValue<TimeOnly option> idx)
@@ -1033,7 +985,7 @@ type Series(handle: SeriesHandle) =
         
         | DataType.Binary -> box (this.GetValue<byte[] option> idx)
 
-        // 复杂类型：走通用路径，返回 obj (可能是 F# List, Map 等)
+        // Complex Type
         | DataType.List _ -> this.GetValue<obj> idx
         | DataType.Struct _ -> this.GetValue<obj> idx
         | DataType.Array _ -> this.GetValue<obj> idx
@@ -1044,8 +996,6 @@ type Series(handle: SeriesHandle) =
     /// Ideal for safe handling of nulls in Polars series.
     /// </summary>
     member this.GetValueOption<'T>(index: int64) : 'T option =
-        // 我们利用 ArrowReader 的能力，它能自动把 Arrow 的 null 映射为 F# Option
-        // 只要传入的泛型是 'T option
         this.GetValue<'T option> index
     // ==========================================
     // Interop with DataFrame
@@ -1065,9 +1015,7 @@ and SeriesDtNameSpace(parent: Series) =
     
     // Helper: col("Name").Dt.Op(...)
     let apply (op: Expr -> Expr) =
-        // 构造表达式：对当前列名应用操作
         let expr = Expr.Col parent.Name |> op
-        // 应用到底层 Series
         parent.ApplyExpr expr
 
     // --- Extraction ---
@@ -1107,11 +1055,6 @@ and SeriesDtNameSpace(parent: Series) =
 
     member _.OffsetBy(duration: string) =
         apply (fun e -> e.Dt.OffsetBy duration)
-
-    // 注意：Series.OffsetBy(Expr) 比较棘手
-    // 因为 ApplyExpr 创建的临时 DataFrame 只有当前这一列。
-    // 如果传入的 Expr 引用了其他列，这里会报错。
-    // 但如果传入的是 pl.lit(...)，则没问题。
     member _.OffsetBy(duration: Expr) =
         apply (fun e -> e.Dt.OffsetBy duration)
 
@@ -1156,7 +1099,6 @@ and SeriesDtNameSpace(parent: Series) =
 
 and SeriesStrNameSpace(parent: Series) =
     
-    // Helper: 借用 Expr 引擎
     let apply (op: Expr -> Expr) =
         let expr = Expr.Col parent.Name |> op
         parent.ApplyExpr expr
@@ -1257,8 +1199,6 @@ and SeriesListNameSpace(parent: Series) =
     /// Logic: [this_val, other_val]
     /// </summary>
     member _.Concat(other: Series) =
-        // 调用我们刚写的 ApplyBinaryExpr
-        // Op: left.List.Concat(right)
         parent.ApplyBinaryExpr(other, (fun l r -> l.List.Concat r))
 
     // --- Search ---
@@ -1268,8 +1208,6 @@ and SeriesListNameSpace(parent: Series) =
 
 and SeriesArrayNameSpace(parent: Series) =
     
-    // Helper: 借用 Expr 引擎
-    // 假设 Expr 上挂载的属性名为 .Array (根据你之前的测试用例推断)
     let apply (op: Expr -> Expr) =
         let expr = Expr.Col parent.Name |> op
         parent.ApplyExpr expr
@@ -1347,7 +1285,6 @@ and SeriesArrayNameSpace(parent: Series) =
 
 and SeriesStructNameSpace(parent: Series) =
     
-    // Helper: 借用 Expr 引擎
     let apply (op: Expr -> Expr) =
         let expr = Expr.Col parent.Name |> op
         parent.ApplyExpr(expr)
@@ -1400,23 +1337,16 @@ and DataFrame(handle: DataFrameHandle) =
         ?tryParseDates: bool
     ) : DataFrame =
         
-        // 1. 处理默认参数
         let sep = defaultArg separator ','
         let header = defaultArg hasHeader true
-        // C# 接收 ulong (uint64)
         let skip = defaultArg skipRows 0 |> uint64 
         let parseDates = defaultArg tryParseDates true
 
-        // 2. 准备 Schema Dictionary
-        // 我们需要一个可空的 Dictionary 传给 C#
         let mutable dictArg : Dictionary<string, DataTypeHandle> = null
         
-        // 我们需要追踪创建出来的 Handle 以便后续释放
-        // (因为 DataType.CreateHandle() 创建的是非托管资源)
         let mutable handlesToDispose = new List<DataTypeHandle>()
 
         try
-            // 3. 构建 Dictionary (如果用户提供了 Schema)
             if schema.IsSome then
                 dictArg <- new Dictionary<string, DataTypeHandle>()
                 for kv in schema.Value do
@@ -1424,20 +1354,11 @@ and DataFrame(handle: DataFrameHandle) =
                     dictArg.Add(kv.Key, h)
                     handlesToDispose.Add h
 
-            // 4. 调用 C# Wrapper
-            // 此时 C# 的 WithSchemaHandle 会：
-            // - 锁定我们传入的 handles
-            // - 创建临时的 Rust Schema
-            // - 调用 pl_read_csv
-            // - 释放临时的 Rust Schema
             let dfHandle = PolarsWrapper.ReadCsv(path, dictArg, header, sep, skip, parseDates)
             
             new DataFrame(dfHandle)
 
         finally
-            // 5. [关键] 释放我们在 F# 这边创建的 DataTypeHandle
-            // 虽然 C# 用了它们，但 C# 只是 Borrow (借用) 来创建 Schema
-            // 并没有接管这些 Handle 的生命周期，所以我们要负责清理
             for h in handlesToDispose do
                 h.Dispose()
     /// <summary> Asynchronously read a CSV file into a DataFrame. </summary>
@@ -1448,26 +1369,20 @@ and DataFrame(handle: DataFrameHandle) =
                                ?skipRows: int,
                                ?tryParseDates: bool) : Async<DataFrame> =
         
-        // 1. 在主线程准备参数 (参数解析是非常快的)
         let header = defaultArg hasHeader true
         let sep = defaultArg separator ','
         let skip = defaultArg skipRows 0
         let dates = defaultArg tryParseDates true
         
-        // 2. 转换 Schema (Map -> Dictionary)
         let schemaDict = 
             match schema with
             | Some m -> 
                 let d = Dictionary<string, DataTypeHandle>()
-                // 记得使用 CreateHandle()
                 m |> Map.iter (fun k v -> d.Add(k, v.CreateHandle()))
                 d
             | None -> null
 
-        // 3. 进入 Async 工作流
         async {
-            // 调用 C# Wrapper 的 Async 方法 (返回 Task<DataFrameHandle>)
-            // 使用 Async.AwaitTask 等待 C# Task 完成
             let! handle = 
                 PolarsWrapper.ReadCsvAsync(
                     path, 
@@ -1490,11 +1405,8 @@ and DataFrame(handle: DataFrameHandle) =
     static member ReadDb(reader: IDataReader, ?batchSize: int) : DataFrame =
         let size = defaultArg batchSize 50_000
         
-        // 1. 将 DataReader 转为 Arrow Batch 流
-        // 这是一个 C# 扩展方法，在 F# 中作为静态方法调用
         let batchStream = reader.ToArrowBatches size
         
-        // 2. 直接导入
         let handle = Polars.NET.Core.Arrow.ArrowStreamInterop.ImportEager batchStream
         
         if handle.IsInvalid then
@@ -1519,18 +1431,13 @@ and DataFrame(handle: DataFrameHandle) =
     static member ofSeqStream<'T>(data: seq<'T>, ?batchSize: int) : DataFrame =
         let size = defaultArg batchSize 100_000
 
-        // 1. 构建惰性流 (Lazy Stream)
-        // 只有当底层 Rust 开始拉取数据时，这里才会真正执行 chunk 和 BuildRecordBatch
         let batchStream = 
             data
             |> Seq.chunkBySize size
             |> Seq.map ArrowFfiBridge.BuildRecordBatch
 
-        // 2. 一键导入
-        // C# 的 ImportEager 会自动处理 peek schema 和缝合逻辑
         let handle = ArrowStreamInterop.ImportEager batchStream
 
-        // 3. 处理空流情况 (ImportEager 返回 InvalidHandle 时)
         if handle.IsInvalid then
             DataFrame.create []
         else
@@ -1564,8 +1471,6 @@ and DataFrame(handle: DataFrameHandle) =
     /// Useful for custom eager sinks (e.g. WriteDatabase).
     /// </summary>
     member this.ExportBatches(onBatch: Action<RecordBatch>) : unit =
-        // Eager 操作通常是只读的，不需要 TransferOwnership
-        // PolarsWrapper.ExportBatches 负责遍历内部 Chunks 并回调 C#
         PolarsWrapper.ExportBatches(this.Handle, onBatch)
 
     /// <summary>
@@ -1578,68 +1483,46 @@ and DataFrame(handle: DataFrameHandle) =
     member this.WriteTo(writerAction: Action<IDataReader>, ?bufferSize: int, ?typeOverrides: IDictionary<string, Type>) : unit =
         let capacity = defaultArg bufferSize 5
         
-        // 1. 生产者-消费者缓冲区
-        // use 确保 Collection 释放
         use buffer = new BlockingCollection<Apache.Arrow.RecordBatch>(capacity)
 
-        // 2. 启动消费者任务 (Consumer: DB Writer)
-        // 在后台线程运行，避免阻塞主线程（虽然 Eager WriteTo 本身通常是阻塞调用）
         let consumerTask = Task.Run(fun () ->
-            // 获取消费流
             let stream = buffer.GetConsumingEnumerable()
             
-            // 处理类型覆盖
             let overrides = 
                 match typeOverrides with 
                 | Some d -> new Dictionary<string, Type>(d) 
                 | None -> null
             
-            // 构造伪装的 DataReader
             use reader = new ArrowToDbStream(stream, overrides)
             
-            // 执行用户回调 (如 SqlBulkCopy.WriteToServer)
             writerAction.Invoke reader
         )
 
-        // 3. 启动生产者 (Producer: DataFrame Iterator)
-        // 当前线程执行，遍历 DataFrame 的内存块
         try
             try
-                // 将 DataFrame 的 Chunks 推入 Buffer
-                // 如果 Buffer 满了，这里会阻塞
                 this.ExportBatches(fun batch -> buffer.Add batch)
             finally
-                // 4. 通知消费者：没有更多数据了
                 buffer.CompleteAdding()
         with
         | _ -> 
-            // 确保异常抛出
             reraise()
 
-        // 5. 等待消费者完成
         try
             consumerTask.Wait()
         with
         | :? AggregateException as aggEx ->
-            // 解包 Task 异常，抛出真实的 SqlException 等
             raise (aggEx.Flatten().InnerException)
     
     /// <summary>
     /// Get the schema as Map<ColumnName, DataType>.
     /// </summary>
     member this.Schema : Map<string, DataType> =
-        // 1. 获取所有列名 (string[])
-        // 假设 this.Columns 属性已经实现了 (调用 PolarsWrapper.GetColumnNames)
         let names = this.ColumnNames
         
-        // 2. 遍历列名，获取每一列的 Series 和 DataType
         names
         |> Array.map (fun (name: string) ->
-            // [关键] 这是一个非常轻量的操作
-            // 我们只是获取了一个指向现有 Series 的 Handle，没有数据拷贝
             let s = this.Column name
             
-            // s.DataType 现在调用的是我们刚写的 DataType.FromHandle (递归 Native 读取)
             name, s.DataType
         )
         |> Map.ofArray
@@ -1652,7 +1535,6 @@ and DataFrame(handle: DataFrameHandle) =
     member this.PrintSchema() =
         printfn "--- DataFrame Schema ---"
         this.Schema |> Map.iter (fun name dtype -> 
-            // 简单的反射打印 DU 名称
             printfn "%-15s | %A" name dtype
         )
         printfn "------------------------"
@@ -1691,36 +1573,33 @@ and DataFrame(handle: DataFrameHandle) =
         let h = PolarsWrapper.Filter(this.Handle,expr.CloneHandle())
         new DataFrame(h)
     /// <summary>
-    /// [复杂版] 支持每列独立控制排序方向和 Null 值位置。
+    /// Sort with parameters.
     /// </summary>
-    /// <param name="columns">排序的列 (Expr/Selector)。</param>
-    /// <param name="descending">每列的排序方向 (true=降序)。长度必须为 1 (广播) 或与列数一致。</param>
-    /// <param name="nullsLast">每列的 Null 值位置 (true=最后)。长度必须为 1 (广播) 或与列数一致。</param>
-    /// <param name="maintainOrder">是否保持稳定性 (Stable Sort)。</param>
+    /// <param name="columns">the column which needs to be sorted (Expr/Selector)。</param>
+    /// <param name="descending">sort direction (true=descending).Length must be 1 (broadcasting) or same with columns.</param>
+    /// <param name="nullsLast">null value position (true=last).Length must be 1 (broadcasting) or same with columns</param>
+    /// <param name="maintainOrder">Stable Sort option</param>
     member this.Sort(
         columns: seq<#IColumnExpr>,
         descending: seq<bool>,
         nullsLast: seq<bool>,
         ?maintainOrder: bool
     ) =
-        // 1. 准备 Expr Handles (Clone for Transfer)
         let exprHandles = 
             columns 
             |> Seq.collect (fun x -> x.ToExprs()) 
             |> Seq.map (fun e -> e.CloneHandle()) 
             |> Seq.toArray
         
-        // 2. 准备 Bool Arrays
         let descArr = descending |> Seq.toArray
         let nullsArr = nullsLast |> Seq.toArray
         let stable = defaultArg maintainOrder false
 
-        // 3. 调用 Wrapper
         let h = PolarsWrapper.DataFrameSort(this.Handle, exprHandles, descArr, nullsArr, stable)
         new DataFrame(h)
 
     /// <summary>
-    /// [简单版] 全局控制排序方向和 Null 值位置。
+    /// Sort DataFrame with simple options.
     /// </summary>
     member this.Sort(
         columns: seq<#IColumnExpr>,
@@ -1731,10 +1610,8 @@ and DataFrame(handle: DataFrameHandle) =
         let desc = defaultArg descending false
         let nLast = defaultArg nullsLast false
         
-        // 构造单元素数组，利用底层的广播机制
         this.Sort(columns, [| desc |], [| nLast |], ?maintainOrder = maintainOrder)
 
-    // [兼容旧单列 API]
     member this.Sort(expr: Expr, ?descending: bool, ?nullsLast: bool) =
         this.Sort([expr], ?descending=descending, ?nullsLast=nullsLast)
 
@@ -1844,7 +1721,6 @@ and DataFrame(handle: DataFrameHandle) =
         let shuff = defaultArg shuffle true
         let s = Option.toNullable seed
         
-        // n 必须 >= 0
         new DataFrame(PolarsWrapper.SampleN(handle, uint64 n, replace, shuff, s))
 
     /// <summary>
@@ -1900,7 +1776,6 @@ and DataFrame(handle: DataFrameHandle) =
         | :? Apache.Arrow.LargeListArray as listArr ->
             if listArr.IsNull rowIndex then None
             else
-                // Offset 是 long，强转 int (单行 List 长度通常不会超过 20 亿)
                 let start = int listArr.ValueOffsets.[rowIndex]
                 let end_ = int listArr.ValueOffsets.[rowIndex + 1]
                 Some (extractStrings listArr.Values start end_)
@@ -1986,9 +1861,7 @@ and DataFrame(handle: DataFrameHandle) =
     /// Syntax: df.[rowIndex, "colName"]
     /// </summary>
     member this.Item (rowIndex: int, columnName: string) : obj =
-        // 1. 先拿列 (Series)
         let series = this.Column columnName
-        // 2. 再拿值 (Series Indexer)
         series.[rowIndex]
 
     /// <summary>
@@ -2008,16 +1881,14 @@ and DataFrame(handle: DataFrameHandle) =
     /// Similar to DataTable.Rows[i].ItemArray.
     /// </summary>
     member this.Row (index: int) : obj[] =
-        let h = int64 this.Rows // 假设 this.Rows 返回 long
+        let h = int64 this.Rows
         if int64 index < 0L || int64 index >= h then
             raise (IndexOutOfRangeException(sprintf "Row index %d is out of bounds. Height: %d" index h))
 
-        let w = this.Columns.Length // 假设 this.Columns 是 string[]
+        let w = this.Columns.Length
         let rowData = Array.zeroCreate<obj> w
 
-        // F# 的 for 循环是包含上界的，所以用 0 .. w-1
         for i in 0 .. w - 1 do
-            // 复用 this.[row, colIndex] 索引器
             rowData.[i] <- this.[index, i]
 
         rowData
@@ -2058,14 +1929,10 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// Uses Zero-Copy native introspection.
     /// </summary>
     member _.Schema : Map<string, DataType> =
-        // 1. 获取 Native Schema Handle
-        // 使用 use 确保 Handle 用完即焚
         use schemaHandle = PolarsWrapper.GetLazySchema handle
 
-        // 2. 获取字段数量
         let len = PolarsWrapper.GetSchemaLen schemaHandle
 
-        // 3. 遍历并构建 Map
         if len = 0UL then 
             Map.empty
         else
@@ -2073,14 +1940,11 @@ and LazyFrame(handle: LazyFrameHandle) =
                 let mutable name = Unchecked.defaultof<string>
                 let mutable typeHandle = Unchecked.defaultof<DataTypeHandle>
                 
-                // 调用 C# Wrapper 获取第 i 个字段的信息
                 PolarsWrapper.GetSchemaFieldAt(schemaHandle, i, &name, &typeHandle)
                 
-                // [关键] typeHandle 是新创建的，必须 Dispose
                 use h = typeHandle
                 
-                // 递归构建 F# DataType (复用我们之前的成果)
-                let dtype = DataType.FromHandle(h)
+                let dtype = DataType.FromHandle h
                 
                 yield name, dtype
             |]
@@ -2137,24 +2001,16 @@ and LazyFrame(handle: LazyFrameHandle) =
     static member scanSeq<'T>(data: seq<'T>, ?batchSize: int) : LazyFrame =
         let size = defaultArg batchSize 100_000
 
-        // 1. 静态推断 Schema (无需触碰数据流)
-        // 相比 C# 的 ProbeEnumerator (预读首帧)，F# 这里利用 BuildRecordBatch 的反射能力，
-        // 传入空序列即可得到正确的 Schema。这样更安全，不会消耗流的任何元素。
         let dummyBatch = ArrowFfiBridge.BuildRecordBatch(Seq.empty<'T>)
         let schema = dummyBatch.Schema
 
-        // 2. 定义流工厂 (The Stream Factory)
-        // 每次 Polars 引擎需要扫描数据时，都会调用这个工厂。
         let streamFactory = Func<IEnumerator<RecordBatch>>(fun () ->
             data
             |> Seq.chunkBySize size
             |> Seq.map ArrowFfiBridge.BuildRecordBatch
-            // [修复] Seq 模块没有 getEnumerator，直接调用接口方法
             |> fun s -> s.GetEnumerator()
         )
 
-        // 3. 调用 Core 层封装
-        // ArrowStreamInterop.ScanStream 封装了 CreateDirectScanContext, ExportSchema, CallWrapper, FreeSchema 等所有逻辑
         let handle = ArrowStreamInterop.ScanStream(streamFactory, schema)
         
         new LazyFrame(handle)
@@ -2166,23 +2022,18 @@ and LazyFrame(handle: LazyFrameHandle) =
     static member scanDb(readerFactory: unit -> IDataReader, ?batchSize: int) : LazyFrame =
         let size = defaultArg batchSize 50_000
         
-        // 1. 预读 Schema (Open -> GetSchema -> Close)
         let schema = 
             use tempReader = readerFactory()
             tempReader.GetArrowSchema()
 
-        // 2. 定义流工厂
         let streamFactory = Func<IEnumerator<RecordBatch>>(fun () ->
-            // 注意：这里我们创建一个 seq，并让它负责 reader 的生命周期
             let batchSeq = seq {
                 use reader = readerFactory()
-                // yield! 展开枚举器
                 yield! reader.ToArrowBatches size
             }
             batchSeq.GetEnumerator()
         )
 
-        // 3. 调用 Core
         let handle = ArrowStreamInterop.ScanStream(streamFactory, schema)
         new LazyFrame(handle)
 
@@ -2200,12 +2051,8 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// This executes the query and calls 'onBatch' for each RecordBatch produced.
     /// </summary>
     member this.SinkBatches(onBatch: Action<RecordBatch>) : unit =
-        // 这里假设 Wrapper 返回 void，或者是阻塞的
-        // 如果 Wrapper 返回 Handle (如 C# 示例)，我们需要确保它被执行
         let newHandle = PolarsWrapper.SinkBatches(this.CloneHandle(), onBatch)
         
-        // C# 示例里为了触发执行，手动调了 CollectStreaming。
-        // 这说明 SinkBatches 只是构建了 Plan，还没跑。
         let lfRes = new LazyFrame(newHandle)
         use _ = lfRes.CollectStreaming()
         () 
@@ -2219,71 +2066,47 @@ and LazyFrame(handle: LazyFrameHandle) =
     member this.SinkTo(writerAction: Action<IDataReader>, ?bufferSize: int, ?typeOverrides: IDictionary<string, Type>) : unit =
         let capacity = defaultArg bufferSize 5
         
-        // 1. 生产者-消费者缓冲区
-        // 使用 use 确保 Collection 在结束后 Dispose (虽然它主要是清理句柄)
         use buffer = new BlockingCollection<RecordBatch>(boundedCapacity = capacity)
 
-        // 2. 启动消费者任务 (Consumer: DB Writer)
-        // Task.Run 启动后台线程
         let consumerTask = Task.Run(fun () ->
-            // 获取消费枚举器 (GetConsumingEnumerable 会阻塞等待直到 CompleteAdding)
             let stream = buffer.GetConsumingEnumerable()
             
-            // 将 override 字典传给 ArrowToDbStream (如果提供了的话)
-            // C# 的 ArrowToDbStream 构造函数应该接受 IEnumerable 和 Dictionary
             let overrides = 
                     match typeOverrides with 
                     | Some d -> new Dictionary<string, Type>(d) 
                     | None -> null
             
-            // 构造伪装的 DataReader
             use reader = new ArrowToDbStream(stream, overrides)
             
-            // 执行用户逻辑 (如 SqlBulkCopy)
             writerAction.Invoke reader
         )
 
-        // 3. 启动生产者 (Producer: Polars Engine)
-        // 在当前线程阻塞执行
         try
             try
-                // 将 Polars 生产的 Batch 推入 Buffer
-                // 如果 Buffer 满了，Buffer.Add 会阻塞，从而反压 Rust 引擎
                 this.SinkBatches(fun batch -> buffer.Add batch)
             finally
-                // 4. 通知消费者：没有更多数据了
                 buffer.CompleteAdding()
         with
         | _ -> 
-            // 如果生产者崩溃，确保 Task 也能收到异常或取消，防止死锁
-            // (CompleteAdding 已经在 finally 里了，消费者会读完剩余数据后退出)
             reraise()
 
-        // 4. 等待消费者完成并抛出可能的聚合异常
         try
             consumerTask.Wait()
         with
         | :? AggregateException as aggEx ->
-            // 拆包 AggregateException，抛出真正的首个错误，让调用方好处理
             raise (aggEx.Flatten().InnerException)
     
     /// <summary>
     /// Join with another LazyFrame.
     /// </summary>
     member this.Join(other: LazyFrame, leftOn: Expr seq, rightOn: Expr seq, how: JoinType) : LazyFrame =
-        // 1. 准备 Left On 表达式数组 (Clone Handle, Move 语义)
         let lOnArr = leftOn |> Seq.map (fun e -> e.CloneHandle()) |> Seq.toArray
         
-        // 2. 准备 Right On 表达式数组
         let rOnArr = rightOn |> Seq.map (fun e -> e.CloneHandle()) |> Seq.toArray
         
-        // 3. 准备 LazyFrame Handles
-        // Join 算子会消耗左右两个 LazyFrame，所以我们需要传入 Clone 的 Handle
         let lHandle = this.CloneHandle()
         let rHandle = other.CloneHandle()
 
-        // 4. 调用 Wrapper (假设 Wrapper 接受 int 枚举作为 JoinType)
-        // 注意：Wrapper 签名通常是 (Left, Right, LeftExprs, RightExprs, JoinType)
         let newHandle = PolarsWrapper.Join(lHandle, rHandle, lOnArr, rOnArr, how.ToNative())
         
         new LazyFrame(newHandle)
@@ -2302,8 +2125,6 @@ and LazyFrame(handle: LazyFrameHandle) =
         let h = PolarsWrapper.LazySelect(lfClone, handles)
         new LazyFrame(h)
     member this.Select(columns: seq<#IColumnExpr>) =
-            // 使用 Seq.collect 展平所有输入
-            // 不管是 Expr, Selector 还是 ColumnExpr，都会乖乖交出 Expr list
             let exprs = 
                 columns 
                 |> Seq.collect (fun x -> x.ToExprs()) 
@@ -2311,7 +2132,7 @@ and LazyFrame(handle: LazyFrameHandle) =
             
             this.Select exprs
     /// <summary>
-    /// [复杂版] 支持每列独立控制排序方向和 Null 值位置。
+    /// Sort with Parameters
     /// </summary>
     member this.Sort(
         columns: seq<#IColumnExpr>,
@@ -2319,7 +2140,6 @@ and LazyFrame(handle: LazyFrameHandle) =
         nullsLast: seq<bool>,
         ?maintainOrder: bool
     ) =
-        // 1. 准备 Expr Handles (Clone for Transfer)
         let exprHandles = 
             columns 
             |> Seq.collect (fun x -> x.ToExprs()) 
@@ -2330,15 +2150,13 @@ and LazyFrame(handle: LazyFrameHandle) =
         let nullsArr = nullsLast |> Seq.toArray
         let stable = defaultArg maintainOrder false
 
-        // 2. Clone LF Handle (Wrapper 会消耗它)
         let lfHandle = this.CloneHandle()
 
-        // 3. 调用 Wrapper
         let h = PolarsWrapper.LazyFrameSort(lfHandle, exprHandles, descArr, nullsArr, stable)
         new LazyFrame(h)
 
     /// <summary>
-    /// [简单版] 全局控制排序方向和 Null 值位置。
+    /// Sort with simple options
     /// </summary>
     member this.Sort(
         columns: seq<#IColumnExpr>,
@@ -2349,7 +2167,6 @@ and LazyFrame(handle: LazyFrameHandle) =
         let desc = defaultArg descending false
         let nLast = defaultArg nullsLast false
         
-        // 构造单元素数组，利用底层的广播机制
         this.Sort(columns, [| desc |], [| nLast |], ?maintainOrder = maintainOrder)
     member this.Sort(expr: Expr, ?descending: bool, ?nullsLast: bool) =
         this.Sort([expr], ?descending=descending, ?nullsLast=nullsLast)
@@ -2371,24 +2188,19 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <param name="by">Columns to sort by.</param>
     /// <param name="reverse">Sort direction per column. Default is false (no reverse).</param>
     member this.TopK(k: int, by: seq<#IColumnExpr>, ?reverse: seq<bool>) =
-        // 1. 准备 Expr Handles
         let exprHandles = 
             by 
             |> Seq.collect (fun x -> x.ToExprs()) 
             |> Seq.map (fun e -> e.CloneHandle()) 
             |> Seq.toArray
         
-        // 2. 准备 Reverse (Descending) 数组
         let descArr = 
             match reverse with
             | Some d -> d |> Seq.toArray
-            | None -> [| false |] // 默认升序，C#/Rust 端会广播
+            | None -> [| false |] 
 
-        // 3. Clone LF Handle (Wrapper 消耗它)
         let lfHandle = this.CloneHandle()
 
-        // 4. Call Wrapper
-        // 我们透传 reverse 参数，让用户控制。
         let h = PolarsWrapper.LazyFrameTopK(lfHandle, uint k, exprHandles, descArr)
         new LazyFrame(h)
 
@@ -2440,7 +2252,6 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// Helper: Unnest columns by name.
     /// </summary>
     member this.Unnest(columns: string list) =
-        // 将字符串列表转换为 Selector (pl.cs.cols)
         let columnsArray = columns|> List.toArray
         let handle = PolarsWrapper.SelectorCols columnsArray
         let sel = new Selector(handle)
@@ -2484,7 +2295,7 @@ and LazyFrame(handle: LazyFrameHandle) =
             let aExprs = aggs |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
             this.GroupBy(kExprs, aExprs)
     member this.Unpivot (index: string list) (on: string list) (variableName: string option) (valueName: string option) : LazyFrame =
-        let lfClone = this.CloneHandle() // 必须 Clone
+        let lfClone = this.CloneHandle()
         let iArr = List.toArray index
         let oArr = List.toArray on
         let varN = Option.toObj variableName
@@ -2508,11 +2319,9 @@ and LazyFrame(handle: LazyFrameHandle) =
         let lOn = leftOn.CloneHandle()
         let rOn = rightOn.CloneHandle()
         
-        // 处理分组列
         let lByArr = byLeft |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let rByArr = byRight |> List.map (fun e -> e.CloneHandle()) |> List.toArray
 
-        // 处理可选参数
         let strat = defaultArg strategy "backward"
         let tol = Option.toObj tolerance 
 
@@ -2535,16 +2344,13 @@ and LazyFrame(handle: LazyFrameHandle) =
                          strategy: string option, 
                          tolerance: TimeSpan option) : LazyFrame =
         
-        // 将 TimeSpan 转换为 Polars 字符串格式 (e.g. "1h30m")
         let tolStr = 
             tolerance 
             |> Option.map DurationFormatter.ToPolarsString
 
-        // 调用上面的主重载
         this.JoinAsOf(other, leftOn, rightOn, byLeft, byRight, strategy, tolStr)
     static member Concat  (lfs: LazyFrame list) (how: ConcatType) : LazyFrame =
         let handles = lfs |> List.map (fun lf -> lf.CloneHandle()) |> List.toArray
-        // 默认 rechunk=false, parallel=true (Lazy 的常见默认值)
         new LazyFrame(PolarsWrapper.LazyConcat(handles, how.ToNative(), false, true))
     /// <summary>
     /// Perform a dynamic group-by (rolling window) and aggregation in one step.
@@ -2562,17 +2368,15 @@ and LazyFrame(handle: LazyFrameHandle) =
     member this.GroupByDynamic(
         indexCol: string,
         every: TimeSpan,
-        aggs: seq<#IColumnExpr>, // [核心] 直接传入聚合表达式
+        aggs: seq<#IColumnExpr>, 
         ?period: TimeSpan,
         ?offset: TimeSpan,
-        ?by: seq<#IColumnExpr>,  // [可选] 额外的分组键
+        ?by: seq<#IColumnExpr>, 
         ?label: Label,
         ?includeBoundaries: bool,
         ?closedWindow: ClosedWindow,
         ?startBy: StartBy
     ) : LazyFrame =
-        
-        // 1. 准备参数
         let periodVal = defaultArg period every
         let offsetVal = defaultArg offset TimeSpan.Zero
         let labelVal = defaultArg label Label.Left
@@ -2580,29 +2384,22 @@ and LazyFrame(handle: LazyFrameHandle) =
         let closedWindowVal = defaultArg closedWindow ClosedWindow.Left
         let startByVal = defaultArg startBy StartBy.WindowBound
 
-        // 2. 转换 TimeSpan -> String
         let everyStr = DurationFormatter.ToPolarsString every
         let periodStr = DurationFormatter.ToPolarsString periodVal
         let offsetStr = DurationFormatter.ToPolarsString offsetVal
 
-        // 3. 处理 Group Keys (by) -> Expr Handle Array
-        // 支持 Expr, Selector, IColumnExpr
         let keyExprs = 
             match by with
             | Some cols -> cols |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
             | None -> []
         let keyHandles = keyExprs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
 
-        // 4. 处理 Aggregations (aggs) -> Expr Handle Array
-        // 同样支持混写
         let aggExprs = 
             aggs 
             |> Seq.collect (fun x -> x.ToExprs()) 
             |> Seq.toList
         let aggHandles = aggExprs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
 
-        // 5. 调用 Native Wrapper
-        // Wrapper 消耗 LF 所有权，所以我们 Clone 一个传入
         let lfHandle = this.CloneHandle()
 
         let newH = PolarsWrapper.LazyGroupByDynamic(
@@ -2639,20 +2436,16 @@ type SqlContext() =
         new LazyFrame(PolarsWrapper.SqlExecute(handle, query))
 
 type private TempSchema(schema: Map<string, DataType>) =
-    // 在构造时：创建所有 Handle 并放入 Dictionary
     let handles = 
         schema 
         |> Seq.map (fun kv -> 
-            // 这里创建了非托管资源
             kv.Key, kv.Value.CreateHandle()
         )
         |> dict
         |> fun d -> new Dictionary<string, DataTypeHandle>(d)
 
-    // 对外提供给 C# 调用的字典
     member this.Dictionary = handles
 
-    // 自动清理：释放所有创建的 Handle
     interface IDisposable with
         member _.Dispose() =
             for h in handles.Values do h.Dispose()

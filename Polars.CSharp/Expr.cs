@@ -1,4 +1,4 @@
-#pragma warning disable CS1591 // 缺少对公共可见类型或成员的 XML 注释
+#pragma warning disable CS1591
 using Apache.Arrow;
 using Polars.NET.Core;
 
@@ -17,41 +17,33 @@ public class Expr : IDisposable
     }
     internal static Expr MakeLit(object val)
     {
-        // 1. 如果传进来的已经是 Expr，直接返回（防止套娃）
         if (val is Expr e) return e;
 
-        // 2. 如果是 Selector，隐式转为 Expr
         if (val is Selector s) return s.ToExpr();
 
-        // 3. 根据运行时类型分发给具体的 Wrapper 方法
         return val switch
         {
-            // --- 整数 ---
+            // --- Integer ---
             int i => new Expr(PolarsWrapper.Lit(i)),
             long l => new Expr(PolarsWrapper.Lit(l)),
-            // short, byte 也可以转为 int 或 long 处理
             short sh => new Expr(PolarsWrapper.Lit(sh)),
             byte by => new Expr(PolarsWrapper.Lit(by)),
 
-            // --- 浮点 ---
+            // --- Float ---
             double d => new Expr(PolarsWrapper.Lit(d)),
             float f => new Expr(PolarsWrapper.Lit(f)),
-            // decimal 通常需要转 double，因为 Polars 内核没有 decimal128 的直接 Lit 入口(通常)
-            // 或者如果有 pl_lit_decimal 再改
-            // decimal dec => new Expr(PolarsWrapper.Lit((double)dec)), 
 
-            // --- 基础 ---
+            // --- String and Boolean ---
             string str => new Expr(PolarsWrapper.Lit(str)),
             bool b => new Expr(PolarsWrapper.Lit(b)),
             
-            // --- 时间 ---
-            // 假设 Wrapper 里有对应实现
+            // --- Time ---
             DateTime dt => new Expr(PolarsWrapper.Lit(dt)),
             
             // --- Null ---
             null => new Expr(PolarsWrapper.LitNull()),
 
-            // --- 报错 ---
+            // --- Exception ---
             _ => throw new NotSupportedException($"Unsupported literal type: {val.GetType().Name}")
         };
     }
@@ -350,7 +342,7 @@ public class Expr : IDisposable
     public static Expr operator ^(bool left, Expr right) 
         => new(PolarsWrapper.Xor(MakeLit(left).Handle, right.CloneHandle()));
     // ---------------------------------------------------
-    // 基础方法
+    // Methods
     // ---------------------------------------------------
 
     /// <summary>
@@ -362,7 +354,7 @@ public class Expr : IDisposable
         new(PolarsWrapper.Alias(Handle, name));
 
     // ==========================================
-    // Aggregation (聚合函数)
+    // Aggregation
     // ==========================================
 
     /// <summary>
@@ -427,7 +419,7 @@ public class Expr : IDisposable
     public Expr Ln(double baseVal = Math.E) => new(PolarsWrapper.Log(CloneHandle(), baseVal));
 
     // ==========================================
-    // Trigonometry (三角函数)
+    // Trigonometry
     // ==========================================
 
     /// <summary>Compute the element-wise sine.</summary>
@@ -512,10 +504,7 @@ public class Expr : IDisposable
     /// Note: This is different from FillNull. It only handles IEEE 754 NaN.
     /// </summary>
     public Expr FillNan(object value)
-    {
-        // 自动把 value 转为 Lit Expr
-        return new Expr(PolarsWrapper.FillNan(CloneHandle(), MakeLit(value).Handle));
-    }
+        => new(PolarsWrapper.FillNan(CloneHandle(), MakeLit(value).Handle));
     // ==========================================
     // Top-K & Bottom-K
     // ==========================================
@@ -654,17 +643,15 @@ public class Expr : IDisposable
     /// </summary>
     public Expr Over(params Expr[] partitionBy)
     {
-        // 1. 准备 Partition Handles (需要 Clone，因为 Wrapper 会接管所有权)
         var partitionHandles = System.Array.ConvertAll(partitionBy, e => e.CloneHandle());
 
-        // 2. 调用 Wrapper (注意：this.CloneHandle() 防止当前对象被消费)
         var h = PolarsWrapper.Over(CloneHandle(), partitionHandles);
         
         return new Expr(h);
     }
 
     /// <summary>
-    /// 语法糖: 允许直接传字符串列名
+    /// Window function: Apply aggregation over specific groups.
     /// Example: Col("Amt").Sum().Over("Group", "Date")
     /// </summary>
     public Expr Over(params string[] partitionBy)
@@ -946,36 +933,26 @@ public class Expr : IDisposable
     }
 
     /// <summary>
-    /// 判断当前 Expr 对象是否与另一个对象是同一个实例（基于底层指针地址）。
-    /// <para>注意：Polars 的 Expr 是不透明指针。即使逻辑相同的两个表达式（如 col("a") 和 col("a")），
-    /// 它们在底层也是不同的内存对象，因此 Equals 会返回 false。</para>
+    /// Decide whether two Expr objects are the same instance
     /// </summary>
     public override bool Equals(object? obj)
     {
-        // 1. 快速检查引用是否指向同一托管对象
         if (ReferenceEquals(this, obj)) return true;
 
-        // 2. 类型检查 (Pattern Matching)
         if (obj is not Expr other) return false;
 
-        // 3. 句柄有效性检查 (防止操作已释放的句柄)
         if (Handle.IsInvalid || other.Handle.IsInvalid) return false;
 
-        // 4. 严谨的底层指针比较
-        // 两个 Expr 即使逻辑相同，如果它们对应 Rust 侧不同的内存地址，也被视为不等。
-        // 这对于防止 Dictionary<Expr, T> 产生意外行为至关重要。
         return Handle.DangerousGetHandle() == other.Handle.DangerousGetHandle();
     }
 
     /// <summary>
-    /// 获取基于底层指针地址的哈希码。
+    /// Get hashcode based on handles
     /// </summary>
     public override int GetHashCode()
     {
-        // 如果句柄无效，返回 0 或抛出异常（这里选择返回 0 以保证稳定性）
         if (Handle.IsInvalid) return 0;
         
-        // 使用 IntPtr 自身的 GetHashCode，它是基于内存地址的
         return Handle.DangerousGetHandle().GetHashCode();
     }
 }
@@ -995,7 +972,6 @@ public class DtOps
         _expr = expr;
     }
 
-    // 辅助函数：自动 Clone 并调用 Wrapper
     private Expr Wrap(Func<ExprHandle, ExprHandle> op)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
@@ -1055,13 +1031,7 @@ public class DtOps
     /// <summary>
     /// Format the date/datetime as a string using the default format "%Y-%m-%dT%H:%M:%S%.f".
     /// </summary>
-    public override string ToString()
-    {
-        // 注意：这里重写的是 C# 对象的 ToString，不是生成 Expr。
-        // 如果你想生成 Expr，应该用 ToString(format)
-        return "DtOps"; 
-    }
-
+    public override string ToString() => "DtOps"; 
     /// <summary>
     /// Cast to Date (remove time component).
     /// </summary>
@@ -1074,7 +1044,7 @@ public class DtOps
     public Expr Time() => Wrap(PolarsWrapper.DtTime);
 
     // ==========================================
-    // Truncate & Round (时间对齐)
+    // Truncate & Round
     // ==========================================
 
     /// <summary>
@@ -1108,24 +1078,17 @@ public class DtOps
     public Expr Round(TimeSpan every)
         => Round(DurationFormatter.ToPolarsString(every));
     // ==========================================
-    // Offset (时间平移)
+    // Offset
     // ==========================================
 
     /// <summary>
     /// Offset the datetimes by a given duration expression.
     /// </summary>
-    public Expr OffsetBy(Expr by)
-    {
-        return new Expr(PolarsWrapper.DtOffsetBy(_expr.Handle, by.Handle));
-    }
-
+    public Expr OffsetBy(Expr by) => new(PolarsWrapper.DtOffsetBy(_expr.Handle, by.Handle));
     /// <summary>
     /// Offset the datetimes by a constant duration string (e.g., "1d", "-2h").
     /// </summary>
-    public Expr OffsetBy(string duration)
-    {
-        return OffsetBy(Polars.Lit(duration));
-    }
+    public Expr OffsetBy(string duration) => OffsetBy(Polars.Lit(duration));
     /// <summary>
     /// Offset the datetimes by TimeSpan
     /// </summary>
@@ -1138,7 +1101,7 @@ public class DtOps
     }
 
     // ==========================================
-    // Timestamp (转整数)
+    // Timestamp
     // ==========================================
 
     /// <summary>
@@ -1176,7 +1139,6 @@ public class DtOps
     // ==========================================
     // BusinessDays
     // ==========================================
-    // 默认工作日掩码：周一到周五为 True
     private static readonly bool[] DefaultWeekMask = [true, true, true, true, true, false, false];
 
     /// <summary>
@@ -1207,10 +1169,8 @@ public class DtOps
         bool[]? weekMask = null, 
         Roll roll = Roll.Raise)
     {
-        // 1. 处理 Mask
         var mask = weekMask ?? DefaultWeekMask;
         
-        // 2. 处理假期 (DateOnly -> Int32 Days since Epoch)
         int[] holidayInts;
         if (holidays == null)
         {
@@ -1218,14 +1178,13 @@ public class DtOps
         }
         else
         {
-            // Polars 使用 1970-01-01 作为 0
-            // DateOnly.DayNumber 是从 0001-01-01 开始的天数
-            // 1970-01-01 的 DayNumber 是 719162
+            // Polars using 1970-01-01 as 0
+            // DateOnly.DayNumber is days from 0001-01-01
+            // 1970-01-01 DayNumber is 719162
             const int EpochDayNumber = 719162;
             holidayInts = [.. holidays.Select(d => d.DayNumber - EpochDayNumber)];
         }
 
-        // 3. Clone handle for 'n' (consume semantics)
         var nHandle = PolarsWrapper.CloneExpr(n.Handle);
         var handle = PolarsWrapper.CloneExpr(_expr.Handle);
         
@@ -1549,23 +1508,18 @@ public class ListOps
     /// <param name="others">Other list expressions to append.</param>
     public Expr Concat(params Expr[] others)
     {
-        // 构造参数列表: [this, other1, other2, ...]
         var allExprs = new ExprHandle[others.Length + 1];
         
-        // 1. Clone this
         allExprs[0] = PolarsWrapper.CloneExpr(_expr.Handle);
         
-        // 2. Clone others
         for (int i = 0; i < others.Length; i++)
         {
             allExprs[i + 1] = PolarsWrapper.CloneExpr(others[i].Handle);
         }
 
-        // 3. 调用 Wrapper
         return new Expr(PolarsWrapper.ConcatList(allExprs));
     }
     
-    // 显式重载以支持单个 Expr，避免 params 数组分配的开销（可选）
     public Expr Concat(Expr other)
     {
         return Concat([other]);
@@ -1714,7 +1668,7 @@ public class NameOps
     public Expr Prefix(string prefix)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
-        return new(PolarsWrapper.Prefix(h, prefix)); // Wrapper 需确认签名 
+        return new(PolarsWrapper.Prefix(h, prefix)); 
     }
 
     /// <summary>
@@ -1725,6 +1679,6 @@ public class NameOps
     public Expr Suffix(string suffix) 
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
-        return new(PolarsWrapper.Suffix(h, suffix)); // Wrapper 需确认签名 
+        return new(PolarsWrapper.Suffix(h, suffix)); 
     }
 }

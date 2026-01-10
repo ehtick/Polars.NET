@@ -32,25 +32,21 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     {
         get
         {
-            // [重构] 遍历列构建 Schema，确保类型安全且无需解析字符串
-            
             int width = (int)PolarsWrapper.DataFrameWidth(Handle);
             var schema = new Dictionary<string, DataType>(width);
 
             for (int i = 0; i < width; i++)
             {
-                // 1. 获取第 i 列的 SeriesHandle (这是 Rust 端 Clone 出来的新 Handle，需要释放)
+                // Get Series
                 using var seriesHandle = PolarsWrapper.DataFrameGetColumnAt(Handle, i);
                 
-                // 2. 获取列名 (Wrapper 需封装 pl_series_name)
-                // 假设 PolarsWrapper.GetSeriesName(SeriesHandle) 存在
+                // Get Column Name
                 string name = PolarsWrapper.SeriesName(seriesHandle);
 
-                // 3. 获取 DataType (直接拿 Handle)
+                // Get DataType
                 var dtHandle = PolarsWrapper.GetSeriesDataType(seriesHandle);
                 
-                // 4. 构造 DataType 对象并加入字典
-                // 注意：DataType 对象会接管 dtHandle 的生命周期
+                // 4. Build DataType object
                 schema[name] = new DataType(dtHandle);
             }
 
@@ -63,12 +59,11 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public void PrintSchema()
     {
-        var schema = Schema; // 获取刚刚实现的 Dictionary
+        var schema = Schema; 
         
         Console.WriteLine("root");
         foreach (var kvp in schema)
         {
-            // 格式模仿 Spark:  |-- name: type
             Console.WriteLine($" |-- {kvp.Key}: {kvp.Value}");
         }
     }
@@ -91,9 +86,8 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool hasHeader = true, 
         char separator = ',',
         ulong skipRows = 0,
-        bool tryParseDates = true) // [新增参数]
+        bool tryParseDates = true) 
     {
-        // 将 C# 的 DataType 转换为底层的 DataTypeHandle
         var schemaHandles = schema?.ToDictionary(
             kv => kv.Key, 
             kv => kv.Value.Handle
@@ -105,7 +99,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             hasHeader, 
             separator, 
             skipRows,
-            tryParseDates // 传递给 Wrapper
+            tryParseDates
         );
 
         return new DataFrame(handle);
@@ -137,7 +131,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <returns></returns>
     public static DataFrame ReadIpc(string path)
     {
-        //
         return new DataFrame(PolarsWrapper.ReadIpc(path));
     }
 
@@ -146,7 +139,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public static DataFrame FromArrow(RecordBatch batch)
     {
-        // 调用 Core 层的 Bridge
         var handle = ArrowFfiBridge.ImportDataFrame(batch);
         return new DataFrame(handle);
     }
@@ -156,7 +148,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <returns></returns>
     public RecordBatch ToArrow()
     {
-        //
         return ArrowFfiBridge.ExportDataFrame(Handle);
     }
     /// <summary>
@@ -168,7 +159,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool hasHeader = true,
         char separator = ',',
         ulong skipRows = 0,
-        bool tryParseDates = true) // [新增参数]
+        bool tryParseDates = true) 
     {
         var schemaHandles = schema?.ToDictionary(
             kv => kv.Key, 
@@ -181,7 +172,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             hasHeader, 
             separator, 
             skipRows,
-            tryParseDates // 传递给 Wrapper
+            tryParseDates 
         );
 
         return new DataFrame(handle);
@@ -203,18 +194,15 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="batchSize">Number of rows per Arrow batch.</param>
     public static DataFrame ReadDatabase(IDataReader reader, int batchSize = 50_000)
     {
-        // 1. 显式获取 Schema (为了传给 Exporter)
-        // 复用了你的"邪修"逻辑，支持嵌套类型推断
-        var schema = reader.GetArrowSchema();
+        // Get Schema 
+         var schema = reader.GetArrowSchema();
 
-        // 2. 获取流
-        // 复用了 Buffer Pool + ArrowConverter
+        // Get ArrowStream
         var batchEnumerable = reader.ToArrowBatches(batchSize);
         
-        // 3. 获取枚举器 (准备移交控制权)
+        // Get Enumberator
         var enumerator = batchEnumerable.GetEnumerator();
 
-        // 4. 调用互操作层
         try 
         {
             var handle = ArrowStreamInterop.ImportEager(enumerator, schema);
@@ -222,7 +210,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         }
         catch
         {
-            // 如果出错，记得清理 enumerator
             enumerator.Dispose();
             throw;
         }
@@ -261,11 +248,8 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public T? GetValue<T>(long rowIndex, string colName)
     {
-        // 1. 获取 Series (假设已有索引器 this[string column])
-        // 注意：这里不要用 using，因为 Series 的所有权属于 DataFrame，不能 Dispose
         var series = this[colName];
         
-        // 2. 委托给 Series.GetValue<T>
         return series.GetValue<T>(rowIndex);
     }
     /// <summary>
@@ -274,11 +258,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public T? GetValue<T>(string colName,long rowIndex)
     {
-        // 1. 获取 Series (假设已有索引器 this[string column])
-        // 注意：这里不要用 using，因为 Series 的所有权属于 DataFrame，不能 Dispose
         var series = this[colName];
-        
-        // 2. 委托给 Series.GetValue<T>
         return series.GetValue<T>(rowIndex);
     }
 
@@ -293,7 +273,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         get
         {
             var series = this[colName];
-            return series[rowIndex]; // 委托给 Series 的 object 索引器
+            return series[rowIndex];
         }
     }
     
@@ -308,7 +288,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         get
         {
             var series = this[colName];
-            return series[rowIndex]; // 委托给 Series 的 object 索引器
+            return series[rowIndex]; 
         }
     }
     // ==========================================
@@ -321,9 +301,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <returns></returns>
     public DataFrame Select(params Expr[] exprs)
     {
-        // 必须 Clone Handle，因为 Wrapper 会消耗它们
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
-        
         return new DataFrame(PolarsWrapper.Select(Handle, handles));
     }
     /// <summary>
@@ -428,7 +406,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool nullsLast = false, 
         bool maintainOrder = false)
     {
-        // 构造长度为 1 的数组，利用 Rust/Wrapper 的广播机制
         return Sort(
             exprs, 
             [descending], 
@@ -446,14 +423,12 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool[] nullsLast, 
         bool maintainOrder = false)
     {
-        // 1. Clone Exprs (为了不消耗用户手中的对象)
         var clonedHandles = new ExprHandle[exprs.Length];
         for (int i = 0; i < exprs.Length; i++)
         {
             clonedHandles[i] = PolarsWrapper.CloneExpr(exprs[i].Handle);
         }
 
-        // 2. 调用 Wrapper
         var h = PolarsWrapper.DataFrameSort(
             Handle, 
             clonedHandles, 
@@ -472,85 +447,45 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// Get the top k rows according to the given expressions.
     /// <para>This selects the largest values.</para>
     /// </summary>
-    public DataFrame TopK(int k, Expr[] by, bool[] reverse)
-    {
-        // 核心逻辑：Lazy -> TopK -> Collect
-        // 注意：Collect() 会执行计算并返回新的 DataFrame
-        return Lazy()
-            .TopK(k, by, reverse)
-            .Collect();
-    }
+    public DataFrame TopK(int k, Expr[] by, bool[] reverse) => Lazy().TopK(k, by, reverse) .Collect();
 
     /// <summary>
     /// Get the top k rows according to a single expression.
     /// </summary>
-    public DataFrame TopK(int k, Expr by, bool reverse = false)
-    {
-        return Lazy()
-            .TopK(k, by, reverse)
-            .Collect();
-    }
+    public DataFrame TopK(int k, Expr by, bool reverse = false) => Lazy().TopK(k, by, reverse).Collect();
 
     /// <summary>
     /// Get the top k rows according to a column name.
     /// </summary>
-    public DataFrame TopK(int k, string colName, bool reverse = false)
-    {
-        return Lazy()
-            .TopK(k, colName, reverse)
-            .Collect();
-    }
+    public DataFrame TopK(int k, string colName, bool reverse = false) => Lazy().TopK(k, colName, reverse).Collect();
 
     /// <summary>
     /// Get the bottom k rows according to the given expressions.
     /// <para>This selects the smallest values.</para>
     /// </summary>
-    public DataFrame BottomK(int k, Expr[] by, bool[] reverse)
-    {
-        return Lazy()
-            .BottomK(k, by, reverse)
-            .Collect();
-    }
+    public DataFrame BottomK(int k, Expr[] by, bool[] reverse) => Lazy().BottomK(k, by, reverse).Collect();
 
     /// <summary>
     /// Get the bottom k rows according to a single expression.
     /// </summary>
-    public DataFrame BottomK(int k, Expr by, bool reverse = false)
-    {
-        return Lazy()
-            .BottomK(k, by, reverse)
-            .Collect();
-    }
+    public DataFrame BottomK(int k, Expr by, bool reverse = false) => Lazy().BottomK(k, by, reverse).Collect();
 
     /// <summary>
     /// Get the bottom k rows according to a column name.
     /// </summary>
-    public DataFrame BottomK(int k, string colName, bool reverse = false)
-    {
-        return Lazy()
-            .BottomK(k, colName, reverse)
-            .Collect();
-    }
+    public DataFrame BottomK(int k, string colName, bool reverse = false) => Lazy().BottomK(k, colName, reverse).Collect();
     /// <summary>
     /// Return head lines from a DataFrame
     /// </summary>
     /// <param name="n"></param>
     /// <returns></returns>
-    public DataFrame Head(int n = 5)
-    {
-        //
-        return new DataFrame(PolarsWrapper.Head(Handle, (uint)n));
-    }
+    public DataFrame Head(int n = 5) => new(PolarsWrapper.Head(Handle, (uint)n));
     /// <summary>
     /// Return tail lines from a DataFrame
     /// </summary>
     /// <param name="n"></param>
     /// <returns></returns>
-    public DataFrame Tail(int n = 5)
-    {
-        //
-        return new DataFrame(PolarsWrapper.Tail(Handle, (uint)n));
-    }
+    public DataFrame Tail(int n = 5) => new(PolarsWrapper.Tail(Handle, (uint)n));
     /// <summary>
     /// Explode a list or structure in a Column
     /// </summary>
@@ -559,7 +494,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     public DataFrame Explode(params Expr[] exprs)
     {
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
-        //
         return new DataFrame(PolarsWrapper.Explode(Handle, handles));
     }
     /// <summary>
@@ -578,31 +512,18 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <summary>
     /// Drop a column by name.
     /// </summary>
-    public DataFrame Drop(string columnName)
-    {
-        // Wrapper: Drop(df, name)
-        // 注意：Polars 操作通常返回新 DataFrame，原 DataFrame 可能会被消耗（取决于 Rust 实现）。
-        // 如果 Rust 的 pl_dataframe_drop 是消耗性的 (Move)，我们这里应该 new DataFrame(handle)。
-        return new DataFrame(PolarsWrapper.Drop(Handle, columnName));
-    }
+    public DataFrame Drop(string columnName) => new(PolarsWrapper.Drop(Handle, columnName));
 
     /// <summary>
     /// Rename a column.
     /// </summary>
-    public DataFrame Rename(string oldName, string newName)
-    {
-        return new DataFrame(PolarsWrapper.Rename(Handle, oldName, newName));
-    }
+    public DataFrame Rename(string oldName, string newName) => new(PolarsWrapper.Rename(Handle, oldName, newName));
 
     /// <summary>
     /// Drop rows containing null values.
     /// </summary>
     /// <param name="subset">Column names to consider. If null/empty, checks all columns.</param>
-    public DataFrame DropNulls(params string[]? subset)
-    {
-        // Wrapper 处理了 subset 为 null 的情况
-        return new DataFrame(PolarsWrapper.DropNulls(Handle, subset));
-    }
+    public DataFrame DropNulls(params string[]? subset) => new(PolarsWrapper.DropNulls(Handle, subset));
 
     // ==========================================
     // Sampling
@@ -612,17 +533,14 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// Sample n rows from the DataFrame.
     /// </summary>
     public DataFrame Sample(ulong n, bool withReplacement = false, bool shuffle = true, ulong? seed = null)
-    {
-        return new DataFrame(PolarsWrapper.SampleN(Handle, n, withReplacement, shuffle, seed));
-    }
+        => new(PolarsWrapper.SampleN(Handle, n, withReplacement, shuffle, seed));
 
     /// <summary>
     /// Sample a fraction of rows from the DataFrame.
     /// </summary>
     public DataFrame Sample(double fraction, bool withReplacement = false, bool shuffle = true, ulong? seed = null)
-    {
-        return new DataFrame(PolarsWrapper.SampleFrac(Handle, fraction, withReplacement, shuffle, seed));
-    }
+        => new(PolarsWrapper.SampleFrac(Handle, fraction, withReplacement, shuffle, seed));
+
     // ==========================================
     // Combining DataFrames
     // ==========================================
@@ -662,9 +580,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// Join with another DataFrame using a single column pair.
     /// </summary>
     public DataFrame Join(DataFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
-    {
-        return Join(other, [leftOn], [rightOn], how);
-    }
+        => Join(other, [leftOn], [rightOn], how);
     /// <summary>
     /// Perform an As-Of Join (time-series join).
     /// <para>
@@ -680,8 +596,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         Expr[]? leftBy = null,
         Expr[]? rightBy = null)
     {
-        // 核心逻辑: Eager(this/other) -> Lazy -> JoinAsOf -> Collect -> Eager
-        // 注意：我们必须把 'other' 也转成 LazyFrame
         return this.Lazy()
             .JoinAsOf(
                 other.Lazy(), 
@@ -706,7 +620,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         Expr[]? leftBy = null,
         Expr[]? rightBy = null)
     {
-        // 转发给字符串版本的 JoinAsOf
         return JoinAsOf(
             other,
             leftOn,
@@ -738,10 +651,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     /// <param name="by"></param>
     /// <returns></returns>
-    public GroupByBuilder GroupBy(params Expr[] by)
-    {
-        return new GroupByBuilder(this, by);
-    }
+    public GroupByBuilder GroupBy(params Expr[] by) => new (this, by);
     /// <summary>
     /// Group by column names.
     /// </summary>
@@ -794,9 +704,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="agg"></param>
     /// <returns></returns>
     public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg agg = PivotAgg.First)
-    {
-        return new DataFrame(PolarsWrapper.Pivot(Handle, index, columns, values, agg.ToNative()));
-    }
+        => new(PolarsWrapper.Pivot(Handle, index, columns, values, agg.ToNative()));
     /// <summary>
     /// Unpivot (Melt) the DataFrame from wide to long format.
     /// </summary>
@@ -806,9 +714,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="valueName"></param>
     /// <returns></returns>
     public DataFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
-    {
-        return new DataFrame(PolarsWrapper.Unpivot(Handle, index, on, variableName, valueName));
-    }
+        => new(PolarsWrapper.Unpivot(Handle, index, on, variableName, valueName));
     /// <summary>
     /// Unpivot (Melt) the DataFrame from wide to long format.
     /// </summary>
@@ -828,47 +734,33 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     /// <param name="path"></param>
     public void WriteCsv(string path)
-    {
-        PolarsWrapper.WriteCsv(Handle, path);
-    }
+        => PolarsWrapper.WriteCsv(Handle, path);
     /// <summary>
     /// Write DataFrame to Parquet File
     /// </summary>
     /// <param name="path"></param>
     public void WriteParquet(string path)
-    {
-        PolarsWrapper.WriteParquet(Handle, path);
-    }
+        => PolarsWrapper.WriteParquet(Handle, path);
     /// <summary>
     /// Write DataFrame to IPC File    
     /// </summary>
     /// <param name="path"></param>
     public void WriteIpc(string path)
-    {
-        PolarsWrapper.WriteIpc(Handle, path);
-    }
+        => PolarsWrapper.WriteIpc(Handle, path);
     /// <summary>
     /// Write DataFrame to JSON File
     /// </summary>
     /// <param name="path"></param>
     public void WriteJson(string path)
-    {
-        PolarsWrapper.WriteJson(Handle, path);
-    }
+        => PolarsWrapper.WriteJson(Handle, path);
     /// <summary>
-    /// 将 DataFrame 的数据按 Batch 导出（零拷贝）。
-    /// 这是实现自定义 Eager Sink (如 WriteDatabase) 的基础。
+    /// Export DataFrame to Record Batch
     /// </summary>
-    /// <param name="onBatchReceived">接收 RecordBatch 的回调</param>
+    /// <param name="onBatchReceived">Receive RecordBatch Callback</param>
     public void ExportBatches(Action<RecordBatch> onBatchReceived)
-    {
-        // 调用 Wrapper，传递 Handle (DataFrameHandle)
-        // 注意：这是只读操作，不需要 TransferOwnership
-        PolarsWrapper.ExportBatches(Handle, onBatchReceived);
-    }
+        => PolarsWrapper.ExportBatches(Handle, onBatchReceived);
     /// <summary>
-    /// 通用写入接口：将 DataFrame 转换为 IDataReader 并交给 writerAction 处理。
-    /// 用户可以在 writerAction 里使用 SqlBulkCopy, NpgsqlBinaryImporter 等任意工具。
+    /// Common Write Interface:Transform DataFrame to IDataReader
     /// </summary>
     public void WriteTo( Action<IDataReader> writerAction, int bufferSize = 5,Dictionary<string, Type>? typeOverrides = null)
     {
@@ -877,11 +769,8 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         // Consumer Task
         var consumerTask = Task.Run(() => 
         {
-            // 这里创建了 ArrowToDbStream，它是 IDataReader 的实现
             using var reader = new ArrowToDbStream(buffer.GetConsumingEnumerable(),typeOverrides = null);
             
-            // [关键] 将 reader 交给用户的回调函数
-            // 用户在这里执行 bulk.WriteToServer(reader)
             writerAction(reader);
         });
 
@@ -903,7 +792,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public DataFrame Describe()
     {
-        // 1. 筛选数值列
+        // 1. Select Numeric Column
         var schema = Schema;
         var numericCols = schema
             .Where(kv => kv.Value.IsNumeric)
@@ -913,8 +802,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         if (numericCols.Count == 0)
             throw new InvalidOperationException("No numeric columns to describe.");
 
-        // 2. 定义统计指标
-        // 每个指标是一个 Tuple: (Name, Func<colName, Expr>)
+        // 2. Define stastistical metrics
         var metrics = new List<(string Name, Func<string, Expr> Op)>
         {
             ("count",      c => Polars.Col(c).Count().Cast(DataType.Float64)),
@@ -928,14 +816,12 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             ("max",        c => Polars.Col(c).Max().Cast(DataType.Float64))
         };
 
-        // 3. 计算每一行 (Row Frames)
         var rowFrames = new List<DataFrame>();
         
         try
         {
             foreach (var (statName, op) in metrics)
             {
-                // 构建 Select 表达式列表: [ Lit(statName).Alias("statistic"), op(col1), op(col2)... ]
                 var exprs = new List<Expr>
                 {
                     Polars.Lit(statName).Alias("statistic")
@@ -946,18 +832,13 @@ public class DataFrame : IDisposable,IEnumerable<Series>
                     exprs.Add(op(col));
                 }
 
-                // 执行 Select -> 得到 1 行 N 列的 DataFrame
-                // 注意：Select 返回新 DF，我们需要收集起来
                 rowFrames.Add(Select(exprs.ToArray()));
             }
 
-            // 4. 垂直拼接
-            // 需要 Wrapper 支持 Concat(DataFrameHandle[])
             return Concat(rowFrames);
         }
         finally
         {
-            // 清理中间产生的临时 DataFrames
             foreach (var frame in rowFrames)
             {
                 frame.Dispose();
@@ -974,18 +855,13 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     public override string ToString()
     {
         if (Handle.IsInvalid) return "DataFrame (Disposed)";
-        
-        // 调用 Rust 获取漂亮的表格
         return PolarsWrapper.DataFrameToString(Handle);
     }
 
     /// <summary>
     /// Print the DataFrame to Console.
     /// </summary>
-    public void Show()
-    {
-        Console.WriteLine(ToString());
-    }
+    public void Show() => Console.WriteLine(ToString());
     // ==========================================
     // Interop
     // ==========================================
@@ -995,16 +871,11 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     /// <returns></returns>
     public DataFrame Clone()
-    {
-        return new DataFrame(PolarsWrapper.CloneDataFrame(Handle));
-    }
+        => new(PolarsWrapper.CloneDataFrame(Handle));
     /// <summary>
     /// Dispose the DataFrame and release resources.
     /// </summary>
-    public void Dispose()
-    {
-        Handle?.Dispose();
-    }
+    public void Dispose() => Handle?.Dispose();
     // ==========================================
     // Object Mapping (From Records)
     // ==========================================
@@ -1015,14 +886,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public static DataFrame From<T>(IEnumerable<T> data)
     {
-        // 1. 利用我们强大的 ArrowConverter 将对象列表转为 Struct Series
-        // 这是一次性遍历，性能最高，且支持嵌套类型
         using var structSeries = Series.From("data", data);
         
-        // 2. 将 Series 包装为 DataFrame
         using var tmpDf = new DataFrame(structSeries);
         
-        // 3. 调用 Polars 的 Unnest 将 Struct 字段炸开为独立列
         return tmpDf.Unnest("data");
     }
     /// <summary>
@@ -1037,19 +904,14 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </example>
     public static DataFrame FromColumns(object columns)
     {
-        // 1. 调用 Core 层进行反射和转换
-        // 返回的是 List<(string Name, IArrowArray Array)>
         var rawColumns = ArrowConverter.BuildColumnsFromObject(columns);
 
-        // 2. 将 Arrow Arrays 包装为 Series
-        // 这一步必须在 API 层做，因为 Series 是 API 层的类
         var seriesList = new List<Series>(rawColumns.Count);
         foreach (var (name, array) in rawColumns)
         {
             seriesList.Add(Series.FromArrow(name, array));
         }
 
-        // 3. 组装 DataFrame
         return new DataFrame(seriesList.ToArray());
     }
     /// <summary>
@@ -1063,9 +925,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             return;
         }
 
-        // 提取 Handles
-        // 注意：NativeBindings.pl_dataframe_new 通常会 Clone 这些 Series，
-        // 所以 C# 端的 Series 对象依然拥有原本 Handle 的所有权，用户可以在外面继续使用 series[i]。
         var handles = series.Select(s => s.Handle).ToArray();
         
         Handle = PolarsWrapper.DataFrameNew(handles);
@@ -1078,17 +937,12 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="batchSize">Rows per chunk (default 100,000)</param>
     public static DataFrame FromArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000)
     {
-        // 1. 转为 Arrow 流
         var stream = data.ToArrowBatches(batchSize);
 
-        // 2. 尝试 Eager 导入 (Core 层自动处理探测和缝合)
         var handle = ArrowStreamInterop.ImportEager(stream);
 
-        // 3. 处理空流情况
-        // 如果 handle 无效，说明流里没有数据，ArrowStreamInterop 没法推断 Schema
         if (handle.IsInvalid)
         {
-            // 回退到反射机制生成空 DataFrame (因为我们需要 T 的结构)
             return From(Enumerable.Empty<T>());
         }
 
@@ -1105,11 +959,8 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public IEnumerable<T> Rows<T>() where T : new()
     {
-        // 1. 转为 Arrow RecordBatch (这是 Polars.CSharp 这一层特有的能力)
-        // ToArrow() 方法本身应该已经在 DataFrame 类里实现了
         using var batch = ToArrow(); 
 
-        // 2. 委托给 Core 层去解析
         foreach (var item in ArrowReader.ReadRecordBatch<T>(batch))
         {
             yield return item;
@@ -1126,10 +977,8 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public LazyFrame Lazy()
     {
-        // 1. 先克隆 DataFrame Handle。
         var clonedHandle = PolarsWrapper.CloneDataFrame(Handle);
         
-        // 2. 转换为 LazyFrame
         var lfHandle = PolarsWrapper.DataFrameToLazy(clonedHandle);
         
         return new LazyFrame(lfHandle);
@@ -1143,10 +992,8 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public Series Column(string name)
     {
-        // 调用 Wrapper 获取 SeriesHandle (Rust 侧通常是 Clone Arc，引用计数+1)
         var sHandle = PolarsWrapper.DataFrameGetColumn(Handle, name);
         
-        // 返回新的 Series 对象，它接管 Handle 的生命周期
         return new Series(name, sHandle);
     }
 
@@ -1165,8 +1012,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public Series Column(int index)
     {
-        // 直接调用 Wrapper
-        // 错误检查已经在 Wrapper 里做过了 (抛 IndexOutOfRangeException)
         var h = PolarsWrapper.DataFrameGetColumnAt(Handle, index);
         return new Series(h);
     }
@@ -1176,7 +1021,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public Series[] GetColumns()
     {
-        // 用底层的按索引获取列名 (有序)
         var names = PolarsWrapper.GetColumnNames(Handle);
         
         var cols = new Series[names.Length];
@@ -1207,8 +1051,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         }
     }
     /// <summary>
-    /// 获取指定行的数据，返回对象数组。
-    /// 类似于 DataTable.Rows[i].ItemArray
+    /// Get data foir selected row.
     /// </summary>
     public object?[] Row(int index)
     {
@@ -1218,7 +1061,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         var rowData = new object?[Width];
         for (int i = 0; i < Width; i++)
         {
-            // 复用之前实现的 this[row, col] 索引器
             rowData[i] = this[index, i];
         }
         return rowData;
@@ -1245,7 +1087,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     {
         var sb = new StringBuilder();
         
-        // 1. 基础样式 (仿 Polars/Pandas 风格)
+        // Basic Style
         sb.Append(@"
 <style>
 .pl-dataframe { font-family: sans-serif; border-collapse: collapse; width: auto; }
@@ -1259,30 +1101,27 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
         sb.Append("<table class='pl-dataframe'>");
 
-        // 2. 表头 (Name + Type)
+        // Table Header
         sb.Append("<thead><tr>");
         
-        // 既然我们要遍历列，这里顺便把列类型也取出来
-        // 我们可以利用 Schema 或者直接取 Series 的 dtype
         for (int i = 0; i < Width; i++)
         {
             var col = Column(i);
-            // HTML Encode 防止列名里有 <script> 等坏东西
             var colName = System.Net.WebUtility.HtmlEncode(col.Name);
-            var colType = col.DataType.ToString(); // 或者更短的 string 
+            var colType = col.DataType.ToString();
             
             sb.Append($"<th>{colName}<span class='pl-dtype'>{colType}</span></th>");
         }
         sb.Append("</tr></thead>");
 
-        // 3. 数据体 (Body)
+        // Body
         sb.Append("<tbody>");
         
         int rowsToShow = (int)Math.Min(Height, limit);
         for (int r = 0; r < rowsToShow; r++)
         {
             sb.Append("<tr>");
-            var rowData = Row(r); // 利用刚才实现的 Row() 方法
+            var rowData = Row(r);
             
             foreach (var val in rowData)
             {
@@ -1292,16 +1131,13 @@ public class DataFrame : IDisposable,IEnumerable<Series>
                 }
                 else
                 {
-                    // 针对不同类型做一点简单的格式化
                     string cellStr = val switch
                     {
                         DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss"),
-                        // 还可以针对 float 做精度截断
                         double d => d.ToString("G6"), 
                         _ => val.ToString() ?? ""
                     };
                     
-                    // 截断过长的字符串
                     if (cellStr.Length > 50) cellStr = cellStr[..47] + "...";
                     
                     sb.Append($"<td>{System.Net.WebUtility.HtmlEncode(cellStr)}</td>");
@@ -1312,7 +1148,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         sb.Append("</tbody>");
         sb.Append("</table>");
 
-        // 4. 底部信息 (Shape)
+        // Shape
         var hiddenRows = Height - rowsToShow;
         if (hiddenRows > 0)
         {

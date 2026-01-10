@@ -7,7 +7,6 @@ type TimeUnit =
     | Microseconds
     | Milliseconds
 
-// 定义字段 (用于 Struct)
 type Field = { Name: string; DataType: DataType }
 
 /// <summary>
@@ -42,7 +41,7 @@ and DataType =
         | Float64 -> 11
         | String -> 12
         | Date -> 13
-        | Datetime _ -> 14 // Selector 通常只看大类
+        | Datetime _ -> 14 
         | Time -> 15
         | Duration _ -> 16
         | Binary -> 17
@@ -52,12 +51,9 @@ and DataType =
         | Categorical -> 21
         | Decimal _ -> 22
         | Array _ -> 23
-    // 转换 helper
     static member FromHandle (handle: DataTypeHandle) : DataType =
-        // 1. 获取类型枚举值 (Kind)
         let kind = PolarsWrapper.GetDataTypeKind handle
 
-        // 2. 匹配 Kind (假设 Rust 端的枚举顺序如下，请根据实际情况校对)
         match kind with
         | 1 -> Boolean
         | 2 -> Int8
@@ -70,10 +66,10 @@ and DataType =
         | 9 -> UInt64
         | 10 -> Float32
         | 11 -> Float64
-        | 12 -> String // Utf8
+        | 12 -> String 
         | 13 -> Date
         
-        // --- 复杂类型处理 ---
+        // --- Complex Type ---
         
         // Datetime
         | 14 -> 
@@ -102,9 +98,9 @@ and DataType =
             Duration unit
 
         | 17 -> Binary
-        | 18 -> Null // 同时也用于 List<Null>
+        | 18 -> Null
         
-        // Struct (递归)
+        // Struct
         | 19 -> 
             let len = PolarsWrapper.GetStructLen handle
             let fields = 
@@ -112,19 +108,15 @@ and DataType =
                     let mutable name = Unchecked.defaultof<string>
                     let mutable fieldHandle = Unchecked.defaultof<DataTypeHandle>
                     
-                    // 调用 C# Wrapper (out 参数在 F# 中用 & 引用)
                     PolarsWrapper.GetStructField(handle, i, &name, &fieldHandle)
-                    
-                    // [关键] 必须 Dispose 临时 Handle
-                    // 使用 use 确保它在当前迭代结束时释放
+
                     use h = fieldHandle 
                     yield { Name = name; DataType = DataType.FromHandle h }
                 ]
             Struct fields
 
-        // List (递归)
+        // List
         | 20 -> 
-            // 获取内部类型的 Handle
             use innerHandle = PolarsWrapper.GetInnerType handle
             let innerType = DataType.FromHandle innerHandle
             List innerType
@@ -160,7 +152,6 @@ and DataType =
     /// </summary>
     member internal this.CreateHandle() : DataTypeHandle =
         
-        // 辅助：将 TimeUnit 转为 int code (0=ns, 1=us, 2=ms)
         let toUnitCode tu = 
             match tu with 
             | Nanoseconds -> 0 
@@ -186,53 +177,44 @@ and DataType =
         | Date -> PolarsWrapper.NewPrimitiveType 13
         | Time -> PolarsWrapper.NewPrimitiveType 15
         
-        // --- 复杂类型 ---
+        // --- Complex Type ---
 
-        // [升级] Datetime: 传递单位和时区
+        // Datetime: Unit and Timezone
         | Datetime(unit, tz) ->
             let code = toUnitCode unit
             let tzStr = Option.toObj tz // None -> null
             PolarsWrapper.NewDateTimeType(code, tzStr)
 
-        // [升级] Duration: 传递单位
+        // Duration
         | Duration unit ->
             let code = toUnitCode unit
             PolarsWrapper.NewDurationType code
 
-        // [升级] Categorical
+        // Categorical
         | Categorical -> 
             PolarsWrapper.NewCategoricalType()
 
-        // [升级] Decimal: 传递精度 (p, s)
+        // Decimal: precision (p, s)
         | Decimal(p, s) ->
-            // Rust 端通常用 0 或特定的值表示 None，这里假设 0 为自动/默认
             let prec = defaultArg p 0
             let scale = defaultArg s 0 
             PolarsWrapper.NewDecimalType(prec, scale)
 
-        // [升级] List: 递归创建
+        // List:
         | List innerType ->
-            // 1. 递归创建内部类型的 Handle
-            // 使用 use 确保这个临时 Handle 在传给 NewListType 后被释放
             use innerHandle = innerType.CreateHandle()
             
-            // 2. 传递给 Wrapper (Rust 会 Clone 这个类型定义)
             PolarsWrapper.NewListType innerHandle
 
-        // [升级] Struct: 递归创建字段
+        // Struct
         | Struct fields ->
             let names = fields |> List.map (fun f -> f.Name) |> List.toArray
-            
-            // 1. 递归创建所有字段类型的 Handle
+
             let typeHandles = fields |> List.map (fun f -> f.DataType.CreateHandle()) |> List.toArray
             
             try
-                // 2. 传递给 Wrapper
                 PolarsWrapper.NewStructType(names, typeHandles)
             finally
-                // 3. [关键] 清理所有临时的子 Handle
-                // 因为 NewStructType 内部将这些类型转成了 C 数组传给 Rust
-                // Rust 那边复制完数据后，这边的 Handle 就没用了
                 for h in typeHandles do h.Dispose()
 
         | Array(innerType,width) ->
@@ -251,8 +233,6 @@ type JoinType =
     | Cross
     | Semi
     | Anti
-    
-    // 内部转换 helper
     member internal this.ToNative() =
         match this with
         | Inner -> PlJoinType.Inner

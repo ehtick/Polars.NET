@@ -28,14 +28,13 @@ module Series =
     let gtEq (other: Series) (s: Series) = s .>= other
     let ltEq (other: Series) (s: Series) = s .<= other
 
-    // 支持标量广播
     let addLit (value: 'T) (s: Series) = s + Series.ofSeq("lit", [value])
     let subLit (value: 'T) (s: Series) = s - Series.ofSeq("lit", [value])
     let subLitFrom (value: 'T) (s: Series) = Series.ofSeq("lit", [value]) - s
     let mulLit (value: 'T) (s: Series) = s * Series.ofSeq("lit", [value])
     let divLit (value: 'T) (s: Series) = s / Series.ofSeq("lit", [value])
     let divLitFrom (value: 'T) (s: Series) = Series.ofSeq("lit", [value]) / s
-    // Comparison (用于 Filter / Mask)
+    // Comparison 
     let eqLit (value: 'T) (s: Series) = s .= Series.ofSeq("lit", [value])
     let neqLit (value: 'T) (s: Series) = s != Series.ofSeq("lit", [value])
     let gtLit (value: 'T) (s: Series) = s .> Series.ofSeq("lit", [value])

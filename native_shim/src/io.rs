@@ -11,7 +11,7 @@ use crate::types::{DataFrameContext, LazyFrameContext, SchemaContext};
 use crate::utils::ptr_to_str;
 
 // ==========================================
-// 读取 csv
+// Read csv
 // ==========================================
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_read_csv(
@@ -25,30 +25,26 @@ pub extern "C" fn pl_read_csv(
     ffi_try!({
         let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
         
-        // 1. 构建 ParseOptions (处理分隔符和日期解析)
-        // 使用 builder 方法链式调用
+        // Build ParseOptions
         let parse_options = CsvParseOptions::default()
             .with_separator(separator)
             .with_try_parse_dates(try_parse_dates);
         
-        // 2. 处理 Schema Overrides
-        // 处理 Schema: 如果指针为空，则为 None；否则 clone 出 SchemaRef
+        // Schema Overrides
         let schema = if schema_ptr.is_null() {
             None
         } else {
-            // 注意：SchemaContext { schema: SchemaRef }
-            // SchemaRef 是 Arc<Schema>，Clone 开销极小
             Some(unsafe { &*schema_ptr }.schema.clone())
         };
 
-        // 3. 构建 ReadOptions (注入 parse_options)
+        // Build ReadOptions
         let options = CsvReadOptions::default()
             .with_has_header(has_header)
             .with_skip_rows(skip_rows)
             .with_parse_options(parse_options)
             .with_schema_overwrite(schema);
 
-        // 4. 执行读取
+        // Execute
         // p.into_owned().into() -> String -> PathBuf
         let df = options
             .try_into_reader_with_file_path(Some(p.into_owned().into()))?
@@ -69,13 +65,10 @@ pub extern "C" fn pl_scan_csv(
     ffi_try!({
         let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
 
-        // 2. 处理 Schema Overrides
-        // 处理 Schema: 如果指针为空，则为 None；否则 clone 出 SchemaRef
+        // Schema Overrides
         let schema = if schema_ptr.is_null() {
             None
         } else {
-            // 注意：SchemaContext { schema: SchemaRef }
-            // SchemaRef 是 Arc<Schema>，Clone 开销极小
             Some(unsafe { &*schema_ptr }.schema.clone())
         };
         
@@ -84,14 +77,14 @@ pub extern "C" fn pl_scan_csv(
             .with_separator(separator)
             .with_skip_rows(skip_rows)
             .with_try_parse_dates(try_parse_dates)
-            .with_dtype_overwrite(schema); // LazyReader 通常直接支持这个
+            .with_dtype_overwrite(schema); 
 
         let inner = reader.finish()?;
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
     })
 }
 // ==========================================
-// 读取 Parquet
+// Read Parquet
 // ==========================================
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_read_parquet(path_ptr: *const c_char) -> *mut DataFrameContext {
@@ -116,7 +109,6 @@ pub extern "C" fn pl_scan_parquet(path_ptr: *const c_char) -> *mut LazyFrameCont
             .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         
         let args = ScanArgsParquet::default();
-        // LazyFrame::scan_parquet 返回 Result，用 ? 抛出
         let lf = LazyFrame::scan_parquet(PlPath::new(path), args)?;
 
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
@@ -124,7 +116,7 @@ pub extern "C" fn pl_scan_parquet(path_ptr: *const c_char) -> *mut LazyFrameCont
 }
 
 // ==========================================
-// 读取 JSON
+// JSON
 // ==========================================
 // Read JSON (Eager)
 #[unsafe(no_mangle)]
@@ -187,14 +179,14 @@ pub extern "C" fn pl_lazy_sink_ipc(
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         let path = ptr_to_str(path_ptr).unwrap();
 
-        // 1. 准备选项
+        // Prepare Option
         let writer_options = IpcWriterOptions::default();
         let sink_options = SinkOptions::default();
 
-        // 2. 构造 Target (使用 PlPath::new 自动处理本地/云路径)
+        // Build Target
         let target = SinkTarget::Path(PlPath::new(path));
 
-        // 3. [修复] 调用 sink_ipc (4个参数)
+        // Call sink_ipc
         // target, options, cloud_options, sink_options
         let sink_lf = lf_ctx.inner.sink_ipc(
             target, 
@@ -218,17 +210,14 @@ pub extern "C" fn pl_dataframe_from_arrow_record_batch(
     c_schema_ptr: *mut ffi::ArrowSchema
 ) -> *mut DataFrameContext {
     ffi_try!({
-        // 1. 安全检查: 指针不能为空
         if c_array_ptr.is_null() || c_schema_ptr.is_null() {
             return Err(PolarsError::ComputeError("Null pointer passed to pl_from_arrow".into()));
         }
 
-        // 2. 导入 Arrow Schema
+        // Import Arrow Schema
         let field = unsafe { ffi::import_field_from_c(&*c_schema_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))? };
         
-        // 3. 导入 Array
-        // import_array_from_c 接收的是 ArrowArray 结构体本身(move)，而不是指针
-        // 所以我们需要读取指针指向的内容: unsafe { std::ptr::read(c_array_ptr) }
+        // Import Array
         let arrow_array_struct = unsafe { std::ptr::read(c_array_ptr) };
         let array = unsafe { 
             ffi::import_array_from_c(arrow_array_struct, field.dtype.clone())
@@ -237,7 +226,6 @@ pub extern "C" fn pl_dataframe_from_arrow_record_batch(
         
         let df = match array.as_any().downcast_ref::<StructArray>() {
             Some(struct_arr) => {
-                // [修复] 类型注解改为 Vec<Column>
                 let columns: Vec<Column> = struct_arr
                     .values()
                     .iter()
@@ -245,21 +233,17 @@ pub extern "C" fn pl_dataframe_from_arrow_record_batch(
                     .map(|(arr, field)| {
                         let name = PlSmallStr::from_str(&field.name);
                         
-                        // Series::from_arrow 返回 PolarsResult<Series>
-                        // 我们需要 map 它，把 Series 转为 Column
                         Series::from_arrow(name, arr.clone())
-                            .map(|s| Column::from(s)) // [关键] Series -> Column
+                            .map(|s| Column::from(s)) 
                     })
                     .collect::<PolarsResult<Vec<_>>>()?;
                 
                 DataFrame::new(columns)?
             },
             None => {
-                // 单列情况也要改
                 let name = PlSmallStr::from_str(&field.name);
                 let series = Series::from_arrow(name, array)?;
                 
-                // [修复] vec![Column::from(series)]
                 DataFrame::new(vec![Column::from(series)])?
             }
         };
@@ -268,7 +252,7 @@ pub extern "C" fn pl_dataframe_from_arrow_record_batch(
     })
 }
 // ==========================================
-// 2. 写操作 (Void 返回值)
+// Write Ops
 // ==========================================
 
 #[unsafe(no_mangle)]
@@ -326,7 +310,6 @@ pub extern "C" fn pl_dataframe_write_json(df_ptr: *mut DataFrameContext, path: *
         
         let file = File::create(p.as_ref()).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         
-        // 默认输出为标准 JSON Array 格式
         JsonWriter::new(file)
         .with_json_format(JsonFormat::Json)
         .finish(&mut ctx.df)
@@ -335,13 +318,12 @@ pub extern "C" fn pl_dataframe_write_json(df_ptr: *mut DataFrameContext, path: *
 
 
 // ==========================================
-// 3. 内存与转换操作
+// Memory and Convert Ops
 // ==========================================
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_free_dataframe(ptr: *mut DataFrameContext) {
     ffi_try_void!({
         if !ptr.is_null() {
-        // 拿回所有权，离开作用域时自动 Drop (释放内存)
         unsafe { let _ = Box::from_raw(ptr); }
         }
         Ok(())
@@ -354,7 +336,6 @@ pub extern "C" fn pl_to_arrow(
     out_chunk: *mut ArrowArray, 
     out_schema: *mut ArrowSchema
 ) {
-    // 这是一个非常关键的函数，必须捕获 Panic，否则内存越界会崩掉宿主进程
     ffi_try_void!({
         if ctx_ptr.is_null() {
              return Err(PolarsError::ComputeError("Null pointer passed to pl_to_arrow".into()));
@@ -400,11 +381,9 @@ pub extern "C" fn pl_lazy_sink_parquet(
         let pl_path = PlPath::new(path_str);
         let target = SinkTarget::Path(pl_path.into());
 
-        // 4. 配置项
         let write_options = ParquetWriteOptions::default();
         let sink_options = SinkOptions::default();
 
-        // 5. 执行
         let sink_lf = lf_ctx.inner.sink_parquet(
             target, 
             write_options, 
@@ -480,12 +459,7 @@ pub extern "C" fn pl_lazy_sink_csv(
 // ==========================================
 // Streaming Sink to DataBase
 // ==========================================
-// 1. 定义回调签名
-// 这里的逻辑是：Rust 生产数据 (Input)，C# 消费数据。
-// 不需要 Output 参数，因为是 Sink。
-// 参数 1 (Input): ArrowArray 指针 (由 Rust 填充，C# 接管)
-// 参数 2 (Input): ArrowSchema 指针 (由 Rust 填充，C# 接管)
-// 参数 3 (Error): 错误信息缓冲区
+// 1. Define Callback
 type SinkCallback = extern "C" fn(
     *mut ffi::ArrowArray, 
     *mut ffi::ArrowSchema,
@@ -494,7 +468,7 @@ type SinkCallback = extern "C" fn(
 
 type CleanupCallback = extern "C" fn(*mut c_void);
 
-// 2. 包装结构体 (持有回调和上下文)
+// 2. Define Struct 
 #[derive(Clone)]
 struct CSharpSinkUdf {
     callback: SinkCallback,
@@ -502,11 +476,10 @@ struct CSharpSinkUdf {
     user_data: *mut c_void, // GCHandle
 }
 
-// 必须实现 Send + Sync (Polars 是多线程的)
+// Send + Sync
 unsafe impl Send for CSharpSinkUdf {}
 unsafe impl Sync for CSharpSinkUdf {}
 
-// 当 Rust 销毁这个 UDF 时（通常是 Pipeline 结束），通知 C# 释放 GCHandle
 impl Drop for CSharpSinkUdf {
     fn drop(&mut self) {
         (self.cleanup)(self.user_data);
@@ -515,54 +488,39 @@ impl Drop for CSharpSinkUdf {
 
 impl CSharpSinkUdf {
     fn call(&self, df: DataFrame) -> PolarsResult<DataFrame> {
-        // A. 将 DataFrame 转为 StructArray (RecordBatch)
-        // Polars 的 DataFrame 可能由多个 Chunk 组成，我们需要把每个 Chunk 都发给 C#
-        // 最简单的方法是转成 Struct Series，然后迭代它的 Chunks
+        // DataFrame -> StructArray (RecordBatch)
         let struct_s = df.into_struct("batch".into()).into_series();
         
-        // 获取底层的 Chunks (Box<dyn Array>)
+        // Get Chunks (Box<dyn Array>)
         let chunks = struct_s.chunks();
 
-        // 准备错误缓冲区 (1KB)
+        // Error Message Buffer (1KB)
         let mut error_msg_buf = [0u8; 1024]; 
         let error_ptr = error_msg_buf.as_mut_ptr() as *mut std::os::raw::c_char;
 
         for array_ref in chunks {
             let field = ArrowField::new("".into(), array_ref.dtype().clone(), true);
-            // [核心: Transfer Ownership]
-            // 1. 将 Rust Array 导出为 FFI 结构体
-            // to_ffi 会生成 ArrowArray 和 ArrowSchema
             let c_array = ffi::export_array_to_c(array_ref.clone());
             let c_schema = ffi::export_field_to_c(&field);
 
-            // 2. Box::into_raw 放弃所有权，转成裸指针传给 C#
-            // 注意：一定要用 Box 包装，否则函数结束栈内存会被回收
+            // Alloc array to heap
             let ptr_array = Box::into_raw(Box::new(c_array));
             let ptr_schema = Box::into_raw(Box::new(c_schema));
 
-            // 3. 调用 C# 回调
+            // Call C# Callback
             let status = (self.callback)(ptr_array, ptr_schema, error_ptr);
 
-            // 4. 检查 C# 是否报错
             if status != 0 {
-                // 如果 C# 报错（比如 SqlBulkCopy 失败），我们需要手动回收刚才泄漏出去的指针
-                // 因为 C# 可能没来得及 Take Ownership
-                // (视具体约定而定，通常如果报错，C# 应该保证不 Free 或者 Rust 负责 Free)
-                // 这里简单处理：如果 C# 返回错，它应该在内部处理好资源，或者我们 Panic
-                
                 let msg = unsafe { CStr::from_ptr(error_ptr).to_string_lossy().into_owned() };
                 return Err(PolarsError::ComputeError(format!("C# Sink Failed: {}", msg).into()));
             }
         }
 
-        // B. 返回空 DataFrame
-        // 既然是 Sink，数据发给 C# 后，Rust 这边就不需要保留了。
-        // 返回空 DF 让 Polars 释放内存。
+        // Return empty DataFrame
         Ok(DataFrame::empty())
     }
 }
 
-// 3. 导出 API
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_map_batches(
     lf_ptr: *mut LazyFrameContext,
@@ -573,14 +531,13 @@ pub extern "C" fn pl_lazy_map_batches(
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         
-        // 构建 UDF 对象 (Arc 引用计数，因为可能被多个线程克隆)
+        // Build UDF Object
         let udf = Arc::new(CSharpSinkUdf { 
             callback, 
             cleanup, 
             user_data 
         });
 
-        // 严格对照你提供的 map 签名:
         // fn map<F>(self, function: F, optimizations: AllowedOptimizations, schema: Option<Arc<dyn UdfSchema>>, name: Option<&'static str>)
         
         let new_lf = lf_ctx.inner.map(
@@ -588,16 +545,12 @@ pub extern "C" fn pl_lazy_map_batches(
             move |df| udf.call(df),
             
             // 2. optimizations
-            // 使用默认优化选项 (通常允许所有优化，或者什么都不做)
-            // 如果 AllowedOptimizations 报错，尝试换成 OptFlags::default()
             AllowedOptimizations::default(), 
 
             // 3. schema
-            // 我们不需要输出 schema (因为返回空 DF)
             None,
 
             // 4. name
-            // 给 UDF 起个名字，方便 Explain 时查看
             Some("csharp_sink"), 
         );
 
@@ -613,7 +566,7 @@ pub extern "C" fn pl_dataframe_export_batches(
     user_data: *mut c_void
 ) {
     ffi_try_void!({
-        let df_ctx = unsafe { &*df_ptr }; // 注意：这里是借用，不获取所有权，因为我们只是读
+        let df_ctx = unsafe { &*df_ptr }; 
         let df = &df_ctx.df;
 
         let udf = CSharpSinkUdf { 
@@ -622,8 +575,6 @@ pub extern "C" fn pl_dataframe_export_batches(
             user_data 
         };
 
-        // 复用之前的逻辑：转为 Struct Series 以获取 Chunks
-        // 这是一种零拷贝的技巧，把 DataFrame 的每一列视为 Struct 的字段
         let struct_s = df.clone().into_struct("batch".into()).into_series();
         let chunks = struct_s.chunks();
 
@@ -631,11 +582,7 @@ pub extern "C" fn pl_dataframe_export_batches(
         let error_ptr = error_msg_buf.as_mut_ptr() as *mut std::os::raw::c_char;
 
         for array_ref in chunks {
-            // Transfer Ownership via FFI
             let field = ArrowField::new("".into(), array_ref.dtype().clone(), true);
-            // [核心: Transfer Ownership]
-            // 1. 将 Rust Array 导出为 FFI 结构体
-            // to_ffi 会生成 ArrowArray 和 ArrowSchema
             let c_array = ffi::export_array_to_c(array_ref.clone());
             let c_schema = ffi::export_field_to_c(&field);
 
@@ -645,13 +592,10 @@ pub extern "C" fn pl_dataframe_export_batches(
             let status = (udf.callback)(ptr_array, ptr_schema, error_ptr);
 
             if status != 0 {
-                // 如果 C# 报错，直接返回
-                // CSharpSinkUdf 的 Drop 会自动调用 cleanup
                 return Ok(()); 
             }
         }
         
-        // 运行结束，udf 离开作用域，自动触发 cleanup
         Ok(())
     })
 }
