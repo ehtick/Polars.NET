@@ -6,7 +6,6 @@ use crate::utils::{consume_exprs_array, ptr_to_str};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_free(ptr: *mut ExprContext) {
-    // 使用 ffi_try_void! 确保异常安全
     ffi_try_void!({
         if !ptr.is_null() {
             unsafe { let _ = Box::from_raw(ptr); }
@@ -15,11 +14,11 @@ pub extern "C" fn pl_expr_free(ptr: *mut ExprContext) {
     })
 }
 // ==========================================
-// 1. 宏定义区域
+// Marcos
 // ==========================================
 
-/// 模式 1: 基础类型字面量构造 (Literal Constructor)
-/// 生成: fn pl_expr_lit_i32(val: i32) -> *mut ExprContext
+/// Literal Constructor
+/// like: fn pl_expr_lit_i32(val: i32) -> *mut ExprContext
 macro_rules! gen_lit_ctor {
     ($func_name:ident, $input_type:ty) => {
         #[unsafe(no_mangle)]
@@ -32,41 +31,38 @@ macro_rules! gen_lit_ctor {
     };
 }
 
-/// 模式 2: 字符串构造 (String Constructor)
-/// 生成: fn pl_expr_col(ptr: *const c_char) -> *mut ExprContext
+/// String Constructor
+/// like: fn pl_expr_col(ptr: *const c_char) -> *mut ExprContext
 macro_rules! gen_str_ctor {
     ($func_name:ident, $polars_func:ident) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn $func_name(ptr: *const c_char) -> *mut ExprContext {
             ffi_try!({
                 let s = ptr_to_str(ptr).unwrap();
-                let expr = $polars_func(s); // 调用 col(s) 或 lit(s)
+                let expr = $polars_func(s); 
                 Ok(Box::into_raw(Box::new(ExprContext { inner: expr })))
             })
         }
     };
 }
 
-/// 模式 3: 一元操作 (Unary Operator)
-/// 生成: fn pl_expr_sum(ptr: *mut ExprContext) -> *mut ExprContext
+/// Unary Operator
+/// like: fn pl_expr_sum(ptr: *mut ExprContext) -> *mut ExprContext
 macro_rules! gen_unary_op {
     ($func_name:ident, $method:ident) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn $func_name(ptr: *mut ExprContext) -> *mut ExprContext {
             ffi_try!({
-                // 1. 拿回所有权
                 let ctx = unsafe { Box::from_raw(ptr) };
-                // 2. 调用方法 (如 ctx.inner.sum())
                 let new_expr = ctx.inner.$method(); 
-                // 3. 返回
                 Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
             })
         }
     };
 }
 
-/// 模式 4: 二元操作 (Binary Operator)
-/// 生成: fn pl_expr_eq(left: *mut, right: *mut) -> *mut
+/// Binary Operator
+/// like: fn pl_expr_eq(left: *mut, right: *mut) -> *mut
 macro_rules! gen_binary_op {
     ($func_name:ident, $method:ident) => {
         #[unsafe(no_mangle)]
@@ -75,7 +71,6 @@ macro_rules! gen_binary_op {
                 let left = unsafe { Box::from_raw(left_ptr) };
                 let right = unsafe { Box::from_raw(right_ptr) };
                 
-                // 调用 left.inner.eq(right.inner)
                 let new_expr = left.inner.$method(right.inner);
                 
                 Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
@@ -84,24 +79,23 @@ macro_rules! gen_binary_op {
     };
 }
 
-/// 模式 5: 命名空间一元操作 (Namespace Unary)
-/// 专门处理 .dt().year(), .str().to_uppercase() 这种
+/// Namespace Unary
+/// for .dt().year(), .str().to_uppercase(), etc.
 macro_rules! gen_namespace_unary {
     ($func_name:ident, $ns:ident, $method:ident) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn $func_name(ptr: *mut ExprContext) -> *mut ExprContext {
             ffi_try!({
                 let ctx = unsafe { Box::from_raw(ptr) };
-                // 例如: ctx.inner.dt().year()
                 let new_expr = ctx.inner.$ns().$method();
                 Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
             })
         }
     };
 }
-/// 模式 6: RollingWindow操作
+/// RollingWindow
 fn parse_fixed_window_size(s: &str) -> PolarsResult<usize> {
-    // 去掉可能的 "i" 后缀 (Polars 习惯 "3i" 代表 3 index/rows)
+    // remove "i" suffix
     let clean_s = s.trim().trim_end_matches('i');
     clean_s.parse::<usize>().map_err(|_| {
         PolarsError::ComputeError(format!("Invalid fixed window size: '{}'. For time-based windows (e.g. '3d'), use rolling_by.", s).into())
@@ -119,10 +113,10 @@ macro_rules! gen_rolling_op {
                 let ctx = unsafe { Box::from_raw(expr_ptr) };
                 let window_size_str = ptr_to_str(window_size_ptr).unwrap();
 
-                // 1. 解析大小
+                // Parse size
                 let window_size = parse_fixed_window_size(window_size_str)?;
 
-                // 2. 构建 Fixed Window Options
+                // Build Fixed Window Options
                 let options = RollingOptionsFixedWindow {
                     window_size,
                     min_periods: min_periods, // 默认至少1个数据，防止全Null
@@ -131,7 +125,7 @@ macro_rules! gen_rolling_op {
                     fn_params: None,
                 };
 
-                // 3. 调用 expr.rolling_mean(options)
+                // Call expr.rolling_mean(options)
                 let new_expr = ctx.inner.$method(options);
                 
                 Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
@@ -145,7 +139,7 @@ fn map_closed_window(s: &str) -> ClosedWindow {
         "right" => ClosedWindow::Right,
         "both" => ClosedWindow::Both,
         "none" => ClosedWindow::None,
-        _ => ClosedWindow::Left, // 默认左闭右开 [ )
+        _ => ClosedWindow::Left, // Default [ )
     }
 }
 macro_rules! gen_rolling_by_op {
@@ -155,8 +149,8 @@ macro_rules! gen_rolling_by_op {
             expr_ptr: *mut ExprContext,
             window_size_ptr: *const c_char,
             min_periods: usize,
-            by_ptr: *mut ExprContext,       // 时间索引列
-            closed_ptr: *const c_char       // "left", "right" ...
+            by_ptr: *mut ExprContext,       
+            closed_ptr: *const c_char       
         ) -> *mut ExprContext {
             ffi_try!({
                 let ctx = unsafe { Box::from_raw(expr_ptr) };
@@ -165,11 +159,11 @@ macro_rules! gen_rolling_by_op {
                 let window_size_str = ptr_to_str(window_size_ptr).unwrap();
                 let closed_str = ptr_to_str(closed_ptr).unwrap_or("left");
 
-                // 1. 解析 Duration
-                // Duration::parse 会处理 "1d", "30m" 等格式
+                // Parse Duration
+                // Duration::parse "1d", "30m" like format
                 let duration = Duration::parse(window_size_str);
 
-                // 2. 构建 Options
+                // Build Options
                 let options = RollingOptionsDynamicWindow {
                     window_size: duration,
                     min_periods: min_periods,
@@ -177,8 +171,7 @@ macro_rules! gen_rolling_by_op {
                     fn_params: None,
                 };
 
-                // 3. 调用 expr.rolling_xxx_by(by, options)
-                // 注意：在 0.50 中，window_size 已经在 options 里了，所以函数参数变少了
+                // 3. Caill expr.rolling_xxx_by(by, options)
                 let new_expr = ctx.inner.$method(
                     by.inner, 
                     options
@@ -193,24 +186,24 @@ macro_rules! gen_rolling_by_op {
 // 2. 宏应用区域 (Boilerplate 消灭术)
 // ==========================================
 
-// --- Group 1: 构造函数 ---
+// --- Group 1: lit funcs ---
 gen_lit_ctor!(pl_expr_lit_i32, i32);
 gen_lit_ctor!(pl_expr_lit_i64, i64);
 gen_lit_ctor!(pl_expr_lit_bool, bool);
 gen_lit_ctor!(pl_expr_lit_f32, f32);
 gen_lit_ctor!(pl_expr_lit_f64, f64);
 
-// --- Group 2: 字符串构造 ---
+// --- Group 2: String col and lit ---
 gen_str_ctor!(pl_expr_col, col);
 gen_str_ctor!(pl_expr_lit_str, lit);
 
-// --- Group 3: 一元操作 ---
+// --- Group 3: Unarp Ops ---
 gen_unary_op!(pl_expr_sum, sum);
 gen_unary_op!(pl_expr_mean, mean);
 gen_unary_op!(pl_expr_max, max);
 gen_unary_op!(pl_expr_min, min);
 gen_unary_op!(pl_expr_abs, abs);
-// 逻辑非 (!)
+// Logic Not (!)
 gen_unary_op!(pl_expr_not, not);
 // is_null()
 gen_unary_op!(pl_expr_is_null, is_null);
@@ -224,7 +217,7 @@ gen_unary_op!(pl_expr_is_unique, is_unique);
 gen_unary_op!(pl_expr_sqrt,sqrt);
 gen_unary_op!(pl_expr_cbrt, cbrt);
 gen_unary_op!(pl_expr_exp,exp);
-// --- Trigonometry (三角函数) ---
+// --- Trigonometry ---
 gen_unary_op!(pl_expr_sin, sin);
 gen_unary_op!(pl_expr_cos, cos);
 gen_unary_op!(pl_expr_tan, tan);
@@ -241,12 +234,11 @@ gen_unary_op!(pl_expr_arcsinh, arcsinh);
 gen_unary_op!(pl_expr_arccosh, arccosh);
 gen_unary_op!(pl_expr_arctanh, arctanh);
 
-// 补充一些常用的数学函数
-gen_unary_op!(pl_expr_sign, sign); // 符号函数 (-1, 0, 1)
-gen_unary_op!(pl_expr_ceil, ceil); // 向上取整
-gen_unary_op!(pl_expr_floor, floor); // 向下取整
+gen_unary_op!(pl_expr_sign, sign); // Sign func (-1, 0, 1)
+gen_unary_op!(pl_expr_ceil, ceil); // ceiling round
+gen_unary_op!(pl_expr_floor, floor); // flooring round
 
-// --- Group 4: 二元操作 ---
+// --- Group 4: Binary Ops ---
 gen_binary_op!(pl_expr_eq, eq); // ==
 gen_binary_op!(pl_expr_neq, neq); // !=
 gen_binary_op!(pl_expr_gt, gt); // >
@@ -254,14 +246,14 @@ gen_binary_op!(pl_expr_gt_eq, gt_eq); // >=
 gen_binary_op!(pl_expr_lt, lt);       // <
 gen_binary_op!(pl_expr_lt_eq, lt_eq); // <=
 
-// 算术运算
+// Arithmetic
 gen_binary_op!(pl_expr_add, add); // +
 gen_binary_op!(pl_expr_sub, sub); // -
 gen_binary_op!(pl_expr_mul, mul); // *
 gen_binary_op!(pl_expr_div, div); // /
 gen_binary_op!(pl_expr_floor_div, floor_div); // //
 gen_binary_op!(pl_expr_rem, rem); // % (取余)
-// 逻辑运算
+// Logic Ops
 gen_binary_op!(pl_expr_and, and); // &
 gen_binary_op!(pl_expr_or, or);   // |
 gen_binary_op!(pl_expr_xor, xor); // xor
@@ -270,8 +262,8 @@ gen_binary_op!(pl_expr_fill_null, fill_null);
 // Math Ops
 gen_binary_op!(pl_expr_pow,pow);
 
-// --- Group 5: 命名空间操作 ---
-// dt 命名空间
+// --- Group 5: Namespace Ops ---
+// dt namespace
 gen_namespace_unary!(pl_expr_dt_year, dt, year);
 gen_namespace_unary!(pl_expr_dt_month, dt, month);
 gen_namespace_unary!(pl_expr_dt_quarter, dt, quarter);
@@ -285,13 +277,13 @@ gen_namespace_unary!(pl_expr_dt_millisecond, dt, millisecond);
 gen_namespace_unary!(pl_expr_dt_microsecond, dt, microsecond);
 gen_namespace_unary!(pl_expr_dt_nanosecond, dt, nanosecond);
 
-gen_namespace_unary!(pl_expr_dt_date, dt, date); // 转为 Date 类型
-gen_namespace_unary!(pl_expr_dt_time, dt, time); // 转为 Time 类型
+gen_namespace_unary!(pl_expr_dt_date, dt, date); // convert to Date
+gen_namespace_unary!(pl_expr_dt_time, dt, time); // convert to Time 
 // String Namespace
 gen_namespace_unary!(pl_expr_str_to_uppercase, str, to_uppercase);
 gen_namespace_unary!(pl_expr_str_to_lowercase, str, to_lowercase);
 gen_namespace_unary!(pl_expr_str_len_bytes, str, len_bytes);
-// --- List Ops (list 命名空间) ---
+// --- List Ops ---
 gen_namespace_unary!(pl_expr_list_first, list, first);
 gen_namespace_unary!(pl_expr_list_sum, list, sum);
 gen_namespace_unary!(pl_expr_list_min, list, min);
@@ -313,7 +305,6 @@ pub extern "C" fn pl_expr_alias(expr_ptr: *mut ExprContext, name_ptr: *const c_c
     ffi_try!({
         let expr_ctx = unsafe { Box::from_raw(expr_ptr) };
         let name = ptr_to_str(name_ptr).unwrap();
-        // alias 逻辑
         let new_expr = expr_ctx.inner.alias(name);
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -331,15 +322,13 @@ pub extern "C" fn pl_expr_lit_null() -> *mut Expr {
 // Bitwise Operations (Shift)
 // ==========================================
 
-// 定义一个宏来简化 shift 逻辑
+// Macro for shift op
 macro_rules! impl_shift_op {
     ($s:ident, $n:ident, $op:tt) => {{
         match $s.dtype() {
             // Signed Integers
             DataType::Int8 => {
                 let ca = $s.i8()?;
-                // apply_values 是最快的，它直接操作底层 value buffer，自动保留 Validity Mask (Nulls)
-                // 这里的 $n 是 i32，Rust shift 右侧通常接受基本整型
                 Ok(ca.apply_values(|v| v $op $n).into_series())
             },
             DataType::Int16 => Ok($s.i16()?.apply_values(|v| v $op $n).into_series()),
@@ -352,7 +341,7 @@ macro_rules! impl_shift_op {
             DataType::UInt32 => Ok($s.u32()?.apply_values(|v| v $op $n).into_series()),
             DataType::UInt64 => Ok($s.u64()?.apply_values(|v| v $op $n).into_series()),
             
-            // 其他类型不支持
+            // Other dtype not supported
             dt => polars_bail!(ComputeError: "Bitwise shift not supported for dtype: {}", dt),
         }
     }}
@@ -363,16 +352,12 @@ pub extern "C" fn pl_expr_bit_shl(expr_ptr: *mut ExprContext, n: i32) -> *mut Ex
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         
-        // [修复] 闭包接收 Column，返回 PolarsResult<Option<Column>>
         let function = move |c: Column| {
-            // 1. 获取底层 Series 引用
             let s = c.as_materialized_series();
             
-            // 2. 调用宏进行计算 (返回 Series)
             let op_result: PolarsResult<Series> = impl_shift_op!(s, n, <<);
             let res_series = op_result?;
             
-            // 3. 包装回 Column
             Ok(Some(Column::from(res_series)))
         };
 
@@ -387,7 +372,6 @@ pub extern "C" fn pl_expr_bit_shr(expr_ptr: *mut ExprContext, n: i32) -> *mut Ex
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         
-        // [修复] 同上
         let function = move |c: Column| {
             let s = c.as_materialized_series();
             let op_result: PolarsResult<Series> = impl_shift_op!(s, n, >>);
@@ -403,7 +387,7 @@ pub extern "C" fn pl_expr_bit_shr(expr_ptr: *mut ExprContext, n: i32) -> *mut Ex
 }
 
 // ==========================================
-// String Operations (例如 Contains)
+// String Operations 
 // ==========================================
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_str_contains(
@@ -414,15 +398,13 @@ pub extern "C" fn pl_expr_str_contains(
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let pat = ptr_to_str(pat_ptr).unwrap();
         
-        // str().contains() 比较特殊，有两个参数 (pattern, strict)
-        // 这里的 false 是 hardcode 的 strict 参数，如果想暴露出去，需要修改 C 接口签名
         let new_expr = ctx.inner.str().contains(lit(pat), false);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
 
-// offset: 起始位置 (支持负数), length: 长度
+// offset: start position , length: offset length
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_str_slice(
     expr_ptr: *mut ExprContext, 
@@ -436,7 +418,7 @@ pub extern "C" fn pl_expr_str_slice(
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
-// extract (正则提取)
+// extract (Regex)
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_str_extract(
     expr_ptr: *mut ExprContext, 
@@ -453,22 +435,20 @@ pub extern "C" fn pl_expr_str_extract(
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
-// 替换操作 (Replace All)
-// pat: 匹配模式, val: 替换值
+// Replace All
+// pat: matching pattern, val: replace value
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_str_replace_all(
     expr_ptr: *mut ExprContext, 
     pat_ptr: *const c_char,
     val_ptr: *const c_char,
-    use_regex: bool // [新增]
+    use_regex: bool 
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let pat = ptr_to_str(pat_ptr).unwrap();
         let val = ptr_to_str(val_ptr).unwrap();
 
-        // Polars 参数名是 literal。
-        // 如果 use_regex = true，则 literal = false。
         let new_expr = ctx.inner.str().replace_all(lit(pat), lit(val), !use_regex);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
@@ -483,17 +463,15 @@ pub extern "C" fn pl_expr_str_split(
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let pat = ptr_to_str(pat_ptr).unwrap();
-        // by_lengths=false (也就是 split by pattern)
         let new_expr = ctx.inner.str().split(lit(pat));
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
 
-// Helper: 将 C 字符串转换为 Polars Literal Expr
-// 如果 ptr 为 null，则返回 lit(Null) -> 表示去除空白符
+// Helper: Convert C String into Polars Literal Expr
+// if ptr is null，return lit(Null)
 unsafe fn str_or_null_lit(ptr: *const c_char) -> Expr {
     if ptr.is_null() {
-        // 创建一个类型为 String 但值为 Null 的字面量
         lit(NULL) 
     } else {
         let s = unsafe { CStr::from_ptr(ptr).to_string_lossy() };
@@ -510,14 +488,13 @@ pub extern "C" fn pl_expr_str_strip_chars(
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let match_expr = unsafe { str_or_null_lit(matches) };
         
-        // Clone 是为了支持不可变 API
         let new_expr = ctx.inner.str().strip_chars(match_expr);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
 
-// 2. Strip Chars Start (LTrim)
+// Strip Chars Start (LTrim)
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_str_strip_chars_start(
     expr_ptr: *mut ExprContext, 
@@ -533,7 +510,7 @@ pub extern "C" fn pl_expr_str_strip_chars_start(
     })
 }
 
-// 3. Strip Chars End (RTrim)
+// Strip Chars End (RTrim)
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_str_strip_chars_end(
     expr_ptr: *mut ExprContext, 
@@ -549,8 +526,7 @@ pub extern "C" fn pl_expr_str_strip_chars_end(
     })
 }
 
-// 4. Strip Prefix (去除固定前缀，不是字符集合)
-// 比如 "http://google.com" strip_prefix "http://" -> "google.com"
+// Strip Prefix
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_str_strip_prefix(
     expr_ptr: *mut ExprContext, 
@@ -558,7 +534,6 @@ pub extern "C" fn pl_expr_str_strip_prefix(
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
-        // Prefix 必须有值，不能是 Null (业务逻辑上)
         let prefix_str = unsafe { CStr::from_ptr(prefix).to_string_lossy() };
         
         let new_expr = ctx.inner.str().strip_prefix(lit(prefix_str.as_ref()));
@@ -567,7 +542,7 @@ pub extern "C" fn pl_expr_str_strip_prefix(
     })
 }
 
-// 5. Strip Suffix
+// Strip Suffix
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_str_strip_suffix(
     expr_ptr: *mut ExprContext, 
@@ -588,7 +563,6 @@ pub extern "C" fn pl_expr_str_starts_with(expr_ptr: *mut ExprContext, prefix: *c
     let ctx = unsafe { Box::from_raw(expr_ptr) };
     let p = unsafe { CStr::from_ptr(prefix).to_string_lossy() };
     
-    // starts_with 接受 Expr，我们需要把 prefix 转为 Lit
     let new_expr = ctx.inner.str().starts_with(lit(p.as_ref()));
     Box::into_raw(Box::new(ExprContext { inner: new_expr }))
 }
@@ -610,10 +584,9 @@ pub extern "C" fn pl_expr_str_to_date(expr_ptr: *mut ExprContext, format: *const
     let fmt = unsafe { CStr::from_ptr(format).to_string_lossy() };
     
     // strptime(dtype, options)
-    // 这里简化处理，直接用 StrptimeOptions::default()
     let options = StrptimeOptions {
         format: Some(fmt.into()),
-        strict: false, // 转换失败返回 Null，不 panic
+        strict: false,
         exact: true,
         ..Default::default()
     };
@@ -634,13 +607,13 @@ pub extern "C" fn pl_expr_str_to_datetime(expr_ptr: *mut ExprContext, format: *c
         ..Default::default()
     };
     
-    // 默认转为 Microseconds, 无时区
+    // default: Microseconds, no timezone
     let new_expr = ctx.inner.str().to_datetime(Some(TimeUnit::Microseconds), None, options, lit("raise"));
     Box::into_raw(Box::new(ExprContext { inner: new_expr }))
 }
 
 // ==========================================
-// 复用expr
+// clone expr
 // ==========================================
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_clone(ptr: *mut ExprContext) -> *mut ExprContext {
@@ -654,7 +627,7 @@ pub extern "C" fn pl_expr_clone(ptr: *mut ExprContext) -> *mut ExprContext {
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_dt_to_string(
     expr_ptr: *mut ExprContext,
-    format_ptr: *const c_char // 必须传入格式字符串，如 "%Y-%m-%d"
+    format_ptr: *const c_char
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
@@ -672,7 +645,7 @@ pub extern "C" fn pl_expr_dt_to_string(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_dt_truncate(expr_ptr: *mut ExprContext, every: *const c_char) -> *mut ExprContext {
     ffi_try!({
-        let ctx = unsafe { Box::from_raw(expr_ptr) }; // Move
+        let ctx = unsafe { Box::from_raw(expr_ptr) }; 
         let every_str = unsafe { CStr::from_ptr(every).to_string_lossy() };
         
         // dt().truncate(every)
@@ -726,14 +699,12 @@ pub extern "C" fn pl_expr_dt_timestamp(expr_ptr: *mut ExprContext, unit_code: i3
     })
 }
 
-// 辅助函数：String -> NonExistent Enum
+// Helper：String -> NonExistent Enum
 fn parse_non_existent(s: &str) -> NonExistent {
     match s {
         "null" => NonExistent::Null,
         "raise" => NonExistent::Raise,
-        // Polars 可能不支持其他策略用于 NonExistent，或者有 Time/RollForward 等
-        // 根据 0.50 源码，通常是 raise 或 null。
-        _ => NonExistent::Raise, // 默认报错
+        _ => NonExistent::Raise, 
     }
 }
 // Convert Time Zone (Physical value changes, Wall time changes)
@@ -746,7 +717,6 @@ pub extern "C" fn pl_expr_dt_convert_time_zone(
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let tz_str = unsafe { CStr::from_ptr(tz_ptr).to_string_lossy() };
         
-        // [修复] 构造 TimeZone 结构体
         // Polars 0.50+ TimeZone::new(str)
         let tz = unsafe{ TimeZone::new_unchecked(tz_str.as_ref()) };
         
@@ -759,7 +729,6 @@ pub extern "C" fn pl_expr_dt_convert_time_zone(
 // Replace Time Zone (Physical value stays, Wall time changes or meta changes)
 // tz_ptr: NULL means "unset" (make naive), otherwise "set" (make aware)
 // ambiguous_ptr: "raise", "earliest", "latest", "null", etc.
-// 2. Replace Time Zone (参数升级)
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_dt_replace_time_zone(
     expr_ptr: *mut ExprContext,
@@ -770,7 +739,7 @@ pub extern "C" fn pl_expr_dt_replace_time_zone(
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         
-        // A. 构造 Option<TimeZone>
+        // Build Option<TimeZone>
         let tz = if tz_ptr.is_null() {
             None
         } else {
@@ -778,8 +747,7 @@ pub extern "C" fn pl_expr_dt_replace_time_zone(
             unsafe { Some(TimeZone::new_unchecked(s.as_ref())) }
         };
 
-        // B. 构造 Ambiguous Expr
-        // 这里的 ambiguous 是 Expr 类型，通常传 lit("raise") 或 lit("earliest")
+        // Build Ambiguous Expr
         let amb_str = if ambiguous_ptr.is_null() {
             "raise"
         } else {
@@ -787,8 +755,7 @@ pub extern "C" fn pl_expr_dt_replace_time_zone(
         };
         let ambiguous_expr = lit(amb_str);
 
-        // C. 构造 NonExistent Enum
-        // 这里必须解析字符串为 Rust 枚举
+        // Build NonExistent Enum
         let ne_str = if non_existent_ptr.is_null() {
             "raise"
         } else {
@@ -796,7 +763,7 @@ pub extern "C" fn pl_expr_dt_replace_time_zone(
         };
         let non_existent = parse_non_existent(ne_str);
 
-        // D. 调用
+        // Call Polars
         let new_expr = ctx.inner.dt().replace_time_zone(tz, ambiguous_expr, non_existent);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
@@ -807,40 +774,39 @@ pub extern "C" fn pl_expr_dt_replace_time_zone(
 pub extern "C" fn pl_expr_add_business_days(
     expr_ptr: *mut ExprContext,
     n_ptr: *mut ExprContext,
-    week_mask_ptr: *const u8, // 长度必须为 7
-    holidays_ptr: *const i32,   // 假期数组指针 (Days since epoch)
+    week_mask_ptr: *const u8, 
+    holidays_ptr: *const i32, 
     holidays_len: usize,
-    roll_strategy: u8           // 0: Raise, 1: Forward, 2: Backward
+    roll_strategy: u8          
 ) -> *mut ExprContext {
     ffi_try!({
         let e = unsafe { Box::from_raw(expr_ptr) };
         let n = unsafe { Box::from_raw(n_ptr) };
         
-        // 1. 构建 Week Mask [bool; 7]
-        // 顺序: Mon, Tue, Wed, Thu, Fri, Sat, Sun
+        // Build Week Mask [bool; 7]
+        // Order: Mon, Tue, Wed, Thu, Fri, Sat, Sun
         let week_mask = unsafe {
         let slice = std::slice::from_raw_parts(week_mask_ptr, 7);
         let mut arr = [false; 7];
             for i in 0..7 {
-                arr[i] = slice[i] != 0; // 0 是 false, 非 0 是 true
+                arr[i] = slice[i] != 0; 
             }
             arr
         };
 
-        // 2. 构建 Holidays Vec<i32>
+        // Build Holidays Vec<i32>
         let holidays = unsafe {
             std::slice::from_raw_parts(holidays_ptr, holidays_len).to_vec()
         };
 
-        // 3. 构建 Roll 策略
+        // Build Roll Strategy
         let roll = match roll_strategy {
             1 => Roll::Forward,
             2 => Roll::Backward,
             _ => Roll::Raise,
         };
 
-        // 4. 调用 Polars DSL
-        // 注意：add_business_days 通常挂载在 dt 命名空间下
+        // Call Polars DSL
         let new_expr = e.inner.dt().add_business_days(
             n.inner,
             week_mask,
@@ -866,7 +832,7 @@ pub extern "C" fn pl_expr_is_business_day(
         let slice = std::slice::from_raw_parts(week_mask_ptr, 7);
         let mut arr = [false; 7];
             for i in 0..7 {
-                arr[i] = slice[i] != 0; // 0 是 false, 非 0 是 true
+                arr[i] = slice[i] != 0; 
             }
             arr
         };
@@ -888,7 +854,7 @@ pub extern "C" fn pl_expr_is_business_day(
 // Intervals
 // ==========================================
 // --- IsBetween ---
-// 这是一个三元操作: expr.is_between(lower, upper)
+// expr.is_between(lower, upper)
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_is_between(
     expr_ptr: *mut ExprContext,
@@ -900,8 +866,6 @@ pub extern "C" fn pl_expr_is_between(
         let lower = unsafe { Box::from_raw(lower_ptr) };
         let upper = unsafe { Box::from_raw(upper_ptr) };
 
-        // 默认 behavior 是 ClosedInterval::Both (闭区间 [])
-        // 如果想暴露给 C#，可以传个 int 进来映射
         let new_expr = ctx.inner.is_between(lower.inner, upper.inner, ClosedInterval::Both);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
@@ -909,15 +873,12 @@ pub extern "C" fn pl_expr_is_between(
 }
 
 // --- DateTime Literal ---
-// 接收一个 i64 (微秒时间戳)，返回一个 Datetime 类型的 Expr
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_lit_datetime(
     micros: i64
 ) -> *mut ExprContext {
     ffi_try!({
-        // 1. 先造一个 Int64 字面量
         let lit_expr = lit(micros);
-        // 2. Cast 成 Datetime (Microseconds)
         let dt_expr = lit_expr.cast(DataType::Datetime(TimeUnit::Microseconds, None));
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: dt_expr })))
@@ -942,8 +903,8 @@ pub extern "C" fn pl_expr_list_get(
 pub extern "C" fn pl_expr_list_sort(
     expr_ptr: *mut ExprContext,
     descending: bool,
-    nulls_last: bool,      // [新增]
-    maintain_order: bool   // [新增]
+    nulls_last: bool,      
+    maintain_order: bool   
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
@@ -951,7 +912,7 @@ pub extern "C" fn pl_expr_list_sort(
         let options = SortOptions {
             descending,
             nulls_last,
-            multithreaded: true, // List sort 内部通常是并行的，默认开启
+            multithreaded: true, 
             maintain_order,
             limit: None
         };
@@ -983,7 +944,7 @@ pub extern "C" fn pl_expr_cols(
     len: usize
 ) -> *mut ExprContext {
     ffi_try!({
-        // 构造 Vec<String> (cols 接受 AsRef<str>)
+        // Build Vec<String>
         let mut names = Vec::with_capacity(len);
         let slice = unsafe { std::slice::from_raw_parts(names_ptr, len) };
         for &p in slice {
@@ -1036,7 +997,6 @@ pub extern "C" fn pl_concat_list(
     exprs_len: usize
 ) -> *mut ExprContext {
     ffi_try!({
-        // 1. 还原 Exprs Vec
         let mut exprs = Vec::with_capacity(exprs_len);
         let ptr_slice = unsafe { std::slice::from_raw_parts(exprs_ptr, exprs_len) };
         for &ptr in ptr_slice {
@@ -1044,7 +1004,6 @@ pub extern "C" fn pl_concat_list(
             exprs.push(expr_ctx.inner);
         }
 
-        // 2. 调用 concat_list
         let new_expr = concat_list(exprs).expect("concat_list failed");
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
@@ -1052,7 +1011,7 @@ pub extern "C" fn pl_concat_list(
 }
 
 // ==========================================
-// Array Ops (array 命名空间)
+// Array Ops 
 // ==========================================
 
 #[unsafe(no_mangle)]
@@ -1141,7 +1100,7 @@ pub extern "C" fn pl_expr_array_contains(
     })
 }
 
-// 统计类
+// Array Statistics
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_array_mean(expr_ptr: *mut ExprContext) -> *mut ExprContext {
     ffi_try!({
@@ -1178,7 +1137,7 @@ pub extern "C" fn pl_expr_array_var(expr_ptr: *mut ExprContext, ddof: u8) -> *mu
     })
 }
 
-// 布尔逻辑
+// Boolean logic
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_array_any(expr_ptr: *mut ExprContext) -> *mut ExprContext {
     ffi_try!({
@@ -1197,7 +1156,7 @@ pub extern "C" fn pl_expr_array_all(expr_ptr: *mut ExprContext) -> *mut ExprCont
     })
 }
 
-// 排序与极值
+// Sort
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_array_sort(
     expr_ptr: *mut ExprContext, 
@@ -1246,7 +1205,7 @@ pub extern "C" fn pl_expr_array_arg_max(expr_ptr: *mut ExprContext) -> *mut Expr
     })
 }
 
-// 结构变换
+// Transform
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_array_get(
     expr_ptr: *mut ExprContext, 
@@ -1277,7 +1236,6 @@ pub extern "C" fn pl_expr_array_to_struct(
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
-        // arr().to_struct(name_generator). 这里传 None 使用默认命名 (field_0, field_1...)
         let new_expr = ctx.inner.arr().to_struct(None);
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -1288,7 +1246,7 @@ pub extern "C" fn pl_expr_array_to_struct(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_log(
     expr_ptr: *mut ExprContext, 
-    base: f64 // <--- 这里是 f64，不是 *mut ExprContext
+    base: f64 
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
@@ -1305,7 +1263,7 @@ pub extern "C" fn pl_expr_round(
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
-        // round 默认行为
+        // default round
         let new_expr = ctx.inner.round(decimals, RoundMode::HalfAwayFromZero); 
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -1349,9 +1307,9 @@ pub extern "C" fn pl_expr_suffix(
     })
 }
 
-// --- Struct Ops (struct 命名空间) ---
+// --- Struct Ops ---
 
-// 1. as_struct(exprs) -> Expr (构造结构体)
+// as_struct(exprs) -> Expr
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_as_struct(
     exprs_ptr: *const *mut ExprContext,
@@ -1365,7 +1323,7 @@ pub extern "C" fn pl_expr_as_struct(
     })
 }
 
-// 2. struct.field_by_name(name)
+// struct.field_by_name(name)
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_struct_field_by_name(
     expr_ptr: *mut ExprContext,
@@ -1374,13 +1332,12 @@ pub extern "C" fn pl_expr_struct_field_by_name(
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let name = ptr_to_str(name_ptr).unwrap();
-        // struct_() 是进入 struct namespace 的入口
+        // struct_() is the entry of struct namespace
         let new_expr = ctx.inner.struct_().field_by_name(name);
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
 
-// 1. 按索引取字段
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_expr_struct_field_by_index(
     expr: *mut Expr, 
@@ -1392,16 +1349,15 @@ pub unsafe extern "C" fn pl_expr_struct_field_by_index(
     Box::into_raw(Box::new(new_expr))
 }
 
-// 2. 重命名字段
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_expr_struct_rename_fields(
     expr: *mut Expr,
-    names_ptr: *mut *mut c_char, // 字符串数组指针
+    names_ptr: *mut *mut c_char,
     len: usize
 ) -> *mut Expr {
     let e = unsafe { Box::from_raw(expr) };
     
-    // 将 C 字符串数组转换为 Vec<String>
+    // Convert C String vector to Vec<String>
     let names: Vec<String> = if names_ptr.is_null() || len == 0 {
         Vec::new()
     } else {
@@ -1422,7 +1378,6 @@ pub unsafe extern "C" fn pl_expr_struct_json_encode(
     expr: *mut Expr
 ) -> *mut Expr {
     let e = unsafe { Box::from_raw(expr)};
-    // Polars 原生支持 struct.json_encode()
     let new_expr = e.struct_().json_encode();
     Box::into_raw(Box::new(new_expr))
 }
@@ -1434,14 +1389,10 @@ pub extern "C" fn pl_expr_over(
     len: usize
 ) -> *mut ExprContext {
     ffi_try!({
-        // 1. 拿到主表达式 (例如 sum("salary"))
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         
-        // 2. 拿到分组表达式列表 (例如 [col("department")])
-        // 使用我们之前提取到 types.rs 的公共函数
         let partition_by = unsafe { consume_exprs_array(partition_by_ptr, len) };
 
-        // 3. 调用 over
         let new_expr = ctx.inner.over(partition_by);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
@@ -1481,8 +1432,6 @@ pub extern "C" fn pl_expr_shift(
     })
 }
 // diff(n, null_behavior)
-// null_behavior: "ignore" or "drop" (Polars 0.50 默认可能是 ignore)
-// 这里简单起见，只暴露 n，使用默认行为
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_diff(
     expr_ptr: *mut ExprContext,
@@ -1491,7 +1440,6 @@ pub extern "C" fn pl_expr_diff(
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         // diff(n, null_behavior)
-        // NullBehavior::Ignore 是通用默认值
         let new_expr = ctx.inner.diff(n.into(), Default::default());
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -1507,10 +1455,8 @@ pub extern "C" fn pl_expr_forward_fill(
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         
-        // 转换 limit: 0 -> None, 其他 -> Some
         let limit_opt = if limit == 0 { None } else { Some(limit as u32) };
         
-        // 使用策略枚举
         let strategy = FillNullStrategy::Forward(limit_opt);
         let new_expr = ctx.inner.fill_null_with_strategy(strategy);
         
@@ -1536,7 +1482,7 @@ pub extern "C" fn pl_expr_backward_fill(
     })
 }
 
-// 逻辑: when(predicate).then(truthy).otherwise(falsy)
+// Logic: when(predicate).then(truthy).otherwise(falsy)
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_if_else(
     pred_ptr: *mut ExprContext,
@@ -1598,13 +1544,13 @@ pub extern "C" fn pl_expr_quantile(
     let ctx = unsafe { Box::from_raw(expr_ptr) };
     let method_str = unsafe { CStr::from_ptr(interpol).to_string_lossy() };
     
-    // 解析 QuantileInterpolOptions
+    // Parse QuantileInterpolOptions
     let method = match method_str.as_ref() {
         "nearest" => QuantileMethod::Nearest,
         "higher" => QuantileMethod::Higher,
         "lower" => QuantileMethod::Lower,
         "midpoint" => QuantileMethod::Midpoint,
-        _ => QuantileMethod::Linear, // 默认 Linear
+        _ => QuantileMethod::Linear,  
     };
 
     let new_expr = ctx.inner.quantile(lit(quantile), method);
@@ -1620,7 +1566,6 @@ pub extern "C" fn pl_expr_fill_nan(
         let e = unsafe { Box::from_raw(expr) };
         let v = unsafe { Box::from_raw(fill_value) };
         
-        // fill_nan 接受一个 Expr
         let out = e.inner.fill_nan(v.inner);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: out })))
@@ -1653,33 +1598,29 @@ pub extern "C" fn pl_expr_bottom_k(expr_ptr: *mut ExprContext, k: u32) -> *mut E
 pub extern "C" fn pl_expr_top_k_by(
     expr_ptr: *mut ExprContext, 
     k: u32, 
-    by_ptrs: *const *mut ExprContext, // Expr 指针数组
+    by_ptrs: *const *mut ExprContext, 
     by_len: usize,
-    descending_ptr: *const bool,      // bool 数组
+    descending_ptr: *const bool,      
     desc_len: usize
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         
-        // 1. 处理 by_exprs (消费所有权)
         let mut by_exprs = Vec::with_capacity(by_len);
         if by_len > 0 {
             let slice = unsafe { std::slice::from_raw_parts(by_ptrs, by_len) };
             for &p in slice {
-                // 这里的关键是 Box::from_raw，我们接管了 C# 传来的 Expr 所有权
                 let e = unsafe { Box::from_raw(p) };
                 by_exprs.push(e.inner);
             }
         }
 
-        // 2. 处理 descending (复制)
         let mut descending = Vec::with_capacity(desc_len);
         if desc_len > 0 {
             let slice = unsafe { std::slice::from_raw_parts(descending_ptr, desc_len) };
             descending.extend_from_slice(slice);
         }
 
-        // 3. 调用 top_k_by
         let new_expr = ctx.inner.top_k_by(lit(k), by_exprs, descending);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
@@ -1698,7 +1639,6 @@ pub extern "C" fn pl_expr_bottom_k_by(
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         
-        // 1. 处理 by_exprs
         let mut by_exprs = Vec::with_capacity(by_len);
         if by_len > 0 {
             let slice = unsafe { std::slice::from_raw_parts(by_ptrs, by_len) };
@@ -1708,14 +1648,12 @@ pub extern "C" fn pl_expr_bottom_k_by(
             }
         }
 
-        // 2. 处理 descending
         let mut descending = Vec::with_capacity(desc_len);
         if desc_len > 0 {
             let slice = unsafe { std::slice::from_raw_parts(descending_ptr, desc_len) };
             descending.extend_from_slice(slice);
         }
 
-        // 3. 调用 bottom_k_by
         let new_expr = ctx.inner.bottom_k_by(lit(k), by_exprs, descending);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
@@ -1735,7 +1673,6 @@ pub extern "C" fn pl_expr_explode(expr_ptr: *mut ExprContext) -> *mut ExprContex
 pub unsafe extern "C" fn pl_expr_implode(expr: *mut Expr) -> *mut Expr {
     ffi_try!({
         let e = unsafe { Box::from_raw(expr) };
-        // 调用 polars expr 的 implode
         let new_expr = e.implode();
         Ok(Box::into_raw(Box::new(new_expr)))
     })

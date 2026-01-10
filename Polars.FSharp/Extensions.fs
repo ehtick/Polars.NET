@@ -38,13 +38,11 @@ module SeriesExtensions =
                 let accessor = ArrowReader.GetSeriesAccessor<'T> cArray
                 let len = cArray.Length
 
-                // 3. 高速循环
                 for i in 0 .. len - 1 do
                     let valObj = accessor.Invoke i
                     if isNull valObj then 
                         None 
                     else 
-                        // Unbox: 将 object 强转回 'T
                         Some(unbox<'T> valObj)
             }
         /// <summary>

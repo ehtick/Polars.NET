@@ -61,7 +61,7 @@ F# Users:
 dotnet add package Polars.FSharp
 ```
 
-## Target Framework
+## 🗜 Target Framework
 
 .NET 8 and later
 
@@ -219,7 +219,7 @@ We are actively working on detailed API documentation.
 
     - Auto-generated API Reference (HTML)
 
-    - Advanced Recipes (Time Series, Vector Search)
+And plan to migrate core Polars Engine from 0.50 to 0.52(newest)
 
 ## 🤝 Contributing
 

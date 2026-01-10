@@ -6,11 +6,11 @@ use polars::lazy::dsl::UnpivotArgsDSL;
 use crate::utils::{consume_exprs_array, map_jointype, ptr_to_str};
 
 // ==========================================
-// 宏定义
+// Macro Definition
 // ==========================================
 
-/// 模式 A: LazyFrame -> Vec<Expr> -> LazyFrame
-/// 适用: select, with_columns
+/// LazyFrame -> Vec<Expr> -> LazyFrame
+/// for select, with_columns
 macro_rules! gen_lazy_vec_op {
     ($func_name:ident, $method:ident) => {
         #[unsafe(no_mangle)]
@@ -20,25 +20,24 @@ macro_rules! gen_lazy_vec_op {
             len: usize
         ) -> *mut LazyFrameContext {
             ffi_try!({
-                // 1. 拿回 LazyFrame 所有权 (Consume)
-                // 链式调用的核心：上一步的输出是这一步的输入，旧壳子丢弃
+                // Consume LazyFrame handle
                 let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
                 
-                // 2. 拿回 Exprs 所有权
+                // Take back the ownership of Exprs
                 let exprs = unsafe { consume_exprs_array(exprs_ptr, len) };
 
-                // 3. 执行转换
+                // Transform
                 let new_lf = lf_ctx.inner.$method(exprs);
 
-                // 4. 返回新壳子
+                // Return new context
                 Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
             })
         }
     };
 }
 
-/// 模式 B: LazyFrame -> 单个 Expr -> LazyFrame
-/// 适用: filter
+/// LazyFrame -> Single Expr -> LazyFrame
+/// for: filter
 macro_rules! gen_lazy_single_expr_op {
     ($func_name:ident, $method:ident) => {
         #[unsafe(no_mangle)]
@@ -58,8 +57,8 @@ macro_rules! gen_lazy_single_expr_op {
     };
 }
 
-/// 模式 C: LazyFrame -> 标量参数 -> LazyFrame
-/// 适用: limit (u32), head (u32, 只要类型匹配)
+/// LazyFrame -> Scalar Parameters -> LazyFrame
+/// For: limit (u32), head (u32)
 macro_rules! gen_lazy_scalar_op {
     ($func_name:ident, $method:ident, $arg_type:ty) => {
         #[unsafe(no_mangle)]
@@ -77,7 +76,7 @@ macro_rules! gen_lazy_scalar_op {
 }
 
 // ==========================================
-// 3. 宏应用 (标准 API)
+// Macro (Standard API)
 // ==========================================
 
 // --- Select / WithColumns ---
@@ -88,9 +87,7 @@ gen_lazy_vec_op!(pl_lazy_with_columns, with_columns);
 gen_lazy_single_expr_op!(pl_lazy_filter, filter);
 
 // --- Limit ---
-// limit 在 Polars 中通常接受 IdxSize (u32)
 gen_lazy_scalar_op!(pl_lazy_limit, limit, u32);
-// 也可以加个 tail
 gen_lazy_scalar_op!(pl_lazy_tail, tail, u32);
 
 // ==========================================
@@ -103,15 +100,13 @@ pub extern "C" fn pl_lazyframe_sort(
     expr_len: usize,
     descending_ptr: *const bool,
     descending_len: usize,
-    nulls_last_ptr: *const bool,   // [新增]
-    nulls_last_len: usize,         // [新增]
-    maintain_order: bool           // [新增]
+    nulls_last_ptr: *const bool,   
+    nulls_last_len: usize,         
+    maintain_order: bool           
 ) -> *mut LazyFrameContext {
     ffi_try!({
-        // 1. 消费 LazyFrame (Consuming Self)
         let ctx = unsafe { Box::from_raw(lf_ptr) };
         
-        // 2. 还原 Exprs (Consuming Exprs)
         let mut exprs = Vec::with_capacity(expr_len);
         let ptr_slice = unsafe { std::slice::from_raw_parts(expr_ptrs, expr_len) };
         for &ptr in ptr_slice {
@@ -119,7 +114,6 @@ pub extern "C" fn pl_lazyframe_sort(
             exprs.push(expr_ctx.inner);
         }
 
-        // 3. 处理 Descending (支持广播)
         let desc_slice = unsafe { std::slice::from_raw_parts(descending_ptr, descending_len) };
         let descending = if descending_len == 1 && expr_len > 1 {
             vec![desc_slice[0]; expr_len]
@@ -127,7 +121,6 @@ pub extern "C" fn pl_lazyframe_sort(
             desc_slice.to_vec()
         };
 
-        // 4. 处理 Nulls Last (支持广播)
         let nulls_slice = unsafe { std::slice::from_raw_parts(nulls_last_ptr, nulls_last_len) };
         let nulls_last = if nulls_last_len == 1 && expr_len > 1 {
             vec![nulls_slice[0]; expr_len]
@@ -135,13 +128,11 @@ pub extern "C" fn pl_lazyframe_sort(
             nulls_slice.to_vec()
         };
 
-        // 5. 构建选项
         let options = SortMultipleOptions::default()
             .with_order_descending_multi(descending)
             .with_nulls_last_multi(nulls_last)
             .with_maintain_order(maintain_order);
 
-        // 6. 执行 Sort
         let res_lf = ctx.inner.sort_by_exprs(exprs, options);
 
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: res_lf })))
@@ -152,7 +143,6 @@ fn build_sort_options(descending: Vec<bool>) -> SortMultipleOptions {
     let len = descending.len();
     SortMultipleOptions {
         descending,
-        // 根据源码，TopK/BottomK 倾向于把 Null 放到最后，这样 Slice(0, k) 就能取到非空值
         nulls_last: vec![true; len], 
         multithreaded: true,
         maintain_order: false,
@@ -166,13 +156,12 @@ pub extern "C" fn pl_lazyframe_top_k(
     k: u32,
     by_ptrs: *const *mut ExprContext,
     by_len: usize,
-    reverse_ptr: *const bool, // 对应 C# 的 reverse 参数
+    reverse_ptr: *const bool, 
     reverse_len: usize
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(lf_ptr) };
         
-        // 1. 提取 Exprs
         let mut by_exprs = Vec::with_capacity(by_len);
         if by_len > 0 {
             let slice = unsafe { std::slice::from_raw_parts(by_ptrs, by_len) };
@@ -182,19 +171,14 @@ pub extern "C" fn pl_lazyframe_top_k(
             }
         }
 
-        // 2. 提取 reverse (descending) flags
         let mut reverse = Vec::with_capacity(reverse_len);
         if reverse_len > 0 {
             let slice = unsafe { std::slice::from_raw_parts(reverse_ptr, reverse_len) };
             reverse.extend_from_slice(slice);
         }
 
-        // 3. 构建 Options
         let options = build_sort_options(reverse);
 
-        // 4. 调用 top_k
-        // Polars 的 top_k 内部会自动处理 reverse 逻辑 (with_order_reversed)
-        // 我们只需要传入用户期望的排序方向即可
         let new_lf = ctx.inner.top_k(k, by_exprs, options);
         
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
@@ -213,7 +197,6 @@ pub extern "C" fn pl_lazyframe_bottom_k(
     ffi_try!({
         let ctx = unsafe { Box::from_raw(lf_ptr) };
         
-        // 1. 提取 Exprs
         let mut by_exprs = Vec::with_capacity(by_len);
         if by_len > 0 {
             let slice = unsafe { std::slice::from_raw_parts(by_ptrs, by_len) };
@@ -223,17 +206,14 @@ pub extern "C" fn pl_lazyframe_bottom_k(
             }
         }
 
-        // 2. 提取 reverse flags
         let mut reverse = Vec::with_capacity(reverse_len);
         if reverse_len > 0 {
             let slice = unsafe { std::slice::from_raw_parts(reverse_ptr, reverse_len) };
             reverse.extend_from_slice(slice);
         }
 
-        // 3. 构建 Options
         let options = build_sort_options(reverse);
 
-        // 4. 调用 bottom_k
         let new_lf = ctx.inner.bottom_k(k, by_exprs, options);
         
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
@@ -253,7 +233,6 @@ pub extern "C" fn pl_lazy_groupby_agg(
         let keys = unsafe { consume_exprs_array(keys_ptr, keys_len) };
         let aggs = unsafe { consume_exprs_array(aggs_ptr, aggs_len) };
 
-        // 链式调用
         let new_lf = lf_ctx.inner.group_by_stable(keys).agg(aggs);
         
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
@@ -263,15 +242,14 @@ pub extern "C" fn pl_lazy_groupby_agg(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
     lf_ptr: *mut LazyFrameContext,
-    // --- 动态分组参数 ---
     index_col: *const c_char,
     every: *const c_char,
     period: *const c_char,
     offset: *const c_char,
-    label_idx: i32,         // [修改] 0=Left, 1=Right, 2=DataPoint
+    label_idx: i32,         
     include_boundaries: bool,
-    closed_window_idx: i32, // 0=Left, 1=Right, 2=Both, 3=None
-    start_by_idx: i32,      // 0=WindowBound, 1=DataPoint...
+    closed_window_idx: i32, 
+    start_by_idx: i32,      
     // --- Keys & Aggs ---
     keys_ptr: *const *mut ExprContext, keys_len: usize,
     aggs_ptr: *const *mut ExprContext, aggs_len: usize
@@ -279,13 +257,11 @@ pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         
-        // 1. 解析字符串
         let index_col_str = unsafe { CStr::from_ptr(index_col).to_str().unwrap() };
         let every_str = unsafe { CStr::from_ptr(every).to_str().unwrap() };
         let period_str = unsafe { CStr::from_ptr(period).to_str().unwrap() };
         let offset_str = unsafe { CStr::from_ptr(offset).to_str().unwrap() };
 
-        // 2. 映射 Enum (ClosedWindow)
         let closed_window = match closed_window_idx {
             0 => ClosedWindow::Left,
             1 => ClosedWindow::Right,
@@ -294,8 +270,6 @@ pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
             _ => ClosedWindow::Left,
         };
 
-        // 3. [新增] 映射 Enum (Label)
-        // pub enum Label { Left, Right, DataPoint }
         let label = match label_idx {
             0 => Label::Left,
             1 => Label::Right,
@@ -303,7 +277,6 @@ pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
             _ => Label::Left,
         };
 
-        // 4. [新增] 映射 Enum (StartBy)
         let start_by = match start_by_idx {
             0 => StartBy::WindowBound,
             1 => StartBy::DataPoint,
@@ -317,29 +290,24 @@ pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
             _ => StartBy::WindowBound,
         };
 
-        // 5. 构建 Options
-        // 注意：根据源代码，index_column 字段虽然在结构体里，但 group_by_dynamic 会处理它
-        // 我们这里初始化为一个空 PlSmallStr 或者直接填对都行
         let options = DynamicGroupOptions {
             index_column: PlSmallStr::from_str(index_col_str), // 初始化一下
             every: Duration::parse(every_str),
             period: Duration::parse(period_str),
             offset: Duration::parse(offset_str),
-            label,               // [修改] 替代了 truncate
+            label,    
             include_boundaries,
             closed_window,
             start_by,
         };
 
-        // 6. 解析 Exprs
         let keys = unsafe { consume_exprs_array(keys_ptr, keys_len) };
         let aggs = unsafe { consume_exprs_array(aggs_ptr, aggs_len) };
 
-        // 7. 执行
         // group_by_dynamic(self, index_column: Expr, group_by: E, options: DynamicGroupOptions)
         let new_lf = lf_ctx.inner
             .group_by_dynamic(
-                col(index_col_str), // 传入 index 列的表达式
+                col(index_col_str), 
                 keys, 
                 options
             )
@@ -365,13 +333,10 @@ pub extern "C" fn pl_lazy_explode(
 
         let mut iter = exprs.into_iter();
         
-        // 1. 处理第一个
         let first_expr = iter.next().unwrap();
-        // [修复] 处理 Option: 如果转换失败，抛出错误
         let mut final_selector = first_expr.into_selector()
             .ok_or_else(|| PolarsError::ComputeError("Expr cannot be converted to Selector".into()))?;
 
-        // 2. 处理剩下的
         for e in iter {
             let s = e.into_selector()
                 .ok_or_else(|| PolarsError::ComputeError("Expr cannot be converted to Selector".into()))?;
@@ -388,13 +353,12 @@ pub extern "C" fn pl_lazy_explode(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazyframe_unnest(
     lf_ptr: *mut LazyFrameContext,
-    sel_ptr: *mut SelectorContext // 接收 Selector 句柄
+    sel_ptr: *mut SelectorContext 
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        let sel_ctx = unsafe {  Box::from_raw(sel_ptr) }; // 借用 Selector，不消耗它
+        let sel_ctx = unsafe {  Box::from_raw(sel_ptr) }; 
 
-        // 调用 unnest(Selector)
         let new_lf = lf_ctx.inner.unnest(sel_ctx.inner);
         
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
@@ -402,7 +366,7 @@ pub extern "C" fn pl_lazyframe_unnest(
 }
 
 // ==========================================
-// Collect (出口：LazyFrame -> DataFrame)
+// Collect (LazyFrame -> DataFrame)
 // ==========================================
 
 #[unsafe(no_mangle)]
@@ -410,9 +374,6 @@ pub extern "C" fn pl_lazy_collect(lf_ptr: *mut LazyFrameContext) -> *mut DataFra
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         
-        // 去掉了 println!，保持库函数的纯洁性。
-        // 如果想看日志，可以在 F# 端调用 explain 或者 check schema。
-        // 这里的 ? 会捕获 PolarsError 并转给 ffi_try
         let df = lf_ctx.inner.collect()?;
 
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
@@ -424,7 +385,7 @@ pub extern "C" fn pl_lazy_collect_streaming(lf_ptr: *mut LazyFrameContext) -> *m
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         
-        // Polars 0.50+ 写法: with_streaming(true).collect()
+        // Polars 0.50+ API: with_streaming(true).collect()
         let df = lf_ctx.inner
             .with_new_streaming(true)
             .collect()?;
@@ -446,8 +407,6 @@ pub extern "C" fn pl_lazy_unpivot(
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         
-        // 1. 辅助：把 C字符串数组 转为 Vec<PlSmallStr>
-        // 因为 cols() 和 exclude() 都接受 IntoVec<PlSmallStr>
         let to_pl_strs = |ptr, len| unsafe {
             let mut v = Vec::with_capacity(len);
             for &p in std::slice::from_raw_parts(ptr, len) {
@@ -460,18 +419,14 @@ pub extern "C" fn pl_lazy_unpivot(
         let index_names = to_pl_strs(id_vars_ptr, id_len);
         let on_names = to_pl_strs(val_vars_ptr, val_len);
 
-        // 2. 构造 Selector
-        // index: 直接指定列名
-        let index_selector = cols(index_names.clone()); // clone 一份给 index 使用
+        let index_selector = cols(index_names.clone()); 
 
-        // on: 如果为空，则默认选取 "所有非 index 的列" (模仿 pandas/polars 默认行为)
         let on_selector = if on_names.is_empty() {
-            all().exclude_cols(index_names) // 这里用掉了 index_names
+            all().exclude_cols(index_names) 
         } else {
             cols(on_names)
         };
 
-        // 3. 处理重命名
         let variable_name = if variable_name_ptr.is_null() { 
             None 
         } else { 
@@ -484,10 +439,9 @@ pub extern "C" fn pl_lazy_unpivot(
             Some(PlSmallStr::from_str(ptr_to_str(value_name_ptr).unwrap())) 
         };
 
-        // 4. 构建参数 (UnpivotArgs)
         let args = UnpivotArgsDSL {
-            index: index_selector, // 必须是 Selector
-            on: on_selector,       // 必须是 Selector
+            index: index_selector, 
+            on: on_selector,       
             variable_name,
             value_name,
         };
@@ -505,11 +459,10 @@ pub extern "C" fn pl_lazy_concat(
     lfs_ptr: *const *mut LazyFrameContext, 
     len: usize,
     how: i32,        // 0=Vert, 1=Horz, 2=Diag
-    rechunk: bool,   // 统一传给 UnionArgs
-    parallel: bool   // 统一传给 UnionArgs
+    rechunk: bool,   
+    parallel: bool   
 ) -> *mut LazyFrameContext {
     ffi_try!({
-        // 1. 消费所有 LazyFrame
         let mut lfs = Vec::with_capacity(len);
         let slice = unsafe { std::slice::from_raw_parts(lfs_ptr, len) };
         
@@ -522,21 +475,17 @@ pub extern "C" fn pl_lazy_concat(
              return Err(PolarsError::ComputeError("Cannot concat empty list of LazyFrames".into()));
         }
 
-        // 2. 统一构建 UnionArgs
-        // 无论哪种拼接，都把配置传进去，由 Polars 内部决定用不用
         let args = UnionArgs {
             rechunk,
             parallel,
             ..Default::default()
         };
 
-        // 3. 根据策略调用
         let new_lf = match how {
             // Vertical
             0 => concat(lfs, args)?,
             
             // Horizontal
-            // 既然源码签名是 fn(inputs, args)，我们就直接传 args
             1 => concat_lf_horizontal(lfs, args)?,
 
             // Diagonal
@@ -558,22 +507,18 @@ pub extern "C" fn pl_lazy_join(
     right_ptr: *mut LazyFrameContext,
     left_on_ptr: *const *mut ExprContext, left_on_len: usize,
     right_on_ptr: *const *mut ExprContext, right_on_len: usize,
-    how_code: i32 // 复用 PlJoinType 枚举
+    how_code: i32 
 ) -> *mut LazyFrameContext {
     ffi_try!({
-        // 1. 消费左右 LazyFrame
         let left_ctx = unsafe { Box::from_raw(left_ptr) };
         let right_ctx = unsafe { Box::from_raw(right_ptr) };
 
-        // 2. 消费连接键表达式
         let left_on = unsafe { consume_exprs_array(left_on_ptr, left_on_len) };
         let right_on = unsafe { consume_exprs_array(right_on_ptr, right_on_len) };
 
-        // 3. 映射 JoinType
         let how = map_jointype(how_code);
         let args = JoinArgs::new(how);
 
-        // 4. 执行 Lazy Join
         let new_lf = left_ctx.inner.join(right_ctx.inner, left_on, right_on, args);
 
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
@@ -582,11 +527,9 @@ pub extern "C" fn pl_lazy_join(
 fn exprs_to_names(exprs: &[Expr]) -> PolarsResult<Vec<PlSmallStr>> {
     let mut names = Vec::new();
     for e in exprs {
-        // e.meta().root_names() 返回 Vec<PlSmallStr>
+        // e.meta().root_names() returns Vec<PlSmallStr>
         let roots = e.clone().meta().root_names();
         
-        // 将所有找到的根列名都加入到结果列表中
-        // extend_from_slice 会把 Vec 里的元素一个个加进去
         names.extend_from_slice(&roots);
     }
     Ok(names)
@@ -611,11 +554,9 @@ pub extern "C" fn pl_lazy_join_asof(
         let by_left_exprs = unsafe { consume_exprs_array(by_left_ptr, by_left_len) };
         let by_right_exprs = unsafe { consume_exprs_array(by_right_ptr, by_right_len) };
 
-        // 将 Expr 列表转换为列名列表 (PlSmallStr)
         let left_by_names = if by_left_exprs.is_empty() { None } else { Some(exprs_to_names(&by_left_exprs)?) };
         let right_by_names = if by_right_exprs.is_empty() { None } else { Some(exprs_to_names(&by_right_exprs)?) };
 
-        // 策略
         let strategy_str = ptr_to_str(strategy_ptr).unwrap_or("backward");
         let strategy = match strategy_str {
             "forward" => AsofStrategy::Forward,
@@ -623,31 +564,29 @@ pub extern "C" fn pl_lazy_join_asof(
             _ => AsofStrategy::Backward,
         };
 
-        // [修复] 容差解析: 字符串 -> (Scalar?, String?)
         let tol_str = if tolerance_ptr.is_null() { "" } else { ptr_to_str(tolerance_ptr).unwrap() };
         
         let (tolerance, tolerance_str_val) = if tol_str.is_empty() {
             (None, None)
         } else if let Ok(v) = tol_str.parse::<i64>() {
-            // 纯整数 -> Scalar(Int64)
+            // Pure Interger -> Scalar(Int64)
             (Some(Scalar::new(DataType::Int64, AnyValue::Int64(v))), None)
         } else if let Ok(v) = tol_str.parse::<f64>() {
-            // 浮点数 -> Scalar(Float64)
+            // Float -> Scalar(Float64)
             (Some(Scalar::new(DataType::Float64, AnyValue::Float64(v))), None)
         } else {
-            // 否则认为是时间字符串 ("2h")，直接传给 Polars
             (None, Some(PlSmallStr::from_str(tol_str)))
         };
 
-        // 构建 Options
+        // Build Options
         let options = AsOfOptions {
             strategy,
             tolerance,      // Option<Scalar>
             tolerance_str: tolerance_str_val, // Option<PlSmallStr>
             left_by: left_by_names,
             right_by: right_by_names,
-            allow_eq: true, // 默认允许相等匹配
-            check_sortedness: true, // 默认检查排序
+            allow_eq: true, 
+            check_sortedness: true, 
         };
 
         let new_lf = left.inner.join_builder()
@@ -661,27 +600,15 @@ pub extern "C" fn pl_lazy_join_asof(
     })
 }
 // ==========================================
-// 5. 实用功能
+// Ops
 // ==========================================
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_schema(lf_ptr: *mut LazyFrameContext) -> *mut c_char {
     ffi_try!({
-        // 借用 LazyFrame (注意：collect_schema 需要 &mut self，因为它会缓存 plan)
-        // 所以这里我们必须用 &mut *lf_ptr
         let ctx = unsafe { &mut *lf_ptr };
         
-        // 调用 collect_schema 获取 SchemaRef
         let schema = ctx.inner.collect_schema()?;
         
-        // 方案 A: 转 JSON (推荐，如果开启了 serde feature)
-        // let json = serde_json::to_string(&schema).unwrap();
-        
-        // 方案 B: 简单 Debug 字符串 (如果不依赖 serde)
-        // 格式类似: Schema { fields: [Field { name: "a", dtype: Int64 }, ...] }
-        // 这对 C# 来说比较难解析。
-        
-        // 方案 C (最佳折衷): 手动构建一个简化的 JSON 字符串
-        // {"name": "Int64", "age": "Utf8"}
         let mut json_parts = Vec::new();
         for (name, dtype) in schema.iter() {
             let dtype_str = dtype.to_string();
@@ -693,7 +620,6 @@ pub extern "C" fn pl_lazy_schema(lf_ptr: *mut LazyFrameContext) -> *mut c_char {
     })
 }
 
-// 不执行计算，只查看计划
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_explain(lf_ptr: *mut LazyFrameContext, optimized: bool) -> *mut c_char {
     ffi_try!({
@@ -705,7 +631,6 @@ pub extern "C" fn pl_lazy_explain(lf_ptr: *mut LazyFrameContext, optimized: bool
     })
 }
 
-// 释放字符串 (配合 pl_lazy_explain 使用)
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_free_string(ptr: *mut std::os::raw::c_char) {
     if !ptr.is_null() {
@@ -713,13 +638,10 @@ pub extern "C" fn pl_free_string(ptr: *mut std::os::raw::c_char) {
     }
 }
 
-// 克隆逻辑计划
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_clone(lf_ptr: *mut LazyFrameContext) -> *mut LazyFrameContext {
-    // 注意：这里用 &*lf_ptr 借用，而不是 Box::from_raw 消费
     let ctx = unsafe { &*lf_ptr };
     
-    // LazyFrame 的 clone 只是复制查询计划，非常快
     let new_lf = ctx.inner.clone();
     
     Box::into_raw(Box::new(LazyFrameContext { inner: new_lf }))
@@ -735,20 +657,17 @@ pub extern "C" fn pl_lazy_frame_free(ptr: *mut LazyFrameContext) {
     })
 }
 
-// 定义回调函数签名：C# 返回一个 ArrowArrayStream 指针
+// Define Callback：C# will return ArrowArrayStream Pointer
 type StreamFactoryCallback = unsafe extern "C" fn(*mut core::ffi::c_void) -> *mut polars_arrow::ffi::ArrowArrayStream;
-type DestroyUserDataCallback = unsafe extern "C" fn(*mut core::ffi::c_void); // [新增]
-// 1. 定义扫描器结构体
-// 这个结构体会被 Polars 的 Logical Plan 持有，直到执行时
+type DestroyUserDataCallback = unsafe extern "C" fn(*mut core::ffi::c_void); 
+// Define scanner struct
 struct CSharpStreamScanner {
     schema: SchemaRef,
     callback: StreamFactoryCallback,
     destroy_callback: Option<DestroyUserDataCallback>,
-    user_data: *mut core::ffi::c_void, // 指向 C# 端保持上下文的对象 (GCHandle)
+    user_data: *mut core::ffi::c_void, 
 }
 
-// 必须实现 Send + Sync，因为 Lazy 执行可能是多线程的
-// 我们假设 C# 的回调是线程安全的，或者 Polars 只在一个线程调用它
 unsafe impl Send for CSharpStreamScanner {}
 unsafe impl Sync for CSharpStreamScanner {}
 
@@ -756,7 +675,6 @@ impl Drop for CSharpStreamScanner {
     fn drop(&mut self) {
         if let Some(destroy) = self.destroy_callback {
             unsafe {
-                // 通知 C# 释放 GCHandle
                 destroy(self.user_data);
             }
         }
@@ -767,18 +685,15 @@ impl AnonymousScan for CSharpStreamScanner {
     fn as_any(&self) -> &dyn Any {
         self
     }
-    // 核心：当 Polars 需要数据时，会调用这个 scan 方法
     fn scan(&self, _scan_opts: AnonymousScanArgs) -> PolarsResult<DataFrame> {
         unsafe {
-            // A. 回调 C# 获取新的流指针
+            // Call C# for new pointer for stream
             let stream_ptr = (self.callback)(self.user_data);
             
             if stream_ptr.is_null() {
                 return Err(PolarsError::ComputeError("C# callback returned null stream".into()));
             }
 
-            // B. 复用我们在 Eager 模式下写好的逻辑！
-            // 把 stream_ptr 转成 DataFrameContext，再拆出 DataFrame
             let ctx_ptr = super::eager::pl_dataframe_new_from_stream(stream_ptr);
             
             if ctx_ptr.is_null() {
@@ -790,25 +705,22 @@ impl AnonymousScan for CSharpStreamScanner {
         }
     }
 
-    // 告诉 Polars 数据的结构
+    // Tell Polars the schema of data
     fn schema(&self, _infer_schema_length: Option<usize>) -> PolarsResult<SchemaRef> {
         Ok(self.schema.clone())
     }
 
-    // 允许谓词下推 (Predicate Pushdown) 等优化
-    // 如果我们要支持更高级的过滤下推，可以在这里扩展，但现在先允许全部扫描
     fn allows_predicate_pushdown(&self) -> bool {
         false 
     }
     fn allows_projection_pushdown(&self) -> bool {
-        true // 允许列裁剪 (只读需要的列)
+        true 
     }
     fn allows_slice_pushdown(&self) -> bool {
-        true // 允许 Limit/Offset 下推
+        true 
     }
 }
 use polars::prelude::{Field as PolarsField};
-// 2. 导出 LazyFrame 构造函数
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_lazy_frame_scan_stream(
     ptr_schema: *mut polars_arrow::ffi::ArrowSchema,
@@ -817,19 +729,17 @@ pub unsafe extern "C" fn pl_lazy_frame_scan_stream(
     user_data: *mut core::ffi::c_void,
 ) -> *mut LazyFrameContext {
     ffi_try!({
-        // 解析 C Schema
+        // Parse C Schema
         let field = unsafe { polars_arrow::ffi::import_field_from_c(&*ptr_schema)? };
         
         // Arrow Field -> Polars Schema
-        let arrow_dtype = field.dtype; // 注意：字段名可能是 data_type 而不是 dtype，视版本而定
+        let arrow_dtype = field.dtype; 
         
         let schema = match arrow_dtype {
             ArrowDataType::Struct(fields) => {
-                // [修复 2] Schema::new() 不存在，改用 Schema::with_capacity
                 let mut schema = Schema::with_capacity(fields.len());
                 for f in fields {
                     let p_field = PolarsField::from(&f);
-                    // [修复 3] Schema 通常使用 insert 方法添加字段，而不是 with_column
                     schema.insert(p_field.name, p_field.dtype);
                 }
                 Arc::new(schema)
@@ -837,7 +747,6 @@ pub unsafe extern "C" fn pl_lazy_frame_scan_stream(
             _ => return Err(PolarsError::ComputeError("Schema must be a Struct".into())),
         };
 
-        // 创建扫描器
         let scanner = CSharpStreamScanner {
             schema,
             callback,
@@ -845,7 +754,6 @@ pub unsafe extern "C" fn pl_lazy_frame_scan_stream(
             user_data,
         };
 
-        // 创建 LazyFrame
         let lf = LazyFrame::anonymous_scan(
             std::sync::Arc::new(scanner),
             ScanArgsAnonymous::default()
