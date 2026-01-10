@@ -5,7 +5,8 @@ name: Build and Publish NuGet
 # 2. 或者手动在 GitHub 界面点击 "Run workflow" 触发
 on:
   push:
-    branches: [ "main" ]
+    tags:
+      - 'v*'
     paths-ignore:
       - '**.md'         # 忽略所有 .md 文件
       - 'LICENSE'       # 忽略 License
@@ -211,7 +212,3 @@ jobs:
           EOF
           
           dotnet run
-      # (可选) 9. 自动发布到 NuGet.org
-      # 如果你在 GitHub Secrets 里配置了 NUGET_API_KEY，取消下面的注释即可自动发布
-      # - name: Push to NuGet
-      #   run: dotnet nuget push nupkgs/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
