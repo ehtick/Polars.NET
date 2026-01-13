@@ -4,15 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-polars = { version = "0.50.0", features = ["lazy", "csv","dtype-date","parquet","strings","regex",
+polars = { version = "0.52.0", features = ["lazy", "csv","dtype-date","parquet","strings","regex",
 "timezones","semi_anti_join","cross_join","is_between","is_in","is_unique","log",
 "abs","round_series","dtype-struct","dtype-array","array_any_all","array_to_struct","pivot","sql","diff","rolling_window","rolling_window_by",
 "json","ipc","asof_join","diagonal_concat","top_k",
 "dtype-categorical","serde","dynamic_group_by","business"] }
-polars-core = { version = "0.50.0" }
-polars-ops = { version = "0.50.0", features = ["pivot"] }
-polars-arrow = { version = "0.50.0" }
-polars-io = { version = "0.50.0", features = ["parquet","cloud"] }
+polars-core = { version = "0.52.0" }
+polars-ops = { version = "0.52.0", features = ["pivot"] }
+polars-arrow = { version = "0.52.0" }
+polars-io = { version = "0.52.0", features = ["parquet","cloud"] }
 flate2 = { version = "=1.0.35", features = ["rust_backend"] }
 serde_json = "1.0.145"
 
@@ -29,7 +29,7 @@ panic = "abort"
 # 发布模式：追求极致体积和性能 (NuGet 发布用)
 [profile.release]
 strip = true        # 自动去除符号表 (Strip symbols)
-opt-level = 3       # 最高优化等级
+opt-level = 3       # 最高优化等级3
 lto = true          # 开启链接时优化 (关键！体积减小约 30-50%)
 codegen-units = 1   # 牺牲并行编译速度，换取更优的二进制布局
 panic = "abort"     # Panic 直接中止，不展开堆栈，进一步减小体积

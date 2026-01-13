@@ -140,9 +140,9 @@ public static partial class PolarsWrapper
             }
         }
     }
-    public static LazyFrameHandle LazyFrameUnnest(LazyFrameHandle lf, SelectorHandle selector)
+    public static LazyFrameHandle LazyFrameUnnest(LazyFrameHandle lf, SelectorHandle selector,string? separator)
     {
-        var h = ErrorHelper.Check(NativeBindings.pl_lazyframe_unnest(lf, selector));
+        var h = ErrorHelper.Check(NativeBindings.pl_lazyframe_unnest(lf, selector, separator));
         lf.TransferOwnership();
         selector.TransferOwnership();
         return ErrorHelper.Check(h);

@@ -480,11 +480,13 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Unnest struct columns selected by a Selector.
     /// </summary>
-    public LazyFrame Unnest(Selector selector)
+    /// <param name="selector">Columns to unnest.</param>
+    /// <param name="separator">Optional separator.</param>
+    public LazyFrame Unnest(Selector selector,string? separator = null)
     {
         var lfClone = CloneHandle();
         var sClone = selector.CloneHandle();
-        var h = PolarsWrapper.LazyFrameUnnest(lfClone, sClone);
+        var h = PolarsWrapper.LazyFrameUnnest(lfClone, sClone,separator);
         return new LazyFrame(h);
     }
 
@@ -494,10 +496,8 @@ public class LazyFrame : IDisposable
     /// </summary>
     public LazyFrame Unnest(params string[] columns)
     {
-        // 1. 在 C# 端创建 Selector 对象
         using var sel = Selector.Cols(columns);
-        // 2. 传给底层
-        return Unnest(sel);
+        return Unnest(sel,null);
     }
     /// <summary>
     /// Explode list-like columns into multiple rows.

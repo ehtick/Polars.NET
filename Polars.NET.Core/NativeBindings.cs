@@ -146,7 +146,8 @@ unsafe internal partial class NativeBindings
     public static partial DataFrameHandle pl_dataframe_unnest(
         DataFrameHandle df,
         [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string[] cols,
-        UIntPtr len
+        UIntPtr len,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? separator
     );
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_lit_str([MarshalAs(UnmanagedType.LPUTF8Str)] string val);
@@ -543,10 +544,11 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool rechunk,
         [MarshalAs(UnmanagedType.U1)] bool parallel
     );
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_lazyframe_unnest(
         LazyFrameHandle lf, 
-        SelectorHandle selector
+        SelectorHandle selector,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? separator
     );
     // --- Streaming & Sink ---
     [LibraryImport(LibName)] 

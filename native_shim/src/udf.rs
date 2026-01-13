@@ -74,19 +74,33 @@ pub extern "C" fn pl_expr_map(
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let udf = Arc::new(CSharpUdf { callback,cleanup,user_data });
         let target_dtype = unsafe { &(*output_type_ptr).dtype };
-        let output_type = match target_dtype {
-            DataType::Unknown(UnknownKind::Any) => GetOutput::map_field(|f| Ok(f.clone())),
-            
-            _ => GetOutput::from_type((*target_dtype).clone()),
+        let target_dtype_owned = target_dtype.clone();
+
+        let output_map = move |_input_schema: &Schema, input_field: &Field| -> PolarsResult<Field> {
+            match &target_dtype_owned {
+                // Unknown means keep Identity
+                DataType::Unknown(_) => Ok(input_field.clone()),
+                
+                known_dtype => Ok(Field::new(input_field.name().clone(), known_dtype.clone())),
+            }
         };
 
         let new_expr = ctx.inner.map(
             move |c| {
-                let s = c.take_materialized_series();
-                let res_series = udf.call(s)?;
-                Ok(res_series.map(|s| s.into_column()))
+                // [Logic from previous step]
+                // Column -> Series
+                let s = c.as_materialized_series().clone();
+                
+                // Call C# UDF
+                let res_series_opt = udf.call(s)?;
+                
+                // Unwrap Option (C# UDF must return a Series)
+                let out_s = res_series_opt.expect("C# UDF returned None");
+                
+                // Series -> Column
+                Ok(out_s.into_column())
             }, 
-            output_type
+            output_map
         );
 
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))

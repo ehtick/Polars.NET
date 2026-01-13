@@ -163,9 +163,15 @@ pub extern "C" fn pl_read_ipc(path_ptr: *const c_char) -> *mut DataFrameContext 
 pub extern "C" fn pl_scan_ipc(path_ptr: *const c_char) -> *mut LazyFrameContext {
     ffi_try!({
         let path = ptr_to_str(path_ptr).unwrap();
-        // 0.50: ScanArgsIpc::default()
-        let args = ScanArgsIpc::default();
-        let lf = LazyFrame::scan_ipc(PlPath::new(path), args)?;
+        // [Polars 0.52 Change]
+        // 1. ScanArgsIpc -> IpcScanOptions 
+        let ipc_options = IpcScanOptions::default();
+        
+        // 2.  UnifiedScanArgs (Cloud, Schema, RowCount,etc)
+        let unified_args = UnifiedScanArgs::default();
+
+        // 3. call scan_ipc(path, options, unified_args)
+        let lf = LazyFrame::scan_ipc(PlPath::new(path), ipc_options, unified_args)?;
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
     })
 }

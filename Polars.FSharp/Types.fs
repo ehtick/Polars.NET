@@ -73,7 +73,6 @@ type Series(handle: SeriesHandle) =
             resDf.[0]
 
         finally
-            // 5. 清理临时对象
             match tempToDispose with
             | Some s -> s.Handle.Dispose()
             | None -> ()
@@ -102,7 +101,6 @@ type Series(handle: SeriesHandle) =
         ?maintainOrder: bool,
         ?multithreaded: bool
     ) =
-        // 处理默认值
         let desc = defaultArg descending false
         let nLast = defaultArg nullsLast false
         let stable = defaultArg maintainOrder false
@@ -689,7 +687,6 @@ type Series(handle: SeriesHandle) =
         s.Cast DataType.Time
 
     // --- TimeSpan (Polars Duration: i64 microseconds) ---
-    // 为了和 Datetime(us) 兼容，Duration 也默认用 us
     static member create(name: string, data: TimeSpan seq) =
         let arr = Seq.toArray data
         let micros = Array.zeroCreate<int64> arr.Length
@@ -758,7 +755,7 @@ type Series(handle: SeriesHandle) =
     member _.Decimal(index: int) : decimal option = 
         PolarsWrapper.SeriesGetDecimal(handle, int64 index) |> Option.ofNullable
 
-    // 时间类型
+    // Temporal Type
     member _.Date(index: int) : DateOnly option = 
         PolarsWrapper.SeriesGetDate(handle, int64 index) |> Option.ofNullable
 
@@ -771,9 +768,6 @@ type Series(handle: SeriesHandle) =
     member _.Duration(index: int) : TimeSpan option = 
         PolarsWrapper.SeriesGetDuration(handle, int64 index) |> Option.ofNullable
     // --- Aggregations (Returning Series of len 1) ---
-    // 返回 Series 而不是 scalar，是为了支持链式计算 (s.Sum() / s.Count())
-    // 最终要取值时，用户可以调 s.Int(0) 或 s.Float(0)
-    
     member this.Sum() = new Series(PolarsWrapper.SeriesSum handle)
     member this.Mean() = new Series(PolarsWrapper.SeriesMean handle)
     member this.Min() = new Series(PolarsWrapper.SeriesMin handle)
@@ -825,9 +819,6 @@ type Series(handle: SeriesHandle) =
     static member (.<=) (lhs: Series, rhs: Series) = new Series(PolarsWrapper.SeriesLtEq(lhs.Handle, rhs.Handle))
 
     // --- Broadcasting Helpers (Scalar Ops) ---
-    // 允许 s + 1, s * 2.5 等操作
-    // 我们创建一个临时的长度为1的 Series 传给 Rust，Rust 会处理广播
-
     static member (+) (lhs: Series, rhs: int) = lhs + Series.create("lit", [rhs])
     static member (+) (lhs: Series, rhs: double) = lhs + Series.create("lit", [rhs])
     static member (-) (lhs: Series, rhs: int) = lhs - Series.create("lit", [rhs])
@@ -1561,8 +1552,6 @@ and DataFrame(handle: DataFrameHandle) =
         let h = PolarsWrapper.Select(this.Handle, handles)
         new DataFrame(h)
     member this.Select(columns: seq<#IColumnExpr>) =
-            // 使用 Seq.collect 展平所有输入
-            // 不管是 Expr, Selector 还是 ColumnExpr，都会乖乖交出 Expr list
             let exprs = 
                 columns 
                 |> Seq.collect (fun x -> x.ToExprs()) 
@@ -1655,13 +1644,15 @@ and DataFrame(handle: DataFrameHandle) =
     member this.Explode(columns: seq<#IColumnExpr>) =
         let exprs = columns |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
         this.Explode exprs
-    member this.UnnestColumn(column: string) : DataFrame =
+    member this.UnnestColumn(column: string, ?separator: string) : DataFrame =
         let cols = [| column |]
-        let newHandle = PolarsWrapper.Unnest(this.Handle, cols)
+        let sep = defaultArg separator null
+        let newHandle = PolarsWrapper.Unnest(this.Handle, cols, sep)
         new DataFrame(newHandle)
-    member this.UnnestColumns(columns: string list) : DataFrame =
+    member this.UnnestColumns(columns: string list, ?separator: string) : DataFrame =
         let cArr = List.toArray columns
-        let newHandle = PolarsWrapper.Unnest(this.Handle, cArr)
+        let sep = defaultArg separator null
+        let newHandle = PolarsWrapper.Unnest(this.Handle, cArr, sep)
         new DataFrame(newHandle)
        /// <summary> Pivot the DataFrame from long to wide format. </summary>
     member this.Pivot (index: string list) (columns: string list) (values: string list) (aggFn: PivotAgg) : DataFrame =
@@ -2238,30 +2229,30 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <summary>
     /// Decompose a struct column into multiple columns.
     /// </summary>
-    member this.Unnest(selector: Selector) =
-        // 1. Clone LF Handle
+    member this.Unnest(selector: Selector,?separator: string) =
         let lfHandle = this.CloneHandle()
         
-        // 2. Clone Selector Handle (Wrapper 也会消耗 Selector)
         let selHandle = selector.CloneHandle()
 
-        let h = PolarsWrapper.LazyFrameUnnest(lfHandle, selHandle)
+        let sep = defaultArg separator null
+
+        let h = PolarsWrapper.LazyFrameUnnest(lfHandle, selHandle, sep)
         new LazyFrame(h)
 
     /// <summary>
     /// Helper: Unnest columns by name.
     /// </summary>
-    member this.Unnest(columns: string list) =
+    member this.Unnest(columns: string list,?separator: string) =
         let columnsArray = columns|> List.toArray
         let handle = PolarsWrapper.SelectorCols columnsArray
         let sel = new Selector(handle)
-        this.Unnest sel
+        this.Unnest (sel,?separator=separator)
 
     /// <summary>
     /// Helper: Unnest a single column by name.
     /// </summary>
-    member this.Unnest(column: string) =
-        this.Unnest [column]
+    member this.Unnest(column: string, ?separator: string) =
+        this.Unnest ([column], ?separator=separator)
     member this.Limit (n: uint) : LazyFrame =
         let lfClone = this.CloneHandle()
         let h = PolarsWrapper.LazyLimit(lfClone, n)
@@ -2269,7 +2260,7 @@ and LazyFrame(handle: LazyFrameHandle) =
     member this.WithColumn (expr: Expr) : LazyFrame =
         let lfClone = this.CloneHandle()
         let exprClone = expr.CloneHandle()
-        let handles = [| exprClone |] // 使用克隆的 handle
+        let handles = [| exprClone |] 
         let h = PolarsWrapper.LazyWithColumns(lfClone, handles)
         new LazyFrame(h)
     member this.WithColumns (exprs: Expr list) : LazyFrame =
