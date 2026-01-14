@@ -4,10 +4,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use crate::types::{DataFrameContext, DataTypeContext, SeriesContext};
 use crate::utils::*;
-use polars_arrow::array::PrimitiveArray;
 use polars_arrow::datatypes::ArrowDataType;
-use polars_arrow::buffer::Buffer;
-use polars_arrow::bitmap::Bitmap;
+
 // ==========================================
 // Constructors 
 // ==========================================
@@ -141,30 +139,33 @@ pub extern "C" fn pl_series_new_str(
 pub extern "C" fn pl_series_new_decimal(
     name: *const c_char,
     ptr: *const i128,
-    validity: *const bool, 
+    validity: *const bool,
     len: usize,
-    scale: usize 
+    scale: usize
 ) -> *mut SeriesContext {
     ffi_try!({
-        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
-        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
         
-        let values = Buffer::from(slice.to_vec());
-
-        let validity_bitmap = if validity.is_null() {
-            None
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let series = if validity.is_null() {
+            Series::new(name.clone().into(), slice)
         } else {
             let v_slice = unsafe { std::slice::from_raw_parts(validity, len) };
-            Some(Bitmap::from_trusted_len_iter(v_slice.iter().copied()))
+            let opts: Vec<Option<i128>> = slice.iter().zip(v_slice.iter())
+                .map(|(&v, &valid)| if valid { Some(v) } else { None })
+                .collect();
+            Series::new(name.clone().into(), &opts)
         };
 
-        let dtype = ArrowDataType::Decimal(38, scale);
+        let decimal_series = series
+            .i128()
+            .map_err(|_| PolarsError::ComputeError("Failed to cast to i128 for decimal creation".into()))?
+            .clone()
+            .into_decimal(38, scale)
+            .map_err(|e| PolarsError::ComputeError(format!("Decimal creation failed: {}", e).into()))?
+            .into_series();
 
-        let arr = PrimitiveArray::new(dtype, values, validity_bitmap);
-
-        let series = Series::from_arrow(name_str.into(), Box::new(arr))?;
-
-        Ok(Box::into_raw(Box::new(SeriesContext { series })))
+        Ok(Box::into_raw(Box::new(SeriesContext { series: decimal_series })))
     })
 }
 
@@ -509,12 +510,8 @@ pub extern "C" fn pl_series_get_decimal(
     let ctx = unsafe { &*s_ptr };
     if idx >= ctx.series.len() { return false; }
 
-    // 1. 尝试获取物理 Int128Chunked (Physical Access)
-    // 这种方式绕过了 AnyValue 的模式匹配，更稳健
     if let Ok(ca) = ctx.series.decimal() {
-        // 2. 获取具体的值 (Option<i128>)
         if let Some(val) = ca.phys.get(idx) {
-            // 3. 获取 Scale
             let scale = match ctx.series.dtype() {
                 DataType::Decimal(_, s) => *s, // 0.52: Decimal(precision, scale)
                 _ => 0,

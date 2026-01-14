@@ -9,7 +9,7 @@
     <IsPackable>true</IsPackable>
 
     <PackageId>Polars.NET.Core</PackageId>
-    <Version>0.1.0-alpha2</Version>
+    <Version>0.1.0-beta1</Version>
     <Authors>ErrorLSC</Authors>
     <Description>Core infrastructure and native bindings for Polars.NET. Not intended for direct use.</Description>
     <PackageTags>internal;native</PackageTags>
