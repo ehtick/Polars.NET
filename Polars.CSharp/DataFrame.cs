@@ -500,11 +500,16 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// Decompose a struct column into multiple columns.
     /// </summary>
     /// <param name="columns">The struct columns to unnest.</param>
-    public DataFrame Unnest(params string[] columns)
+    /// <param name="separator">Optional separator between struct column name and field name.</param>
+    public DataFrame Unnest(string[] columns,string? separator=null)
     {
-        var newHandle = PolarsWrapper.Unnest(Handle, columns);
+        var newHandle = PolarsWrapper.Unnest(Handle, columns,separator);
         return new DataFrame(newHandle);
     }
+    /// <summary>
+    /// Decompose a struct column into multiple columns (Default separator).
+    /// </summary>
+    public DataFrame Unnest(params string[] columns) => Unnest(columns, separator: null);
     // ==========================================
     // Data Cleaning / Structure Ops
     // ==========================================

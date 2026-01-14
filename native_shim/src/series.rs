@@ -4,6 +4,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use crate::types::{DataFrameContext, DataTypeContext, SeriesContext};
 use crate::utils::*;
+use polars_arrow::datatypes::ArrowDataType;
 
 // ==========================================
 // Constructors 
@@ -160,7 +161,7 @@ pub extern "C" fn pl_series_new_decimal(
             .i128()
             .map_err(|_| PolarsError::ComputeError("Failed to cast to i128 for decimal creation".into()))?
             .clone()
-            .into_decimal(None, scale)
+            .into_decimal(38, scale)
             .map_err(|e| PolarsError::ComputeError(format!("Decimal creation failed: {}", e).into()))?
             .into_series();
 
@@ -500,20 +501,30 @@ pub extern "C" fn pl_series_get_str(s_ptr: *mut SeriesContext, idx: usize) -> *m
 // out_val: i128 value
 // out_scale: scale 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_series_get_decimal(s_ptr: *mut SeriesContext, idx: usize, out_val: *mut i128, out_scale: *mut usize) -> bool {
+pub extern "C" fn pl_series_get_decimal(
+    s_ptr: *mut SeriesContext, 
+    idx: usize, 
+    out_val: *mut i128, 
+    out_scale: *mut usize
+) -> bool {
     let ctx = unsafe { &*s_ptr };
     if idx >= ctx.series.len() { return false; }
 
-    match ctx.series.get(idx) {
-        Ok(AnyValue::Decimal(v, scale)) => { 
-            unsafe { 
-                *out_val = v; 
+    if let Ok(ca) = ctx.series.decimal() {
+        if let Some(val) = ca.phys.get(idx) {
+            let scale = match ctx.series.dtype() {
+                DataType::Decimal(_, s) => *s, // 0.52: Decimal(precision, scale)
+                _ => 0,
+            };
+            
+            unsafe {
+                *out_val = val;
                 *out_scale = scale;
-            } 
-            true 
+            }
+            return true;
         }
-        _ => false
     }
+    false
 }
 
 #[unsafe(no_mangle)]

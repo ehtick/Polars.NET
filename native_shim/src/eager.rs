@@ -630,7 +630,8 @@ pub extern "C" fn pl_concat(
 pub extern "C" fn pl_dataframe_unnest(
     df: *mut DataFrame, 
     cols: *const *const c_char, 
-    len: usize
+    len: usize,
+    separator: *const c_char
 ) -> *mut DataFrame {
     ffi_try!({
         let df = unsafe { &*df };
@@ -641,7 +642,13 @@ pub extern "C" fn pl_dataframe_unnest(
             .iter()
             .map(|&ptr| unsafe { CStr::from_ptr(ptr).to_str().unwrap() });
 
-        let result_df = df.unnest(names)?;
+        let sep_opt = if separator.is_null() {
+            None
+        } else {
+            unsafe { Some(CStr::from_ptr(separator).to_str().unwrap()) }
+        };
+
+        let result_df = df.unnest(names, sep_opt)?;
 
         Ok(Box::into_raw(Box::new(result_df)))
     })

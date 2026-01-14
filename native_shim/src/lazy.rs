@@ -353,13 +353,21 @@ pub extern "C" fn pl_lazy_explode(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazyframe_unnest(
     lf_ptr: *mut LazyFrameContext,
-    sel_ptr: *mut SelectorContext 
+    sel_ptr: *mut SelectorContext,
+    separator_ptr: *const c_char 
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         let sel_ctx = unsafe {  Box::from_raw(sel_ptr) }; 
 
-        let new_lf = lf_ctx.inner.unnest(sel_ctx.inner);
+        let sep = if separator_ptr.is_null() {
+            None
+        } else {
+            let s = ptr_to_str(separator_ptr).unwrap();
+            Some(PlSmallStr::from_str(s))
+        };
+
+        let new_lf = lf_ctx.inner.unnest(sel_ctx.inner, sep);
         
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
     })

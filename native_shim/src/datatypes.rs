@@ -43,11 +43,10 @@ macro_rules! define_pl_datatype_kind {
     };
 }
 
-// === 使用宏定义所有类型 ===
-// 这里是唯一的维护点！
+// === Marco here ===
 define_pl_datatype_kind! {
     pub enum PlDataTypeKind {
-        Unknown     = 0  <=> DataType::Unknown(_)      => DataType::Unknown(Default::default()), // 注意：UnknownKind::Any 在新版可能是 Default
+        Unknown     = 0  <=> DataType::Unknown(_)      => DataType::Unknown(Default::default()),
         Boolean     = 1  <=> DataType::Boolean         => DataType::Boolean,
         Int8        = 2  <=> DataType::Int8            => DataType::Int8,
         Int16       = 3  <=> DataType::Int16           => DataType::Int16,
@@ -69,7 +68,7 @@ define_pl_datatype_kind! {
         Struct      = 19 <=> DataType::Struct(_)       => DataType::Struct(vec![]),
         List        = 20 <=> DataType::List(_)         => DataType::List(Box::new(DataType::Null)),
         Categorical = 21 <=> DataType::Categorical(_, _) => DataType::Categorical(Categories::random(PlSmallStr::EMPTY, CategoricalPhysical::U32),Categories::random(PlSmallStr::EMPTY, CategoricalPhysical::U32).mapping()),
-        Decimal     = 22 <=> DataType::Decimal(_, _)   => DataType::Decimal(None, None),
+        Decimal     = 22 <=> DataType::Decimal(_, _)   => DataType::Decimal(38, 0),
         Array       = 23 <=> DataType::Array(_, _)     => DataType::Array(Box::new(DataType::Null), 0),
     }
 }
@@ -95,8 +94,8 @@ pub unsafe extern "C" fn pl_datatype_new_primitive(code: i32) -> *mut DataType {
 // scale: decimal places
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_datatype_new_decimal(precision: usize, scale: usize) -> *mut DataTypeContext {
-    let prec = if precision == 0 { None } else { Some(precision) };
-    let dtype = DataType::Decimal(prec, Some(scale));
+    let prec = if precision == 0 { 38 } else { precision };
+    let dtype = DataType::Decimal(prec, scale);
     Box::into_raw(Box::new(DataTypeContext { dtype }))
 }
 
@@ -332,8 +331,8 @@ pub unsafe extern "C" fn pl_datatype_get_decimal_info(
         if ptr.is_null() { return; }
         let dtype = unsafe {&*ptr};
         if let DataType::Decimal(p, s) = dtype {
-            unsafe {*precision = p.map(|v| v as i32).unwrap_or(38)};
-            unsafe {*scale = s.map(|v| v as i32).unwrap_or(9)};
+            unsafe {*precision = *p as i32};
+            unsafe {*scale = *s as i32};
         } else {
             unsafe {*precision = 0};
             unsafe {*scale = 0};

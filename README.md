@@ -2,12 +2,13 @@
 [![NuGet Downloads](https://img.shields.io/nuget/dt/Polars.NET.svg)](https://www.nuget.org/packages/Polars.NET)
 [![NuGet](https://img.shields.io/nuget/v/Polars.FSharp.svg)](https://www.nuget.org/packages/Polars.FSharp)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/Polars.FSharp.svg)](https://www.nuget.org/packages/Polars.FSharp)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 
 # Polars.NET
 
 🚀 **High-Performance, AI-Ready DataFrames for .NET, powered by Rust & Apache Arrow.**
 
-Polars.NET is not just a binding; it is a production-grade data engineering toolkit for the .NET ecosystem. It brings the lightning-fast performance of the Polars Rust engine to C# and F#, while adding unique, enterprise-ready features missing from official bindings—like seamless Database Streaming, Zero-Copy Interop, and AI-native Vector support.
+**Polars.NET** is not just a binding; it is a production-grade data engineering toolkit for the .NET ecosystem. It brings the lightning-fast performance of the Polars Rust engine to C# and F#, while adding unique, enterprise-ready features missing from other solutions—like seamless **Database Streaming**, **Zero-Copy Interop**, and **Safe Native UDFs**.
 
 ## Why Polars.NET exists
 
@@ -16,39 +17,65 @@ not a thin wrapper, not a toy binding, and not a Python dependency in disguise.
 
 Polars.NET is designed for engineers who care about:
 
-- predictable performance
+- **predictable performance** (No GC spikes)
 
-- strong typing
+- **strong typing** (Compile-time safety)
 
-- streaming data at scale
+- **streaming data at scale** (Constant memory usage)
 
-- and long-term system evolution
+- **and long-term system evolution** (Stable API)
 
-## Why Polars.NET?
+## 🌟 Key Highlights
 
-1. ⚡ Unmatched Performance
-- Rust Core: Built on the blazing fast Polars query engine (written in Rust).
+### 1. ⚡ Unmatched Performance
+- **Rust Core**: Built on the blazing fast Polars query engine (0.52.0+).
+- **Lazy Evaluation**: Intelligent query optimizer with predicate pushdown, projection pushdown, and parallel execution.
+- **Zero-Copy**: Built on **Apache Arrow**, enabling zero-overhead data transfer between C#, Python (for AI), and Databases.
 
-- Lazy Evaluation: Intelligent query optimizer with predicate pushdown, projection pushdown, and parallel execution.
+### 2. 🛡️ Battle-Tested Quality
+We take stability seriously. Polars.NET is backed by a rigorous test suite:
+- **300+ Unit & Integration Tests**: Covering everything from basic filtering to complex AsOf Joins, SQL Context, and Database Streaming.
+- **Memory Safety Checks**: Ensuring no leaks across the Rust/.NET boundary (FFI).
+- **Edge Case Coverage**: Null handling, nested structs, and type casting are strictly verified.
 
-- Zero-Copy: Built on Apache Arrow, enabling zero-copy data transfer between C#, Python, and databases.
+### 3. 🧶 .NET Native Experience
+- **Fluent API**: Intuitive, LINQ-like API design for C#.
+- **Functional API**: Idiomatic, pipe-forward (`|>`) API for F# lovers.
+- **Type Safety**: Leveraging .NET's strong type system to prevent runtime errors.
 
-2. 🛡️ Enterprise & AI Ready
-- Database Streaming (Unique):
+## 🏛️ Architecture
 
-   - Read: Stream millions of rows from any IDataReader (SQL Server, Postgres, SQLite) directly into Polars without loading everything into RAM.
+Our unique **3-Layer Architecture** ensures stability even when the underlying Rust engine changes.
 
-   - Write: Stream processed data back to databases via IBulkCopy interfaces using our unique ArrowToDbStream adapter.
+```mermaid
+graph TD
+    subgraph UserSpace ["User Space"]
+        CApp["C# App"]
+        FApp["F# App"]
+    end
 
-3. 🧶 .NET Native Experience
+    subgraph HighLevel ["High-Level API .NET"]
+        direction TB
+        CSAPI["Polars.CSharp<br/>(Fluent/LINQ Style)"]
+        FSAPI["Polars.FSharp<br/>(Functional/Pipe Style)"]
+    end
 
-    - Fluent API: Intuitive, LINQ-like API design for C#.
+    subgraph CoreLayer ["Core Wrapper .NET"]
+        Core["Polars.NET.Core<br/>(SafeHandles, P/Invoke)"]
+    end
 
-    - Functional API: Idiomatic, pipe-forward (|>) API for F# lovers.
+    subgraph NativeLayer ["Native Rust Shim"]
+        Shim["Native Shim<br/>(Hand-written FFI, Stable ABI)"]
+        Polars["Polars Engine 0.52.0<br/>(Rust)"]
+    end
 
-    - Type Safety: Leveraging .NET's strong type system to prevent runtime errors.
-
-    - Feel free to use C#/F# native UDF to integrate with your own logic.
+    CApp --> CSAPI
+    FApp --> FSAPI
+    CSAPI --> Core
+    FSAPI --> Core
+    Core -->|"Zero-Copy (Arrow)"| Shim
+    Shim -->|"Rust API"| Polars
+```
 
 ## 📦 Installation
 
@@ -61,15 +88,13 @@ F# Users:
 dotnet add package Polars.FSharp
 ```
 
-## 🗜 Target Framework
-
-.NET 8 and later
+Requirements: .NET 8 or later.
 
 ## 🏁 Quick Start
 
 ### C# Example
 
-```C#
+```csharp
 using Polars.CSharp;
 using static Polars.CSharp.Polars; // For Col(), Lit() helpers
 
@@ -96,7 +121,7 @@ res.Show();
 ```
 ### F# Example
 
-```F#
+```fsharp
 
 open Polars.FSharp
 
@@ -122,11 +147,12 @@ res.Show()
 ```
 ## 🔥 Killer Features (The "Missing" Parts)
 
-1. 🌊 Streaming ETL: Database -> Polars -> Database
+### 1. 🌊 Streaming ETL: Database -> Polars -> Database
 
-Process millions of rows with constant memory usage using our unique streaming adapters.
+**The Problem**: Loading 10 million SQL rows into a DataTable or List<T> explodes memory. 
+**The Solution**: Stream data directly from IDataReader into Polars' core using constant memory.
 
-```C#
+```csharp
 // 1. Source: Stream from Database (e.g., SqlDataReader)
 // We scan the DB via a factory, pulling 50k rows at a time into Apache Arrow batches.
 var lf = LazyFrame.ScanDb(() => mySqlCommand.ExecuteReader(), batchSize: 50_000);
@@ -163,11 +189,11 @@ pipeline.SinkTo((IDataReader reader) =>
 └────────────┘
 ```
 
-2. 🧠 Native C#/F# UDFs
+### 2. 🧠 Native C#/F# UDFs
 
 Run C#/F# functions directly on Expr/Series with Zero-Copy overhead using Apache Arrow memory layout.
 
-```F#
+```fsharp
 // Define logic with Option handling (Safe!)
 let complexLogic (opt: int option) =
     match opt with
@@ -183,40 +209,54 @@ let result = s.MapOption(complexLogic, DataType.Int32)
 // Result: [null, 20, null, 40]
 ```
 
-3. 🕒 Time Series Intelligence
+### 3. 🛡️ Deep Type-Safe Schema Inference
 
-Robust support for time-series data, including As-Of Joins and Dynamic Rolling Windows.
+**The Problem:** Defining schemas for complex nested JSON-like data is painful and error-prone.
+**The Solution:** Polars.NET includes a powerful **Recursive Arrow Converter**. It automatically maps complex .NET object graphs—including Lists, nested objects, and native types like `DateOnly`—directly to Arrow memory.
 
-```C#
-// As-Of Join: Match trades to the nearest quote within 2 seconds
-var trades = dfTrades.Lazy(); // timestamp, ticker, price
-var quotes = dfQuotes.Lazy(); // timestamp, ticker, bid
+```csharp
+// 1. Define complex nested structures
+public class Portfolio
+{
+    public string User { get; set; }
+    public List<Holding> Assets { get; set; } // Nested List!
+    public Address Contact { get; set; }      // Nested Struct!
+}
 
-var enriched = trades.JoinAsOf(
-    quotes, 
-    leftOn: Col("timestamp"), 
-    rightOn: Col("timestamp"),
-    by: [Col("ticker")],      // Match on same Ticker
-    tolerance: "2s",          // Look back max 2 seconds
-    strategy: "backward"      // Find previous quote
-);
+public record Holding(string Ticker, decimal Qty, DateOnly Acquired);
+
+// 2. Auto-Inference Magic
+// Polars.NET recursively builds the Schema:
+// User: Utf8
+// Assets: List<Struct<Utf8, Decimal128, Date32>>
+// Contact: Struct<...>
+using var df = DataFrame.From(GetPortfolios()); 
+
+// 3. Zero friction integration
+// No manual mapping. No flattening required.
 ```
 
-```F#
-// F# Dynamic Rolling Window
-lf
-|> pl.groupByDynamic "time" (TimeSpan.FromHours 1.0)
-    [ pl.col("value").Mean().Alias("hourly_mean") ]
-|> pl.collect
-```
+## 🤝 The Polars.NET Promise: Stability First
+
+We know that breaking changes hurt. While the underlying Polars Rust engine evolves rapidly with frequent API changes, Polars.NET works differently.
+
+1. The Native Shim Shield: We maintain a hand-written Rust FFI layer (native_shim) that absorbs upstream breaking changes from Polars.
+
+2. Stable High-Level API: We promise to keep the C# and F# public APIs (DataFrame, Series, LazyFrame) semantically stable. Even if Polars changes its       internal methods (like into_decimal vs primitive_array), we update our shim, so your C# code doesn't have to change.
+
+3. Deprecation Policy: If a breaking change is absolutely necessary, we will mark methods as [Obsolete] for at least one minor version before removal.
 
 ## 🗺️ Roadmap & Documentation
 
-We are actively working on detailed API documentation.
+We are building the future of data engineering in .NET.
 
-    - Auto-generated API Reference (HTML)
+- Expanded SQL Support: Full coverage of Polars SQL capabilities (CTEs, Window Functions) to replace in-memory DataTable SQL queries.
 
-And plan to migrate core Polars Engine from 0.50 to 0.52(newest)
+- AI & Tensor Integration: Zero-copy export to .NET 9 Tensors and Microsoft.ML, enabling seamless "Data Prep -> Training/Inference" pipelines.
+
+- LINQ Provider (Long-term): IQueryable implementation to translate standard LINQ queries into high-performance Polars Expressions.
+
+- Documentation: Comprehensive API Reference.
 
 ## 🤝 Contributing
 

@@ -358,10 +358,12 @@ pub extern "C" fn pl_expr_bit_shl(expr_ptr: *mut ExprContext, n: i32) -> *mut Ex
             let op_result: PolarsResult<Series> = impl_shift_op!(s, n, <<);
             let res_series = op_result?;
             
-            Ok(Some(Column::from(res_series)))
+            Ok(Column::from(res_series))
         };
 
-        let new_expr = ctx.inner.map(function, GetOutput::same_type());
+        let output_map = |_input_schema: &Schema, input_field: &Field| Ok(input_field.clone());
+
+        let new_expr = ctx.inner.map(function, output_map);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -377,10 +379,12 @@ pub extern "C" fn pl_expr_bit_shr(expr_ptr: *mut ExprContext, n: i32) -> *mut Ex
             let op_result: PolarsResult<Series> = impl_shift_op!(s, n, >>);
             let res_series = op_result?;
 
-            Ok(Some(Column::from(res_series)))
+            Ok(Column::from(res_series))
         };
 
-        let new_expr = ctx.inner.map(function, GetOutput::same_type());
+        let output_map = |_input_schema: &Schema, input_field: &Field| Ok(input_field.clone());
+
+        let new_expr = ctx.inner.map(function, output_map);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -1251,7 +1255,7 @@ pub extern "C" fn pl_expr_log(
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         // Polars API: log(base: f64)
-        let new_expr = ctx.inner.log(base); 
+        let new_expr = ctx.inner.log(base.into()); 
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
