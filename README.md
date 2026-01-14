@@ -9,6 +9,34 @@
 
 Polars.NET is not just a binding; it is a production-grade data engineering toolkit for the .NET ecosystem. It brings the lightning-fast performance of the Polars Rust engine to C# and F#, while adding unique, enterprise-ready features missing from official bindings—like seamless Database Streaming, Zero-Copy Interop, and AI-native Vector support.
 
+graph TD
+    subgraph UserSpace [User Space]
+        CApp[C# App]
+        FApp[F# App]
+    end
+
+    subgraph HighLevel [High-Level API .NET]
+        direction TB
+        CSAPI[Polars.CSharp<br/>(Fluent/LINQ Style)]
+        FSAPI[Polars.FSharp<br/>(Functional/Pipe Style)]
+    end
+
+    subgraph CoreLayer [Core Wrapper .NET]
+        Core[Polars.NET.Core<br/>(SafeHandles, P/Invoke)]
+    end
+
+    subgraph NativeLayer [Native Rust Shim]
+        Shim[Native Shim<br/>(Hand-written FFI, Stable ABI)]
+        Polars[Polars Engine 0.52.0<br/>(Rust)]
+    end
+
+    CApp --> CSAPI
+    FApp --> FSAPI
+    CSAPI --> Core
+    FSAPI --> Core
+    Core -->|"Zero-Copy (Arrow)"| Shim
+    Shim -->|"Rust API"| Polars
+
 ## Why Polars.NET exists
 
 The .NET ecosystem deserves a first-class, production-grade DataFrame engine —
@@ -216,7 +244,6 @@ We are actively working on detailed API documentation.
 
     - Auto-generated API Reference (HTML)
 
-And plan to migrate core Polars Engine from 0.50 to 0.52(newest)
 
 ## 🤝 Contributing
 
