@@ -147,10 +147,10 @@ res.Show()
 ```
 ## 🔥 Killer Features (The "Missing" Parts)
 
-1. 🌊 Streaming ETL: Database -> Polars -> Database
+### 1. 🌊 Streaming ETL: Database -> Polars -> Database
 
-The Problem: Loading 10 million SQL rows into a DataTable or List<T> explodes memory. 
-The Solution: Stream data directly from IDataReader into Polars' core using constant memory.
+**The Problem**: Loading 10 million SQL rows into a DataTable or List<T> explodes memory. 
+**The Solution**: Stream data directly from IDataReader into Polars' core using constant memory.
 
 ```csharp
 // 1. Source: Stream from Database (e.g., SqlDataReader)
@@ -189,7 +189,7 @@ pipeline.SinkTo((IDataReader reader) =>
 └────────────┘
 ```
 
-2. 🧠 Native C#/F# UDFs
+### 2. 🧠 Native C#/F# UDFs
 
 Run C#/F# functions directly on Expr/Series with Zero-Copy overhead using Apache Arrow memory layout.
 
@@ -210,6 +210,7 @@ let result = s.MapOption(complexLogic, DataType.Int32)
 ```
 
 ### 3. 🛡️ Deep Type-Safe Schema Inference
+
 **The Problem:** Defining schemas for complex nested JSON-like data is painful and error-prone.
 **The Solution:** Polars.NET includes a powerful **Recursive Arrow Converter**. It automatically maps complex .NET object graphs—including Lists, nested objects, and native types like `DateOnly`—directly to Arrow memory.
 
