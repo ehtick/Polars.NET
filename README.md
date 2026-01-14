@@ -47,7 +47,7 @@ We take stability seriously. Polars.NET is backed by a rigorous test suite:
 
 Our unique **3-Layer Architecture** ensures stability even when the underlying Rust engine changes.
 
-```Mermaid
+```mermaid
 graph TD
     subgraph UserSpace ["User Space"]
         CApp["C# App"]
@@ -94,7 +94,7 @@ Requirements: .NET 8 or later.
 
 ### C# Example
 
-```C#
+```csharp
 using Polars.CSharp;
 using static Polars.CSharp.Polars; // For Col(), Lit() helpers
 
@@ -121,7 +121,7 @@ res.Show();
 ```
 ### F# Example
 
-```F#
+```fsharp
 
 open Polars.FSharp
 
@@ -152,7 +152,7 @@ res.Show()
 The Problem: Loading 10 million SQL rows into a DataTable or List<T> explodes memory. 
 The Solution: Stream data directly from IDataReader into Polars' core using constant memory.
 
-```C#
+```csharp
 // 1. Source: Stream from Database (e.g., SqlDataReader)
 // We scan the DB via a factory, pulling 50k rows at a time into Apache Arrow batches.
 var lf = LazyFrame.ScanDb(() => mySqlCommand.ExecuteReader(), batchSize: 50_000);
@@ -193,7 +193,7 @@ pipeline.SinkTo((IDataReader reader) =>
 
 Run C#/F# functions directly on Expr/Series with Zero-Copy overhead using Apache Arrow memory layout.
 
-```F#
+```fsharp
 // Define logic with Option handling (Safe!)
 let complexLogic (opt: int option) =
     match opt with
@@ -209,31 +209,30 @@ let result = s.MapOption(complexLogic, DataType.Int32)
 // Result: [null, 20, null, 40]
 ```
 
-3. 🕒 Time Series Intelligence
+### 3. 🛡️ Deep Type-Safe Schema Inference
+**The Problem:** Defining schemas for complex nested JSON-like data is painful and error-prone.
+**The Solution:** Polars.NET includes a powerful **Recursive Arrow Converter**. It automatically maps complex .NET object graphs—including Lists, nested objects, and native types like `DateOnly`—directly to Arrow memory.
 
-Robust support for time-series data, including As-Of Joins and Dynamic Rolling Windows.
+```csharp
+// 1. Define complex nested structures
+public class Portfolio
+{
+    public string User { get; set; }
+    public List<Holding> Assets { get; set; } // Nested List!
+    public Address Contact { get; set; }      // Nested Struct!
+}
 
-```C#
-// As-Of Join: Match trades to the nearest quote within 2 seconds
-var trades = dfTrades.Lazy(); // timestamp, ticker, price
-var quotes = dfQuotes.Lazy(); // timestamp, ticker, bid
+public record Holding(string Ticker, decimal Qty, DateOnly Acquired);
 
-var enriched = trades.JoinAsOf(
-    quotes, 
-    leftOn: Col("timestamp"), 
-    rightOn: Col("timestamp"),
-    by: [Col("ticker")],      // Match on same Ticker
-    tolerance: "2s",          // Look back max 2 seconds
-    strategy: "backward"      // Find previous quote
-);
-```
+// 2. Auto-Inference Magic
+// Polars.NET recursively builds the Schema:
+// User: Utf8
+// Assets: List<Struct<Utf8, Decimal128, Date32>>
+// Contact: Struct<...>
+using var df = DataFrame.From(GetPortfolios()); 
 
-```F#
-// F# Dynamic Rolling Window
-lf
-|> pl.groupByDynamic "time" (TimeSpan.FromHours 1.0)
-    [ pl.col("value").Mean().Alias("hourly_mean") ]
-|> pl.collect
+// 3. Zero friction integration
+// No manual mapping. No flattening required.
 ```
 
 ## 🤝 The Polars.NET Promise: Stability First
@@ -248,9 +247,15 @@ We know that breaking changes hurt. While the underlying Polars Rust engine evol
 
 ## 🗺️ Roadmap & Documentation
 
-We are actively working on detailed API documentation.
+We are building the future of data engineering in .NET.
 
-    - Auto-generated API Reference (HTML)
+- Expanded SQL Support: Full coverage of Polars SQL capabilities (CTEs, Window Functions) to replace in-memory DataTable SQL queries.
+
+- AI & Tensor Integration: Zero-copy export to .NET 9 Tensors and Microsoft.ML, enabling seamless "Data Prep -> Training/Inference" pipelines.
+
+- LINQ Provider (Long-term): IQueryable implementation to translate standard LINQ queries into high-performance Polars Expressions.
+
+- Documentation: Comprehensive API Reference.
 
 ## 🤝 Contributing
 
