@@ -829,9 +829,44 @@ public class Expr : IDisposable
     #region Window & Offset Functions
 
     /// <summary>
-    /// Window function: Apply aggregation over specific groups.
-    /// Example: Col("Amt").Sum().Over(Col("Group"))
+    /// Apply a window function over a subgroup.
+    /// <para>
+    /// This is similar to SQL's `OVER (PARTITION BY ...)` clause.
+    /// Unlike <see cref="DataFrame.GroupBy(Expr[])"/>, this does not reduce the number of rows.
+    /// The result is broadcasted back to the original rows.
+    /// </para>
     /// </summary>
+    /// <param name="partitionBy">The columns to partition by.</param>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     group = new[] { "A", "A", "A", "B", "B" },
+    ///     val = new[] { 10, 20, 30, 100, 200 }
+    /// });
+    /// 
+    /// // Calculate mean per group and subtract it from the value
+    /// // The result has the same shape as the original DataFrame (5 rows)
+    /// df.Select(
+    ///     Col("group"),
+    ///     Col("val"),
+    ///     Col("val").Mean().Over("group").Alias("group_mean"),
+    ///     (Col("val") - Col("val").Mean().Over("group")).Alias("diff_from_mean")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (5, 4)
+    /// ┌───────┬─────┬────────────┬────────────────┐
+    /// │ group ┆ val ┆ group_mean ┆ diff_from_mean │
+    /// │ ---   ┆ --- ┆ ---        ┆ ---            │
+    /// │ str   ┆ i32 ┆ f64        ┆ f64            │
+    /// ╞═══════╪═════╪════════════╪════════════════╡
+    /// │ A     ┆ 10  ┆ 20.0       ┆ -10.0          │
+    /// │ A     ┆ 20  ┆ 20.0       ┆ 0.0            │
+    /// ...
+    /// └───────┴─────┴────────────┴────────────────┘
+    /// */
+    /// </code>
+    /// </example>
     public Expr Over(params Expr[] partitionBy)
     {
         var partitionHandles = System.Array.ConvertAll(partitionBy, e => e.CloneHandle());
@@ -874,7 +909,7 @@ public class Expr : IDisposable
     /// </summary>
     /// <param name="windowSize"></param>
     /// <param name="minPeriods"></param>
-    /// <returns></returns>
+    /// <seealso cref="RollingMean(string,int)"/>
     public Expr RollingMin(string windowSize, int minPeriods = 1) 
         => new(PolarsWrapper.RollingMin(CloneHandle(), windowSize, minPeriods));
     /// <summary>
@@ -882,7 +917,7 @@ public class Expr : IDisposable
     /// </summary>
     /// <param name="windowSize"></param>
     /// <param name="minPeriods"></param>
-    /// <returns></returns>
+    /// <seealso cref="RollingMean(string,int)"/>
     public Expr RollingMin(TimeSpan windowSize, int minPeriods = 1) 
         => RollingMin(DurationFormatter.ToPolarsString(windowSize),minPeriods);
     /// <summary>
@@ -890,7 +925,7 @@ public class Expr : IDisposable
     /// </summary>
     /// <param name="windowSize"></param>
     /// <param name="minPeriods"></param>
-    /// <returns></returns>
+    /// <seealso cref="RollingMean(string,int)"/>
     public Expr RollingMax(string windowSize,int minPeriods=1) 
         => new(PolarsWrapper.RollingMax(CloneHandle(), windowSize, minPeriods));
     /// <summary>
@@ -898,15 +933,25 @@ public class Expr : IDisposable
     /// </summary>
     /// <param name="windowSize"></param>
     /// <param name="minPeriods"></param>
-    /// <returns></returns>
+    /// <seealso cref="RollingMean(string,int)"/>
     public Expr RollingMax(TimeSpan windowSize, int minPeriods = 1) 
         => RollingMax(DurationFormatter.ToPolarsString(windowSize),minPeriods);
     /// <summary>
-    /// Static Rolling Mean
+    /// Apply a rolling mean (moving average) over a window.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: "3i" (3 index rows), "1d" (1 day), "1h" (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">The minimum number of observations in the window required to have a value (otherwise null).</param>
+    /// <example>
+    /// <code>
+    /// // Rolling mean of 3 rows ("3i")
+    /// df.Select(
+    ///     Col("val").RollingMean("3i", minPeriods: 1).Alias("roll_mean")
+    /// );
+    /// </code>
+    /// </example>
     public Expr RollingMean(string windowSize,int minPeriods=1) 
         => new(PolarsWrapper.RollingMean(CloneHandle(), windowSize,minPeriods));
     /// <summary>
@@ -922,7 +967,7 @@ public class Expr : IDisposable
     /// </summary>
     /// <param name="windowSize"></param>
     /// <param name="minPeriods"></param>
-    /// <returns></returns>
+    /// <seealso cref="RollingMean(string,int)"/>
     public Expr RollingSum(string windowSize,int minPeriods=1) 
         => new(PolarsWrapper.RollingSum(CloneHandle(), windowSize,minPeriods));
     /// <summary>
@@ -930,7 +975,7 @@ public class Expr : IDisposable
     /// </summary>
     /// <param name="windowSize"></param>
     /// <param name="minPeriods"></param>
-    /// <returns></returns>
+    /// <seealso cref="RollingMean(string,int)"/>
     public Expr RollingSum(TimeSpan windowSize, int minPeriods = 1) 
         => RollingSum(DurationFormatter.ToPolarsString(windowSize),minPeriods);
     /// <summary>
@@ -1074,12 +1119,71 @@ public class Expr : IDisposable
         );
     }
     /// <summary>
-    /// Explode a list column into multiple rows.
+    /// Explode a list expression.
+    /// <para>
+    /// This turns a list column into a long column (flattening).
+    /// </para>
+    /// <para>
+    /// <b>Warning:</b> When used in <see cref="DataFrame.Select(Expr[])"/> with other columns, 
+    /// it may cause a length mismatch error if the other columns are not broadcasted. 
+    /// Use <see cref="DataFrame.Explode"/> for safely exploding columns while repeating others.
+    /// </para>
     /// </summary>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     id = new[] { 1, 2 },
+    ///     tags = new[] { new[] { "a", "b" }, new[] { "c" } }
+    /// });
+    /// 
+    /// // Example 1: Expression Explode (Flatten single column)
+    /// df.Select(
+    ///     Col("tags").Explode().Alias("tags_flat")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (3, 1)
+    /// ┌───────────┐
+    /// │ tags_flat │
+    /// │ ---       │
+    /// │ str       │
+    /// ╞═══════════╡
+    /// │ a         │
+    /// │ b         │
+    /// │ c         │
+    /// └───────────┘
+    /// */
+    /// 
+    /// // Example 2: To keep 'id' aligned, use DataFrame.Explode:
+    /// // df.Explode("tags").Show();
+    /// </code>
+    /// </example>
     public Expr Explode() => new(PolarsWrapper.Explode(CloneHandle()));
     /// <summary>
     /// Aggregate values into a list.
+    /// <para>
+    /// This is the opposite of <see cref="Explode"/>. It collects values from multiple rows into a single list.
+    /// </para>
     /// </summary>
+    /// <example>
+    /// <code>
+    /// // Collect all IDs and Tags into single lists
+    /// df.Select(
+    ///     Col("id").Implode().Alias("all_ids"), 
+    ///     Col("tags").Implode().Alias("nested_tags")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (1, 2)
+    /// ┌───────────┬─────────────────────┐
+    /// │ all_ids   ┆ nested_tags         │
+    /// │ ---       ┆ ---                 │
+    /// │ list[i32] ┆ list[list[str]]     │
+    /// ╞═══════════╪═════════════════════╡
+    /// │ [1, 2]    ┆ [["a", "b"], ["c"]] │
+    /// └───────────┴─────────────────────┘
+    /// */
+    /// </code>
+    /// </example>
     public Expr Implode() => new(PolarsWrapper.Implode(CloneHandle()));
     // ==========================================
     // Namespaces
@@ -1153,6 +1257,7 @@ public class Expr : IDisposable
 
 /// <summary>
 /// Contains methods for temporal (Date/Time) operations.
+/// Access this via <see cref="Expr.Dt"/>.
 /// </summary>
 public class DtOps
 {
@@ -1170,6 +1275,21 @@ public class DtOps
     }
 
     /// <summary>Get the year from the underlying date/datetime.</summary>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     dt = new[] { new DateTime(2024, 1, 1, 10, 15, 30) } 
+    /// });
+    /// 
+    /// df.Select(
+    ///     Col("dt").Dt.Year(),    // 2024
+    ///     Col("dt").Dt.Month(),   // 1
+    ///     Col("dt").Dt.Weekday(), // 1 (Monday)
+    ///     Col("dt").Dt.ToString("%Y-%m-%d") // "2024-01-01"
+    /// ).Show();
+    /// </code>
+    /// </example>
     public Expr Year() => Wrap(PolarsWrapper.DtYear);
 
     /// <summary>Get the quarter from the underlying date/datetime.</summary>
@@ -1206,13 +1326,17 @@ public class DtOps
     public Expr Nanosecond() => Wrap(PolarsWrapper.DtNanosecond);
 
     /// <summary>
-    /// Format the date/datetime as a string using the given format string (strftime).
+    /// Format the date/datetime as a string using the given format string.
+    /// <para>Format codes follow the Rust `chrono` crate syntax (similar to strftime).</para>
     /// </summary>
     public Expr ToString(string format)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.DtToString(h, format));
     }
+    /// <summary>
+    /// Alias for <see cref="ToString(string)"/>.
+    /// </summary>
     public Expr Strftime(string format)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
@@ -1238,9 +1362,19 @@ public class DtOps
     // Truncate & Round
     // ==========================================
 
-    /// <summary>
+    /// <summary>       
     /// Truncate the datetimes to the given interval (e.g. "1d", "1h", "15m").
+    /// <para>This behaves like a "floor" operation for time.</para>
     /// </summary>
+    /// <example>
+    /// <code>
+    /// // Input: 2024-02-29 23:59:59
+    /// df.Select(
+    ///     Col("dt").Dt.Truncate("1h"), // Result: 23:00:00
+    ///     Col("dt").Dt.Round("1h")     // Result: 2024-03-01 00:00:00
+    /// );
+    /// </code>
+    /// </example>
     public Expr Truncate(string every)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
@@ -1279,6 +1413,16 @@ public class DtOps
     /// <summary>
     /// Offset the datetimes by a constant duration string (e.g., "1d", "-2h").
     /// </summary>
+    /// <example>
+    /// <code>
+    /// df.Select(
+    ///     // Add 2 days
+    ///     Col("dt").Dt.OffsetBy("2d"),
+    ///     // Subtract 1 hour
+    ///     Col("dt").Dt.OffsetBy("-1h")
+    /// );
+    /// </code>
+    /// </example>
     public Expr OffsetBy(string duration) => OffsetBy(Polars.Lit(duration));
     /// <summary>
     /// Offset the datetimes by TimeSpan
@@ -1309,19 +1453,66 @@ public class DtOps
     // ==========================================
     /// <summary>
     /// Convert from one timezone to another.
-    /// Resulting Series will have the given time zone.
+    /// <para>
+    /// This changes the physical time (wall clock time) to match the target timezone.
+    /// The input Series must already have a timezone assigned (e.g. via <see cref="ReplaceTimeZone"/>).
+    /// </para>
     /// </summary>
-    /// <param name="timeZone">Target time zone (e.g. "Asia/Shanghai")</param>
+    /// <param name="timeZone">Target time zone string (IANA database, e.g. "Asia/Shanghai", "America/New_York").</param>
+    /// <returns>A new expression with the converted time.</returns>
+    /// <example>
+    /// <code>
+    /// // 1. Start with a naive datetime (noon)
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     dt = new[] { new DateTime(2024, 1, 1, 12, 0, 0) } 
+    /// });
+    /// 
+    /// // 2. Operations:
+    /// // - ReplaceTimeZone("UTC"): Define metadata (it is now UTC noon)
+    /// // - ConvertTimeZone("Asia/Shanghai"): Shift to +8 hours (20:00)
+    /// // - ConvertTimeZone("America/New_York"): Shift to -5 hours (07:00)
+    /// df.Select(
+    ///     Col("dt").Alias("naive"),
+    ///     
+    ///     Col("dt").Dt.ReplaceTimeZone("UTC").Alias("utc_tagged"),
+    ///     
+    ///     Col("dt").Dt.ReplaceTimeZone("UTC")
+    ///               .Dt.ConvertTimeZone("Asia/Shanghai")
+    ///               .Alias("shanghai_time"),
+    /// 
+    ///     Col("dt").Dt.ReplaceTimeZone("UTC")
+    ///               .Dt.ConvertTimeZone("America/New_York")
+    ///               .Alias("ny_time")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (1, 4)
+    /// ┌─────────────────────┬─────────────────────────┬─────────────────────────────┬────────────────────────────────┐
+    /// │ naive               ┆ utc_tagged              ┆ shanghai_time               ┆ ny_time                        │
+    /// │ ---                 ┆ ---                     ┆ ---                         ┆ ---                            │
+    /// │ datetime[μs]        ┆ datetime[μs, UTC]       ┆ datetime[μs, Asia/Shanghai] ┆ datetime[μs, America/New_York] │
+    /// ╞═════════════════════╪═════════════════════════╪═════════════════════════════╪════════════════════════════════╡
+    /// │ 2024-01-01 12:00:00 ┆ 2024-01-01 12:00:00 UTC ┆ 2024-01-01 20:00:00 CST     ┆ 2024-01-01 07:00:00 EST        │
+    /// └─────────────────────┴─────────────────────────┴─────────────────────────────┴────────────────────────────────┘
+    /// */
+    /// </code>
+    /// </example>
     public Expr ConvertTimeZone(string timeZone)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.DtConvertTimeZone(h, timeZone));
     }
-
     /// <summary>
     /// Replace the time zone of a Series.
-    /// This does not change the underlying timestamp, only the metadata.
+    /// <para>
+    /// This sets the time zone metadata without changing the underlying physical time (wall clock).
+    /// Use this to assign a timezone to a naive datetime.
+    /// </para>
     /// </summary>
+    /// <param name="timeZone">The time zone to assign (e.g. "UTC", "Asia/Shanghai"). If null, removes timezone info.</param>
+    /// <param name="ambiguous">How to handle ambiguous times (e.g. DST transitions). Default "raise".</param>
+    /// <param name="nonExistent">How to handle non-existent times. Default "raise".</param>
+    /// <seealso cref="ConvertTimeZone(string)"/>
     public Expr ReplaceTimeZone(string? timeZone, string? ambiguous = null, string? nonExistent = "raise")
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
@@ -1334,14 +1525,26 @@ public class DtOps
 
     /// <summary>
     /// Add business days to the date column.
+    /// <para>
+    /// Automatically skips weekends (by default) and specified holidays.
+    /// </para>
     /// </summary>
     /// <param name="n">Number of business days to add (can be negative).</param>
-    /// <param name="holidays">List of holidays (dates to skip).</param>
+    /// <param name="holidays">List of holidays to skip.</param>
     /// <param name="weekMask">
     /// Array of 7 bools indicating business days, starting from Monday. 
-    /// Default is Mon-Fri.
+    /// Default is Mon-Fri [true, true, true, true, true, false, false].
     /// </param>
     /// <param name="roll">Strategy for handling non-business days.</param>
+    /// <example>
+    /// <code>
+    /// // Add 1 business day (skipping weekends)
+    /// // Fri 2024-03-01 -> Mon 2024-03-04
+    /// df.Select(
+    ///     Col("dt").Dt.AddBusinessDays(1)
+    /// );
+    /// </code>
+    /// </example>
     public Expr AddBusinessDays(
         int n, 
         IEnumerable<DateOnly>? holidays = null, 
@@ -1414,81 +1617,144 @@ public class DtOps
 // StringOps Helper Class
 // ==========================================
 /// <summary>
-/// Offers multiple methods for checking and parsing elements of a string column.
+/// Offers multiple methods for checking, parsing, and transforming string columns.
+/// Access this via <see cref="Expr.Str"/>.
 /// </summary>
 public class StringOps
 {
     private readonly Expr _expr;
     internal StringOps(Expr expr) { _expr = expr; }
 
-    // 辅助函数：Clone 并调用
     private Expr Wrap(Func<ExprHandle, ExprHandle> op)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(op(h));
     }
     /// <summary>
-    /// Transfer String to UpperClass.
+    /// Convert string to uppercase.
     /// </summary>
+    /// <example>
+    /// <code>
+    /// df.Select(Col("text").Str.ToUpper());
+    /// </code>
+    /// </example>
     public Expr ToUpper() => Wrap(PolarsWrapper.StrToUpper);
     /// <summary>
-    /// Transfer String to LowerClass.
+    /// Convert String to LowerClass.
     /// </summary>
     public Expr ToLower() => Wrap(PolarsWrapper.StrToLower);
-    
     /// <summary>
     /// Get length in bytes.
+    /// <para>Note: Multi-byte characters (like emojis or CJK) count as > 1 byte.</para>
     /// </summary>
     public Expr Len() => Wrap(PolarsWrapper.StrLenBytes);
     /// <summary>
-    /// Slice string by length.
+    /// Slice the string by offset and length.
     /// </summary>
-    /// <param name="offset"></param>
-    /// <param name="length"></param>
-    /// <returns></returns>
+    /// <param name="offset">Start index.</param>
+    /// <param name="length">Length of the slice.</param>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     text = new[] { "Polars", "  Data  ", "Rust", null, "123-abc" }
+    /// });
+    /// 
+    /// // 1. ToUpper
+    /// // 2. Len (bytes)
+    /// // 3. Slice (offset=1, len=3)
+    /// df.Select(
+    ///     Col("text"),
+    ///     Col("text").Str.ToUpper().Alias("upper"),
+    ///     Col("text").Str.Len().Alias("len_bytes"), 
+    ///     Col("text").Str.Slice(1, 3).Alias("sliced") 
+    /// ).Show();
+    /// /* Output:
+    /// shape: (5, 4)
+    /// ┌──────────┬──────────┬───────────┬────────┐
+    /// │ text     ┆ upper    ┆ len_bytes ┆ sliced │
+    /// │ ---      ┆ ---      ┆ ---       ┆ ---    │
+    /// │ str      ┆ str      ┆ u32       ┆ str    │
+    /// ╞══════════╪══════════╪═══════════╪════════╡
+    /// │ Polars   ┆ POLARS   ┆ 6         ┆ ola    │
+    /// │   Data   ┆   DATA   ┆ 8         ┆  Da    │
+    /// │ Rust     ┆ RUST     ┆ 4         ┆ ust    │
+    /// │ null     ┆ null     ┆ null      ┆ null   │
+    /// │ 123-abc  ┆ 123-ABC  ┆ 7         ┆ 23-    │
+    /// └──────────┴──────────┴───────────┴────────┘
+    /// */
+    /// </code>
+    /// </example>
     public Expr Slice(long offset, ulong length)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.StrSlice(h, offset, length));
     }
     /// <summary>
-    /// Replace charaters in a string.
+    /// Replace all occurrences of a pattern with a value.
     /// </summary>
-    /// <param name="pattern"></param>
-    /// <param name="value"></param>
-    /// <param name="useRegex"></param>
-    /// <returns></returns>
+    /// <param name="pattern">The pattern to search for.</param>
+    /// <param name="value">The value to replace with.</param>
+    /// <param name="useRegex">Whether to interpret the pattern as a Regex.</param>
     public Expr ReplaceAll(string pattern, string value, bool useRegex = false)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.StrReplaceAll(h, pattern, value, useRegex));
     }
     /// <summary>
-    /// Extract charaters in string by Regex.
+    /// Extract the first match of a regex pattern.
     /// </summary>
-    /// <param name="pattern"></param>
-    /// <param name="groupIndex"></param>
-    /// <returns></returns>
+    /// <param name="pattern">Regex pattern with capture groups.</param>
+    /// <param name="groupIndex">The index of the capture group to extract (usually 1).</param>
     public Expr Extract(string pattern, uint groupIndex)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.StrExtract(h, pattern, groupIndex));
     }
     /// <summary>
-    /// Check if the string contains a substring that matches a pattern.
+    /// Check if the string contains a substring or regex pattern.
     /// </summary>
-    /// <param name="pattern"></param>
-    /// <returns></returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     code = new[] { "ID-001", "ID-002", "ID-999", "XX-000", "ID-ABC" },
+    ///     text = new[] { "Polars", "Data", "Rust", null, "123" }
+    /// });
+    /// 
+    /// df.Select(
+    ///     Col("code"),
+    ///     // Replace "-" with "_"
+    ///     Col("code").Str.ReplaceAll("-", "_").Alias("replaced"),
+    ///     // Extract numbers using Regex group 1
+    ///     Col("code").Str.Extract(@"(\d+)", 1).Alias("extracted_num"),
+    ///     // Check if text contains "a"
+    ///     Col("text").Str.Contains("a").Alias("has_a")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (5, 4)
+    /// ┌────────┬──────────┬───────────────┬───────┐
+    /// │ code   ┆ replaced ┆ extracted_num ┆ has_a │
+    /// │ ---    ┆ ---      ┆ ---           ┆ ---   │
+    /// │ str    ┆ str      ┆ str           ┆ bool  │
+    /// ╞════════╪══════════╪═══════════════╪═══════╡
+    /// │ ID-001 ┆ ID_001   ┆ 001           ┆ true  │
+    /// │ ID-002 ┆ ID_002   ┆ 002           ┆ true  │
+    /// │ ID-999 ┆ ID_999   ┆ 999           ┆ false │
+    /// │ XX-000 ┆ XX_000   ┆ 000           ┆ null  │
+    /// │ ID-ABC ┆ ID_ABC   ┆ null          ┆ false │
+    /// └────────┴──────────┴───────────────┴───────┘
+    /// */
+    /// </code>
+    /// </example>
     public Expr Contains(string pattern)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.StrContains(h, pattern));
     }
     /// <summary>
-    /// Split the string by a substring.
+    /// Split the string by a separator. Returns a List&lt;String&gt;.
     /// </summary>
-    /// <param name="separator"></param>
-    /// <returns></returns>
     public Expr Split(string separator)
     {
          var h = PolarsWrapper.CloneExpr(_expr.Handle);
@@ -1497,12 +1763,21 @@ public class StringOps
     // ==========================================
     // Strip / Clean
     // ==========================================
-
     /// <summary>
     /// Remove leading and trailing characters.
     /// If matches is null, whitespace is removed.
     /// </summary>
     /// <param name="matches">The set of characters to be removed.</param>
+    /// <example>
+    /// <code>
+    /// df.Select(
+    ///     // "  Data  " -> "Data"
+    ///     Col("text").Str.StripChars().Alias("trimmed"),
+    ///     // Remove "ID-" prefix
+    ///     Col("code").Str.StripPrefix("ID-").Alias("no_prefix")
+    /// );
+    /// </code>
+    /// </example>
     public Expr StripChars(string? matches = null)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
@@ -1573,9 +1848,38 @@ public class StringOps
     // Temporal Parsing (日期转换)
     // ==========================================
 
-    /// <summary>
+    /// <summary>       
     /// Convert string to Date using the specified format.
+    /// <para>
+    /// Strict parsing: Format mismatches result in null.
+    /// Format string is similar to `strftime` (e.g. "%Y-%m-%d").
+    /// </para>
     /// </summary>
+    /// <example>
+    /// <code>
+    /// var dateDf = DataFrame.FromColumns(new { 
+    ///     raw = new[] { "2024-01-01", "2024/02/01", "invalid" } 
+    /// });
+    /// 
+    /// dateDf.Select(
+    ///     Col("raw"),
+    ///     Col("raw").Str.ToDate("%Y-%m-%d").Alias("fmt_dash"), 
+    ///     Col("raw").Str.ToDate("%Y/%m/%d").Alias("fmt_slash")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌────────────┬────────────┬────────────┐
+    /// │ raw        ┆ fmt_dash   ┆ fmt_slash  │
+    /// │ ---        ┆ ---        ┆ ---        │
+    /// │ str        ┆ date       ┆ date       │
+    /// ╞════════════╪════════════╪════════════╡
+    /// │ 2024-01-01 ┆ 2024-01-01 ┆ null       │
+    /// │ 2024/02/01 ┆ null       ┆ 2024-02-01 │
+    /// │ invalid    ┆ null       ┆ null       │
+    /// └────────────┴────────────┴────────────┘
+    /// */
+    /// </code>
+    /// </example>
     public Expr ToDate(string format)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
@@ -1596,7 +1900,7 @@ public class StringOps
 // ListOps Helper Class
 // ==========================================
 /// <summary>
-/// Offers methods for list operations.
+/// Operations on List columns. Access via <see cref="Expr.List"/>.
 /// </summary>
 public class ListOps
 {
@@ -1614,19 +1918,58 @@ public class ListOps
     /// <returns></returns>
     public Expr First() => Wrap(PolarsWrapper.ListFirst);
     /// <summary>
-    /// Get the last element of the list.
+    /// Get the value at a specific index.
     /// </summary>
-    /// <param name="index"></param>
-    /// <returns></returns>
+    /// <param name="index">The index to retrieve (can be negative for reverse indexing).</param>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     student = new[] { "Alice", "Bob", "Charlie" },
+    ///     scores = new[] { 
+    ///         new[] { 100, 90, 80 },
+    ///         new[] { 60, 60 },
+    ///         new int[] { }
+    ///     }
+    /// });
+    /// 
+    /// df.Select(
+    ///     Col("student"),
+    ///     Col("scores").List.Len().Alias("course_count"),
+    ///     Col("scores").List.Sum().Alias("total_score"),
+    ///     Col("scores").List.Get(0).Alias("first_score")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (3, 4)
+    /// ┌─────────┬──────────────┬─────────────┬─────────────┐
+    /// │ student ┆ course_count ┆ total_score ┆ first_score │
+    /// │ ---     ┆ ---          ┆ ---         ┆ ---         │
+    /// │ str     ┆ u32          ┆ i32         ┆ i32         │
+    /// ╞═════════╪══════════════╪═════════════╪═════════════╡
+    /// │ Alice   ┆ 3            ┆ 270         ┆ 100         │
+    /// │ Bob     ┆ 2            ┆ 120         ┆ 60          │
+    /// │ Charlie ┆ 0            ┆ 0           ┆ null        │
+    /// └─────────┴──────────────┴─────────────┴─────────────┘
+    /// */
+    /// 
+    /// // To Explode (Flatten) the list, use DataFrame.Explode:
+    /// // df.Explode(Col("scores")).Show();
+    /// </code>
+    /// </example>
     public Expr Get(int index) 
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.ListGet(h, index));
     }
     /// <summary>
-    /// Get the length of the list.
+    /// Get the length of the lists.
     /// </summary>
-    /// <returns></returns>
+    /// <example>
+    /// <code>
+    /// // Input: [100, 90, 80]
+    /// df.Select(Col("scores").List.Len()); // Output: 3
+    /// </code>
+    /// </example>
     public Expr Len() => Wrap(PolarsWrapper.ListLen);
     /// <summary>
     /// Join the list elements into a single string with a separator.
@@ -1651,9 +1994,14 @@ public class ListOps
         return new Expr(PolarsWrapper.ListSort(h, descending,nullsLast,maintainOrder));
     }
     /// <summary>
-    /// Calculate the sum of the list elements.
+    /// Calculate the sum of the values in the list (row-wise).
     /// </summary>
-    /// <returns></returns>
+    /// <example>
+    /// <code>
+    /// // Input: [100, 90, 80]
+    /// df.Select(Col("scores").List.Sum()); // Output: 270
+    /// </code>
+    /// </example>
     public Expr Sum() => Wrap(PolarsWrapper.ListSum);
     /// <summary>
     /// Calculate the minimum of the list elements.
@@ -1711,10 +2059,7 @@ public class ListOps
         return new Expr(PolarsWrapper.ConcatList(allExprs));
     }
     
-    public Expr Concat(Expr other)
-    {
-        return Concat([other]);
-    }
+    public Expr Concat(Expr other) => Concat([other]);
     public Expr Reverse() => Wrap(PolarsWrapper.ListReverse); 
 }
 // ==========================================
@@ -1802,7 +2147,7 @@ public class ArrayOps
 // StructOps Helper Class
 // ==========================================
 /// <summary>
-/// Offers methods for accessing fields within struct columns.
+/// Operations on Struct columns. Access via <see cref="Expr.Struct"/>.
 /// </summary>
 public class StructOps
 {
@@ -1812,6 +2157,38 @@ public class StructOps
     /// <summary>
     /// Retrieve a field from the struct by name.
     /// </summary>
+    /// <param name="name">The name of the field.</param>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     id = new[] { 1, 2 },
+    ///     product = new[] 
+    ///     { 
+    ///         new { Name = "Laptop", Specs = new { Ram = 16, SSD = 512 } },
+    ///         new { Name = "Mouse",  Specs = new { Ram = 0,  SSD = 0   } }
+    ///     }
+    /// });
+    /// 
+    /// df.Select(
+    ///     Col("id"),
+    ///     Col("product").Struct.Field("Name").Alias("prod_name"),
+    ///     // Nested Access
+    ///     Col("product").Struct.Field("Specs").Struct.Field("Ram").Alias("ram_gb")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌─────┬───────────┬────────┐
+    /// │ id  ┆ prod_name ┆ ram_gb │
+    /// │ --- ┆ ---       ┆ ---    │
+    /// │ i32 ┆ str       ┆ i32    │
+    /// ╞═════╪═══════════╪════════╡
+    /// │ 1   ┆ Laptop    ┆ 16     │
+    /// │ 2   ┆ Mouse     ┆ 0      │
+    /// └─────┴───────────┴────────┘
+    /// */
+    /// </code>
+    /// </example>
     public Expr Field(string name)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
@@ -1828,6 +2205,14 @@ public class StructOps
     /// <summary>
     /// Rename the fields of the struct.
     /// </summary>
+    /// <param name="names">The new names for the fields.</param>
+    /// <example>
+    /// <code>
+    /// df.Select(
+    ///     Col("product").Struct.RenameFields(new[] { "NewName", "NewSpecs" })
+    /// );
+    /// </code>
+    /// </example>
     public Expr RenameFields(params string[] names)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
