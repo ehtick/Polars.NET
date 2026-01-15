@@ -804,6 +804,22 @@ public partial class Series : IDisposable
         return new Series(newHandle);
     }
     // ==========================================
+    // Drop Nulls and Nans
+    // ==========================================
+    /// <summary>
+    /// Drop Null Values
+    /// </summary>
+    public Series DropNulls()
+    {
+        var newHandle = PolarsWrapper.SeriesDropNulls(Handle);
+        return new Series(newHandle);
+    }
+    /// <summary>
+    /// Drop Nan Values
+    /// </summary>
+    public Series DropNans()
+        => ApplyExpr(Polars.Col(Name).DropNans());
+    // ==========================================
     // Fill Ops
     // ==========================================
     /// <summary>

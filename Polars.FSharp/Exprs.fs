@@ -205,6 +205,10 @@ and Expr(handle: ExprHandle) =
         new Expr(PolarsWrapper.IsNull(this.CloneHandle()))
     member this.IsNotNull() = 
         new Expr(PolarsWrapper.IsNotNull(this.CloneHandle()))
+    member this.DropNulls() =
+        new Expr(PolarsWrapper.DropNulls(this.CloneHandle()))
+    member this.DropNans() =
+        new Expr(PolarsWrapper.DropNans(this.CloneHandle()))
     // UDF
     /// <summary>
     /// Apply a custom C#/F# function (UDF) to the expression.

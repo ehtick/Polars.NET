@@ -208,6 +208,8 @@ gen_unary_op!(pl_expr_not, not);
 // is_null()
 gen_unary_op!(pl_expr_is_null, is_null);
 gen_unary_op!(pl_expr_is_not_null, is_not_null);
+gen_unary_op!(pl_expr_drop_nulls, drop_nulls);
+gen_unary_op!(pl_expr_drop_nans, drop_nans);
 // dupilicated and unique
 gen_unary_op!(pl_expr_unique, unique);
 gen_unary_op!(pl_expr_unique_stable, unique_stable);

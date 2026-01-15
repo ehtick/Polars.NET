@@ -177,4 +177,56 @@ public class CleaningTests
         // B: [2, 3, 2]. IsDuplicated -> [True, False, True]. Sum = 2.
         Assert.Equal(2u, groupB_DupCount);
     }
+    [Fact]
+    public void TestDropNulls()
+    {
+        // 1. 测试 Series.DropNulls()
+        var s = Series.From("data", new int?[] { 1, null, 2, null, 3 });
+        var cleanSeries = s.DropNulls();
+
+        Assert.Equal(3, cleanSeries.Length);
+
+        // 2. 测试 Expr.DropNulls() via DataFrame
+        // 注意：在 Select 中使用 DropNulls 会改变列长，所以只选这一列以避免 "Length Mismatch" 错误
+        var df = DataFrame.FromColumns(new
+        {
+            vals = new int?[] { 10, null, 20 }
+        });
+
+        var resultDf = df.Select(Polars.Col("vals").DropNulls());
+        
+        Assert.Equal(2, resultDf.Height);
+        Assert.Equal(10, resultDf["vals"][0]);
+        Assert.Equal(20, resultDf["vals"][1]);
+    }
+
+    [Fact]
+    public void TestDropNans()
+    {
+        // NaN (Not a Number) 是浮点数特有的概念，不同于 Null
+        
+        // 1. 测试 Series.DropNans()
+        // 你的实现是用 ApplyExpr 做到的，这个测试也能验证 ApplyExpr 是否正确处理了长度变化
+        var s = new Series("floats", new double[] { 1.5, double.NaN, 2.5, double.NaN, 3.5 });
+        var cleanSeries = s.DropNans();
+
+        Assert.Equal(3, cleanSeries.Length);
+        
+        // 验证内容 (CollectionAssert 比较浮点数可能需要 comparer，这里简单手写)
+        var arr = cleanSeries.ToArray<double>();
+        Assert.Equal(1.5, arr[0]);
+        Assert.Equal(2.5, arr[1]);
+        Assert.Equal(3.5, arr[2]);
+
+        // 2. 测试 Expr.DropNans() via DataFrame
+        var df = DataFrame.FromColumns(new
+        {
+            f = new double[] { double.NaN, 100.0, double.NaN }
+        });
+
+        var resultDf = df.Select(Polars.Col("f").DropNans());
+        
+        Assert.Equal(1, resultDf.Height);
+        Assert.Equal(100.0, resultDf["f"][0]);
+    }
 }

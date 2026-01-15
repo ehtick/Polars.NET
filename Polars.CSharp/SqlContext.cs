@@ -3,8 +3,24 @@ using Polars.NET.Core;
 namespace Polars.CSharp;
 
 /// <summary>
-/// A SQL Context allows running SQL queries on LazyFrames.
+/// A context for executing SQL queries against DataFrames and LazyFrames.
+/// <para>
+/// Polars supports a subset of ANSI SQL. The query is converted into a logical plan 
+/// and optimized/executed by the Polars engine.
+/// </para>
 /// </summary>
+/// <example>
+/// <code>
+/// using var ctx = new SqlContext();
+/// 
+/// // Register DataFrames as tables
+/// ctx.Register("df", df);
+/// 
+/// // Execute SQL query
+/// // Note: Returns a LazyFrame, so you must call Collect() to materialize data.
+/// var result = ctx.Execute("SELECT * FROM df WHERE val > 10").Collect();
+/// </code>
+/// </example>
 public class SqlContext : IDisposable
 {
     internal SqlContextHandle Handle { get; }

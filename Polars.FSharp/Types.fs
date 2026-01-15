@@ -182,6 +182,11 @@ type Series(handle: SeriesHandle) =
     /// </summary>
     member this.IsNotNull() : Series = 
         new Series(PolarsWrapper.SeriesIsNotNull handle)
+    member this.DropNulls() : Series =
+        new Series(PolarsWrapper.SeriesDropNulls handle)
+    member this.DropNans() : Series =
+        let expr = Expr.Col(this.Name).DropNans()
+        this.ApplyExpr expr
     /// <summary>
     /// Check if the value at the specified index is null.
     /// This is faster than retrieving the value and checking for Option.None.

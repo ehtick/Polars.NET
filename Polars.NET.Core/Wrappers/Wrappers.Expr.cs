@@ -352,7 +352,10 @@ public static partial class PolarsWrapper
 
     public static ExprHandle IsNotNull(ExprHandle expr) 
         => UnaryOp(NativeBindings.pl_expr_is_not_null, expr);
-
+    public static ExprHandle DropNulls(ExprHandle expr) 
+        => UnaryOp(NativeBindings.pl_expr_drop_nulls, expr);
+    public static ExprHandle DropNans(ExprHandle expr) 
+        => UnaryOp(NativeBindings.pl_expr_drop_nans, expr);
     // Unique and Duplicated
     public static ExprHandle ExprIsUnique(ExprHandle expr)
         => UnaryOp(NativeBindings.pl_expr_is_unique,expr);

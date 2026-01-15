@@ -219,6 +219,8 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_fill_nan(ExprHandle expr, ExprHandle fillValue);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_null(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_not_null(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_drop_nulls(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_drop_nans(ExprHandle expr);
     // Unique ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_unique(ExprHandle expr);
 
@@ -963,6 +965,8 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     [return: MarshalAs(UnmanagedType.I1)]
     public static partial bool pl_series_is_null_at(SeriesHandle s, UIntPtr idx);
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_drop_nulls(SeriesHandle s);
     [LibraryImport(LibName)]
     public static partial UIntPtr pl_series_null_count(SeriesHandle s);
     [LibraryImport(LibName)] public static partial SeriesHandle pl_series_is_nan(SeriesHandle s);

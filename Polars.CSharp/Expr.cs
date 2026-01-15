@@ -696,6 +696,14 @@ public class Expr : IDisposable
     /// </summary>
     public Expr FillNan(object value)
         => new(PolarsWrapper.FillNan(CloneHandle(), MakeLit(value).Handle));
+    /// <summary>
+    /// Drop null values.
+    /// </summary>
+    public Expr DropNulls() => new(PolarsWrapper.DropNulls(CloneHandle()));
+    /// <summary>
+    /// Drop nan values.
+    /// </summary>
+    public Expr DropNans() => new(PolarsWrapper.DropNans(CloneHandle()));
     // ==========================================
     // Top-K & Bottom-K
     // ==========================================

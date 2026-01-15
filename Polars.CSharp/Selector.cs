@@ -71,8 +71,7 @@ namespace Polars.CSharp
         public static Expr operator ==(Selector s, float other) => s.ToExpr() == other;
         public static Expr operator !=(Selector s, float other) => s.ToExpr() != other;
 
-        // --- String (常用) ---
-        // 字符串只支持 + (拼接) 和 比较
+        // --- String ---
         public static Expr operator +(Selector s, string v) => s.ToExpr() + v;
         public static Expr operator ==(Selector s, string v) => s.ToExpr() == v;
         public static Expr operator !=(Selector s, string v) => s.ToExpr() != v;
@@ -82,7 +81,7 @@ namespace Polars.CSharp
         public static Expr operator |(Selector s, bool v) => s.ToExpr() | v;
         public static Expr operator ^(Selector s, bool v) => s.ToExpr() ^ v;
 
-        // 反向操作 (int,double,float string * Selector)
+        // Reverse Ops (int,double,float string * Selector)
         public static Expr operator *(int other, Selector s) => Polars.Lit(other) * s.ToExpr();
         public static Expr operator +(int other, Selector s) => Polars.Lit(other) + s.ToExpr();
         public static Expr operator -(int other, Selector s) => Polars.Lit(other) - s.ToExpr();
@@ -163,7 +162,6 @@ namespace Polars.CSharp
         /// </summary>
         public Expr ToExpr()
         {
-            // Wrapper 里的 SelectorToExpr 也会 TransferOwnership
             var exprHandle = PolarsWrapper.SelectorToExpr(Handle);
             return new Expr(exprHandle);
         }

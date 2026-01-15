@@ -413,6 +413,15 @@ pub extern "C" fn pl_series_null_count(s_ptr: *mut SeriesContext) -> usize {
     ctx.series.null_count()
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_drop_nulls(s_ptr: *mut SeriesContext) -> *mut SeriesContext {
+    ffi_try!({
+        let ctx = unsafe { &*s_ptr };
+        let series = ctx.series.drop_nulls();
+        Ok(Box::into_raw(Box::new(SeriesContext { series })))
+    })
+}
+
 // Unique
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_series_unique(ptr: *mut SeriesContext) -> *mut SeriesContext {
