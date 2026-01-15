@@ -187,11 +187,45 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     }
 
     /// <summary>
-    /// Create a DataFrame directly from a DbDataReader.
-    /// Supports basic types, Arrays (as List), and POCOs (as Struct).
+    /// Create a DataFrame directly from a <see cref="IDataReader"/>.
+    /// <para>
+    /// This method streams data from the reader into Arrow batches, allowing for memory-efficient 
+    /// loading of large datasets from databases (e.g., SQL Server, PostgreSQL, SQLite).
+    /// </para>
+    /// <para>
+    /// It automatically maps C# types to Polars types (e.g., <see cref="decimal"/> to Decimal128, <see cref="DateTime"/> to Timestamp).
+    /// </para>
     /// </summary>
-    /// <param name="reader">The open data reader.</param>
-    /// <param name="batchSize">Number of rows per Arrow batch.</param>
+    /// <param name="reader">The open IDataReader instance.</param>
+    /// <param name="batchSize">The number of rows to process per Arrow batch. Default is 50,000.</param>
+    /// <returns>A new DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// // Mocking a DataTable as a data source
+    /// var table = new System.Data.DataTable();
+    /// table.Columns.Add("Product", typeof(string));
+    /// table.Columns.Add("Price", typeof(decimal)); // Correctly maps to Polars Decimal128
+    /// 
+    /// table.Rows.Add("Laptop", 1234.56m);
+    /// table.Rows.Add("Mouse", 99.99m);
+    /// 
+    /// using IDataReader reader = table.CreateDataReader();
+    /// 
+    /// var df = DataFrame.ReadDatabase(reader);
+    /// df.Show();
+    /// /* Output:
+    /// shape: (2, 2)
+    /// ┌─────────┬─────────────────────────┐
+    /// │ Product ┆ Price                   │
+    /// │ ---     ┆ ---                     │
+    /// │ str     ┆ decimal[38,18]          │
+    /// ╞═════════╪═════════════════════════╡
+    /// │ Laptop  ┆ 1234.560000000000000000 │
+    /// │ Mouse   ┆ 99.990000000000000000   │
+    /// └─────────┴─────────────────────────┘
+    /// */
+    /// </code>
+    /// </example>
     public static DataFrame ReadDatabase(IDataReader reader, int batchSize = 50_000)
     {
         // Get Schema 
@@ -295,28 +329,100 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // DataFrame Operations
     // ==========================================
     /// <summary>
-    /// Select columns
+    /// Select columns from the DataFrame and apply expressions to them.
+    /// <para>
+    /// This is the primary way to project data, rename columns, or compute new columns based on existing ones.
+    /// The result will only contain the columns specified in the expression list.
+    /// </para>
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
+    /// <param name="exprs">A list of expressions defining the columns to select or compute.</param>
+    /// <returns>A new DataFrame containing only the selected/computed columns.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     foo = new[] { 1, 2, 3 },
+    ///     bar = new[] { 6, 7, 8 },
+    ///     ham = new[] { "a", "b", "c" }
+    /// });
+    /// 
+    /// // Select "foo" column and compute a new column "bar_x_2"
+    /// var selected = df.Select(
+    ///     Col("foo"),
+    ///     (Col("bar") * 2).Alias("bar_x_2")
+    /// );
+    /// 
+    /// selected.Show();
+    /// /* Output:
+    /// shape: (3, 2)
+    /// ┌─────┬─────────┐
+    /// │ foo ┆ bar_x_2 │
+    /// │ --- ┆ ---     │
+    /// │ i32 ┆ i32     │
+    /// ╞═════╪═════════╡
+    /// │ 1   ┆ 12      │
+    /// │ 2   ┆ 14      │
+    /// │ 3   ┆ 16      │
+    /// └─────┴─────────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Select(params Expr[] exprs)
     {
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         return new DataFrame(PolarsWrapper.Select(Handle, handles));
     }
     /// <summary>
-    /// Select columns by name.
+    /// Select columns by name (convenience overload).
+    /// <para>
+    /// This is a shortcut for creating <see cref="Polars.Col(string)"/> expressions for each column name.
+    /// </para>
     /// </summary>
+    /// <param name="columns">The names of the columns to select.</param>
+    /// <returns>A new DataFrame containing only the selected columns.</returns>
+    /// <remarks>
+    /// For more advanced selections (renaming, calculations), use <see cref="Select(Expr[])"/>.
+    /// </remarks>
+    /// <seealso cref="Select(Expr[])"/>
     public DataFrame Select(params string[] columns)
     {
         var exprs = columns.Select(Polars.Col).ToArray();
         return Select(exprs);
     }
     /// <summary>
-    /// Filter rows based on a boolean expression. 
+    /// Filter rows based on a boolean expression (predicate).
+    /// <para>
+    /// Retains only the rows where the expression evaluates to true.
+    /// </para>
     /// </summary>
-    /// <param name="expr"></param>
-    /// <returns></returns>
+    /// <param name="expr">A boolean expression to filter by (e.g., Col("a") > 5).</param>
+    /// <returns>A new DataFrame containing only the matching rows.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     foo = new[] { 1, 2, 3 },
+    ///     bar = new[] { 6, 7, 8 },
+    ///     ham = new[] { "a", "b", "c" }
+    /// });
+    /// 
+    /// // Keep rows where "foo" is greater than 1
+    /// var filtered = df.Filter(Col("foo") > 1);
+    /// 
+    /// filtered.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌─────┬─────┬─────┐
+    /// │ foo ┆ bar ┆ ham │
+    /// │ --- ┆ --- ┆ --- │
+    /// │ i32 ┆ i32 ┆ str │
+    /// ╞═════╪═════╪═════╡
+    /// │ 2   ┆ 7   ┆ b   │
+    /// │ 3   ┆ 8   ┆ c   │
+    /// └─────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Filter(Expr expr)
     {
         var h = PolarsWrapper.CloneExpr(expr.Handle);
@@ -324,10 +430,43 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return new DataFrame(PolarsWrapper.Filter(Handle, h));
     }
     /// <summary>
-    /// Filter rows based on a boolean expression. 
+    /// Add new columns to the DataFrame or replace existing ones using expressions.
+    /// <para>
+    /// Unlike <see cref="Select(Expr[])"/>, this method keeps all original columns in the DataFrame 
+    /// and appends the new ones (or replaces them if the names match).
+    /// </para>
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
+    /// <param name="exprs">Expressions defining the new columns to add.</param>
+    /// <returns>A new DataFrame with the original columns plus the new/modified columns.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     foo = new[] { 1, 2, 3 },
+    ///     bar = new[] { 6, 7, 8 },
+    ///     ham = new[] { "a", "b", "c" }
+    /// });
+    /// 
+    /// // Add a "sum" column (foo + bar) while keeping others
+    /// var withCols = df.WithColumns(
+    ///     (Col("foo") + Col("bar")).Alias("sum")
+    /// );
+    /// 
+    /// withCols.Show();
+    /// /* Output:
+    /// shape: (3, 4)
+    /// ┌─────┬─────┬─────┬─────┐
+    /// │ foo ┆ bar ┆ ham ┆ sum │
+    /// │ --- ┆ --- ┆ --- ┆ --- │
+    /// │ i32 ┆ i32 ┆ str ┆ i32 │
+    /// ╞═════╪═════╪═════╪═════╡
+    /// │ 1   ┆ 6   ┆ a   ┆ 7   │
+    /// │ 2   ┆ 7   ┆ b   ┆ 9   │
+    /// │ 3   ┆ 8   ┆ c   ┆ 11  │
+    /// └─────┴─────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame WithColumns(params Expr[] exprs)
     {
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
@@ -385,8 +524,48 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     }
 
     /// <summary>
-    /// Sort the DataFrame by multiple columns with specific sort orders.
+    /// Sort the DataFrame by multiple columns with specific sort orders for each column.
+    /// <para>
+    /// This allows for complex sorting, such as sorting by Category (Ascending) and then by Price (Descending).
+    /// </para>
     /// </summary>
+    /// <param name="columns">Names of the columns to sort by.</param>
+    /// <param name="descending">Array of booleans indicating sort order for each column (false=Ascending, true=Descending).</param>
+    /// <param name="nullsLast">Array of booleans indicating whether nulls should be placed at the end for each column.</param>
+    /// <param name="maintainOrder">Whether to maintain the relative order of rows with equal keys (stable sort). Expensive.</param>
+    /// <returns>A new sorted DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     group = new[] { "A", "A", "B", "B", "A" },
+    ///     val = new[] { 10, 5, 20, 15, 8 }
+    /// });
+    /// 
+    /// // Sort by "group" (Ascending) then by "val" (Descending)
+    /// var sorted = df.Sort(
+    ///     columns: new[] { "group", "val" }, 
+    ///     descending: new[] { false, true }, // false=Asc, true=Desc
+    ///     nullsLast: new[] { false, false }
+    /// );
+    /// 
+    /// sorted.Show();
+    /// /* Output:
+    /// shape: (5, 2)
+    /// ┌───────┬─────┐
+    /// │ group ┆ val │
+    /// │ ---   ┆ --- │
+    /// │ str   ┆ i32 │
+    /// ╞═══════╪═════╡
+    /// │ A     ┆ 10  │
+    /// │ A     ┆ 8   │
+    /// │ A     ┆ 5   │
+    /// │ B     ┆ 20  │
+    /// │ B     ┆ 15  │
+    /// └───────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Sort(
         string[] columns, 
         bool[] descending, 
@@ -487,10 +666,41 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <returns></returns>
     public DataFrame Tail(int n = 5) => new(PolarsWrapper.Tail(Handle, (uint)n));
     /// <summary>
-    /// Explode a list or structure in a Column
+    /// Explode list/array columns into multiple rows.
+    /// <para>
+    /// This un-nests list columns. If multiple columns are provided, they are exploded in parallel.
+    /// Note: The list columns being exploded must have the same length for each row.
+    /// </para>
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
+    /// <param name="exprs">Expressions selecting the columns to explode.</param>
+    /// <returns>A new DataFrame where list elements are expanded into rows.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     id = new[] { 1, 2 },
+    ///     tags = new[] { new[] { "apple", "orange" }, new[] { "banana" } },
+    ///     scores = new[] { new[] { 10, 20 }, new[] { 30 } }
+    /// });
+    /// 
+    /// // Explode "tags" and "scores" columns simultaneously
+    /// var exploded = df.Explode(Col("tags"), Col("scores"));
+    /// 
+    /// exploded.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────┬────────┬────────┐
+    /// │ id  ┆ tags   ┆ scores │
+    /// │ --- ┆ ---    ┆ ---    │
+    /// │ i32 ┆ str    ┆ i32    │
+    /// ╞═════╪════════╪════════╡
+    /// │ 1   ┆ apple  ┆ 10     │
+    /// │ 1   ┆ orange ┆ 20     │
+    /// │ 2   ┆ banana ┆ 30     │
+    /// └─────┴────────┴────────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Explode(params Expr[] exprs)
     {
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
@@ -498,17 +708,79 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     }
     /// <summary>
     /// Decompose a struct column into multiple columns.
+    /// <para>
+    /// This is useful for flattening nested JSON-like data.
+    /// </para>
     /// </summary>
-    /// <param name="columns">The struct columns to unnest.</param>
-    /// <param name="separator">Optional separator between struct column name and field name.</param>
+    /// <param name="columns">The names of the struct columns to unnest.</param>
+    /// <param name="separator">
+    /// Optional separator to append to the struct field names (e.g., "struct_col.field"). 
+    /// If null, the field names replace the struct column name directly.
+    /// </param>
+    /// <returns>A new DataFrame with the struct columns expanded.</returns>
+    /// <example>
+    /// <code>
+    /// var data = new[] { new { User = new { Name = "Alice", Age = 30 } } };
+    /// var df = DataFrame.From(data);
+    /// 
+    /// // Unnest with a separator to avoid name collisions
+    /// // Result columns: "User_Name", "User_Age"
+    /// var unnested = df.Unnest(new[] { "User" }, separator: "_");
+    /// unnested.Show();
+    /// /* Output:
+    /// shape: (1, 2)
+    /// ┌───────────┬──────────┐
+    /// │ User_Name ┆ User_Age │
+    /// │ ---       ┆ ---      │
+    /// │ str       ┆ i32      │
+    /// ╞═══════════╪══════════╡
+    /// │ Alice     ┆ 30       │
+    /// └───────────┴──────────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Unnest(string[] columns,string? separator=null)
     {
         var newHandle = PolarsWrapper.Unnest(Handle, columns,separator);
         return new DataFrame(newHandle);
     }
     /// <summary>
-    /// Decompose a struct column into multiple columns (Default separator).
+    /// Decompose a struct column into multiple columns (one for each field in the struct).
+    /// <para>
+    /// This is useful for flattening nested JSON-like data or composite types.
+    /// The original struct column is replaced by its fields.
+    /// </para>
     /// </summary>
+    /// <param name="columns">The names of the struct columns to unnest.</param>
+    /// <returns>A new DataFrame with the struct columns expanded.</returns>
+    /// <example>
+    /// <code>
+    /// // Create a DataFrame with a nested structure (simulating JSON)
+    /// var nestedData = new[] 
+    /// {
+    ///     new { Id = 1, User = new { Name = "Alice", City = "NY" } },
+    ///     new { Id = 2, User = new { Name = "Bob",   City = "LA" } }
+    /// };
+    /// 
+    /// var df = DataFrame.From(nestedData);
+    /// 
+    /// // Unnest the "User" column into "Name" and "City"
+    /// var unnested = df.Unnest("User");
+    /// 
+    /// unnested.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌─────┬───────┬──────┐
+    /// │ Id  ┆ Name  ┆ City │
+    /// │ --- ┆ ---   ┆ ---  │
+    /// │ i32 ┆ str   ┆ str  │
+    /// ╞═════╪═══════╪══════╡
+    /// │ 1   ┆ Alice ┆ NY   │
+    /// │ 2   ┆ Bob   ┆ LA   │
+    /// └─────┴───────┴──────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Unnest(params string[] columns) => Unnest(columns, separator: null);
     // ==========================================
     // Data Cleaning / Structure Ops
@@ -550,29 +822,74 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // Combining DataFrames
     // ==========================================
     /// <summary>
-    /// Join with another DataFrame
+    /// Join with another DataFrame using expressions to define the keys.
+    /// <para>
+    /// This is the most flexible join method, allowing for joining on calculations or different column names 
+    /// without renaming them first.
+    /// </para>
     /// </summary>
-    /// <param name="other"></param>
-    /// <param name="leftOn"></param>
-    /// <param name="rightOn"></param>
-    /// <param name="how"></param>
-    /// <returns></returns>
+    /// <param name="other">The right DataFrame to join with.</param>
+    /// <param name="leftOn">Expressions for the left keys.</param>
+    /// <param name="rightOn">Expressions for the right keys.</param>
+    /// <param name="how">Type of join (Inner, Left, Outer, Cross, etc.). Default is Inner.</param>
+    /// <returns>A new DataFrame resulting from the join.</returns>
     public DataFrame Join(DataFrame other, Expr[] leftOn, Expr[] rightOn, JoinType how = JoinType.Inner)
     {
         var lHandles = leftOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         var rHandles = rightOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
 
-    return new DataFrame(PolarsWrapper.Join(
-            Handle, 
-            other.Handle, 
-            lHandles, 
-            rHandles, 
-            how.ToNative()
-        ));
+        return new DataFrame(PolarsWrapper.Join(
+                Handle, 
+                other.Handle, 
+                lHandles, 
+                rHandles, 
+                how.ToNative()
+            ));
     }
     /// <summary>
     /// Join with another DataFrame using column names.
     /// </summary>
+    /// <param name="other">The right DataFrame to join with.</param>
+    /// <param name="leftOn">Column names in the left DataFrame to join on.</param>
+    /// <param name="rightOn">Column names in the right DataFrame to join on.</param>
+    /// <param name="how">Type of join (Inner, Left, Outer, Cross, etc.). Default is Inner.</param>
+    /// <returns>A new DataFrame resulting from the join.</returns>
+    /// <example>
+    /// <code>
+    /// var dfCustomers = DataFrame.FromColumns(new
+    /// {
+    ///     id = new[] { 1, 2, 3 },
+    ///     name = new[] { "Alice", "Bob", "Charlie" }
+    /// });
+    /// 
+    /// var dfOrders = DataFrame.FromColumns(new
+    /// {
+    ///     id = new[] { 1, 2, 4 },
+    ///     amount = new[] { 100, 200, 500 }
+    /// });
+    /// 
+    /// // Perform an Inner Join on the "id" column
+    /// var joined = dfCustomers.Join(
+    ///     dfOrders, 
+    ///     leftOn: new[] { "id" }, 
+    ///     rightOn: new[] { "id" }, 
+    ///     how: JoinType.Inner
+    /// );
+    /// 
+    /// joined.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌─────┬───────┬────────┐
+    /// │ id  ┆ name  ┆ amount │
+    /// │ --- ┆ ---   ┆ ---    │
+    /// │ i32 ┆ str   ┆ i32    │
+    /// ╞═════╪═══════╪════════╡
+    /// │ 1   ┆ Alice ┆ 100    │
+    /// │ 2   ┆ Bob   ┆ 200    │
+    /// └─────┴───────┴────────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Join(DataFrame other, string[] leftOn, string[] rightOn, JoinType how = JoinType.Inner)
     {
         var lExprs = leftOn.Select(c => Polars.Col(c)).ToArray();
@@ -582,17 +899,71 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     }
 
     /// <summary>
-    /// Join with another DataFrame using a single column pair.
+    /// Join with another DataFrame using a single column pair (Convenience overload).
     /// </summary>
+    /// <param name="other">The right DataFrame to join with.</param>
+    /// <param name="leftOn">The column name in the left DataFrame.</param>
+    /// <param name="rightOn">The column name in the right DataFrame.</param>
+    /// <param name="how">Type of join. Default is Inner.</param>
+    /// <seealso cref="Join(DataFrame, string[], string[], JoinType)"/>
     public DataFrame Join(DataFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
         => Join(other, [leftOn], [rightOn], how);
     /// <summary>
     /// Perform an As-Of Join (time-series join).
     /// <para>
-    /// This is an Eager operation that executes via the Lazy engine.
-    /// The keys must be sorted.
+    /// This is similar to a left join, but instead of looking for exact matches, it matches the nearest key 
+    /// according to the specified <paramref name="strategy"/>.
+    /// This is ideal for joining trades with quotes, or synchronizing time-series data with different timestamps.
     /// </para>
     /// </summary>
+    /// <param name="other">The right DataFrame to join with.</param>
+    /// <param name="leftOn">The expression for the key column in the left DataFrame (must be sorted).</param>
+    /// <param name="rightOn">The expression for the key column in the right DataFrame (must be sorted).</param>
+    /// <param name="tolerance">Optional tolerance (e.g., "10s", "1d"). Matches beyond this distance are null.</param>
+    /// <param name="strategy">Match strategy: "backward" (default, look for previous value), "forward", or "nearest".</param>
+    /// <param name="leftBy">Optional columns to group by on the left side (exact match required for these).</param>
+    /// <param name="rightBy">Optional columns to group by on the right side (exact match required for these).</param>
+    /// <returns>A new DataFrame with the joined data.</returns>
+    /// <example>
+    /// <code>
+    /// // Trades: Events happening at specific times
+    /// var trades = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] { 10, 20, 30 },
+    ///     stock = new[] { "A", "A", "A" }
+    /// });
+    /// 
+    /// // Quotes: Price updates (irregular intervals)
+    /// // 9->100, 15->101, 25->102, 40->103
+    /// var quotes = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] { 9, 15, 25, 40 },
+    ///     bid = new[] { 100, 101, 102, 103 }
+    /// });
+    /// 
+    /// // Find the latest quote BEFORE or AT the trade time (strategy="backward")
+    /// var asof = trades.JoinAsOf(
+    ///     quotes, 
+    ///     leftOn: Col("time"), 
+    ///     rightOn: Col("time"),
+    ///     strategy: "backward"
+    /// );
+    /// 
+    /// asof.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌──────┬───────┬─────┐
+    /// │ time ┆ stock ┆ bid │
+    /// │ ---  ┆ ---   ┆ --- │
+    /// │ i32  ┆ str   ┆ i32 │
+    /// ╞══════╪═══════╪═════╡
+    /// │ 10   ┆ A     ┆ 100 │ // Matches time 9
+    /// │ 20   ┆ A     ┆ 101 │ // Matches time 15
+    /// │ 30   ┆ A     ┆ 102 │ // Matches time 25
+    /// └──────┴───────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -615,8 +986,12 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     }
 
     /// <summary>
-    /// Perform an As-Of Join with tolerance as timespan (time-series join).
+    /// Perform an As-Of Join with tolerance as a TimeSpan.
+    /// <para>
+    /// Convenience overload that formats the <see cref="TimeSpan"/> into a Polars duration string.
+    /// </para>
     /// </summary>
+    /// <seealso cref="JoinAsOf(DataFrame, Expr, Expr, string?, string, Expr[], Expr[])"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -636,11 +1011,59 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         );
     }
     /// <summary>
-    /// Concatenate multiple DataFrames
+    /// Concatenate multiple DataFrames either vertically (union) or horizontally.
     /// </summary>
-    /// <param name="dfs"></param>
-    /// <param name="how"></param>
-    /// <returns></returns>
+    /// <param name="dfs">A collection of DataFrames to concatenate.</param>
+    /// <param name="how">The concatenation strategy (Vertical, Horizontal, or Diagonal). Default is Vertical.</param>
+    /// <returns>A new combined DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// var df1 = DataFrame.FromColumns(new
+    /// {
+    ///     a = new[] { 1, 2 },
+    ///     b = new[] { 10, 20 }
+    /// });
+    /// 
+    /// var df2 = DataFrame.FromColumns(new
+    /// {
+    ///     a = new[] { 3, 4 },
+    ///     b = new[] { 30, 40 }
+    /// });
+    /// 
+    /// // Vertical Concat (Union rows)
+    /// var catVertical = DataFrame.Concat(new[] { df1, df2 });
+    /// catVertical.Show();
+    /// /* Output:
+    /// shape: (4, 2)
+    /// ┌─────┬─────┐
+    /// │ a   ┆ b   │
+    /// │ --- ┆ --- │
+    /// │ i32 ┆ i32 │
+    /// ╞═════╪═════╡
+    /// │ 1   ┆ 10  │
+    /// │ 2   ┆ 20  │
+    /// │ 3   ┆ 30  │
+    /// │ 4   ┆ 40  │
+    /// └─────┴─────┘
+    /// */
+    /// 
+    /// // Horizontal Concat (Append columns)
+    /// var df3 = DataFrame.FromColumns(new { c = new[] { "x", "y" } });
+    /// var catHorizontal = DataFrame.Concat(new[] { df1, df3 }, ConcatType.Horizontal);
+    /// catHorizontal.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌─────┬─────┬─────┐
+    /// │ a   ┆ b   ┆ c   │
+    /// │ --- ┆ --- ┆ --- │
+    /// │ i32 ┆ i32 ┆ str │
+    /// ╞═════╪═════╪═════╡
+    /// │ 1   ┆ 10  ┆ x   │
+    /// │ 2   ┆ 20  ┆ y   │
+    /// └─────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public static DataFrame Concat(IEnumerable<DataFrame> dfs, ConcatType how = ConcatType.Vertical)
     {
         var handles = dfs.Select(d => PolarsWrapper.CloneDataFrame(d.Handle)).ToArray();
@@ -652,25 +1075,117 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // GroupBy
     // ==========================================
     /// <summary>
-    /// Group by keys and apply aggregations.
+    /// Start a GroupBy operation to perform aggregations on groups of data.
+    /// <para>
+    /// This returns a <see cref="GroupByBuilder"/> which allows you to specify the aggregation functions 
+    /// (like Sum, Min, Max, Count) using the <c>.Agg()</c> method.
+    /// </para>
     /// </summary>
-    /// <param name="by"></param>
-    /// <returns></returns>
+    /// <param name="by">Expressions defining the columns to group by.</param>
+    /// <returns>A builder object to define aggregations.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     group = new[] { "A", "A", "B", "B", "B" },
+    ///     val1 = new[] { 1, 2, 3, 4, 5 },
+    ///     val2 = new[] { 10, 20, 10, 20, 30 }
+    /// });
+    /// 
+    /// // Group by "group" and calculate:
+    /// // 1. Sum of val1
+    /// // 2. Max of val2 (aliased to "max_val2")
+    /// // 3. Count of elements in the group
+    /// var grouped = df.GroupBy(Col("group")).Agg(
+    ///     Col("val1").Sum(),
+    ///     Col("val2").Max().Alias("max_val2"),
+    ///     Col("val1").Count().Alias("count")
+    /// );
+    /// 
+    /// grouped.Sort("group").Show();
+    /// /* Output:
+    /// shape: (2, 4)
+    /// ┌───────┬──────┬──────────┬───────┐
+    /// │ group ┆ val1 ┆ max_val2 ┆ count │
+    /// │ ---   ┆ ---  ┆ ---      ┆ ---   │
+    /// │ str   ┆ i32  ┆ i32      ┆ u32   │
+    /// ╞═══════╪══════╪══════════╪═══════╡
+    /// │ A     ┆ 3    ┆ 20       ┆ 2     │
+    /// │ B     ┆ 12   ┆ 30       ┆ 3     │
+    /// └───────┴──────┴──────────┴───────┘
+    /// */
+    /// </code>
+    /// </example>
     public GroupByBuilder GroupBy(params Expr[] by) => new (this, by);
     /// <summary>
-    /// Group by column names.
+    /// Start a GroupBy operation using column names (convenience overload).
     /// </summary>
+    /// <param name="columns">Names of the columns to group by.</param>
+    /// <returns>A builder object to define aggregations.</returns>
+    /// <remarks>
+    /// For more complex grouping logic (expressions), use <see cref="GroupBy(Expr[])"/>.
+    /// </remarks>
+    /// <seealso cref="GroupBy(Expr[])"/>
     public GroupByBuilder GroupBy(params string[] columns)
     {
         var exprs = columns.Select(Polars.Col).ToArray();
         return GroupBy(exprs);
     }
     /// <summary>
-    /// Group by dynamic windows based on a time index.
+    /// Group based on a time index using dynamic windows (Rolling/Resampling).
     /// <para>
-    /// This is an Eager operation that executes via the Lazy engine for performance.
+    /// This is essential for time-series analysis, allowing you to downsample data (e.g., 1-minute data to 1-hour bars).
     /// </para>
     /// </summary>
+    /// <param name="indexColumn">The column containing time/date data (must be sorted).</param>
+    /// <param name="every">The interval at which to start a new window (e.g., "1h", "1d"). Also known as the step size.</param>
+    /// <param name="period">The duration of each window. If null, defaults to <paramref name="every"/>.</param>
+    /// <param name="offset">Offset to shift the window start times.</param>
+    /// <param name="by">Optional extra columns to group by (e.g., group by "stock_symbol" AND time window).</param>
+    /// <param name="label">Which label to use for the window (Left boundary, Right boundary, or Datapoint).</param>
+    /// <param name="includeBoundaries">Whether to include the window boundaries in the output.</param>
+    /// <param name="closedWindow">Which side of the window interval is closed (inclusive).</param>
+    /// <param name="startBy">Strategy to determine the start of the first window.</param>
+    /// <returns>A <see cref="DynamicGroupBy"/> object to define aggregations.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] 
+    ///     { 
+    ///         new DateTime(2024, 1, 1, 10, 0, 0),
+    ///         new DateTime(2024, 1, 1, 10, 30, 0), // Inside 10:00-11:00 window
+    ///         new DateTime(2024, 1, 1, 11, 0, 0), // Start of next window
+    ///         new DateTime(2024, 1, 1, 11, 15, 0),
+    ///         new DateTime(2024, 1, 2, 09, 0, 0)
+    ///     },
+    ///     val = new[] { 1, 2, 3, 4, 5 }
+    /// });
+    /// 
+    /// // Group into 1-hour windows based on "time"
+    /// var dynamicGrouped = df.GroupByDynamic(
+    ///     indexColumn: "time", 
+    ///     every: TimeSpan.FromHours(1)
+    /// ).Agg(
+    ///     Col("val").Sum().Alias("total_val"),
+    ///     Col("val").Count().Alias("count")
+    /// );
+    /// 
+    /// dynamicGrouped.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────────────────────┬───────────┬───────┐
+    /// │ time                ┆ total_val ┆ count │
+    /// │ ---                 ┆ ---       ┆ ---   │
+    /// │ datetime[μs]        ┆ i32       ┆ u32   │
+    /// ╞═════════════════════╪═══════════╪═══════╡
+    /// │ 2024-01-01 10:00:00 ┆ 3         ┆ 2     │ // 10:00 + 10:30
+    /// │ 2024-01-01 11:00:00 ┆ 7         ┆ 2     │ // 11:00 + 11:15
+    /// │ 2024-01-02 09:00:00 ┆ 5         ┆ 1     │
+    /// └─────────────────────┴───────────┴───────┘
+    /// */
+    /// </code>
+    /// </example>
     public DynamicGroupBy GroupByDynamic(
         string indexColumn,
         TimeSpan every,
@@ -702,32 +1217,94 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     /// <summary>
     /// Pivot the DataFrame from long to wide format.
+    /// <para>
+    /// This creates a new column for each unique value in the <paramref name="columns"/> argument.
+    /// The values in the new columns come from the <paramref name="values"/> column.
+    /// </para>
     /// </summary>
-    /// <param name="index"></param>
-    /// <param name="columns"></param>
-    /// <param name="values"></param>
-    /// <param name="agg"></param>
-    /// <returns></returns>
+    /// <param name="index">Column names to use as the index (the rows).</param>
+    /// <param name="columns">Column names to use for the new column headers.</param>
+    /// <param name="values">Column names to use for the values in the cells.</param>
+    /// <param name="agg">Aggregation function to use if multiple values exist for an index/column pair. Default is First.</param>
+    /// <returns>A wide-format DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// var dfLong = DataFrame.FromColumns(new
+    /// {
+    ///     date = new[] { "2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02" },
+    ///     country = new[] { "US", "CN", "US", "CN" },
+    ///     sales = new[] { 100, 200, 110, 220 }
+    /// });
+    /// 
+    /// // Pivot: rows=date, cols=country, values=sales
+    /// var pivoted = dfLong.Pivot(
+    ///     index: new[] { "date" }, 
+    ///     columns: new[] { "country" }, 
+    ///     values: new[] { "sales" }
+    /// );
+    /// 
+    /// pivoted.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌────────────┬─────┬─────┐
+    /// │ date       ┆ US  ┆ CN  │
+    /// │ ---        ┆ --- ┆ --- │
+    /// │ str        ┆ i32 ┆ i32 │
+    /// ╞════════════╪═════╪═════╡
+    /// │ 2024-01-01 ┆ 100 ┆ 200 │
+    /// │ 2024-01-02 ┆ 110 ┆ 220 │
+    /// └────────────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg agg = PivotAgg.First)
         => new(PolarsWrapper.Pivot(Handle, index, columns, values, agg.ToNative()));
     /// <summary>
     /// Unpivot (Melt) the DataFrame from wide to long format.
+    /// <para>
+    /// This is the reverse of <see cref="Pivot"/>. It collapses multiple columns into key-value pairs.
+    /// </para>
     /// </summary>
-    /// <param name="index"></param>
-    /// <param name="on"></param>
-    /// <param name="variableName"></param>
-    /// <param name="valueName"></param>
-    /// <returns></returns>
+    /// <param name="index">Column names to keep as identifiers (id_vars).</param>
+    /// <param name="on">Column names to unpivot/melt (value_vars).</param>
+    /// <param name="variableName">Name for the new variable column (default "variable").</param>
+    /// <param name="valueName">Name for the new value column (default "value").</param>
+    /// <returns>A long-format DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// // Using the 'pivoted' DataFrame from the Pivot example
+    /// // shape: (2, 3) [date, US, CN]
+    /// 
+    /// // Unpivot back to long format
+    /// var melted = pivoted.Unpivot(
+    ///     index: new[] { "date" },
+    ///     on: new[] { "CN", "US" },
+    ///     variableName: "country",
+    ///     valueName: "sales"
+    /// );
+    /// 
+    /// melted.Sort(new[] { "date", "country" }).Show();
+    /// /* Output:
+    /// shape: (4, 3)
+    /// ┌────────────┬─────────┬───────┐
+    /// │ date       ┆ country ┆ sales │
+    /// │ ---        ┆ ---     ┆ ---   │
+    /// │ str        ┆ str     ┆ i32   │
+    /// ╞════════════╪═════════╪═══════╡
+    /// │ 2024-01-01 ┆ CN      ┆ 200   │
+    /// │ 2024-01-01 ┆ US      ┆ 100   │
+    /// │ 2024-01-02 ┆ CN      ┆ 220   │
+    /// │ 2024-01-02 ┆ US      ┆ 110   │
+    /// └────────────┴─────────┴───────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
         => new(PolarsWrapper.Unpivot(Handle, index, on, variableName, valueName));
     /// <summary>
-    /// Unpivot (Melt) the DataFrame from wide to long format.
+    /// Alias for <see cref="Unpivot"/>. Melts the DataFrame from wide to long format.
     /// </summary>
-    /// <param name="index"></param>
-    /// <param name="on"></param>
-    /// <param name="variableName"></param>
-    /// <param name="valueName"></param>
-    /// <returns></returns>
+    /// <seealso cref="Unpivot(string[], string[], string, string)"/>
     public DataFrame Melt(string[] index, string[] on, string variableName = "variable", string valueName = "value") 
         => Unpivot(index, on, variableName, valueName);
 
@@ -886,9 +1463,47 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
 
     /// <summary>
-    /// Create a DataFrame from a collection of objects (POCOs).
-    /// High-performance implementation using Arrow Struct conversion.
+    /// Create a DataFrame from a collection of strongly-typed objects (POCOs).
+    /// <para>
+    /// This method uses reflection to inspect the properties of the class <typeparamref name="T"/> 
+    /// and maps them to DataFrame columns.
+    /// </para>
     /// </summary>
+    /// <typeparam name="T">The class type of the records.</typeparam>
+    /// <param name="data">The collection of objects to load.</param>
+    /// <returns>A new DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// public class Student
+    /// {
+    ///     public string Name { get; set; }
+    ///     public int Age { get; set; }
+    ///     public double GPA { get; set; }
+    /// }
+    /// 
+    /// var students = new List&lt;Student&gt;
+    /// {
+    ///     new Student { Name = "Alice", Age = 20, GPA = 3.5 },
+    ///     new Student { Name = "Bob", Age = 22, GPA = 3.8 },
+    ///     new Student { Name = "Charlie", Age = 19, GPA = 3.2 }
+    /// };
+    /// 
+    /// var df = DataFrame.From(students);
+    /// df.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────────┬─────┬─────┐
+    /// │ Name    ┆ Age ┆ GPA │
+    /// │ ---     ┆ --- ┆ --- │
+    /// │ str     ┆ i32 ┆ f64 │
+    /// ╞═════════╪═════╪═════╡
+    /// │ Alice   ┆ 20  ┆ 3.5 │
+    /// │ Bob     ┆ 22  ┆ 3.8 │
+    /// │ Charlie ┆ 19  ┆ 3.2 │
+    /// └─────────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public static DataFrame From<T>(IEnumerable<T> data)
     {
         using var structSeries = Series.From("data", data);

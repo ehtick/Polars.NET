@@ -67,6 +67,37 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A boolean expression representing the comparison.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     a = new[] { 1, 2, 3, 4, null as int? },
+    ///     b = new[] { 10, 20, 30, 40, 50 }
+    /// });
+    /// 
+    /// // Compare columns: b > 20
+    /// // Note: Null comparisons propagate null (Logic: 50 > null is null)
+    /// df.Select(
+    ///     Col("b"),
+    ///     (Col("b") > 20).Alias("b_gt_20"),
+    ///     (Col("a") == 2).Alias("a_eq_2")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (5, 3)
+    /// ┌─────┬─────────┬────────┐
+    /// │ b   ┆ b_gt_20 ┆ a_eq_2 │
+    /// │ --- ┆ ---     ┆ ---    │
+    /// │ i32 ┆ bool    ┆ bool   │
+    /// ╞═════╪═════════╪════════╡
+    /// │ 10  ┆ false   ┆ false  │
+    /// │ 20  ┆ false   ┆ true   │
+    /// │ 30  ┆ true    ┆ false  │
+    /// │ 40  ┆ true    ┆ false  │
+    /// │ 50  ┆ true    ┆ null   │
+    /// └─────┴─────────┴────────┘
+    /// */
+    /// </code>
+    /// </example>
     public static Expr operator >(Expr left, Expr right)
     {
         var l = left.CloneHandle();
@@ -84,6 +115,7 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A boolean expression representing the comparison.</returns>
+    /// <see cref="operator >(Expr, Expr)"/>
     public static Expr operator <(Expr left, Expr right)
     {
         var l = left.CloneHandle();
@@ -100,6 +132,7 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A boolean expression representing the comparison.</returns>
+    /// <see cref="operator >(Expr, Expr)"/>
     public static Expr operator >=(Expr left, Expr right)
     {
         var l = left.CloneHandle();
@@ -116,6 +149,7 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A boolean expression representing the comparison.</returns>
+    /// <see cref="operator >(Expr, Expr)"/>
     public static Expr operator <=(Expr left, Expr right)
     {
         var l = left.CloneHandle();
@@ -132,6 +166,7 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A boolean expression representing the comparison.</returns>
+    /// <see cref="operator >(Expr, Expr)"/>
     public static Expr operator ==(Expr left, Expr right)
     {
         var l = left.CloneHandle();
@@ -148,6 +183,7 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A boolean expression representing the comparison.</returns>
+    /// <see cref="operator >(Expr, Expr)"/>
     public static Expr operator !=(Expr left, Expr right)
     {
         var l = left.CloneHandle();
@@ -164,10 +200,42 @@ public class Expr : IDisposable
 
     /// <summary>
     /// Creates an expression representing the addition of two expressions.
+    /// <para>
+    /// Supports element-wise addition. If one operand is a scalar/literal, it is broadcast to the length of the other.
+    /// </para>
     /// </summary>
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A numeric expression representing the sum.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     a = new[] { 1, 2, 3, 4, null as int? },
+    ///     b = new[] { 10, 20, 30, 40, 50 }
+    /// });
+    /// 
+    /// // Arithmetic: Column + Column, Column * Scalar
+    /// df.Select(
+    ///     (Col("a") + Col("b")).Alias("sum_ab"),
+    ///     (Col("a") * 2).Alias("a_double")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (5, 2)
+    /// ┌────────┬──────────┐
+    /// │ sum_ab ┆ a_double │
+    /// │ ---    ┆ ---      │
+    /// │ i32    ┆ i32      │
+    /// ╞════════╪══════════╡
+    /// │ 11     ┆ 2        │
+    /// │ 22     ┆ 4        │
+    /// │ 33     ┆ 6        │
+    /// │ 44     ┆ 8        │
+    /// │ null   ┆ null     │
+    /// └────────┴──────────┘
+    /// */
+    /// </code>
+    /// </example>
     public static Expr operator +(Expr left, Expr right)
     {
         var l = left.CloneHandle();
@@ -184,6 +252,7 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A numeric expression representing the difference.</returns>
+    /// <see cref="operator +(Expr, Expr)"/>
     public static Expr operator -(Expr left, Expr right)
     {
         var l = left.CloneHandle();
@@ -200,6 +269,7 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A numeric expression representing the product.</returns>
+    /// /// <see cref="operator +(Expr, Expr)"/>
     public static Expr operator *(Expr left, Expr right)   
     {
         var l = left.CloneHandle();
@@ -216,6 +286,7 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A numeric expression representing the quotient.</returns>
+    /// /// <see cref="operator +(Expr, Expr)"/>
     public static Expr operator /(Expr left, Expr right)   
     {
         var l = left.CloneHandle();
@@ -232,6 +303,7 @@ public class Expr : IDisposable
     /// <param name="left">The left expression.</param>
     /// <param name="right">The right expression.</param>
     /// <returns>A numeric expression representing the quotient.</returns>
+    /// /// <see cref="operator +(Expr, Expr)"/>
     public static Expr operator %(Expr left, Expr right)   
     {
         var l = left.CloneHandle();
@@ -247,22 +319,58 @@ public class Expr : IDisposable
     /// Integer division (floor division).
     /// </summary>
     public Expr FloorDiv(Expr other)
-    {
-        return new Expr(PolarsWrapper.FloorDiv(this.CloneHandle(), other.CloneHandle()));
-    }
+        => new(PolarsWrapper.FloorDiv(this.CloneHandle(), other.CloneHandle()));
 
     public Expr FloorDiv(object other)
-    {
-        return new Expr(PolarsWrapper.FloorDiv(this.CloneHandle(), MakeLit(other).Handle));
-    }
+        =>new(PolarsWrapper.FloorDiv(this.CloneHandle(), MakeLit(other).Handle));
     // ==========================================
     // Bitwise Operators (<<, >>)
     // ==========================================
 
     /// <summary>
     /// Bitwise left shift operation.
-    /// <para>Equivalent to Rust/C# `&lt;&lt;` operator.</para>
+    /// <para>
+    /// Equivalent to C# `&lt;&lt;` operator. 
+    /// Shifting left by N is equivalent to multiplying by 2^N.
+    /// </para>
     /// </summary>
+    /// <param name="left">The expression to shift.</param>
+    /// <param name="right">The number of bits to shift.</param>
+    /// <returns>A numeric expression with bits shifted left.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     vals = new[] { 1, 2, 4, 8, 16 },    // Powers of 2
+    ///     neg  = new[] { -2, -4, -8, -16, -32 } // Negative numbers
+    /// });
+    /// 
+    /// // 1. Left shift by 1 (x * 2)
+    /// // 2. Right shift by 1 (x / 2)
+    /// // 3. Negative Right shift (Arithmetic Shift, preserves sign)
+    /// df.Select(
+    ///     Col("vals"),
+    ///     (Col("vals") &lt;&lt; 1).Alias("shl_1"), 
+    ///     (Col("vals") &gt;&gt; 1).Alias("shr_1"), 
+    ///     Col("neg"),
+    ///     (Col("neg") &gt;&gt; 1).Alias("neg_shr_1") 
+    /// ).Show();
+    /// /* Output:
+    /// shape: (5, 5)
+    /// ┌──────┬───────┬───────┬─────┬───────────┐
+    /// │ vals ┆ shl_1 ┆ shr_1 ┆ neg ┆ neg_shr_1 │
+    /// │ ---  ┆ ---   ┆ ---   ┆ --- ┆ ---       │
+    /// │ i32  ┆ i32   ┆ i32   ┆ i32 ┆ i32       │
+    /// ╞══════╪═══════╪═══════╪═════╪═══════════╡
+    /// │ 1    ┆ 2     ┆ 0     ┆ -2  ┆ -1        │
+    /// │ 2    ┆ 4     ┆ 1     ┆ -4  ┆ -2        │
+    /// │ 4    ┆ 8     ┆ 2     ┆ -8  ┆ -4        │
+    /// │ 8    ┆ 16    ┆ 4     ┆ -16 ┆ -8        │
+    /// │ 16   ┆ 32    ┆ 8     ┆ -32 ┆ -16       │
+    /// └──────┴───────┴───────┴─────┴───────────┘
+    /// */
+    /// </code>
+    /// </example>
     public static Expr operator <<(Expr left, int right)
     {
         var h = left.CloneHandle();
@@ -272,10 +380,14 @@ public class Expr : IDisposable
     /// <summary>
     /// Bitwise right shift operation.
     /// <para>
-    /// For signed integers, this is an arithmetic shift (preserves sign).
+    /// For signed integers, this is an **arithmetic shift** (preserves the sign bit).
     /// For unsigned integers, this is a logical shift (fills with zeros).
     /// </para>
     /// </summary>
+    /// <param name="left">The expression to shift.</param>
+    /// <param name="right">The number of bits to shift.</param>
+    /// <returns>A numeric expression with bits shifted right.</returns>
+    /// <seealso cref="operator &lt;&lt;(Expr, int)"/>
     public static Expr operator >>(Expr left, int right)
     {
         var h = left.CloneHandle();
@@ -292,6 +404,36 @@ public class Expr : IDisposable
     /// <param name="left">The left boolean expression.</param>
     /// <param name="right">The right boolean expression.</param>
     /// <returns>A boolean expression that evaluates to true if both operands are true.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     b = new[] { 10, 20, 30, 40, 50 },
+    ///     cond = new[] { true, false, true, false, true }
+    /// });
+    /// 
+    /// // Logical AND: (b > 20) AND cond
+    /// df.Select(
+    ///     Col("b"),
+    ///     Col("cond"),
+    ///     ((Col("b") &gt; 20) &amp; Col("cond")).Alias("logic_and")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (5, 3)
+    /// ┌─────┬───────┬───────────┐
+    /// │ b   ┆ cond  ┆ logic_and │
+    /// │ --- ┆ ---   ┆ ---       │
+    /// │ i32 ┆ bool  ┆ bool      │
+    /// ╞═════╪═══════╪═══════════╡
+    /// │ 10  ┆ true  ┆ false     │
+    /// │ 20  ┆ false ┆ false     │
+    /// │ 30  ┆ true  ┆ true      │
+    /// │ 40  ┆ false ┆ false     │
+    /// │ 50  ┆ true  ┆ true      │
+    /// └─────┴───────┴───────────┘
+    /// */
+    /// </code>
+    /// </example>
     public static Expr operator &(Expr left, Expr right)  
     {
         var l = left.CloneHandle();
@@ -358,8 +500,57 @@ public class Expr : IDisposable
     // ==========================================
 
     /// <summary>
-    /// Sum
+    /// Calculate the sum of the values in the group or column.
+    /// <para>
+    /// Behavior depends on context:
+    /// <list type="bullet">
+    /// <item>In <see cref="DataFrame.GroupBy(Expr[])"/>: Calculates the sum for each group.</item>
+    /// <item>In <see cref="DataFrame.Select(Expr[])"/>: Calculates the sum of the entire column (scalar result).</item>
+    /// </list>
+    /// </para>
     /// </summary>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     group = new[] { "A", "A", "B", "B" },
+    ///     val = new[] { 1, 2, 3, 4 }
+    /// });
+    /// 
+    /// // 1. GroupBy Aggregation
+    /// df.GroupBy("group").Agg(
+    ///     Col("val").Sum().Alias("sum"),
+    ///     Col("val").Mean().Alias("mean")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌───────┬─────┬──────┐
+    /// │ group ┆ sum ┆ mean │
+    /// │ ---   ┆ --- ┆ ---  │
+    /// │ str   ┆ i32 ┆ f64  │
+    /// ╞═══════╪═════╪══════╡
+    /// │ A     ┆ 3   ┆ 1.5  │
+    /// │ B     ┆ 7   ┆ 3.5  │
+    /// └───────┴─────┴──────┘
+    /// */
+    /// 
+    /// // 2. Global Aggregation (Select)
+    /// df.Select(
+    ///     Col("val").Sum().Alias("total_sum"),
+    ///     Col("val").Count().Alias("total_count")
+    /// ).Show();
+    /// /* Output:
+    /// shape: (1, 2)
+    /// ┌───────────┬─────────────┐
+    /// │ total_sum ┆ total_count │
+    /// │ ---       ┆ ---         │
+    /// │ i32       ┆ u32         │
+    /// ╞═══════════╪═════════════╡
+    /// │ 10        ┆ 4           │
+    /// └───────────┴─────────────┘
+    /// */
+    /// </code>
+    /// </example>
     public Expr Sum() => new(PolarsWrapper.Sum(CloneHandle()));
 
     /// <summary>

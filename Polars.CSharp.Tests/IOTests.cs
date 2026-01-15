@@ -702,5 +702,43 @@ ID;ProductName;Weight;ReleaseDate
                     File.Delete(filePath);
             }
         }
+        [Fact]
+        public void ReadDatabase_Should_Handle_Decimal_Correctly()
+        {
+            // 1. Arrange: 用 DataTable 模拟一个包含 Decimal 的数据库读取器
+            var table = new System.Data.DataTable();
+            table.Columns.Add("Product", typeof(string));
+            table.Columns.Add("Price", typeof(decimal)); // 关键测试点：System.Decimal
+
+            // 插入特定的测试数值
+            table.Rows.Add("Laptop", 1234.56m);
+            table.Rows.Add("Mouse", 99.99m);
+            table.Rows.Add("Cable", 0.00m); 
+
+            using var reader = table.CreateDataReader();
+
+            // 2. Act: 通过修复后的 ReadDatabase 读取
+            using var df = DataFrame.ReadDatabase(reader);
+
+            // 3. Assert & Verify
+            // (A) 直观验证：打印出来看是否还有乱码 (e-50 等)
+            Console.WriteLine("=== Decimal Test Output ===");
+            df.Show();
+
+            // (B) 验证 Schema：确保被识别为 Decimal 而不是 Double
+            // 注意：根据修复代码，这里应该是 Decimal(38, 18)
+            var priceCol = df["Price"];
+            Assert.Contains("decimal", priceCol.DataType.ToString());
+
+            // (C) 验证数值：确保精度没有丢失且数值正确
+            // 注意：Polars.NET 的 Series[i] 索引器返回的是 object
+            var val0 = priceCol[0];
+            var val1 = priceCol[1];
+
+            // 如果 ArrowConverter 读取逻辑正常，这里应该能拿到 decimal 或者 double
+            // 为了兼容性，我们要么转 decimal，要么转 double 比较
+            Assert.Equal(1234.56m, Convert.ToDecimal(val0));
+            Assert.Equal(99.99m, Convert.ToDecimal(val1));
+        }
     }
 }

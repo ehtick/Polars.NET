@@ -108,7 +108,7 @@ internal static class DbToArrowStream
         if (checkType == typeof(long)) return Int64Type.Default;
         if (checkType == typeof(float)) return FloatType.Default;
         if (checkType == typeof(double)) return DoubleType.Default;
-        if (checkType == typeof(decimal)) return DoubleType.Default;
+        if (checkType == typeof(decimal)) return new Decimal128Type(38, 18);
         if (checkType == typeof(bool)) return BooleanType.Default;
         if (checkType == typeof(string)) return StringViewType.Default;
         if (checkType == typeof(DateTime)) return new TimestampType(TimeUnit.Microsecond, (string)null!);

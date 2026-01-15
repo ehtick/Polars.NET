@@ -233,8 +233,32 @@ public class LazyFrame : IDisposable
     }
 
     /// <summary>
-    /// Get an explanation of the query plan.
+    /// Get an explanation of the optimized query plan.
+    /// <para>
+    /// Returns a string representation of the logical plan after Polars optimizers 
+    /// (predicate pushdown, projection pushdown, etc.) have run.
+    /// </para>
     /// </summary>
+    /// <param name="optimized">If true, show the optimized plan. If false, show the logical plan as built.</param>
+    /// <returns>The plan as a string.</returns>
+    /// <example>
+    /// <code>
+    /// var q = df.Lazy()
+    ///     .Filter(Col("group") != "C")
+    ///     .WithColumns((Col("val") * 2).Alias("val_x_2"))
+    ///     .Select("group", "val_x_2");
+    /// 
+    /// Console.WriteLine(q.Explain());
+    /// /* Output (Optimized Plan):
+    /// simple π 2/2 ["group", "val_x_2"]
+    ///    WITH_COLUMNS:
+    ///    [[(col("val")) * (2)].alias("val_x_2")] 
+    ///     FILTER [(col("group")) != ("C")]
+    ///     FROM
+    ///       DF ["group", "val"]; PROJECT["group", "val"] 2/2 COLUMNS
+    /// */
+    /// </code>
+    /// </example>
     public string Explain(bool optimized = true)
     {
         return PolarsWrapper.Explain(Handle, optimized);
@@ -257,8 +281,12 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Select specific columns or expressions.
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
+    /// <example>
+    /// <code>
+    /// // Select "a" and calculate "b" * 2
+    /// lf.Select(Col("a"), (Col("b") * 2).Alias("b_double"));
+    /// </code>
+    /// </example>
     public LazyFrame Select(params Expr[] exprs)
     {
         var lfClone = CloneHandle();
@@ -276,9 +304,47 @@ public class LazyFrame : IDisposable
     }
     /// <summary>
     /// Filter rows based on a boolean expression.
+    /// <para>
+    /// In a LazyFrame, this operation is added to the logical plan and is optimized before execution.
+    /// Polars will attempt to push this filter down as close to the data source as possible (Predicate Pushdown).
+    /// </para>
     /// </summary>
-    /// <param name="expr"></param>
-    /// <returns></returns>
+    /// <param name="expr">A boolean expression.</param>
+    /// <returns>A new LazyFrame with the filter applied.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     group = new[] { "A", "A", "B", "B", "C" },
+    ///     val = new[] { 1, 2, 3, 4, 5 }
+    /// });
+    /// 
+    /// // Build a lazy query:
+    /// // 1. Filter out group 'C'
+    /// // 2. Multiply 'val' by 2
+    /// // 3. Select specific columns
+    /// var q = df.Lazy()
+    ///     .Filter(Col("group") != "C")
+    ///     .WithColumns((Col("val") * 2).Alias("val_x_2"))
+    ///     .Select("group", "val_x_2");
+    /// 
+    /// // Execute
+    /// q.Collect().Show();
+    /// /* Output:
+    /// shape: (4, 2)
+    /// ┌───────┬─────────┐
+    /// │ group ┆ val_x_2 │
+    /// │ ---   ┆ ---     │
+    /// │ str   ┆ i32     │
+    /// ╞═══════╪═════════╡
+    /// │ A     ┆ 2       │
+    /// │ A     ┆ 4       │
+    /// │ B     ┆ 6       │
+    /// │ B     ┆ 8       │
+    /// └───────┴─────────┘
+    /// */
+    /// </code>
+    /// </example>
     public LazyFrame Filter(Expr expr)
     {
         var lfClone = CloneHandle();
@@ -289,8 +355,12 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Add or modify columns based on expressions.
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
+    /// <example>
+    /// <code>
+    /// // Add a new column "c" while keeping "a" and "b"
+    /// lf.WithColumns((Col("a") + Col("b")).Alias("c"));
+    /// </code>
+    /// </example>
     public LazyFrame WithColumns(params Expr[] exprs)
     {
         var lfClone = CloneHandle();
@@ -347,8 +417,40 @@ public class LazyFrame : IDisposable
     }
 
     /// <summary>
-    /// Sort the LazyFrame by multiple columns with specific sort orders.
+    /// Lazily sort the DataFrame by multiple columns.
+    /// <para>
+    /// This operation is added to the logical plan. 
+    /// Use <see cref="TopK(int, string, bool)"/> if you only need the top/bottom N rows, as it is more efficient.
+    /// </para>
     /// </summary>
+    /// <param name="columns">Names of the columns to sort by.</param>
+    /// <param name="descending">Sort order for each column.</param>
+    /// <param name="nullsLast">Whether nulls go last for each column.</param>
+    /// <param name="maintainOrder">Whether to maintain the relative order of rows with equal keys.</param>
+    /// <seealso cref="DataFrame.Sort(string[], bool[], bool[], bool)"/>
+    /// <example>
+    /// <code>
+    /// df.Lazy()
+    ///   .Sort(
+    ///       columns: new[] { "group", "val" }, 
+    ///       descending: new[] { false, true }, 
+    ///       nullsLast: new[] { false, false }
+    ///   )
+    ///   .Collect();
+    /// /* Output:
+    /// shape: (5, 2)
+    /// ┌───────┬─────┐
+    /// │ group ┆ val │
+    /// │ ---   ┆ --- │
+    /// │ str   ┆ i32 │
+    /// ╞═══════╪═════╡
+    /// │ A     ┆ 10  │
+    /// │ A     ┆ 8   │
+    /// │ ...   ┆ ... │
+    /// └───────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public LazyFrame Sort(
         string[] columns, 
         bool[] descending, 
@@ -478,10 +580,19 @@ public class LazyFrame : IDisposable
         return new LazyFrame(PolarsWrapper.LazyLimit(lfClone, n));
     }
     /// <summary>
-    /// Unnest struct columns selected by a Selector.
+    /// Lazily unnest struct columns.
+    /// <para>
+    /// Currently uses a Selector to perform the unnesting.
+    /// </para>
     /// </summary>
-    /// <param name="selector">Columns to unnest.</param>
-    /// <param name="separator">Optional separator.</param>
+    /// <seealso cref="DataFrame.Unnest(string[], string?)"/>
+    /// <example>
+    /// <code>
+    /// df.Lazy()
+    ///   .Unnest("User")
+    ///   .Collect();
+    /// </code>
+    /// </example>
     public LazyFrame Unnest(Selector selector,string? separator = null)
     {
         var lfClone = CloneHandle();
@@ -539,13 +650,18 @@ public class LazyFrame : IDisposable
     public LazyFrame Melt(string[] index, string[] on, string variableName = "variable", string valueName = "value") 
         => Unpivot(index, on, variableName, valueName);
     /// <summary>
-    /// Concatenate multiple LazyFrames into one.
+    /// Lazily concatenate multiple LazyFrames.
+    /// <para>
+    /// This adds a concat node to the query plan. 
+    /// For vertical concatenation, schemas must align (or be capable of supertype unification).
+    /// </para>
     /// </summary>
-    /// <param name="how"></param>
-    /// <param name="lfs"></param>
-    /// <param name="rechunk"></param>
-    /// <param name="parallel"></param>
-    /// <returns></returns>
+    /// <example>
+    /// <code>
+    /// LazyFrame.Concat(new[] { lf1, lf2 }, ConcatType.Vertical)
+    ///          .Collect();
+    /// </code>
+    /// </example>
     public static LazyFrame Concat(
         IEnumerable<LazyFrame> lfs, 
         ConcatType how = ConcatType.Vertical, 
@@ -561,13 +677,36 @@ public class LazyFrame : IDisposable
     // Join
     // ==========================================
     /// <summary>
-    /// Join with another LazyFrame on specified columns.
+    /// Lazily join with another LazyFrame.
+    /// <para>
+    /// Polars will optimize the join execution order. 
+    /// Note: Both frames must be LazyFrames.
+    /// </para>
     /// </summary>
-    /// <param name="other"></param>
-    /// <param name="leftOn"></param>
-    /// <param name="rightOn"></param>
-    /// <param name="how"></param>
-    /// <returns></returns>
+    /// <seealso cref="DataFrame.Join(DataFrame, Expr[], Expr[], JoinType)"/>
+    /// <example>
+    /// <code>
+    /// var lf1 = df1.Lazy();
+    /// var lf2 = df2.Lazy();
+    /// 
+    /// // Lazy Left Join
+    /// var joined = lf1.Join(lf2, Col("id"), Col("id"), JoinType.Left)
+    ///                 .Collect();
+    ///                 
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────┬─────────┬───────┐
+    /// │ id  ┆ name    ┆ score │
+    /// │ --- ┆ ---     ┆ ---   │
+    /// │ i32 ┆ str     ┆ i32   │
+    /// ╞═════╪═════════╪═══════╡
+    /// │ 1   ┆ Alice   ┆ 90    │
+    /// │ 2   ┆ Bob     ┆ 80    │
+    /// │ 3   ┆ Charlie ┆ null  │
+    /// └─────┴─────────┴───────┘
+    /// */
+    /// </code>
+    /// </example>
     public LazyFrame Join(LazyFrame other, Expr[] leftOn, Expr[] rightOn, JoinType how = JoinType.Inner)
     {
         var lOn = leftOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
@@ -697,10 +836,32 @@ public class LazyFrame : IDisposable
     // GroupBy
     // ==========================================
     /// <summary>
-    /// Start a GroupBy operation on specified keys.
+    /// Start a lazy GroupBy operation.
     /// </summary>
-    /// <param name="keys"></param>
-    /// <returns></returns>
+    /// <remarks>
+    /// Unlike <see cref="DataFrame.GroupBy(Expr[])"/> which returns a <see cref="GroupByBuilder"/>,
+    /// this returns a <see cref="LazyGroupBy"/> object which allows constructing the aggregation plan.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// df.Lazy()
+    ///   .GroupBy("group")
+    ///   .Agg(Col("val").Sum().Alias("sum_val"))
+    ///   .Collect();
+    ///   
+    /// /* Output:
+    /// shape: (2, 2)
+    /// ┌───────┬─────────┐
+    /// │ group ┆ sum_val │
+    /// │ ---   ┆ ---     │
+    /// │ str   ┆ i32     │
+    /// ╞═══════╪═════════╡
+    /// │ A     ┆ 3       │
+    /// │ B     ┆ 7       │
+    /// └───────┴─────────┘
+    /// */
+    /// </code>
+    /// </example>
     public LazyGroupBy GroupBy(params Expr[] keys)
     {
         var lfClone = CloneHandle();
@@ -728,8 +889,20 @@ public class LazyFrame : IDisposable
         return GroupBy(exprs);
     }
     /// <summary>
-    /// Group by dynamic windows based on a time index.
+    /// Lazily group based on a time index using dynamic windows.
+    /// <para>
+    /// This defines a dynamic groupby in the query plan.
+    /// </para>
     /// </summary>
+    /// <seealso cref="DataFrame.GroupByDynamic"/>
+    /// <example>
+    /// <code>
+    /// df.Lazy()
+    ///   .GroupByDynamic("time", every: TimeSpan.FromHours(1))
+    ///   .Agg(Col("val").Sum().Alias("total"))
+    ///   .Collect();
+    /// </code>
+    /// </example>
     public LazyDynamicGroupBy GroupByDynamic(
         string indexColumn,
         TimeSpan every,
@@ -821,13 +994,53 @@ public class LazyFrame : IDisposable
         using var _ = lfRes.CollectStreaming(); 
     }
     /// <summary>
-    /// Generic streaming Sink interface: Streamingly convert LazyFrame calculation results to IDataReader 
-    /// and hand it over to writerAction for processing.
-    /// Users can utilize tools like SqlBulkCopy, NpgsqlBinaryImporter, etc. within writerAction.
+    /// Stream the result of the LazyFrame calculation into an <see cref="IDataReader"/>.
+    /// <para>
+    /// This allows processing huge datasets that don't fit in memory by handling them in chunks (RecordBatches).
+    /// </para>
+    /// <para>
+    /// Common use cases:
+    /// <list type="bullet">
+    /// <item>Bulk inserting data into SQL Databases (using SqlBulkCopy or NpgsqlBinaryImporter).</item>
+    /// <item>Streaming data to other .NET libraries that consume IDataReader.</item>
+    /// </list>
+    /// </para>
     /// </summary>
-    /// <param name="writerAction">Callback that receives IDataReader (executed in a separate thread)</param>
-    /// <param name="bufferSize">Buffer size (number of Batches)</param>
-    /// <param name="typeOverrides">Target Schema</param>
+    /// <param name="writerAction">
+    /// A callback that receives the <see cref="IDataReader"/>. 
+    /// This action executes on a separate thread (Consumer) while the Polars engine (Producer) pumps data.
+    /// </param>
+    /// <param name="bufferSize">
+    /// The number of RecordBatches to buffer in memory. 
+    /// If the buffer is full, the Polars engine will pause until the consumer reads more data (Backpressure).
+    /// </param>
+    /// <param name="typeOverrides">Optional schema overrides to guide the type mapping.</param>
+    /// <example>
+    /// <code>
+    /// // Simulate a large lazy computation
+    /// var lf = DataFrame.FromColumns(new { id = new[] { 0, 1, 2, 3, 4 } }).Lazy();
+    /// 
+    /// // Stream result to a database writer (simulated here)
+    /// lf.SinkTo(reader => 
+    /// {
+    ///     Console.WriteLine("[DB Writer] Started receiving data...");
+    ///     while (reader.Read())
+    ///     {
+    ///         var val = reader.GetValue(0);
+    ///         Console.WriteLine($"[DB Writer] Insert row: {val}");
+    ///     }
+    ///     Console.WriteLine("[DB Writer] Done.");
+    /// }, bufferSize: 2);
+    /// 
+    /// /* Output:
+    /// [DB Writer] Started receiving data...
+    /// [DB Writer] Insert row: 0
+    /// [DB Writer] Insert row: 1
+    /// ...
+    /// [DB Writer] Done.
+    /// */
+    /// </code>
+    /// </example>
     public void SinkTo(Action<IDataReader> writerAction, int bufferSize = 5,Dictionary<string, Type>? typeOverrides = null)
     {
         // 1. Producer-Consumer buffer
