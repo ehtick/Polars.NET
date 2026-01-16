@@ -372,7 +372,7 @@ HR,50";
     public void Test_LazyFrame_Explode()
     {
         using var s = new Series("chars", ["a,b", "c"]);
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
         
         // 转换为 Lazy 模式
         using var lf = df.Lazy();
@@ -400,7 +400,7 @@ HR,50";
         using var s1 = Series.From("a", [1, 2, 3]);
         using var s2 = Series.From("b", [1.1, 2.2, 3.3]);
         using var s3 = Series.From("c", ["apple", "banana", "cherry"]);
-        using var df = new DataFrame(s1, s2, s3);
+        using var df = DataFrame.FromSeries(s1, s2, s3);
         
         using var lf = df.Lazy();
 

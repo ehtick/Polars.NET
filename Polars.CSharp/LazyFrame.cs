@@ -155,11 +155,62 @@ public class LazyFrame : IDisposable
         return ScanRecordBatches(stream, schema);
     }
     /// <summary>
-    /// Lazy scan from a database using a factory.
-    /// Recommended for scenarios where the query might be executed multiple times.
+    /// Create a LazyFrame from a database query using a reader factory.
+    /// <para>
+    /// <b>Recommended:</b> This is the preferred method for interacting with databases in a Lazy context.
+    /// </para>
+    /// <para>
+    /// It accepts a factory function that creates a NEW <see cref="IDataReader"/> on demand.
+    /// This allows Polars to:
+    /// <list type="bullet">
+    /// <item>Inspect the schema upfront (using a probe reader).</item>
+    /// <item>Re-execute the query if the execution plan requires multiple passes.</item>
+    /// <item>Allow you to call <see cref="Collect"/> multiple times on the same LazyFrame.</item>
+    /// </list>
+    /// </para>
     /// </summary>
-    /// <param name="readerFactory">A function that creates a NEW IDataReader instance each time.</param>
-    /// <param name="batchSize">Define the size of the batch</param>
+    /// <param name="readerFactory">A function that returns a new, open <see cref="IDataReader"/> instance each time it is called.</param>
+    /// <param name="batchSize">The size of the Arrow record batch (rows). Larger values reduce overhead.</param>
+    /// <returns>A new LazyFrame linked to the database stream.</returns>
+    /// <example>
+    /// <code>
+    /// // Define a factory that returns a new Reader for the query
+    /// Func&lt;IDataReader&gt; factory = () =>
+    /// {
+    ///     var cmd = connection.CreateCommand();
+    ///     cmd.CommandText = """
+    ///         SELECT name, score
+    ///         FROM User
+    ///         WHERE score > $min_score OR score IS NULL
+    ///     """;
+    ///     cmd.Parameters.AddWithValue("$min_score", 60.0);
+    ///     return cmd.ExecuteReader();
+    /// };
+    /// 
+    /// // Scan and apply transformations lazily
+    /// var lf = LazyFrame.ScanDatabase(factory);
+    /// 
+    /// var result = lf
+    ///     .WithColumns(
+    ///         Col("score").FillNull(0.0).Alias("clean_score")
+    ///     )
+    ///     .Collect();
+    ///     
+    /// result.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────────┬───────┬─────────────┐
+    /// │ name    ┆ score ┆ clean_score │
+    /// │ ---     ┆ ---   ┆ ---         │
+    /// │ str     ┆ f64   ┆ f64         │
+    /// ╞═════════╪═══════╪═════════════╡
+    /// │ Alice   ┆ 99.5  ┆ 99.5        │
+    /// │ Bob     ┆ 85.0  ┆ 85.0        │
+    /// │ Charlie ┆ null  ┆ 0.0         │
+    /// └─────────┴───────┴─────────────┘
+    /// */
+    /// </code>
+    /// </example>
     public static LazyFrame ScanDatabase(Func<IDataReader> readerFactory, int batchSize = 50_000)
     {
         Schema schema;

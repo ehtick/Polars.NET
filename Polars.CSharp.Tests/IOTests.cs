@@ -49,7 +49,7 @@ namespace Polars.CSharp.Tests
             // 1. 创建数据
             using var s1 = new Series("a", [1, 2, 3]);
             using var s2 = new Series("b", ["x", "y", "z"]);
-            using var dfOriginal = new DataFrame(s1, s2);
+            using var dfOriginal = DataFrame.FromSeries(s1, s2);
 
             // 2. 写入 Parquet (需要 DataFrame.WriteParquet 实现)
             using var f = new DisposableFile(".parquet");
@@ -73,7 +73,7 @@ namespace Polars.CSharp.Tests
         {
             // IPC (Feather) 格式测试
             using var s = new Series("ts", [new DateTime(2023,1,1), new DateTime(2024,1,1)]);
-            using var dfOriginal = new DataFrame(s);
+            using var dfOriginal = DataFrame.FromSeries(s);
 
             using var f = new DisposableFile(".ipc"); // 或 .arrow
             dfOriginal.WriteIpc(f.Path);

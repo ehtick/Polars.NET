@@ -334,4 +334,19 @@ public static partial class PolarsWrapper
     }
     public static DataFrameHandle SeriesStructUnnest(SeriesHandle series)   
         => ErrorHelper.Check(NativeBindings.pl_series_struct_unnest(series));
+    public static DataFrameHandle SeriesValueCounts(
+        SeriesHandle series,
+        bool sort,
+        bool parallel,
+        string name,
+        bool normalize)
+    {
+        return ErrorHelper.Check(NativeBindings.pl_series_value_counts(
+            series,
+            sort,
+            parallel,
+            name,
+            normalize
+        ));
+    }
 }

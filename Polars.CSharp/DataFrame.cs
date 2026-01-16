@@ -1550,6 +1550,33 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         Handle = PolarsWrapper.DataFrameNew(handles);
     }
     /// <summary>
+    /// Create a DataFrame from a collection of Series.
+    /// <para>
+    /// This is the functional equivalent of the constructor <c>new DataFrame(series)</c>, 
+    /// provided for consistency with other <c>From...</c> factory methods.
+    /// </para>
+    /// </summary>
+    /// <param name="series">The series to combine into a DataFrame.</param>
+    /// <returns>A new DataFrame containing the provided series.</returns>
+    /// <exception cref="ArgumentException">Thrown if series have different lengths.</exception>
+    /// <example>
+    /// <code>
+    /// var s1 = new Series("id", new[] { 1, 2, 3 });
+    /// var s2 = new Series("name", new[] { "Alice", "Bob", "Charlie" });
+    /// 
+    /// var df = DataFrame.FromSeries(s1, s2);
+    /// Console.WriteLine(df);
+    /// </code>
+    /// </example>
+    public static DataFrame FromSeries(params Series[] series)
+        => new(series);
+    /// <summary>
+    /// Create a DataFrame from a collection of Series.
+    /// </summary>
+    /// <param name="series">The series to combine.</param>
+    public static DataFrame FromSeries(IEnumerable<Series> series)
+        => new(series.ToArray());
+    /// <summary>
     /// [High Performance] Stream data into Polars using Arrow C Stream Interface.
     /// This method supports datasets larger than available RAM by streaming chunks directly to Polars.
     /// </summary>

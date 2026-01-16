@@ -552,7 +552,7 @@ B,5";
         // Row 0: "1,2" (炸开后应变2行)
         // Row 1: "3"   (炸开后保持1行)
         using var s = new Series("nums", ["1,2", "3"]);
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
 
         // 2. 预处理: 用 Split 生成 List 列
         // 此时 df 结构:

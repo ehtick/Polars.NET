@@ -122,7 +122,7 @@ public class DataTypeTests
         // 2. POCO -> DataFrame (Series.From + DataFrame)
         // 这里用到了我们之前的 ArrowConverter + ArrowFfiBridge
         using var s = Series.From("data", data); 
-        using var df = new DataFrame(s).Unnest("data"); // 炸开成 Id, Info
+        using var df = DataFrame.FromSeries(s).Unnest("data"); // 炸开成 Id, Info
 
         // Expected:
         // Id (i64), Info (Struct)
@@ -174,7 +174,7 @@ public class DataTypeTests
         };
 
         using var s = Series.From("modern", data);
-        using var df = new DataFrame(s).Unnest("modern");
+        using var df = DataFrame.FromSeries(s).Unnest("modern");
 
         // 2. 模拟 Categorical
         // 目前我们写入的是 String，我们在 Polars 端强转为 Categorical
@@ -231,7 +231,7 @@ public class DataTypeTests
 
         // 2. 写入 Polars (ArrowConverter 生效)
         using var s = Series.From("times", data);
-        using var df = new DataFrame(s).Unnest("times");
+        using var df = DataFrame.FromSeries(s).Unnest("times");
 
         // 检查 Schema，Duration 应该被识别
         Assert.Equal(DataTypeKind.Duration, df.Schema["Duration"].Kind);

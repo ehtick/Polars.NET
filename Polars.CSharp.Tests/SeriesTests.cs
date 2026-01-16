@@ -12,7 +12,7 @@ public class SeriesTests
     public void Test_Series_Creation_And_Arrow()
     {
         // 1. 创建 Series (Int32)
-        using var s = new Series("my_series", new int[]{1, 2, 3});
+        using var s = Series.From("my_series", [1, 2, 3]);
         
         Assert.Equal(3, s.Length);
         Assert.Equal("my_series", s.Name);
@@ -81,7 +81,7 @@ public class SeriesTests
         using var s = Series.FromArrow("arrow_list_manual", listArray);
 
         // 4. 验证 Polars
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
 
         // 5. 数据验证
         using var exploded = df.Explode(Polars.Col("arrow_list_manual"));
@@ -111,7 +111,7 @@ public class SeriesTests
             using var s = Series.From("my_list", data);
 
             // 验证
-            using var df = new DataFrame(s);
+            using var df = DataFrame.FromSeries(s);
             
             // Schema 检查
             Assert.Equal(DataTypeKind.List, s.DataType.Kind);
@@ -200,7 +200,7 @@ public class SeriesTests
         // 预期：Rust 会递归把里面的 List<i32> 升级为 LargeList<i64>
         using var s = Series.FromArrow("my_struct", structArray);
 
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
 
         // 6. 验证
         // 确保类型是 Struct
@@ -239,7 +239,7 @@ public class SeriesTests
         using var s = Series.From("students", students);
         
         // 验证
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
         
         Assert.Equal(DataTypeKind.Struct, s.DataType.Kind);
         
@@ -265,7 +265,7 @@ public class SeriesTests
         // 一行代码搞定
         using var s = Series.From("nested_list", data);
 
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
 
         // 验证结构
         Assert.Equal(DataTypeKind.List, s.DataType.Kind);
@@ -295,7 +295,7 @@ public class SeriesTests
         Assert.Equal(DataTypeKind.List, s.DataType.Kind);
         
         // 验证内部数据
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
         using var exp = df.Explode(Polars.Col("strs"));
         Assert.Equal("a", exp.GetValue<string>(0, "strs"));
     }
@@ -303,7 +303,7 @@ public class SeriesTests
     public void Test_Series_String_And_Nulls()
     {
         // 1. 创建 String Series (带 Null)
-        using var s = new Series("strings", ["a", null, "c"]);
+        using var s = Series.From("strings", ["a", null, "c"]);
         
         Assert.Equal(3, s.Length);
         
@@ -318,7 +318,7 @@ public class SeriesTests
     public void Test_Series_Cast_Decimal()
     {
         // 1. 创建 Double Series
-        using var s = new Series("prices", [10.5, 20.0]);
+        using var s = Series.From("prices", [10.5, 20.0]);
 
         // 2. Cast 到 Decimal(10, 2)
         // 这需要 DataType 类发挥作用
@@ -336,7 +336,7 @@ public class SeriesTests
         var data = new DateTimeOffset[] { now, now.AddHours(1) };
 
         // 1. 测试非空构造函数
-        using var s1 = new Series("dto", data);
+        using var s1 = Series.From("dto", data);
         Assert.Equal("dto", s1.Name);
         Assert.Equal(2, s1.Length);
 
@@ -347,7 +347,7 @@ public class SeriesTests
 
         // 2. 测试可空构造函数
         var dataNull = new DateTimeOffset?[] { now, null };
-        using var s2 = new Series("dto_null", dataNull);
+        using var s2 = Series.From("dto_null", dataNull);
         
         Assert.Equal(2, s2.Length);
         Assert.Null(s2.GetValue<DateTimeOffset?>(1));
@@ -364,7 +364,7 @@ public class SeriesTests
         Assert.Equal(5, sInt.Length);
 
         // Case 2: 字符串 Series (含 Null)
-        using var sStr = new Series("str", ["a", null, "b"]);
+        using var sStr = Series.From("str", ["a", null, "b"]);
         
         // 验证: 应该有 1 个 null
         Assert.Equal(1, sStr.NullCount);
@@ -440,7 +440,7 @@ public class SeriesTests
     {
         // 构造包含 NaN 和 Inf 的 Series
         // C# double.NaN 对应 Polars Float64 NaN
-        using var s = new Series("f", [1.0, double.NaN, double.PositiveInfinity]);
+        using var s = Series.From("f", [1.0, double.NaN, double.PositiveInfinity]);
 
         // IsNan -> [false, true, false]
         using var isNan = s.IsNan();
@@ -596,5 +596,58 @@ public class SeriesTests
         // 验证逻辑右移 (0x0F000000 = 251658240)
         uint expected = 0x0F000000;
         Assert.Equal(expected, sUintShr[0]);
+    }
+    [Fact]
+    public void TestToString_And_Show()
+    {
+        // 1. 准备数据
+        var s = Series.From("my_series", new[] { 1, 2, 3, 4, 5 });
+
+        // 2. 测试 ToString (基于 ToFrame 的偷懒实现)
+        var str = s.ToString();
+
+        // 验证输出是否包含关键信息
+        // 由于转成了 DataFrame，输出应该包含 shape 和列名
+        Assert.NotEmpty(str);
+        Assert.True(str.Contains("my_series"), "Output should contain series name");
+        Assert.True(str.Contains("shape: (5, 1)"), "Output should contain DataFrame shape info");
+        
+        // 3. 测试 Show (虽然不能Assert控制台输出，但至少保证不崩)
+        s.Show();
+        
+        // 4. 测试包含 Null 的情况
+        var sNull = Series.From("nulls", new int?[] { 1, null, 3 });
+        var strNull = sNull.ToString();
+        Assert.True(strNull.Contains("null"), "Output should represent null values");
+    }
+
+    [Fact]
+    public void TestValueCounts()
+    {
+        // 准备数据：Apple出现3次，Banana出现1次，Orange出现2次
+        var s = Series.From("fruit", [ 
+            "apple", "apple", "orange", "banana", "apple", "orange" 
+        ]);
+
+        // --- 场景 1: 默认行为 (Sorted, Count) ---
+        var dfCounts = s.ValueCounts();
+        dfCounts.Show();
+        
+        // 验证 Shape: 3种水果 -> 3行
+        Assert.Equal(3, dfCounts.Height);
+        
+        // 验证排序: 默认降序，第一行应该是 apple (3次)
+        Assert.Equal("apple", dfCounts[0][0]); // Column 0 (fruit) Row 0
+        Assert.Equal(3u, dfCounts[1][0]);         // Column 1 (count) Row 0. *注: count通常是u32*
+
+        // --- 场景 2: 自定义名称 + 归一化 (Normalize) ---
+        // normalize=true, name="prob"
+        var dfNorm = s.ValueCounts(sort: true, parallel: true, name: "prob", normalize: true);
+        
+        Assert.Equal("prob", dfNorm.Columns[1]);
+        
+        // 验证概率: apple = 3/6 = 0.5
+        var probApple = dfNorm["prob"][0];
+        Assert.Equal(0.5, probApple); 
     }
 }

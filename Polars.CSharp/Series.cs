@@ -5,7 +5,11 @@ using Polars.NET.Core.Arrow;
 namespace Polars.CSharp;
 
 /// <summary>
-/// Represents a Polars Series.
+/// Represents a single column of data (1-dimensional array).
+/// <para>
+/// A Series is backed by Apache Arrow arrays and supports eager execution.
+/// Operations on Series are generally performed immediately.
+/// </para>
 /// </summary>
 public partial class Series : IDisposable
 {
@@ -15,7 +19,6 @@ public partial class Series : IDisposable
     {
         Handle = handle;
     }
-
     internal Series(string name, SeriesHandle handle)
     {
         PolarsWrapper.SeriesRename(handle, name);
@@ -242,7 +245,7 @@ public partial class Series : IDisposable
                     // DateTime
                     DataTypeKind.Date => GetValue<DateOnly?>(index), 
                     DataTypeKind.Datetime => string.IsNullOrEmpty(this.DataType.TimeZone) 
-                        ? GetValue<DateTime?>(index)      // 无时区：返回 DateTime
+                        ? GetValue<DateTime?>(index)      
                         : (object?)GetValue<DateTimeOffset?>(index),
 
                     // Binary
@@ -630,7 +633,6 @@ public partial class Series : IDisposable
     /// <param name="data"></param>
     public Series(string name, DateTimeOffset[] data)
     {
-        // 1. 转 Arrow
         using var arrowArray = ArrowConverter.Build(data);
         Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
     }
@@ -642,7 +644,6 @@ public partial class Series : IDisposable
     /// <param name="data"></param>
     public Series(string name, DateTimeOffset?[] data)
     {
-        // 1. 转 Arrow
         using var arrowArray = ArrowConverter.Build(data);
         Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
     }
@@ -737,6 +738,10 @@ public partial class Series : IDisposable
     /// Length of the Series.
     /// </summary>
     public long Length => PolarsWrapper.SeriesLen(Handle);
+    /// <summary>
+    /// Return the length of the Series.
+    /// </summary>
+    public long Len() => Length;
     /// <summary>
     /// Name of the Series.
     /// </summary>
@@ -901,10 +906,7 @@ public partial class Series : IDisposable
     /// Get a boolean mask indicating which values are duplicated.
     /// <para>Implemented via DataFrame expression composition.</para>
     /// </summary>
-    public Series IsDuplicated()
-    {
-        return ApplyExpr(Polars.Col(Name).IsDuplicated());
-    }
+    public Series IsDuplicated() => ApplyExpr(Polars.Col(Name).IsDuplicated());
     // ==========================================
     // Common Ops 
     // ==========================================
@@ -945,6 +947,43 @@ public partial class Series : IDisposable
     /// Shortcut for <see cref="SeriesStructOps.Unnest"/>.
     /// </summary>
     public DataFrame Unnest() => Struct.Unnest();
+    /// <summary>
+    /// Count the occurrences of unique values.
+    /// <para>
+    /// Similar to SQL <c>GROUP BY val COUNT(*)</c>.
+    /// </para>
+    /// </summary>
+    /// <param name="sort">Sort the output by count in descending order. Default is true.</param>
+    /// <param name="parallel">Execute in parallel. Default is true.</param>
+    /// <param name="name">The name of the count column. Default is "count".</param>
+    /// <param name="normalize">If true, the count column will contain probabilities (fractions) instead of absolute counts. Default is false.</param>
+    /// <returns>A DataFrame with the series values and their counts.</returns>
+    /// <example>
+    /// <code>
+    /// var s = Series.From("fruit", new[] { "apple", "apple", "banana" });
+    /// 
+    /// // Default: sorted, absolute counts
+    /// s.ValueCounts().Show();
+    /// 
+    /// // Normalized (percentage)
+    /// s.ValueCounts(normalize: true, name: "prob").Show();
+    /// // Result
+    /// ┌────────┬───────┐
+    /// │ fruit  ┆ count │
+    /// │ ---    ┆ ---   │
+    /// │ str    ┆ u32   │
+    /// ╞════════╪═══════╡
+    /// │ apple  ┆ 3     │
+    /// │ orange ┆ 2     │
+    /// │ banana ┆ 1     │
+    /// └────────┴───────┘
+    /// </code>
+    /// </example>
+    public DataFrame ValueCounts(bool sort = true, bool parallel = true, string name = "count", bool normalize = false)
+    {
+        var dfHandle = PolarsWrapper.SeriesValueCounts(Handle, sort, parallel, name, normalize);
+        return new DataFrame(dfHandle);
+    }
     // ==========================================
     // Conversions (Arrow / DataFrame)
     // ==========================================
@@ -1058,7 +1097,24 @@ public partial class Series : IDisposable
     /// </summary>
     public Series Map(Func<IArrowArray, IArrowArray> function, DataType outputType)
         => ApplyExpr(Polars.Col(Name).Map(function, outputType));
+    // ==========================================
+    // Display (Show)
+    // ==========================================
+    /// <summary>
+    /// Returns the string representation of the Series (ASCII table).
+    /// This allows Console.WriteLine(s) to print the table directly.
+    /// </summary>
+    public override string ToString()
+    {
+        if (Handle.IsInvalid) return "Series (Disposed)";
+        using var df = this.ToFrame();
+        return df.ToString();
+    }
 
+    /// <summary>
+    /// Print the DataFrame to Console.
+    /// </summary>
+    public void Show() => Console.WriteLine(ToString());
     // ==========================================
     // High-Level Factories
     // ==========================================
@@ -1580,5 +1636,4 @@ public class SeriesStructOps
         var dfHandle = PolarsWrapper.SeriesStructUnnest(_series.Handle);
         return new DataFrame(dfHandle);
     }
-
 }

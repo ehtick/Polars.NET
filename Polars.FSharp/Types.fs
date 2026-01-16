@@ -804,6 +804,22 @@ type Series(handle: SeriesHandle) =
     /// <param name="interpolation">Interpolation method ("nearest", "higher", "lower", "midpoint", "linear"). Default "linear".</param>
     member this.Quantile(q: float, ?interpolation: string) =
         this.ApplyExpr(Expr.Col(this.Name).Quantile(q, ?interpolation=interpolation))
+    /// <summary>
+    /// Count the occurrences of unique values.
+    /// Similar to SQL `GROUP BY val COUNT(*)`.
+    /// </summary>
+    /// <param name="sort">Sort the output by count in descending order. Default is true.</param>
+    /// <param name="parallel">Execute in parallel. Default is true.</param>
+    /// <param name="name">The name of the count column. Default is "count".</param>
+    /// <param name="normalize">If true, the count column will contain probabilities instead of counts. Default is false.</param>
+    member this.ValueCounts(?sort: bool, ?paralleling: bool, ?name: string, ?normalize: bool) =
+        let sort = defaultArg sort true
+        let paralleling = defaultArg paralleling true
+        let name = defaultArg name "count"
+        let normalize = defaultArg normalize false
+        
+        let dfHandle = PolarsWrapper.SeriesValueCounts(this.Handle, sort, paralleling, name, normalize)
+        new DataFrame(dfHandle)
 
     // --- Operators (Arithmetic) ---
 
@@ -1035,7 +1051,7 @@ and SeriesDtNameSpace(parent: Series) =
 
     /// <summary> Format datetime to string using the given format string (strftime). </summary>
     member _.ToString(format: string) = 
-        apply (fun e -> e.Dt.ToString(format))
+        apply (fun e -> e.Dt.ToString format)
 
     /// <summary> Default ISO format. </summary>
     member this.ToString() = 

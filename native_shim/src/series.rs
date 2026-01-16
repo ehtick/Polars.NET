@@ -818,3 +818,24 @@ pub extern "C" fn pl_series_struct_unnest(series_ptr: *mut SeriesContext) -> *mu
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_value_counts(
+    s_ptr: *mut SeriesContext,
+    sort: bool,
+    parallel: bool,
+    name: *const c_char,
+    normalize: bool,
+) -> *mut DataFrameContext {
+    ffi_try!({
+        let ctx = unsafe { &*s_ptr };
+        
+        let c_str = unsafe { CStr::from_ptr(name) };
+        let name_str = c_str.to_str().unwrap();
+        let pl_name = PlSmallStr::from_str(name_str); 
+
+        let df = ctx.series.value_counts(sort, parallel, pl_name, normalize)?;
+        
+        Ok(Box::into_raw(Box::new(DataFrameContext { df })))
+    })
+}

@@ -994,6 +994,12 @@ unsafe internal partial class NativeBindings
     [MarshalAs(UnmanagedType.U1)] bool maintain_order);
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_series_struct_unnest(SeriesHandle series);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_series_value_counts(SeriesHandle series,
+    [MarshalAs(UnmanagedType.U1)] bool sort,
+    [MarshalAs(UnmanagedType.U1)] bool parallel,
+    string name,
+    [MarshalAs(UnmanagedType.U1)] bool normalize);
     // --- Arrow Export ---
     [LibraryImport(LibName)]
     public static partial ArrowArrayContextHandle pl_series_to_arrow(SeriesHandle h);

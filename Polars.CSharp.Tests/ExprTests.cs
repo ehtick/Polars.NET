@@ -413,7 +413,7 @@ TooShort,1990-05-20,1.60";
         // Row 0: 10:30:55
         // Row 1: 10:45:10
         using var s = new Series("ts", ["2023-01-01 10:30:55", "2023-01-01 10:45:10"]);
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
         
         // 先转成 Datetime 类型 (利用之前做的 tryParseDates 或者手动转换)
         // 这里手动转一下以确保万无一失
@@ -643,7 +643,7 @@ TooShort,1990-05-20,1.60";
     public void Test_Expr_Explode_In_Select()
     {
         using var s = new Series("data", ["x,y"]);
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
 
         // 直接在 Select 内部对表达式结果进行 Explode
         // Col("data").Str.Split(",") 返回 List
@@ -665,7 +665,7 @@ TooShort,1990-05-20,1.60";
         // "__world__" (用于测试 strip chars)
         // "prefix_val_suffix" (用于测试 strip prefix/suffix)
         using var s = new Series("s", ["  hello  ", "__world__", "prefix_val_suffix"]);
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
 
         using var res = df.Select(
             // 1. Strip Whitespace (默认)
@@ -707,7 +707,7 @@ TooShort,1990-05-20,1.60";
     public void Test_String_To_Date_Parsing()
     {
         using var s = new Series("dates", ["2023-01-01", "2023/12/31"]);
-        using var df = new DataFrame(s);
+        using var df = DataFrame.FromSeries(s);
 
         // 测试 ToDate 和 ToDatetime
         // 注意：Wrapper 里的 ToDate/ToDatetime 是严格模式，需要格式匹配
