@@ -14,33 +14,66 @@ type LitMechanism = LitMechanism with
     static member ($) (LitMechanism, v: bool) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: float32) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: int64) = new Expr(PolarsWrapper.Lit v)
+/// <summary>
+/// The main entry point for Polars.NET F# API.
+/// <para>Contains factories for Expressions (pl.col, pl.lit), shortcuts for DataFrame operations, and types.</para>
+/// </summary>
 module pl =
 
     // --- Factories ---
-    /// <summary> Reference a column by name. </summary>
+    /// <summary>   
+    /// Create an expression representing a column with the given name.
+    /// </summary>
+    /// <param name="name">The name of the column.</param>
     let col (name: string) = Expr.Col name
-    /// <summary> Select multiple columns (returns a Wildcard Expression). </summary>
+    /// <summary>
+    /// Create an expression representing multiple columns (Wildcard).
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// pl.cols ["A"; "B"]
+    /// </code>
+    /// </example>
     let cols (names: string list) =
         let arr = List.toArray names
         Expr.Cols names
-    /// <summary> Select all columns (returns a Selector). </summary>
+    /// <summary>
+    /// Select all columns.
+    /// Equivalent to `pl.col("*")`.
+    /// </summary>
     let all () = new Selector(PolarsWrapper.SelectorAll())
 
-    /// <summary> Create a literal expression from a value. </summary>
+    /// <summary>
+    /// Create a literal expression from a value.
+    /// <para>Supported types: int, float, bool, string, DateTime.</para>
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// df.Filter(pl.col("Age") .> pl.lit(18))
+    /// </code>
+    /// </example>
     let inline lit (value: ^T) : Expr = 
         ((^T or LitMechanism) : (static member ($) : LitMechanism * ^T -> Expr) (LitMechanism, value))
     // --- Expr Helpers ---
     /// <summary> Cast an expression to a different data type. </summary>
     let cast (dtype: DataType) (e: Expr) = e.Cast dtype
-
+    /// <summary> Boolean data type. </summary>
     let boolean = DataType.Boolean
+    /// <summary> 32-bit Integer data type. </summary>
     let int32 = DataType.Int32
+    /// <summary> 64-bit Integer data type. </summary>
     let int64 = DataType.Int64
+    /// <summary> 64-bit Floating point data type. </summary>
     let float64 = DataType.Float64
+    /// <summary> String data type (UTF-8). </summary>
     let string = DataType.String
+    /// <summary> Date data type (no time). </summary>
     let date = DataType.Date
+    /// <summary> Datetime data type. </summary>
     let datetime = DataType.Datetime
+    /// <summary> Duration (TimeSpan) data type. </summary>
     let timeSpan = DataType.Duration
+    /// <summary> Time data type (no date). </summary>
     let time = DataType.Time
 
     /// <summary> Count the number of elements in an expression. </summary>
@@ -62,17 +95,17 @@ module pl =
         new Expr(PolarsWrapper.AsStruct handles)
     let struct_ = asStruct
     // --- Eager Ops ---
-    /// <summary> Add or replace columns. </summary>
+    /// <summary> Add or replace a single column in the DataFrame. </summary>
     let withColumn (expr: Expr) (df: DataFrame) : DataFrame =
         df.WithColumn expr
-    /// <summary> Add or replace multiple columns. </summary>
+    /// <summary> Add or replace multiple columns in the DataFrame. </summary>
     let withColumns (exprs: Expr list) (df: DataFrame) : DataFrame =
         df.WithColumns exprs
 
     /// <summary> Filter rows based on a boolean expression. </summary>
     let filter (expr: Expr) (df: DataFrame) : DataFrame =
         df.Filter expr
-    /// <summary> Select columns from DataFrame. </summary>
+    /// <summary> Select columns from the DataFrame. </summary>
     let select (exprs: Expr list) (df: DataFrame) : DataFrame =
         df.Select exprs
     /// <summary> Sort (Order By) the DataFrame. </summary>
@@ -109,8 +142,10 @@ module pl =
     /// <summary> Explode list-like columns into multiple rows. </summary>
     let explode (exprs: Expr list) (df: DataFrame) : DataFrame =
         df.Explode exprs
+    /// <summary> Decompose a struct column into multiple columns. </summary>
     let unnestColumn(column: string) (df:DataFrame) : DataFrame =
         df.UnnestColumn column
+    /// <summary> Decompose multiple struct columns. </summary>
     let unnestColumns(columns: string list) (df:DataFrame) : DataFrame =
         df.UnnestColumns columns
 
@@ -126,13 +161,20 @@ module pl =
     /// Alias for unpivot
     let melt = unpivot    
     /// Aggregation Helpers
+    // <summary> Sum aggregation. </summary>
     let sum (e: Expr) = e.Sum()
+    // <summary> Mean aggregation. </summary>
     let mean (e: Expr) = e.Mean()
+    // <summary> Max aggregation. </summary>
     let max (e: Expr) = e.Max()
+    // <summary> Min aggregation. </summary>
     let min (e: Expr) = e.Min()
     // Fill Helpers
+    /// <summary> Fill null values with a specific value. </summary>
     let fillNull (fillValue: Expr) (e: Expr) = e.FillNull fillValue
+    /// <summary> Check for null values. </summary>
     let isNull (e: Expr) = e.IsNull()
+    /// <summary> Check for non-null values. </summary>
     let isNotNull (e: Expr) = e.IsNotNull()
     // unique and duplicated helpers
     /// <summary> Get unique values. </summary>
@@ -144,17 +186,27 @@ module pl =
     /// <summary> Check if values are duplicated. </summary>
     let inline isDuplicated (e: Expr) = e.IsDuplicated()
     // Math Helpers
+    /// <summary> Absolute value. </summary>
     let abs (e: Expr) = e.Abs()
+    /// <summary> Power. </summary>
     let pow (exponent: Expr) (baseExpr: Expr) = baseExpr.Pow exponent
+    /// <summary> Square root. </summary>
     let sqrt (e: Expr) = e.Sqrt()
+    /// <summary> Exponential (e^x). </summary>
     let exp (e: Expr) = e.Exp()
+    /// <summary> True division. </summary>
     let inline truediv (other: Expr) (e: Expr) = e.Truediv other
+    /// <summary> Floor division (integer result). </summary>
     let inline floorDiv (other: Expr) (e: Expr) = e.FloorDiv other
+    /// <summary> Modulo (remainder). </summary>
     let inline mod_ (other: Expr) (e: Expr) = e.Mod other
-
+    /// <summary> Cube root. </summary>
     let inline cbrt (e: Expr) = e.Cbrt()
+    /// <summary> Sign of the value (-1, 0, 1). </summary>
     let inline sign (e: Expr) = e.Sign()
+    /// <summary> Ceiling (round up). </summary>
     let inline ceil (e: Expr) = e.Ceil()
+    /// <summary> Floor (round down). </summary>
     let inline floor (e: Expr) = e.Floor()
 
     // Trig

@@ -3,13 +3,22 @@ namespace Polars.FSharp
 open System
 open Polars.NET.Core
 open Apache.Arrow
-
+/// <summary>
+/// Interface for types that can be converted to one or more Polars Expressions.
+/// </summary>
 type IColumnExpr =
     abstract member ToExprs : unit -> Expr list
 
 /// <summary>
-/// Represents a Polars Expression, which can be a column reference, a literal value, or a computation.
+/// Represents a Polars Expression (lazy evaluation).
+/// Expressions are the building blocks of Polars queries, representing columns, literals, or transformations.
 /// </summary>
+/// <example>
+/// <code>
+/// // Select column "A", multiply by 2, and alias as "B"
+/// let e = pl.col("A") * pl.lit(2) |> pl.alias "B"
+/// </code>
+/// </example>
 and Expr(handle: ExprHandle) =
     member _.Handle = handle
     member internal this.CloneHandle() = PolarsWrapper.CloneExpr handle
@@ -31,17 +40,28 @@ and Expr(handle: ExprHandle) =
     member this.Array = new ArrayOps(this.CloneHandle())
 
     // --- Column ---
+    /// <summary>
+    /// Create an expression representing a column in a DataFrame.
+    /// </summary>
+    /// <param name="name">The name of the column.</param>
     static member Col (name: string) = new Expr(PolarsWrapper.Col name)
-    /// <summary> Select multiple columns (returns a Wildcard Expression). </summary>
+    /// <summary>
+    /// Create an expression representing multiple columns (Wildcard).
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// pl.cols ["A"; "B"]
+    /// </code>
+    /// </example>
     static member Cols (names: string list) =
         let arr = List.toArray names
         new Expr(PolarsWrapper.Cols arr)
 
     // --- Rounding & Sign ---
+    /// <summary> Round the underlying floating point data to the given number of decimals. </summary>
     member this.Round(decimals: int) = new Expr(PolarsWrapper.Round(this.CloneHandle(), uint decimals))
-    /// <summary> Compute the element-wise sign. </summary>
+    /// <summary> Compute the element-wise sign (-1, 0, 1). </summary>
     member this.Sign() = new Expr(PolarsWrapper.Sign(this.CloneHandle()))
-
     /// <summary> Round up to the nearest integer. </summary>
     member this.Ceil() = new Expr(PolarsWrapper.Ceil(this.CloneHandle()))
 
@@ -64,19 +84,19 @@ and Expr(handle: ExprHandle) =
         new Expr(PolarsWrapper.BitRightShift(this.CloneHandle(), n))
 
     // --- Operators ---
-    /// <summary> Greater than. </summary>
+    /// <summary> Greater than comparison. </summary>
     static member (.>) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Gt(lhs.CloneHandle(), rhs.CloneHandle()))
-    /// <summary> Less than. </summary>
+    /// <summary> Less than comparison. </summary>
     static member (.<) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Lt(lhs.CloneHandle(), rhs.CloneHandle()))
-    /// <summary> Greater than or equal to. </summary>
+    /// <summary> Greater than or equal comparison. </summary>
     static member (.>=) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.GtEq(lhs.CloneHandle(), rhs.CloneHandle()))
-    /// <summary> Less than or equal to. </summary>
+    /// <summary> Less than or equal comparison. </summary>
     static member (.<=) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.LtEq(lhs.CloneHandle(), rhs.CloneHandle()))
-    /// <summary> Equal to. </summary>
+    /// <summary> Equal comparison. </summary>
     static member (.==) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Eq(lhs.CloneHandle(), rhs.CloneHandle()))
-    /// <summary> Not equal to. </summary>
+    /// <summary> Not equal comparison. </summary>
     static member (.!=) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Neq(lhs.CloneHandle(), rhs.CloneHandle()))
-    // 运算符重载, Arithmetic
+    // Arithmetic
     static member ( + ) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Add(lhs.CloneHandle(), rhs.CloneHandle()))
     static member ( - ) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Sub(lhs.CloneHandle(), rhs.CloneHandle()))
     static member ( * ) (lhs: Expr, rhs: Expr) = new Expr(PolarsWrapper.Mul(lhs.CloneHandle(), rhs.CloneHandle()))
@@ -101,7 +121,11 @@ and Expr(handle: ExprHandle) =
     /// <summary> Rename the output column. </summary>
     member this.Alias(name: string) = new Expr(PolarsWrapper.Alias(this.CloneHandle(), name))
 
-    /// <summary> Cast the expression to a different data type. </summary>
+    /// <summary>
+    /// Cast the expression to a different data type.
+    /// </summary>
+    /// <param name="dtype">Target Polars DataType.</param>
+    /// <param name="strict">If true, raise error on invalid cast. If false, convert to null.</param>
     member this.Cast(dtype: DataType, ?strict: bool) =
         let isStrict = defaultArg strict false
         use typeHandle = dtype.CreateHandle()
@@ -214,6 +238,8 @@ and Expr(handle: ExprHandle) =
     /// Apply a custom C#/F# function (UDF) to the expression.
     /// The function receives an Apache Arrow Array and returns an Arrow Array.
     /// </summary>
+    /// <param name="func">Function mapping IArrowArray -> IArrowArray.</param>
+    /// <param name="outputType">The expected output DataType (optional).</param>
     member this.Map(func: Func<IArrowArray, IArrowArray>, outputType: DataType) =
         use typeHandle = outputType.CreateHandle()
         let newHandle = PolarsWrapper.Map(this.CloneHandle(), func, typeHandle)
@@ -297,7 +323,15 @@ and Expr(handle: ExprHandle) =
 
     member this.BottomKBy(k: int, by: #IColumnExpr) =
         this.BottomKBy(k, [by], [| false |])
-    /// <summary> Apply a window function over specific partition columns. </summary>
+    /// <summary> 
+    /// Apply a window function over specific partition columns. 
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// // Calculate sum of "Value" per "Group"
+    /// pl.col("Value").Sum().Over(pl.col("Group"))
+    /// </code>
+    /// </example>
     member this.Over(partitionBy: Expr list) =
         let mainHandle = this.CloneHandle()
         let partHandles = partitionBy |> List.map (fun e -> e.CloneHandle()) |> List.toArray

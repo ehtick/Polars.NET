@@ -30,8 +30,8 @@ type Series(handle: SeriesHandle) =
     // ==========================================
 
     /// <summary>
-    /// Helper: Wrap this Series in a DataFrame, run an Expr, and extract the result.
-    /// This allows Series to use the full power of the Expression engine.
+    /// Internal Helper: Wrap this Series in a temporary DataFrame, run an Expr, and extract the result.
+    /// This allows Series to directly use the full power of the Expression engine without duplicating logic.
     /// </summary>
     member internal this.ApplyExpr(expr: Expr) : Series =
         use dfHandle = PolarsWrapper.SeriesToFrame handle
@@ -45,7 +45,7 @@ type Series(handle: SeriesHandle) =
     // ==========================================
 
     /// <summary>
-    /// Apply a binary expression using two Series.
+    /// Internal Helper: Apply a binary expression using two Series.
     /// Handles name collision by creating a temporary renamed series if necessary.
     /// </summary>
     member internal this.ApplyBinaryExpr(other: Series, op: Expr -> Expr -> Expr) : Series =
@@ -76,16 +76,25 @@ type Series(handle: SeriesHandle) =
             match tempToDispose with
             | Some s -> s.Handle.Dispose()
             | None -> ()
-    
+    /// <summary> Access temporal (Date/Time) operations. </summary>
     member this.Dt = SeriesDtNameSpace this
+    /// <summary> Access string manipulation operations. </summary>
     member this.Str = SeriesStrNameSpace this
+    /// <summary> Access list operations. </summary>
     member this.List = SeriesListNameSpace this
+    /// <summary> Access array (fixed-size list) operations. </summary>
     member this.Array = SeriesArrayNameSpace this
+    /// <summary> Access struct operations. </summary>
     member this.Struct = SeriesStructNameSpace this
+    // --- Basic Operations ---
 
+    /// <summary> Rename the Series in-place. Returns self. </summary>    
     member this.Rename(name: string) = 
         PolarsWrapper.SeriesRename(handle, name)
         this
+    /// <summary> Slice the Series. Returns a new Series. </summary>
+    /// <param name="offset">Start index.</param>
+    /// <param name="length">Length of the slice.</param>
     member this.Slice(offset: int64, length: int64) =
         new Series(PolarsWrapper.SeriesSlice(handle, offset, length))
     /// <summary>
@@ -117,6 +126,7 @@ type Series(handle: SeriesHandle) =
     /// Get the string representation of the Series Data Type (e.g., "Int64", "String").
     /// </summary>
     member _.DtypeStr = PolarsWrapper.GetSeriesDtypeString handle
+    /// <summary> Get the DataType of the Series. </summary>
     member this.DataType : DataType =
         use typeHandle = PolarsWrapper.GetSeriesDataType handle
         
@@ -128,24 +138,20 @@ type Series(handle: SeriesHandle) =
 
     // --- 1. Fill with Scalar (ApplyExpr) ---
 
-    /// <summary>
-    /// Fill null values with a literal value.
-    /// </summary>
+    /// <summary> Fill null values with a literal integer. </summary>
     member this.FillNull(fillValue: int) = 
         this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
-
+    /// <summary> Fill null values with a literal double. </summary>
     member this.FillNull(fillValue: double) = 
         this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
-
+    /// <summary> Fill null values with a literal string. </summary>
     member this.FillNull(fillValue: string) = 
         this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
-
+    /// <summary> Fill null values with a literal boolean. </summary>
     member this.FillNull(fillValue: bool) = 
         this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
 
-    /// <summary>
-    /// Fill floating point NaN values with a literal value.
-    /// </summary>
+    /// <summary> Fill floating point NaN values with a literal value. </summary>
     member this.FillNan(fillValue: double) =
         this.ApplyExpr(Expr.Col(this.Name).FillNan(new Expr(PolarsWrapper.Lit fillValue)))
 
@@ -176,14 +182,19 @@ type Series(handle: SeriesHandle) =
     /// </summary>
     member this.IsNull() : Series = 
         new Series(PolarsWrapper.SeriesIsNull handle)
-
     /// <summary>
     /// Returns a boolean Series indicating which values are not null.
     /// </summary>
     member this.IsNotNull() : Series = 
         new Series(PolarsWrapper.SeriesIsNotNull handle)
+    /// <summary>
+    /// Drop null values.
+    /// </summary>
     member this.DropNulls() : Series =
         new Series(PolarsWrapper.SeriesDropNulls handle)
+    /// <summary>
+    /// Drop nan values.
+    /// </summary>
     member this.DropNans() : Series =
         let expr = Expr.Col(this.Name).DropNans()
         this.ApplyExpr expr
@@ -332,10 +343,10 @@ type Series(handle: SeriesHandle) =
     /// <summary> Logarithm with scalar base. </summary>
     member this.Log(baseVal: double) = 
         this.ApplyExpr(Expr.Col(this.Name).Log baseVal)
-
+    /// <summary> Bitwise left shift. </summary>
     member this.BitLeftShift(n: int) = 
         this.ApplyExpr(Expr.Col(this.Name).BitLeftShift n)
-
+    /// <summary> Bitwise right shift. </summary>
     member this.BitRightShift(n: int) = 
         this.ApplyExpr(Expr.Col(this.Name).BitRightShift n)
 
@@ -625,7 +636,7 @@ type Series(handle: SeriesHandle) =
     static member create(name: string, data: decimal option seq, scale: int) = 
         let arr = Seq.toArray data // decimal option[]
         let nullableArr = 
-            arr |> Array.map (function Some v -> Nullable(v) | None -> Nullable())
+            arr |> Array.map (function Some v -> Nullable v | None -> Nullable())
             
         new Series(PolarsWrapper.SeriesNewDecimal(name, nullableArr, scale))
     // ==========================================
@@ -721,9 +732,9 @@ type Series(handle: SeriesHandle) =
         s.Cast(Duration Microseconds)
     /// <summary>
     /// Smart Constructor:
-    /// 1. Handles primitive types (int, double...).
-    /// 2. Handles Option types (int option...) by forwarding to ofOptionSeq.
-    /// 3. Handles Decimal types (decimal, decimal option) by inferring scale.
+    /// <para>1. Handles primitive types (int, double...).</para>
+    /// <para>2. Handles Option types (int option...) by forwarding to ofOptionSeq.</para>
+    /// <para>3. Handles Decimal types by inferring scale.</para>
     /// </summary>
     static member ofOptionSeq<'T>(name: string, data: seq<'T option>) : Series =
         let t = typeof<'T>
@@ -1320,6 +1331,9 @@ and SeriesStructNameSpace(parent: Series) =
 
 /// <summary>
 /// An eager DataFrame holding data in memory.
+/// <para>
+/// DataFrames are 2D tabular data structures with named columns of potentially different types.
+/// </para>
 /// </summary>
 and DataFrame(handle: DataFrameHandle) =
     interface IDisposable with
@@ -1327,6 +1341,7 @@ and DataFrame(handle: DataFrameHandle) =
     member this.Clone() = new DataFrame(PolarsWrapper.CloneDataFrame handle)
     member internal this.CloneHandle() = PolarsWrapper.CloneDataFrame handle
     member _.Handle = handle
+    /// <summary> Create a DataFrame from a list of Series. </summary>
     static member create(series: Series list) : DataFrame =
         let handles = 
             series 
@@ -1335,11 +1350,20 @@ and DataFrame(handle: DataFrameHandle) =
             
         let h = PolarsWrapper.DataFrameNew handles
         new DataFrame(h)
+    /// <summary> Create a DataFrame from an array of Series. </summary>
     static member create([<ParamArray>] series: Series[]) : DataFrame =
         let handles = series |> Array.map (fun s -> s.Handle)
         let h = PolarsWrapper.DataFrameNew handles
         new DataFrame(h)
     /// <summary>
+    /// Read a CSV file into a DataFrame.
+    /// </summary>
+    /// <param name="path">Path to the CSV file.</param>
+    /// <param name="schema">Optional map of column names to DataTypes to enforce schema.</param>
+    /// <param name="separator">Character used as separator (default ',').</param>
+    /// <param name="hasHeader">Indicate if the first row is a header (default true).</param>
+    /// <param name="skipRows">Number of rows to skip at the start.</param>
+    /// <param name="tryParseDates">Try to automatically parse date strings (default true).</param>
     static member ReadCsv(
         path: string, 
         ?schema: Map<string, DataType>, 
@@ -1410,10 +1434,13 @@ and DataFrame(handle: DataFrameHandle) =
 
     /// <summary>
     /// [Eager] Create a DataFrame from an IDataReader (e.g. SqlDataReader).
-    /// Uses high-performance streaming ingestion.
+    /// <para>
+    /// Uses high-performance streaming ingestion via Apache Arrow.
+    /// This is significantly faster than standard DataTable loading.
+    /// </para>
     /// </summary>
-    /// <param name="reader">The open DataReader.</param>
-    /// <param name="batchSize">Rows per batch (default 50,000).</param>
+    /// <param name="reader">The open IDataReader instance.</param>
+    /// <param name="batchSize">Number of rows per Arrow batch (default 50,000).</param>
     static member ReadDb(reader: IDataReader, ?batchSize: int) : DataFrame =
         let size = defaultArg batchSize 50_000
         
@@ -1428,6 +1455,7 @@ and DataFrame(handle: DataFrameHandle) =
 
     /// <summary> Read a parquet file into a DataFrame (Eager). </summary>
     static member ReadParquet (path: string) = new DataFrame(PolarsWrapper.ReadParquet path)
+    /// <summary> Asynchronously read a Parquet file. </summary>
     static member ReadParquetAsync (path: string): Async<DataFrame> = 
         async {
             let! handle = PolarsWrapper.ReadParquetAsync path |> Async.AwaitTask
@@ -1439,7 +1467,7 @@ and DataFrame(handle: DataFrameHandle) =
         new DataFrame(PolarsWrapper.ReadJson path)
     /// <summary> Read an IPC file into a DataFrame (Eager). </summary>
     static member ReadIpc (path: string) = new DataFrame(PolarsWrapper.ReadIpc path)
-
+    /// <summary> Create a DataFrame from a sequence of objects using Arrow streaming. </summary>
     static member ofSeqStream<'T>(data: seq<'T>, ?batchSize: int) : DataFrame =
         let size = defaultArg batchSize 100_000
 
@@ -1454,6 +1482,7 @@ and DataFrame(handle: DataFrameHandle) =
             DataFrame.create []
         else
             new DataFrame(handle)
+    /// <summary> Create a DataFrame directly from an Apache Arrow RecordBatch. </summary>
     static member FromArrow (batch: Apache.Arrow.RecordBatch) : DataFrame =
         new DataFrame(PolarsWrapper.FromArrow batch)
     /// <summary> Write DataFrame to CSV. </summary>
@@ -1487,11 +1516,14 @@ and DataFrame(handle: DataFrameHandle) =
 
     /// <summary>
     /// Stream the DataFrame directly to a database or other IDataReader consumer.
-    /// Uses a producer-consumer pattern with bounded capacity.
+    /// <para>
+    /// Uses a producer-consumer pattern. This method blocks until the consumer finishes reading.
+    /// Ideal for <c>SqlBulkCopy.WriteToServer</c> or <c>NpgsqlBinaryImporter</c>.
+    /// </para>
     /// </summary>
-    /// <param name="writerAction">Callback to consume the IDataReader (e.g. using SqlBulkCopy).</param>
+    /// <param name="writerAction">Callback that receives an IDataReader.</param>
     /// <param name="bufferSize">Max number of batches to buffer in memory (default: 5).</param>
-    /// <param name="typeOverrides">Force specific C# types for columns (Target Schema).</param>
+    /// <param name="typeOverrides">Dictionary to force specific C# types for columns (optional).</param>
     member this.WriteTo(writerAction: Action<IDataReader>, ?bufferSize: int, ?typeOverrides: IDictionary<string, Type>) : unit =
         let capacity = defaultArg bufferSize 5
         
@@ -1553,10 +1585,12 @@ and DataFrame(handle: DataFrameHandle) =
     // ==========================================
     // Eager Ops
     // ==========================================
+    /// <summary> Add or replace columns using expressions. </summary>
     member this.WithColumns (exprs:Expr list) : DataFrame =
         let handles = exprs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let h = PolarsWrapper.WithColumns(this.Handle,handles)
         new DataFrame(h)
+    /// <summary> Add or replace columns using generic column expressions (Expr or Selectors). </summary>
     member this.WithColumns (columns:seq<#IColumnExpr>) =
         let exprs = 
             columns 
@@ -1564,14 +1598,17 @@ and DataFrame(handle: DataFrameHandle) =
             |> Seq.toList
         
         this.WithColumns exprs
+    /// <summary> Add a single column. </summary>
     member this.WithColumn (expr: Expr) : DataFrame =
         let handle = expr.CloneHandle()
         let h = PolarsWrapper.WithColumns(this.Handle,[| handle |])
         new DataFrame(h)
+    /// <summary> Select columns using expressions. </summary>
     member this.Select(exprs: Expr list) : DataFrame =
         let handles = exprs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let h = PolarsWrapper.Select(this.Handle, handles)
         new DataFrame(h)
+    /// <summary> Select columns using generic column expressions (Expr or Selectors). </summary>
     member this.Select(columns: seq<#IColumnExpr>) =
             let exprs = 
                 columns 
@@ -1579,11 +1616,12 @@ and DataFrame(handle: DataFrameHandle) =
                 |> Seq.toList
             
             this.Select exprs
+    /// <summary> Filter rows based on a boolean expression (predicate). </summary>
     member this.Filter (expr: Expr) : DataFrame = 
         let h = PolarsWrapper.Filter(this.Handle,expr.CloneHandle())
         new DataFrame(h)
     /// <summary>
-    /// Sort with parameters.
+    /// Sort the DataFrame.
     /// </summary>
     /// <param name="columns">the column which needs to be sorted (Expr/Selector)。</param>
     /// <param name="descending">sort direction (true=descending).Length must be 1 (broadcasting) or same with columns.</param>
@@ -1608,9 +1646,7 @@ and DataFrame(handle: DataFrameHandle) =
         let h = PolarsWrapper.DataFrameSort(this.Handle, exprHandles, descArr, nullsArr, stable)
         new DataFrame(h)
 
-    /// <summary>
-    /// Sort DataFrame with simple options.
-    /// </summary>
+    /// <summary> Sort with simple broadcasting options. </summary>
     member this.Sort(
         columns: seq<#IColumnExpr>,
         ?descending: bool,
@@ -1621,41 +1657,48 @@ and DataFrame(handle: DataFrameHandle) =
         let nLast = defaultArg nullsLast false
         
         this.Sort(columns, [| desc |], [| nLast |], ?maintainOrder = maintainOrder)
-
+    /// <summary> Sort by a single expression. </summary>
     member this.Sort(expr: Expr, ?descending: bool, ?nullsLast: bool) =
         this.Sort([expr], ?descending=descending, ?nullsLast=nullsLast)
+    /// <summary> Sort by a single column name. </summary>
 
     member this.Sort(colName: string, ?descending: bool, ?nullsLast: bool) =
         this.Sort([Expr.Col colName], ?descending=descending, ?nullsLast=nullsLast)
-
+    /// <summary> Alias for Sort. </summary>
     member this.Orderby (expr: Expr,desc :bool) : DataFrame =
         this.Sort(expr,desc)
+    /// <summary> Group by keys and apply aggregate expressions. </summary>
     member this.GroupBy (keys: Expr list,aggs: Expr list) : DataFrame =
         let kHandles = keys |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let aHandles = aggs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let h = PolarsWrapper.GroupByAgg(this.Handle, kHandles, aHandles)
         new DataFrame(h)
-    /// <summary> Group by keys and apply aggregations. Supports Selectors in both keys and aggs. </summary>
+    /// <summary> Group by keys and apply aggregations (Supports Selectors). </summary>
     member this.GroupBy(keys: seq<#IColumnExpr>, aggs: seq<#IColumnExpr>) =
         let kExprs = keys |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
         let aExprs = aggs |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
         this.GroupBy (kExprs, aExprs)
+    /// <summary> Join with another DataFrame. </summary>
     member this.Join (other: DataFrame,leftOn: Expr list,rightOn: Expr list,how: JoinType) : DataFrame =
         let lHandles = leftOn |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let rHandles = rightOn |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let h = PolarsWrapper.Join(this.Handle, other.Handle, lHandles, rHandles, how.ToNative())
         new DataFrame(h)
+    /// <summary> Concatenate multiple DataFrames. </summary>
     static member Concat (dfs: DataFrame list) (how: ConcatType): DataFrame =
         let handles = dfs |> List.map (fun df -> df.CloneHandle()) |> List.toArray
         new DataFrame(PolarsWrapper.Concat (handles,how.ToNative()))
+    /// <summary> Get the first n rows. </summary>
     member this.Head (?rows: int) : DataFrame  =
         let n = defaultArg rows 5
-        use h = PolarsWrapper.Head(this.Handle, uint n) 
+        let h = PolarsWrapper.Head(this.Handle, uint n) 
         new DataFrame(h)
+    /// <summary> Get the last n rows. </summary>
     member this.Tail (?n: int) : DataFrame =
         let rows = defaultArg n 5
         let h = PolarsWrapper.Tail(this.Handle, uint rows) 
         new DataFrame(h)
+    /// <summary> Explode list columns to rows. </summary>
     member this.Explode (exprs: Expr list) : DataFrame =
         let handles = exprs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let h = PolarsWrapper.Explode(this.Handle, handles)
@@ -1665,17 +1708,25 @@ and DataFrame(handle: DataFrameHandle) =
     member this.Explode(columns: seq<#IColumnExpr>) =
         let exprs = columns |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
         this.Explode exprs
+    /// <summary> Decompose a struct column into multiple columns. </summary>
     member this.UnnestColumn(column: string, ?separator: string) : DataFrame =
         let cols = [| column |]
         let sep = defaultArg separator null
         let newHandle = PolarsWrapper.Unnest(this.Handle, cols, sep)
         new DataFrame(newHandle)
+    /// <summary> Decompose multiple struct columns. </summary>
     member this.UnnestColumns(columns: string list, ?separator: string) : DataFrame =
         let cArr = List.toArray columns
         let sep = defaultArg separator null
         let newHandle = PolarsWrapper.Unnest(this.Handle, cArr, sep)
         new DataFrame(newHandle)
-       /// <summary> Pivot the DataFrame from long to wide format. </summary>
+    /// <summary>
+    /// Pivot the DataFrame from long to wide format.
+    /// </summary>
+    /// <param name="index">Columns to use as index (keys).</param>
+    /// <param name="columns">Column defining the new column names.</param>
+    /// <param name="values">Column(s) defining the values.</param>
+    /// <param name="aggFn">Aggregation function for duplicates.</param>
     member this.Pivot (index: string list) (columns: string list) (values: string list) (aggFn: PivotAgg) : DataFrame =
         let iArr = List.toArray index
         let cArr = List.toArray columns
@@ -1689,6 +1740,7 @@ and DataFrame(handle: DataFrameHandle) =
         let varN = Option.toObj variableName 
         let valN = Option.toObj valueName 
         new DataFrame(PolarsWrapper.Unpivot(this.Handle, iArr, oArr, varN, valN))
+    /// <summary> Alias for Unpivot. </summary>
     member this.Melt = this.Unpivot
     // ==========================================
     // Printing / String Representation
@@ -1922,6 +1974,10 @@ and DataFrame(handle: DataFrameHandle) =
             (this :> IEnumerable<Series>).GetEnumerator() :> IEnumerator
 /// <summary>
 /// A LazyFrame represents a logical plan of operations that will be optimized and executed only when collected.
+/// <para>
+/// Operations on LazyFrame are not executed immediately. Instead, they build a query plan.
+/// Use <c>Collect()</c> to execute the plan and get a DataFrame.
+/// </para>
 /// </summary>
 and LazyFrame(handle: LazyFrameHandle) =
     member _.Handle = handle
@@ -1930,6 +1986,7 @@ and LazyFrame(handle: LazyFrameHandle) =
     member this.Collect() = 
         let dfHandle = PolarsWrapper.LazyCollect handle
         new DataFrame(dfHandle)
+    /// <summary> Execute the plan using the streaming engine. </summary>
     member this.CollectStreaming() =
         let dfHandle = PolarsWrapper.CollectStreaming handle
         new DataFrame(dfHandle)
@@ -2274,21 +2331,37 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// </summary>
     member this.Unnest(column: string, ?separator: string) =
         this.Unnest ([column], ?separator=separator)
+    /// <summary>
+    /// Limit the number of rows in the LazyFrame.
+    /// This is an optimization hint that pushes down the limit to the scan if possible.
+    /// </summary>
+    /// <param name="n">Maximum number of rows to return.</param>
     member this.Limit (n: uint) : LazyFrame =
         let lfClone = this.CloneHandle()
         let h = PolarsWrapper.LazyLimit(lfClone, n)
         new LazyFrame(h)
+    /// <summary>
+    /// Add or replace a single column in the LazyFrame.
+    /// </summary>
+    /// <param name="expr">The expression defining the new column.</param>
     member this.WithColumn (expr: Expr) : LazyFrame =
         let lfClone = this.CloneHandle()
         let exprClone = expr.CloneHandle()
         let handles = [| exprClone |] 
         let h = PolarsWrapper.LazyWithColumns(lfClone, handles)
         new LazyFrame(h)
+    /// <summary>
+    /// Add or replace multiple columns in the LazyFrame.
+    /// </summary>
+    /// <param name="exprs">List of expressions defining the new columns.</param>
     member this.WithColumns (exprs: Expr list) : LazyFrame =
         let lfClone = this.CloneHandle()
         let handles = exprs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let h = PolarsWrapper.LazyWithColumns(lfClone, handles)
         new LazyFrame(h)
+    /// <summary>
+    /// Add or replace columns using generic column expressions (Expr or Selectors).
+    /// </summary>
     member this.WithColumns (columns:seq<#IColumnExpr>) =
         let exprs = 
             columns 
@@ -2296,16 +2369,31 @@ and LazyFrame(handle: LazyFrameHandle) =
             |> Seq.toList
         
         this.WithColumns exprs
+    /// <summary>
+    /// Group by keys and apply aggregate expressions.
+    /// </summary>
+    /// <param name="keys">Grouping keys.</param>
+    /// <param name="aggs">Aggregation expressions to apply per group.</param>
     member this.GroupBy (keys: Expr list,aggs: Expr list) : LazyFrame =
         let lfClone = this.CloneHandle()
         let kHandles = keys |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let aHandles = aggs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let h = PolarsWrapper.LazyGroupByAgg(lfClone, kHandles, aHandles)
         new LazyFrame(h)
+    /// <summary>
+    /// Group by keys and apply aggregations (Supports Selectors).
+    /// </summary>
     member this.GroupBy(keys: seq<#IColumnExpr>, aggs: seq<#IColumnExpr>) =
             let kExprs = keys |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
             let aExprs = aggs |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
             this.GroupBy(kExprs, aExprs)
+    /// <summary>
+    /// Unpivot (Melt) the LazyFrame from wide to long format.
+    /// </summary>
+    /// <param name="index">Column(s) to use as identifier variables.</param>
+    /// <param name="on">Column(s) to unpivot.</param>
+    /// <param name="variableName">Name for the variable column (defaults to "variable" if None).</param>
+    /// <param name="valueName">Name for the value column (defaults to "value" if None).</param>
     member this.Unpivot (index: string list) (on: string list) (variableName: string option) (valueName: string option) : LazyFrame =
         let lfClone = this.CloneHandle()
         let iArr = List.toArray index
