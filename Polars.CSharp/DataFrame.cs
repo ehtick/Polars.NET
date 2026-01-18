@@ -6,6 +6,7 @@ using Polars.NET.Core.Data;
 using System.Collections.Concurrent;
 using System.Collections;
 using System.Text;
+using Apache.Arrow.Types;
 
 namespace Polars.CSharp;
 
@@ -1732,76 +1733,93 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="limit">Max rows to display (default 10).</param>
     public string ToHtml(int limit = 10)
     {
+        int rowsToShow = (int)Math.Min(Height, limit);
+        using var previewDf = this.Head(rowsToShow);
+        
+        using var batch = ArrowFfiBridge.ExportDataFrame(previewDf.Handle);
+        var schema = batch.Schema;
+
         var sb = new StringBuilder();
         
-        // Basic Style
         sb.Append(@"
 <style>
-.pl-dataframe { font-family: sans-serif; border-collapse: collapse; width: auto; }
-.pl-dataframe th { background-color: #f0f0f0; color: #333; font-weight: bold; text-align: left; padding: 8px; border-bottom: 2px solid #ddd; }
-.pl-dataframe td { padding: 8px; border-bottom: 1px solid #ddd; text-align: left; color: #444; }
-.pl-dataframe tr:hover { background-color: #f9f9f9; }
-.pl-dtype { font-size: 0.8em; color: #888; display: block; font-weight: normal; }
-.pl-null { color: #d66; font-style: italic; }
-.pl-dim { font-size: 0.8em; color: #666; margin-top: 5px; }
+.pl-dataframe { font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; border-collapse: collapse; border: 1px solid #e0e0e0; }
+.pl-dataframe th { background-color: #f0f0f0; font-weight: bold; text-align: left; padding: 6px 12px; border-bottom: 2px solid #ccc; }
+.pl-dataframe td { padding: 6px 12px; border-bottom: 1px solid #f0f0f0; white-space: pre; color: #333; }
+.pl-dataframe tr:nth-child(even) { background-color: #f9f9f9; }
+.pl-dataframe tr:hover { background-color: #f1f1f1; }
+.pl-dtype { font-size: 10px; color: #999; display: block; margin-top: 2px; font-weight: normal; }
+.pl-null { color: #d0d0d0; font-style: italic; }
+.pl-dim { font-family: sans-serif; font-size: 12px; color: #666; margin-bottom: 8px; }
 </style>");
 
-        sb.Append("<table class='pl-dataframe'>");
-
-        // Table Header
-        sb.Append("<thead><tr>");
+        // Dimensions Info
+        sb.Append($"<div class='pl-dim'>Polars DataFrame: <b>({Height} rows, {Width} columns)</b></div>");
         
-        for (int i = 0; i < Width; i++)
+        sb.Append("<div style='overflow-x:auto'><table class='pl-dataframe'>");
+
+        // Header (From Arrow Schema)
+        sb.Append("<thead><tr>");
+        foreach (var field in schema.FieldsList)
         {
-            var col = Column(i);
-            var colName = System.Net.WebUtility.HtmlEncode(col.Name);
-            var colType = col.DataType.ToString();
+            var colName = System.Net.WebUtility.HtmlEncode(field.Name);
+            var colType = field.DataType.Name; 
             
             sb.Append($"<th>{colName}<span class='pl-dtype'>{colType}</span></th>");
         }
         sb.Append("</tr></thead>");
 
-        // Body
+        // Body (From Arrow Batch)
         sb.Append("<tbody>");
         
-        int rowsToShow = (int)Math.Min(Height, limit);
-        for (int r = 0; r < rowsToShow; r++)
+        int rowCount = batch.Length;
+        int colCount = batch.ColumnCount;
+
+        for (int r = 0; r < rowCount; r++)
         {
             sb.Append("<tr>");
-            var rowData = Row(r);
-            
-            foreach (var val in rowData)
+            for (int c = 0; c < colCount; c++)
             {
-                if (val == null || val == DBNull.Value)
+                var colArray = batch.Column(c);
+                var field = schema.GetFieldByIndex(c);
+                
+                string valStr = colArray.FormatValue(r);
+
+                if (valStr != "null")
+                {
+                    if (field.DataType.TypeId == ArrowTypeId.Double)
+                    {
+                        if (double.TryParse(valStr, out double d)) 
+                            valStr = d.ToString("G10");
+                    }
+                    else if (field.DataType.TypeId == ArrowTypeId.Float)
+                    {
+                        if (float.TryParse(valStr, out float f)) 
+                            valStr = f.ToString("G7");
+                    }
+                }
+
+                if (valStr == "null")
                 {
                     sb.Append("<td class='pl-null'>null</td>");
                 }
                 else
                 {
-                    string cellStr = val switch
-                    {
-                        DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss"),
-                        double d => d.ToString("G6"), 
-                        _ => val.ToString() ?? ""
-                    };
-                    
-                    if (cellStr.Length > 50) cellStr = cellStr[..47] + "...";
-                    
-                    sb.Append($"<td>{System.Net.WebUtility.HtmlEncode(cellStr)}</td>");
+                    if (valStr.Length > 100) valStr = valStr[..97] + "...";
+                    sb.Append($"<td>{System.Net.WebUtility.HtmlEncode(valStr)}</td>");
                 }
             }
             sb.Append("</tr>");
         }
-        sb.Append("</tbody>");
-        sb.Append("</table>");
-
-        // Shape
-        var hiddenRows = Height - rowsToShow;
-        if (hiddenRows > 0)
+        
+        // Footer for hidden rows
+        long remaining = Height - rowsToShow;
+        if (remaining > 0)
         {
-            sb.Append($"<div class='pl-dim'>... and {hiddenRows} more rows.</div>");
+             sb.Append($"<tr><td colspan='{colCount}' style='text-align:center; font-style:italic; color:#999; padding: 10px'>... {remaining} more rows ...</td></tr>");
         }
-        sb.Append($"<div class='pl-dim'>shape: ({Height}, {Width})</div>");
+
+        sb.Append("</tbody></table></div>");
 
         return sb.ToString();
     }

@@ -5,6 +5,7 @@ open System.IO
 open System.Text
 open Microsoft.DotNet.Interactive.Formatting
 open Polars.NET.Core.Arrow
+open Apache.Arrow.Types
 /// <summary>
 /// Display utilities for DataFrame and LazyFrame in interactive environments.
 /// </summary>
@@ -53,7 +54,7 @@ module Display =
                 typeName) |> ignore
         sb.Append "</tr></thead>" |> ignore
 
-        // --- 表体 ---
+        // --- Table Body ---
         sb.Append "<tbody>" |> ignore
         let rowCount = batch.Length
         let colCount = batch.ColumnCount
@@ -62,15 +63,35 @@ module Display =
             sb.Append "<tr>" |> ignore
             for j in 0 .. colCount - 1 do
                 let colArray = batch.Column j
+                let field = schema.GetFieldByIndex j
                 
-                let valStr = colArray.FormatValue i
+                // Get raw string
+                let rawStr = colArray.FormatValue i
                 
+                // Modify float/double value
+                let valStr = 
+                    if rawStr = "null" then 
+                        "null"
+                    else
+                        match field.DataType.TypeId with
+                        | ArrowTypeId.Double -> 
+                            match Double.TryParse rawStr with
+                            | true, v -> v.ToString "G10"
+                            | _ -> rawStr
+                        | ArrowTypeId.Float ->
+                            match Single.TryParse rawStr with
+                            | true, v -> v.ToString "G7"
+                            | _ -> rawStr
+                        | _ -> rawStr
+
                 if valStr = "null" then
                     sb.Append "<td class='pl-null'>null</td>" |> ignore
                 else
-                    sb.AppendFormat("<td>{0}</td>", System.Net.WebUtility.HtmlEncode valStr) |> ignore
+                    let finalStr = if valStr.Length > 100 then valStr.Substring(0, 97) + "..." else valStr
+                    sb.AppendFormat("<td>{0}</td>", System.Net.WebUtility.HtmlEncode finalStr) |> ignore
             sb.Append "</tr>" |> ignore
-        
+
+        // Footer
         if totalRows > int64 rowsToShow then
              let remaining = totalRows - int64 rowsToShow
              sb.AppendFormat("<tr><td colspan='{0}' style='text-align:center; font-style:italic; color:#999; padding: 10px'>... {1} more rows ...</td></tr>", colCount, remaining) |> ignore
