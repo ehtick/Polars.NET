@@ -234,20 +234,14 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
         // Get ArrowStream
         var batchEnumerable = reader.ToArrowBatches(batchSize);
-        
-        // Get Enumberator
-        var enumerator = batchEnumerable.GetEnumerator();
 
-        try 
+        var handle = ArrowStreamInterop.ImportEager(batchEnumerable, schema);
+        if (handle.IsInvalid)
         {
-            var handle = ArrowStreamInterop.ImportEager(enumerator, schema);
-            return new DataFrame(handle);
+            var emptyBatch = new RecordBatch(schema, System.Array.Empty<IArrowArray>(), 0);
+            return new DataFrame(ArrowFfiBridge.ImportDataFrame(emptyBatch));
         }
-        catch
-        {
-            enumerator.Dispose();
-            throw;
-        }
+        return new DataFrame(handle);
     }
     // ==========================================
     // Properties
@@ -1583,11 +1577,13 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     /// <param name="data">Source data collection</param>
     /// <param name="batchSize">Rows per chunk (default 100,000)</param>
-    public static DataFrame FromArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000)
+    /// <param name="providedSchema">Stream schema provided by user</param>
+    public static DataFrame FromArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000,Schema? providedSchema = null)
     {
+        var schema = providedSchema ?? ArrowConverter.GetSchemaFromType<T>();
         var stream = data.ToArrowBatches(batchSize);
 
-        var handle = ArrowStreamInterop.ImportEager(stream);
+        var handle = ArrowStreamInterop.ImportEager(stream,schema);
 
         if (handle.IsInvalid)
         {

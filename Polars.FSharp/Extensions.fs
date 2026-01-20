@@ -84,25 +84,6 @@ module Serialization =
     // ==========================================
     
     type DataFrame with
-        
-        /// <summary>
-        /// [ToRecords] Transform DataFrame to F# Records
-        /// </summary>
-        member this.ToRecords<'T>() : seq<'T> =
-            use batch = ArrowFfiBridge.ExportDataFrame this.Handle
-            
-            ArrowReader.ReadRecordBatch<'T> batch |> Seq.toList |> List.toSeq
-
-        /// <summary>
-        /// Create a DataFrame from a sequence of F# Records or Objects.
-        /// Uses high-performance Apache Arrow interop.
-        /// Supports: F# Option, Nested Lists, DateTime, etc.
-        /// </summary>
-        static member ofRecords<'T>(data: seq<'T>) : DataFrame =
-            let batch = ArrowFfiBridge.BuildRecordBatch data
-            
-            let handle = ArrowFfiBridge.ImportDataFrame batch
-            new DataFrame(handle)
         member this.Describe() : DataFrame =
             let numericCols = 
                 this.Schema 

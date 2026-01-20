@@ -13,6 +13,12 @@ namespace Polars.NET.Core.Arrow
             return type.IsGenericType && type.GetGenericTypeDefinition().FullName == OptionTypeName;
         }
 
+        public static bool IsFSharpList(Type type)
+        {
+            return type.IsGenericType && 
+                   type.GetGenericTypeDefinition().FullName == "Microsoft.FSharp.Collections.FSharpList`1";
+        }
+
         public static Type GetUnderlyingType(Type type)
         {
             return IsFSharpOption(type) ? type.GetGenericArguments()[0] : type;

@@ -1442,14 +1442,20 @@ and DataFrame(handle: DataFrameHandle) =
     /// <param name="reader">The open IDataReader instance.</param>
     /// <param name="batchSize">Number of rows per Arrow batch (default 50,000).</param>
     static member ReadDb(reader: IDataReader, ?batchSize: int) : DataFrame =
+        let schema = reader.GetArrowSchema()
+
         let size = defaultArg batchSize 50_000
         
         let batchStream = reader.ToArrowBatches size
         
-        let handle = Polars.NET.Core.Arrow.ArrowStreamInterop.ImportEager batchStream
+        let handle = Polars.NET.Core.Arrow.ArrowStreamInterop.ImportEager(batchStream,schema)
         
         if handle.IsInvalid then
-            DataFrame.create []
+
+            let emptyBatch = new Apache.Arrow.RecordBatch(schema, System.Array.Empty<Apache.Arrow.IArrowArray>(), 0)
+
+            let safeHandle = Polars.NET.Core.Arrow.ArrowFfiBridge.ImportDataFrame emptyBatch
+            new DataFrame(safeHandle)
         else
             new DataFrame(handle)
 
@@ -1471,17 +1477,38 @@ and DataFrame(handle: DataFrameHandle) =
     static member ofSeqStream<'T>(data: seq<'T>, ?batchSize: int) : DataFrame =
         let size = defaultArg batchSize 100_000
 
+        let schema = Polars.NET.Core.Arrow.ArrowConverter.GetSchemaFromType<'T>()
         let batchStream = 
             data
             |> Seq.chunkBySize size
             |> Seq.map ArrowFfiBridge.BuildRecordBatch
 
-        let handle = ArrowStreamInterop.ImportEager batchStream
+        let handle = ArrowStreamInterop.ImportEager(batchStream,schema)
 
         if handle.IsInvalid then
-            DataFrame.create []
+            let emptyBatch = new Apache.Arrow.RecordBatch(schema, System.Array.Empty<Apache.Arrow.IArrowArray>(), 0)
+            let safeHandle = ArrowFfiBridge.ImportDataFrame emptyBatch
+            new DataFrame(safeHandle)
         else
             new DataFrame(handle)
+    /// <summary>
+    /// [ToRecords] Transform DataFrame to F# Records
+    /// </summary>
+    member this.ToRecords<'T>() : seq<'T> =
+        use batch = ArrowFfiBridge.ExportDataFrame this.Handle
+        
+        ArrowReader.ReadRecordBatch<'T> batch |> Seq.toList |> List.toSeq
+
+    /// <summary>
+    /// Create a DataFrame from a sequence of F# Records or Objects.
+    /// Uses high-performance Apache Arrow interop.
+    /// Supports: F# Option, Nested Lists, DateTime, etc.
+    /// </summary>
+    static member ofRecords<'T>(data: seq<'T>) : DataFrame =
+        let batch = ArrowFfiBridge.BuildRecordBatch data
+        
+        let handle = ArrowFfiBridge.ImportDataFrame batch
+        new DataFrame(handle)
     /// <summary> Create a DataFrame directly from an Apache Arrow RecordBatch. </summary>
     static member FromArrow (batch: Apache.Arrow.RecordBatch) : DataFrame =
         new DataFrame(PolarsWrapper.FromArrow batch)
@@ -1981,6 +2008,12 @@ and DataFrame(handle: DataFrameHandle) =
 /// </summary>
 and LazyFrame(handle: LazyFrameHandle) =
     member _.Handle = handle
+    abstract member Dispose : unit -> unit
+    default x.Dispose() = 
+        handle.Dispose()
+
+    interface IDisposable with
+        member x.Dispose() = x.Dispose()
     member internal this.CloneHandle() = PolarsWrapper.LazyClone handle
     /// <summary> Execute the plan and return a DataFrame. </summary>
     member this.Collect() = 
@@ -2067,44 +2100,118 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// </summary>
     /// <param name="data">The data source sequence.</param>
     /// <param name="batchSize">Rows per Arrow batch (default: 100,000).</param>
-    static member scanSeq<'T>(data: seq<'T>, ?batchSize: int) : LazyFrame =
-        let size = defaultArg batchSize 100_000
+    /// <param name="useBuffered">Choose whether disk buffer file needed (for big data) <param>
+    static member scanSeq<'T>(data: seq<'T>, ?batchSize: int, ?useBuffered: bool) : LazyFrame =
+            let size = defaultArg batchSize 100_000
+            let buffered = defaultArg useBuffered false
 
-        let dummyBatch = ArrowFfiBridge.BuildRecordBatch(Seq.empty<'T>)
-        let schema = dummyBatch.Schema
+            // =========================================================
+            // 1. Buffered Mode (Disk IPC)
+            // =========================================================
+            if buffered then
+                let scope = new IpcStreamService.TempIpcScope<'T>(data, size)
+                
+                // Get FileHandle
+                let handle = PolarsWrapper.ScanIpc scope.FilePath
+                
+                { new LazyFrame(handle) with
+                    member this.Dispose() =
+                        base.Dispose()
+                        scope.Dispose()
+                }
 
-        let streamFactory = Func<IEnumerator<RecordBatch>>(fun () ->
-            data
-            |> Seq.chunkBySize size
-            |> Seq.map ArrowFfiBridge.BuildRecordBatch
-            |> fun s -> s.GetEnumerator()
-        )
+            // =========================================================
+            // 2. Streaming Mode (Memory Safety & Lazy Fallback)
+            // =========================================================
+            else
+                let schema = ArrowConverter.GetSchemaFromType<'T>()
 
-        let handle = ArrowStreamInterop.ScanStream(streamFactory, schema)
-        
-        new LazyFrame(handle)
+                let streamFactory = Func<IEnumerable<RecordBatch>>(fun () ->
+                    seq {
+                        let mutable hasYielded = false
+                        
+                        let batches = ArrowConverter.ToArrowBatches(data, size)
+
+                        for batch in batches do
+                            hasYielded <- true
+                            yield batch
+                            batch.Dispose()
+                        
+                        if not hasYielded then
+                            let emptyBatch = ArrowConverter.GetEmptyBatch<'T>()
+                            yield emptyBatch
+                            emptyBatch.Dispose()
+                    }
+                )
+
+                let handle = ArrowStreamInterop.ScanStream(streamFactory, schema)
+                new LazyFrame(handle)
 
     /// <summary>
     /// [Lazy] Scan a database query lazily.
     /// Requires a factory function to create new IDataReaders for potential multi-pass scans.
     /// </summary>
-    static member scanDb(readerFactory: unit -> IDataReader, ?batchSize: int) : LazyFrame =
+    static member scanDb(readerFactory: unit -> IDataReader, ?batchSize: int, ?useBuffered: bool) : LazyFrame =
+        let size = defaultArg batchSize 50_000
+        let buffered = defaultArg useBuffered false
+
+        // =========================================================
+        // 1. Buffered Mode (Disk IPC)
+        // =========================================================
+        if buffered then
+            let runBuffer () =
+                use reader = readerFactory()
+                new IpcStreamService.TempIpcScopeReader(reader, size)
+
+            let scope = runBuffer()
+            let handle = PolarsWrapper.ScanIpc scope.FilePath
+
+            { new LazyFrame(handle) with
+                member this.Dispose() =
+                    base.Dispose()
+                    scope.Dispose()
+            }
+
+        // =========================================================
+        // 2. Streaming Mode (Memory)
+        // =========================================================
+        else
+            // Probe Schema
+            let schema = 
+                use reader = readerFactory()
+                ArrowTypeResolver.GetSchemaFromDataReader reader
+
+            // Stream Factory
+            let factory = Func<IEnumerable<RecordBatch>>(fun () ->
+                seq {
+                    use reader = readerFactory()
+                    let batches = DbToArrowStream.ToArrowBatches(reader, size)
+                    
+                    for batch in batches do
+                        yield batch
+                        batch.Dispose()
+                }
+            )
+
+            let handle = ArrowStreamInterop.ScanStream(factory, schema)
+            new LazyFrame(handle)
+
+    /// <summary>
+    /// [Lazy][Buffered] Scan a database DataReader directly.
+    /// <para>Writes to disk IMMEDIATELY because IDataReader is forward-only.</para>
+    /// </summary>
+    static member scanDb(reader: IDataReader, ?batchSize: int) : LazyFrame =
         let size = defaultArg batchSize 50_000
         
-        let schema = 
-            use tempReader = readerFactory()
-            tempReader.GetArrowSchema()
-
-        let streamFactory = Func<IEnumerator<RecordBatch>>(fun () ->
-            let batchSeq = seq {
-                use reader = readerFactory()
-                yield! reader.ToArrowBatches size
-            }
-            batchSeq.GetEnumerator()
-        )
-
-        let handle = ArrowStreamInterop.ScanStream(streamFactory, schema)
-        new LazyFrame(handle)
+        let scope = new IpcStreamService.TempIpcScopeReader(reader, size)
+        let handle = PolarsWrapper.ScanIpc scope.FilePath
+        
+        // Inline ScopedLazyFrame
+        { new LazyFrame(handle) with
+            member this.Dispose() =
+                base.Dispose()
+                scope.Dispose()
+        }
 
     /// <summary> Write LazyFrame execution result to Parquet (Streaming). </summary>
     member this.SinkParquet (path: string) : unit =

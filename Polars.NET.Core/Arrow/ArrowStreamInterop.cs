@@ -13,8 +13,9 @@ namespace Polars.NET.Core.Arrow
         // Context Object
         private class ScanContext
         {
-            public Func<IEnumerator<Apache.Arrow.RecordBatch>> Factory = default!;
-            public Apache.Arrow.Schema Schema = default!;
+            public Func<IEnumerable<RecordBatch>> Factory = default!;
+            public Schema Schema = default!;
+            public List<IntPtr> AllocatedStreams = [];
         }
 
         /// <summary>
@@ -24,7 +25,7 @@ namespace Polars.NET.Core.Arrow
         {
             var context = new ScanContext
             {
-                Factory = () => data.ToArrowBatches(batchSize).GetEnumerator(),
+                Factory = () => data.ToArrowBatches(batchSize),
                 Schema = schema
             };
 
@@ -58,13 +59,20 @@ namespace Polars.NET.Core.Arrow
                 var context = (ScanContext)handle.Target!;
                 
                 // Create
-                var enumerator = context.Factory();
+                var enumerable = context.Factory();
+                var rawEnumerator = enumerable.GetEnumerator();
+                var safeEnumerator = new SafeEnumerator<RecordBatch>(rawEnumerator);
                 
                 // Alloc C Struct at Heap
                 var ptr = (CArrowArrayStream*)Marshal.AllocHGlobal(sizeof(CArrowArrayStream));
+
+                lock(context.AllocatedStreams) 
+                {
+                    context.AllocatedStreams.Add((IntPtr)ptr);
+                }
                 
                 // Init Exporter and export
-                var exporter = new ArrowStreamExporter(enumerator, context.Schema);
+                var exporter = new ArrowStreamExporter(safeEnumerator, context.Schema);
                 exporter.Export(ptr);
                 
                 return ptr;
@@ -82,13 +90,26 @@ namespace Polars.NET.Core.Arrow
             try
             {
                 var ptr = (IntPtr)userData;
-                if (ptr != IntPtr.Zero)
+                if (ptr == IntPtr.Zero) return;
+
+                var handle = GCHandle.FromIntPtr(ptr);
+                if (handle.IsAllocated)
                 {
-                    var handle = GCHandle.FromIntPtr(ptr);
-                    if (handle.IsAllocated)
+                    var context = (ScanContext)handle.Target!;
+                    
+                    if (context.AllocatedStreams != null)
                     {
-                        handle.Free(); 
+                        lock(context.AllocatedStreams)
+                        {
+                            foreach (var streamPtr in context.AllocatedStreams)
+                            {
+                                Marshal.FreeHGlobal(streamPtr);
+                            }
+                            context.AllocatedStreams.Clear();
+                        }
                     }
+
+                    handle.Free();
                 }
             }
             catch (Exception ex)
@@ -105,13 +126,14 @@ namespace Polars.NET.Core.Arrow
         /// <summary>
         /// Eager Mode: Alloc C struct at current stack frame and call Rust to consume
         /// </summary>
-        public static DataFrameHandle ImportEager(IEnumerator<Apache.Arrow.RecordBatch> stream, Apache.Arrow.Schema schema)
+        public static DataFrameHandle ImportEager(IEnumerable<RecordBatch> stream, Schema schema)
         {
             // Alloc Struct at Stack
             var cStream = new CArrowArrayStream();
 
             // Init Exporter
-            using var exporter = new ArrowStreamExporter(stream, schema);
+            using var enumerator = stream.GetEnumerator();
+            using var exporter = new ArrowStreamExporter(enumerator, schema);
             
             exporter.Export(&cStream);
 
@@ -120,8 +142,8 @@ namespace Polars.NET.Core.Arrow
         }
 
         public static void* CreateDirectScanContext(
-            Func<IEnumerator<Apache.Arrow.RecordBatch>> factory, 
-            Apache.Arrow.Schema schema)
+            Func<IEnumerable<RecordBatch>> factory, 
+            Schema schema)
         {
             var context = new ScanContext
             {
@@ -133,33 +155,11 @@ namespace Polars.NET.Core.Arrow
             return (void*)GCHandle.ToIntPtr(gcHandle);
         }
 
-        public static DataFrameHandle ImportEager(IEnumerable<RecordBatch> stream)
-        {
-            var enumerator = stream.GetEnumerator();
-
-            // Peek first frame
-            if (!enumerator.MoveNext())
-            {
-                // null stream
-                enumerator.Dispose();
-                return new DataFrameHandle(); // Return invalid handle (IsInvalid == true)
-            }
-
-            // Get Schema
-            var firstBatch = enumerator.Current;
-            var schema = firstBatch.Schema;
-
-            // Use PrependEnumerator to create enumerator
-            var combinedEnumerator = new PrependEnumerator(firstBatch, enumerator);
-
-            // Call Rust
-            return ImportEager(combinedEnumerator, schema);
-        }
         /// <summary>
         /// Logic For Lazy Scan
         /// </summary>
         public static LazyFrameHandle ScanStream(
-            Func<IEnumerator<RecordBatch>> streamFactory, 
+            Func<IEnumerable<RecordBatch>> streamFactory, 
             Schema schema)
         {
             var userData = CreateDirectScanContext(streamFactory, schema);
@@ -260,6 +260,37 @@ namespace Polars.NET.Core.Arrow
             };
 
             return (ctx.KeepAliveCallback, cleanup, userDataPtr);
+        }
+
+        private class SafeEnumerator<T> : IEnumerator<T>
+        {
+            private readonly IEnumerator<T> _inner;
+            public SafeEnumerator(IEnumerator<T> inner) { _inner = inner; }
+
+            public T Current => _inner.Current;
+            object System.Collections.IEnumerator.Current => _inner.Current!;
+
+            public void Dispose()
+            {
+                try { _inner.Dispose(); } catch { /* Ignore dispose errors */ }
+            }
+
+            public bool MoveNext()
+            {
+                try
+                {
+                    return _inner.MoveNext();
+                }
+                catch (Exception ex)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"[CRITICAL INTEROP ERROR] Stream iteration failed: {ex}");
+                    Console.ResetColor();
+                    return false; 
+                }
+            }
+
+            public void Reset() => _inner.Reset();
         }
     }
 }

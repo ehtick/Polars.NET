@@ -1,16 +1,32 @@
+using System.Data;
 using System.Linq.Expressions;
 using System.Reflection;
 using Apache.Arrow;
 using Apache.Arrow.Types;
 
 namespace Polars.NET.Core.Arrow;
+
 public static class ArrowConverter
 {
     // Cache Generic Type method definition to avoid reflection in every cycle
     private static readonly MethodInfo _buildMethodDef = typeof(ArrowConverter)
         .GetMethod("Build", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("ArrowConverter.Build<T> method not found.");
-
+    private static class SchemaCache<T>
+    {
+        public static readonly Schema Default = GetSchemaFromType<T>();
+    }
+    /// <summary>
+    /// Build Empty RecordBatch with Schema Only
+    /// </summary>
+    public static RecordBatch GetEmptyBatch<T>()
+    {
+        var schema = SchemaCache<T>.Default; 
+        
+        var emptyStruct = StructBuilderHelper.BuildStructArray(Enumerable.Empty<T>());
+        
+        return new RecordBatch(schema, emptyStruct.Fields, 0);
+    }
     /// <summary>
     /// Read object typeinfo by reflection and transform to Arrow Arrays。
     /// </summary>
@@ -18,35 +34,40 @@ public static class ArrowConverter
     {
         ArgumentNullException.ThrowIfNull(columns);
 
-        var props = columns.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-        if (props.Length == 0)
-            throw new ArgumentException("The provided object has no public properties to treat as columns.");
+        var members = ArrowTypeResolver.GetReadableMembers(columns.GetType());
+        
+        if (members.Length == 0)
+            throw new ArgumentException("The provided object has no public properties/fields to treat as columns.");
 
-        var result = new List<(string, IArrowArray)>(props.Length);
+        var result = new List<(string, IArrowArray)>(members.Length);
 
-        foreach (var prop in props)
+        foreach (var member in members)
         {
-            var colName = prop.Name;
-            var colValue = prop.GetValue(columns) ?? throw new ArgumentNullException($"Column '{colName}' cannot be null.");
+            var colName = member.Name;
+            
+            var colValue = GetMemberValue(member, columns) ?? throw new ArgumentNullException($"Column '{colName}' cannot be null.");
 
-            // 1. Get element type T
-            Type elemType = ReflectionHelper.GetEnumerableElementType(colValue.GetType()) ?? throw new ArgumentException($"Property '{colName}' is not an IEnumerable<T> or Array.");
+            Type elemType = ArrowTypeResolver.GetEnumerableElementType(colValue.GetType()) 
+                ?? throw new ArgumentException($"Member '{colName}' is not an IEnumerable<T> or Array.");
 
-            // 2. Build Generic type methond as ArrowConverter.Build<T>
             var buildMethod = _buildMethodDef.MakeGenericMethod(elemType);
-
-            // 3. Call IArrowArray
             try 
             {
                 var arrowArray = (IArrowArray)buildMethod.Invoke(null, new[]{colValue})!;
                 result.Add((colName, arrowArray));
             }
-            catch (TargetInvocationException ex)
-            {
-                throw ex.InnerException ?? ex;
-            }
+            catch (TargetInvocationException ex) { throw ex.InnerException ?? ex; }
         }
         return result;
+    }
+    private static object? GetMemberValue(MemberInfo member, object target)
+    {
+        return member switch
+        {
+            PropertyInfo p => p.GetValue(target),
+            FieldInfo f => f.GetValue(target),
+            _ => null
+        };
     }
     /// <summary>
     /// General Entry：Decide which type of Arrary based on the type of T
@@ -112,22 +133,15 @@ public static class ArrowConverter
         }
         // List<U>
         // Check whether IEnumerable<U> is available and not string type
-        if (type != typeof(string) && 
-            type.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>)))
+        var elementType = ArrowTypeResolver.GetEnumerableElementType(type);
+        if (elementType != null)
         {
-            // Get List innertype U
-            var enumerableInterface = type.GetInterfaces()
-                .First(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
-            var elementType = enumerableInterface.GetGenericArguments()[0];
-
-            // Use reflection method BuildListArray<U>
             var method = typeof(ArrowConverter)
                 .GetMethod(nameof(BuildListArray), BindingFlags.Public | BindingFlags.Static)!
                 .MakeGenericMethod(elementType);
 
             return (IArrowArray)method.Invoke(null, new[]{data})!;
         }
-
         // Struct
         if (type.IsClass)
         {
@@ -483,6 +497,46 @@ public static class ArrowConverter
         return b.Build();
     }
 
+    public static Schema GetSchemaFromType<T>()
+    {
+        var type = typeof(T);
+        var members = ArrowTypeResolver.GetReadableMembers(type);
+        var fields = new List<Field>();
+
+        foreach (var member in members)
+        {
+            var memberType = ArrowTypeResolver.GetMemberType(member);
+            var field = ArrowTypeResolver.ResolveField(member.Name, memberType);
+            fields.Add(field);
+        }
+
+        return new Schema(fields, null);
+    }
+
+    /// <summary>
+    /// Slice IEnumerable<RecordBatch> to chuncks and convert it to ArrowBatchs
+    /// </summary>
+    public static IEnumerable<RecordBatch> ToArrowBatches<T>(IEnumerable<T> data, int batchSize)
+    {
+        // GetSchema from cache
+        var schema = SchemaCache<T>.Default;
+        bool hasYielded = false;
+
+        foreach (var chunk in data.Chunk(batchSize))
+        {
+            hasYielded = true;
+            var structArray = StructBuilderHelper.BuildStructArray(chunk);
+
+            yield return new RecordBatch(schema, structArray.Fields, chunk.Length);
+        }
+        if (!hasYielded)
+        {
+            var emptyStruct = StructBuilderHelper.BuildStructArray(Enumerable.Empty<T>());
+            
+            yield return new RecordBatch(schema, emptyStruct.Fields, 0);
+        }
+    }
+
     internal static class StructBuilderHelper
     {
         // =================================================================
@@ -495,25 +549,21 @@ public static class ArrowConverter
             var type = typeof(T);
 
             // Get Properties for type
-            var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.GetIndexParameters().Length == 0)
-                .Where(p => !p.PropertyType.IsInterface && !p.PropertyType.IsAbstract)
-                .Where(p => p.PropertyType != typeof(IntPtr) && p.PropertyType != typeof(UIntPtr))
-                .ToArray();
-
+            var members = ArrowTypeResolver.GetReadableMembers(type);
             var fields = new List<Field>();
             var childrenArrays = new List<IArrowArray>();
 
-            foreach (var prop in properties)
+            foreach (var member in members)
             {
-                var getter = CompileGetter<T>(prop);
+                var memberType = ArrowTypeResolver.GetMemberType(member);
+                
+                var getter = CompileGetter<T>(member);
+                var childArray = ProjectAndBuild(dataList, memberType, getter);
 
-                var childArray = ProjectAndBuild(dataList, prop.PropertyType, getter);
+                var fieldDef = ArrowTypeResolver.ResolveField(member.Name, memberType);
+                var finalField = new Field(fieldDef.Name, childArray.Data.DataType, fieldDef.IsNullable);
 
-                bool isNullable = !prop.PropertyType.IsValueType || Nullable.GetUnderlyingType(prop.PropertyType) != null;
-                var field = new Field(prop.Name, childArray.Data.DataType, isNullable);
-
-                fields.Add(field);
+                fields.Add(finalField);
                 childrenArrays.Add(childArray);
             }
 
@@ -623,18 +673,26 @@ public static class ArrowConverter
             // - TProp is int -> BuildInt32
             // - TProp is NestedItem -> BuildStructArray (Recurring)
             // - TProp is List<double> -> BuildListArray
-            return ArrowConverter.Build(columnData);
+            return Build(columnData);
         }
 
         // =================================================================
         // Compile Expression Tree for Getter
         // =================================================================
-        private static Func<T, object?> CompileGetter<T>(PropertyInfo propertyInfo)
+        private static Func<T, object?> CompileGetter<T>(MemberInfo member)
         {
             var instanceParam = Expression.Parameter(typeof(T), "item");
-            var propertyAccess = Expression.Property(instanceParam, propertyInfo);
-            var convertToObject = Expression.Convert(propertyAccess, typeof(object));
+            
+            Expression memberAccess = member switch
+            {
+                PropertyInfo p => Expression.Property(instanceParam, p),
+                FieldInfo f => Expression.Field(instanceParam, f),
+                _ => throw new InvalidOperationException()
+            };
+
+            var convertToObject = Expression.Convert(memberAccess, typeof(object));
             return Expression.Lambda<Func<T, object?>>(convertToObject, instanceParam).Compile();
         }
     }
 }
+

@@ -27,6 +27,14 @@ type UserRecord = {
         score: float option // Nullable Float
         joined: System.DateTime option // Timestamp -> DateTime
     }
+
+type TestUser = {
+    Name: string
+    Age: int
+    Score: float
+    IsActive: bool
+    JoinDate: DateTime
+}
 [<CLIMutable>]
 type SensorData = {
     Id: int
@@ -884,3 +892,81 @@ type ``Basic Functionality Tests`` () =
         
         Assert.Equal(1, res.Cell<int>("A",1))
         Assert.Equal(1, res.Cell<int>("B",1))
+    [<Fact>]
+    member _. ``ScanSeq Streaming Mode - Should convert data correctly`` () =
+        // Arrange
+        let now = DateTime.Now
+        let data = [
+            { Name = "Alice"; Age = 25; Score = 99.5; IsActive = true; JoinDate = now }
+            { Name = "Bob";   Age = 30; Score = 85.0; IsActive = false; JoinDate = now.AddDays -1.0 }
+            { Name = "Charlie"; Age = 35; Score = 70.0; IsActive = true; JoinDate = now.AddDays -10.0 }
+        ]
+
+        // Act
+        // 使用 Streaming 模式 (默认)
+        use lf = LazyFrame.scanSeq data
+        
+        // 触发计算
+        use df = lf.Collect()
+
+        // Assert
+        Assert.Equal(3L, df.Height)
+        
+        // 验证第一行的值
+        let row0_Name = df.["Name"].[0] :?> string option
+        let row0_Score = df.["Score"].[0] :?> double option
+        
+        // 验证 Some 值
+        Assert.Equal(Some "Alice", row0_Name)
+        Assert.Equal(Some 99.5, row0_Score)
+
+    [<Fact>]
+    member _. ``ScanSeq Buffered Mode - Should handle IO correctly`` () =
+        // Arrange
+        let data = seq {
+            for i in 1 .. 1000 do
+                yield { 
+                    Name = sprintf "User_%d" i
+                    Age = i
+                    Score = float i * 1.5
+                    IsActive = i % 2 = 0
+                    JoinDate = DateTime.Now 
+                }
+        }
+
+        // Act
+        // 显式开启 Buffered 模式 (useBuffered = true)
+        // 'use' 关键字会自动调用我们通过对象表达式内联的 Dispose 方法，清理临时文件
+        use lf = LazyFrame.scanSeq(data, useBuffered = true, batchSize = 100)
+        
+        use df = lf.Collect()
+
+        // Assert
+        Assert.Equal(1000L, df.Height)
+        
+        let lastRowScore = df.["Score"].[999] :?> double option
+        
+        Assert.Equal(Some (1000.0 * 1.5), lastRowScore)
+
+    [<Fact>]
+    member _.``ScanSeq Empty Stream - Should preserve Schema without crashing`` () =
+        // Arrange
+        let emptyData = Seq.empty<TestUser>
+
+        // Act
+        // 这里测试的是我们在 C# 端做的 "Lazy Fallback" 逻辑
+        // 即便数据源为空，也不应该抛出 AccessViolation，且必须返回正确的 Schema
+        use lf = LazyFrame.scanSeq emptyData
+        
+        use df = lf.Collect()
+
+        // Assert
+        Assert.Equal(0L, df.Height)
+        
+        // 验证 Schema 是否存在 (如果 Schema 丢了，列名就不存在了，或者这里会抛错)
+        let columns = df.ColumnNames
+        Assert.Contains("Name", columns)
+        Assert.Contains("Age", columns)
+        Assert.Contains("Score", columns)
+        Assert.Contains("IsActive", columns)
+        Assert.Contains("JoinDate", columns)

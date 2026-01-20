@@ -102,7 +102,7 @@ namespace Polars.NET.Core.Arrow
             var structType = (StructType)structArray.Data.DataType;
             
             // Build Schema
-            var schema = new Apache.Arrow.Schema(structType.Fields, null); // null for metadata
+            var schema = new Schema(structType.Fields, null); // null for metadata
 
             // Build RecordBatch
             return new RecordBatch(schema, structArray.Fields, structArray.Length);

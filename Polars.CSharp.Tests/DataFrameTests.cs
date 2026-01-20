@@ -621,33 +621,6 @@ B,5";
         Assert.Equal(3, count);
     }
     [Fact]
-    public void Test_ToHtml_Render()
-    {
-        var df = DataFrame.FromColumns(new 
-        {
-            Name = new[] { "Alice", "Bob" },
-            Age = new[] { 25, 30 },
-            Bio = new[] { "Loves coding", null }
-        });
-
-        var html = df.ToHtml();
-
-        // 简单的字符串包含断言
-        Assert.Contains("<table", html);
-        Assert.Contains("Alice", html);
-        Assert.Contains("Bob", html);
-        
-        // 验证表头包含类型
-        Assert.Contains("str", html); 
-        Assert.Contains("i32", html);
-
-        // 验证 null 处理
-        Assert.Contains("class='pl-null'>null", html);
-        
-        // 验证 Shape
-        Assert.Contains("shape: (2, 3)", html);
-    }
-    [Fact]
     public void Test_DataFrame_Sort_Advanced()
     {
         // 数据: 

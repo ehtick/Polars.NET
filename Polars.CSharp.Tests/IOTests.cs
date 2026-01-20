@@ -184,7 +184,7 @@ namespace Polars.CSharp.Tests
                 }
 
                 // 2. 建立管道
-                var lf = LazyFrame.ScanArrowStream(GenerateData(), batchSize);
+                var lf = LazyFrame.ScanEnumerable(GenerateData(), null,batchSize);
 
                 // 3. 转换逻辑 (Lazy)
                 // 只保留 Type == "A" 的数据 (50万行)
@@ -254,7 +254,7 @@ namespace Polars.CSharp.Tests
             // 2. 建立管道
             // ScanArrowStream 内部会调用 ToArrowBatches -> ArrowConverter
             // 这里会触发你的 "邪修" 递归反射逻辑
-            var lf = LazyFrame.ScanArrowStream(GenerateData(), batchSize);
+            var lf = LazyFrame.ScanEnumerable(GenerateData(),null, batchSize);
 
             // 3. 简单的转换 (确保 Lazy 引擎介入)
             // 比如只保留 Id 偶数的

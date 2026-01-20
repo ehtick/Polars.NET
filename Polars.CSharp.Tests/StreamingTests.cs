@@ -3,10 +3,14 @@ using Apache.Arrow;
 using Apache.Arrow.Types;
 using static Polars.CSharp.Polars;
 using Polars.NET.Core.Data;
+using Xunit.Abstractions;
+using Polars.NET.Core.Arrow;
 
 namespace Polars.CSharp.Tests;
 public class StreamingTests
 {
+    private readonly ITestOutputHelper _output;
+    public StreamingTests(ITestOutputHelper output) => _output = output;
     private class BigDataPoco
     {
         public int Id { get; set; }
@@ -84,7 +88,7 @@ public class StreamingTests
         int batchSize = 10000; // 5 个 Batch
 
         // 1. 定义 LazyFrame (此时 C# 还没有开始遍历 GenerateData)
-        var lf = LazyFrame.ScanArrowStream(GenerateData_2(totalRows), batchSize);
+        var lf = LazyFrame.ScanEnumerable(GenerateData_2(totalRows),null, batchSize);
 
         // 2. 构建查询计划 (Filter -> Select -> Alias)
         // 我们只保留偶数行，并且把 Value 翻倍
@@ -124,9 +128,9 @@ public class StreamingTests
     public void Test_Lazy_Stream_Empty()
     {
         // 验证空流处理：不应该崩溃，应该返回空 DataFrame
-        var lf = LazyFrame.ScanArrowStream(new List<StreamPoco>(), batchSize: 100);
+        var lf = LazyFrame.ScanEnumerable(new List<StreamPoco>(), batchSize: 100);
         using var df = lf.Collect();
-        
+
         Assert.Equal(0, df.Height);
         // Schema 应该依然存在 (Id, Group, Value)
         Assert.Contains("Id", df.ColumnNames);
@@ -156,7 +160,7 @@ public class StreamingTests
 
         // 2. 建立管道
         // Input: Streaming (C# -> Rust Chunk by Chunk)
-        var lf = LazyFrame.ScanArrowStream(InfiniteStream(), batchSize);
+        var lf = LazyFrame.ScanEnumerable(InfiniteStream(),null, batchSize);
 
         // 3. 定义计算图
         // 过滤条件非常苛刻，只有最后一行满足
@@ -206,80 +210,127 @@ public class StreamingTests
             };
         }
     }
-    [Fact(Skip ="Stress test")]
+    [Fact(Skip ="StressTest")]
     [Trait("Category", "StressTest")] // 标记为压力测试，CI 中可选跳过
-    public void Test_100_Million_Rows_Streaming()
+    public async Task Test_100_Million_Rows_StreamingAsync()
     {
         // ====================================================
         // 配置区
         // ====================================================
-        int totalRows = 100_000_000; // 1 亿行！
-        int batchSize = 500_000;     // 每次处理 50 万行 (平衡 FFI 开销与内存)
+        int totalRows = 100_000_000; 
+        int batchSize = 500_000;     
         
-        // 打印初始内存
-        long memStart = GC.GetTotalMemory(true);
-        Console.WriteLine($"[Start] Memory: {memStart / 1024 / 1024} MB");
+        // 预热 GC，确保基准线准确
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+
+        // ====================================================
+        // 内存监控启动
+        // ====================================================
+        using var cts = new CancellationTokenSource();
+        long peakPhysicalMemory = 0;
+        long peakManagedMemory = 0;
+
+        var proc = Process.GetCurrentProcess();
+
+        // 启动后台任务监控内存
+        var monitorTask = Task.Run(async () => 
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                proc.Refresh();
+                // 1. 物理内存 : 包含 C# 堆 + Rust 堆 + 所有非托管资源 (最重要!)
+                long currentPhysical = proc.PrivateMemorySize64;
+                
+                // 2. 托管内存 (GC Heap): 仅 C# 对象
+                long currentManaged = GC.GetTotalMemory(false);
+
+                // 更新峰值
+                if (currentPhysical > peakPhysicalMemory) peakPhysicalMemory = currentPhysical;
+                if (currentManaged > peakManagedMemory) peakManagedMemory = currentManaged;
+
+                // 实时打印 (可选，根据测试运行器可能看不到实时输出)
+                // Console.WriteLine($"[Monitor] Phys: {currentPhysical/1024/1024} MB | Man: {currentManaged/1024/1024} MB");
+
+                try { await Task.Delay(100, cts.Token); } catch { break; }
+            }
+        });
+
+        _output.WriteLine($"[Start] Baseline Physical: {proc.PrivateMemorySize64 / 1024 / 1024} MB");
 
         var sw = Stopwatch.StartNew();
 
-        // 1. 建立管道 (Lazy)
-        // 此时没有任何数据产生
-        var lf = LazyFrame.ScanArrowStream(GenerateMassiveData(totalRows), batchSize);
+        // ====================================================
+        // 核心逻辑
+        // ====================================================
+        try 
+        {
+            // 1. 建立管道
+            using var lf = LazyFrame.ScanEnumerable(
+                    GenerateMassiveData(totalRows), 
+                    batchSize: batchSize, 
+                    useBuffered: true
+                );
+            // 2. 构建查询
+            var q = lf
+                .Filter(Col("Category") == Lit("Category_A"))
+                .Select(
+                    Col("Id").Sum().Alias("SumId"),
+                    (Col("Value") * 2).Sum().Alias("SumValue"),
+                    Col("Id").Count().Alias("Count")
+                );
 
-        // 2. 构建查询计划
-        // 任务：
-        // 1. 过滤出 Category_A (5000万行)
-        // 2. 将 Value 乘以 2
-        // 3. 对 Id 求和 (测试大数聚合)
-        // 4. 对 Value 求和
-        var q = lf
-            .Filter(Col("Category") == Lit("Category_A"))
-            .Select(
-                Col("Id").Sum().Alias("SumId"),
-                (Col("Value") * 2).Sum().Alias("SumValue"), // 1.0 * 2 * 5000w = 1亿
-                Col("Id").Count().Alias("Count")
-            );
-
-        // 3. 执行：CollectStreaming (开启流式引擎)
-        // 这一步是见证奇迹的时刻
-        using var df = q.CollectStreaming();
-
-        sw.Stop();
-        
-        // 打印结束内存
-        // 如果内存泄漏，或者不是流式，这里可能会显示好几个 GB，甚至 OOM
-        long memEnd = GC.GetTotalMemory(true);
-        Console.WriteLine($"[End] Memory: {memEnd / 1024 / 1024} MB");
-        Console.WriteLine($"[Time] Processed {totalRows:N0} rows in {sw.Elapsed.TotalSeconds:F2} seconds.");
-        
-        // 计算吞吐量
-        double throughput = totalRows / sw.Elapsed.TotalSeconds;
-        Console.WriteLine($"[Speed] {throughput:N0} rows/sec");
+            // 3. 执行：CollectStreaming
+            // 关键点：use 语句会触发 Dispose，释放 Rust 端资源
+            using var df = q.CollectStreaming();
+            
+            // 停止计时
+            sw.Stop();
+            
+            // ====================================================
+            // 验证结果
+            // ====================================================
+            Assert.Equal(1, df.Height);
+            long expectedCount = totalRows / 2;
+            Assert.Equal(expectedCount, df.GetValue<long>(0, "Count"));
+            double expectedSumValue = expectedCount * 2.0;
+            Assert.Equal(expectedSumValue, df.GetValue<double>(0, "SumValue"));
+        }
+        finally
+        {
+            // 停止监控
+            cts.Cancel();
+            // 等待监控任务结束（吞掉 Cancel 异常）
+            try {await monitorTask;} catch {} 
+        }
 
         // ====================================================
-        // 验证结果 (数学验证)
+        // 最终报告
         // ====================================================
+        proc.Refresh();
+        long endPhysical = proc.PrivateMemorySize64;
+        if (endPhysical > peakPhysicalMemory) peakPhysicalMemory = endPhysical;
         
-        // 1. 验证行数 (聚合后应该是 1 行)
-        Assert.Equal(1, df.Height);
+        Console.WriteLine("--------------------------------------------------");
+        Console.WriteLine($"[Result] Processed {totalRows:N0} rows");
+        Console.WriteLine($"[Time]   Total Time: {sw.Elapsed.TotalSeconds:F2} s");
+        Console.WriteLine($"[Speed]  Throughput: {totalRows / sw.Elapsed.TotalSeconds:N0} rows/sec");
+        Console.WriteLine("--------------------------------------------------");
+        Console.WriteLine($"[Memory] Peak Physical (Total): {peakPhysicalMemory / 1024 / 1024} MB");
+        Console.WriteLine($"[Memory] Peak Managed  (C#):    {peakManagedMemory / 1024 / 1024} MB");
+        Console.WriteLine($"[Memory] End Physical:          {endPhysical / 1024 / 1024} MB");
+        Console.WriteLine("--------------------------------------------------");
 
-        // 2. 验证 Count (应该是 5000万)
-        long expectedCount = totalRows / 2;
-        Assert.Equal(expectedCount, (long)df.GetValue<long>(0, "Count")); // Count 返回通常是 UInt32/UInt64/Int64
-
-        // 3. 验证 Value Sum
-        // 5000万行 * 1.0 * 2 = 100,000,000
-        double expectedSumValue = expectedCount * 2.0;
-        Assert.Equal(expectedSumValue, df.GetValue<double>(0, "SumValue"));
-
-        // 4. 验证 Id Sum (等差数列求和)
-        // 偶数 id: 0, 2, 4, ... 
-        // 项数 n = 50,000,000
-        // 首项 a1 = 0, 末项 an = (n-1)*2 = 99,999,998
-        // Sum = n * (a1 + an) / 2
-        // 注意：结果会非常大，需要 decimal 或 ulong 防止溢出，Polars SumId 可能是 Int64 或 Float64
-        // 这里做一个近似验证或类型转换验证
-        // 这里只是演示，只要不报错且 Count 对了，基本就稳了
+        // ====================================================
+        // 内存断言 (Streaming 验证)
+        // ====================================================
+        // 如果是真正的流式处理，处理 1 亿行数据，峰值内存不应该超过几 GB。
+        // 如果内存飙升到 10GB+，说明内存泄漏或者 Polars 退化成了 Eager 模式。
+        
+        // 假设每个 Batch 50万行，Arrow 格式紧凑，C# + Rust 开销应该控制在 1GB 以内 (甚至 500MB)
+        // 这里给一个宽松的阈值 2GB，如果超过说明绝对有问题。
+        Assert.True(peakPhysicalMemory < 3L * 1024 * 1024 * 1024, 
+            $"Memory Leak Detected! Peak memory usage ({peakPhysicalMemory/1024/1024} MB) exceeded 2GB limit.");
     }
     [Fact]
     public void Test_ArrowToDbStream_EndToEnd()

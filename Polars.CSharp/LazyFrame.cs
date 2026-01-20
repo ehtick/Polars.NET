@@ -72,48 +72,63 @@ public class LazyFrame : IDisposable
     /// <returns></returns>
     public static LazyFrame ScanNdjson(string path) 
         => new(PolarsWrapper.ScanNdjson(path));
-    /// <summary>
-    /// Scan Arrow Stream As LazyFrame
-    /// </summary>
-    /// <typeparam name="T"></typeparam>
-    /// <param name="data"></param>
-    /// <param name="batchSize"></param>
-    /// <returns></returns>
-    public static LazyFrame ScanArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000)
+
+    private static IEnumerable<RecordBatch> EnsureStreamSafety(IEnumerable<RecordBatch> source)
     {
-        IEnumerable<RecordBatch> StreamGenerator() => data.ToArrowBatches(batchSize);
+        using var enumerator = source.GetEnumerator();
 
-        using var probeEnumerator = StreamGenerator().GetEnumerator();
-        
-        if (!probeEnumerator.MoveNext()) 
+        while (enumerator.MoveNext())
         {
-            return DataFrame.From(Enumerable.Empty<T>()).Lazy();
+            var batch = enumerator.Current;
+            yield return batch;
+            batch.Dispose();
         }
-        
-        var schema = probeEnumerator.Current.Schema;
-
-        var handle = ArrowStreamInterop.ScanStream(
-            () => StreamGenerator().GetEnumerator(), 
-            schema
-        );
-        
-        return new LazyFrame(handle);
     }
 
     /// <summary>
-    /// Scan Arrow Stream As LazyFrame with schema input
+    /// Scan Enumberable As LazyFrame
     /// </summary>
-    /// <typeparam name="T"></typeparam>
-    /// <param name="data"></param>
-    /// <param name="schema"></param>
-    /// <param name="batchSize"></param>
     /// <returns></returns>
-    public static LazyFrame ScanArrowStream<T>(IEnumerable<T> data, Schema schema, int batchSize = 100_000)
+    public static LazyFrame ScanEnumerable<T>(
+        IEnumerable<T> data, 
+        Schema? schema = null, 
+        int batchSize = 100_000,
+        bool useBuffered = false)
     {
+        // 1. Get Schema (Cached)
+        schema ??= ArrowConverter.GetSchemaFromType<T>();
+
+        // 2. Buffered Mode
+        if (useBuffered)
+        {
+            var scope = new IpcStreamService.TempIpcScope<T>(data, batchSize); 
+            var handleBuffered = PolarsWrapper.ScanIpc(scope.FilePath!);
+            return new ScopedLazyFrame(handleBuffered, scope);
+        }
+
+        // 3. Streaming Mode (Memory Pointer)
+
+        IEnumerable<RecordBatch> SafeGenerator()
+        {
+            bool hasYielded = false;
+
+            foreach (var batch in data.ToArrowBatches(batchSize))
+            {
+                hasYielded = true;
+                yield return batch;
+            }
+
+            if (!hasYielded)
+            {
+                yield return ArrowConverter.GetEmptyBatch<T>();
+            }
+        }
+
         var handle = ArrowStreamInterop.ScanStream(
-            () => data.ToArrowBatches(batchSize).GetEnumerator(),
+            () => EnsureStreamSafety(SafeGenerator()), 
             schema
         );
+        
         return new LazyFrame(handle);
     }
 
@@ -121,25 +136,16 @@ public class LazyFrame : IDisposable
     /// Scan RecordBatch Stream
     /// If schema is provied, first batch won't be consumed for getting schema.
     /// </summary>
-    public static LazyFrame ScanRecordBatches(IEnumerable<RecordBatch> stream, Schema schema = null!)
-    {
-        if (schema == null)
+    public static LazyFrame ScanRecordBatches(IEnumerable<RecordBatch> stream, Schema schema)
         {
-            using var enumerator = stream.GetEnumerator();
-            
-            if (!enumerator.MoveNext())
-                throw new InvalidOperationException("Cannot scan empty stream without schema. Please provide a schema explicitly.");
-            
-            schema = enumerator.Current.Schema;
+            if (schema == null) throw new ArgumentNullException(nameof(schema));
+
+            var handle = ArrowStreamInterop.ScanStream(
+                () => EnsureStreamSafety(stream),
+                schema
+            );
+            return new LazyFrame(handle);
         }
-
-        var handle = ArrowStreamInterop.ScanStream(
-            stream.GetEnumerator, 
-            schema
-        );
-
-        return new LazyFrame(handle);
-    }
     /// <summary>
     /// Scan Database to LazyFrame
     /// </summary>
@@ -212,25 +218,67 @@ public class LazyFrame : IDisposable
     /// </code>
     /// </example>
     public static LazyFrame ScanDatabase(Func<IDataReader> readerFactory, int batchSize = 50_000)
-    {
-        Schema schema;
-        using (var probeReader = readerFactory())
         {
-            schema = probeReader.GetArrowSchema();
-        }
-
-        IEnumerable<RecordBatch> ReplayableStream()
-        {
-            using var reader = readerFactory();
-            
-            foreach (var batch in reader.ToArrowBatches(batchSize))
+            Schema schema;
+            // Probe schema
+            using (var probe = readerFactory())
             {
-                yield return batch;
+                schema = probe.GetArrowSchema();
             }
-            
-        }
 
-        return ScanRecordBatches(ReplayableStream(), schema);
+            // Replayable stream
+            IEnumerable<RecordBatch> StreamFactory()
+            {
+                using var reader = readerFactory();
+                foreach (var batch in reader.ToArrowBatches(batchSize))
+                    yield return batch;
+            }
+
+            var handle = ArrowStreamInterop.ScanStream(
+                () => EnsureStreamSafety(StreamFactory()),
+                schema
+            );
+            return new LazyFrame(handle);
+        }
+    /// <summary>
+    /// A LazyFrame with resource scope which needs to be disposed.
+    /// 当它被 Dispose 时，除了释放 LazyFrame 句柄，还会清理关联的临时资源（如磁盘上的 IPC 文件）。
+    /// </summary>
+    public class ScopedLazyFrame : LazyFrame
+    {
+        private readonly IDisposable? _resource;
+
+        // 🟢 修正：构造函数接收 LazyFrameHandle 以匹配基类
+        internal ScopedLazyFrame(LazyFrameHandle handle, IDisposable? resource) 
+            : base(handle) 
+        {
+            _resource = resource;
+        }
+        /// <summary>
+        /// Dispose temp file and lazyframe
+        /// </summary>
+        public new void Dispose()
+        {
+            // 1. 先释放基类持有的 Rust 句柄
+            base.Dispose();
+            
+            // 2. 再清理 C# 端的临时资源 (例如删除临时文件)
+            _resource?.Dispose();
+        }
+    }
+    /// <summary>
+    /// [Buffered] Create a LazyFrame from an existing DataReader.
+    /// <para><b>Note:</b> This consumes the reader IMMEDIATELY and writes to a temp file.</para>
+    /// <para>Returns a <see cref="ScopedLazyFrame"/> which must be disposed to delete the temp file.</para>
+    /// </summary>
+    public static ScopedLazyFrame ScanDatabaseBuffered(IDataReader reader, int batchSize = 50_000)
+    {
+        // DataReader cannot be reset, so we must buffer it to disk immediately
+        var scope = new IpcStreamService.TempIpcScopeReader(reader, batchSize);
+        
+        var handle = PolarsWrapper.ScanIpc(scope.FilePath!);
+        
+        return new ScopedLazyFrame(handle, scope);
     }
     // ==========================================
     // Meta / Inspection

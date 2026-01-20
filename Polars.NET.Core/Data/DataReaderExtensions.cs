@@ -1,5 +1,6 @@
 using System.Data;
 using Apache.Arrow;
+using Polars.NET.Core.Arrow;
 
 namespace Polars.NET.Core.Data
 {
@@ -9,7 +10,7 @@ namespace Polars.NET.Core.Data
         /// From SchemaTable of IDataReader infer Arrow Schema.
         /// </summary>
         public static Schema GetArrowSchema(this IDataReader reader)
-            => DbToArrowStream.GetArrowSchema(reader);
+            => ArrowTypeResolver.GetSchemaFromDataReader(reader);
 
         /// <summary>
         /// Convert IDataReader to Arrow RecordBatch Stream

@@ -567,10 +567,9 @@ type ``Complex Query Tests`` () =
         // ---------------------------------------------------------
         // 2. [Transform] 构建 Polars 流式管道
         // ---------------------------------------------------------
-
+        
         // 这里的 batchSize=50_000 意味着 Polars 每次只从 Reader 拉取 5万行进内存
         let lf = LazyFrame.scanDb(readerFactory, batchSize=50_000)
-
         // Step C: 定义转换逻辑 (Transform)
         // 业务需求：
         // 1. 只保留 "US" 地区的订单
