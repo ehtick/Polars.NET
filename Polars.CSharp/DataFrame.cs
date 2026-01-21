@@ -1387,9 +1387,9 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             ("mean",       c => Polars.Col(c).Mean()),
             ("std",        c => Polars.Col(c).Std()),
             ("min",        c => Polars.Col(c).Min().Cast(DataType.Float64)),
-            ("25%",        c => Polars.Col(c).Quantile(0.25, "nearest").Cast(DataType.Float64)),
+            ("25%",        c => Polars.Col(c).Quantile(0.25, QuantileMethod.Nearest).Cast(DataType.Float64)),
             ("50%",        c => Polars.Col(c).Median().Cast(DataType.Float64)),
-            ("75%",        c => Polars.Col(c).Quantile(0.75, "nearest").Cast(DataType.Float64)),
+            ("75%",        c => Polars.Col(c).Quantile(0.75, QuantileMethod.Nearest).Cast(DataType.Float64)),
             ("max",        c => Polars.Col(c).Max().Cast(DataType.Float64))
         };
 

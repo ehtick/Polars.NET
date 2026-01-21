@@ -122,3 +122,29 @@ public enum PlRoll
     /// </summary>
     Backward = 2
 }
+
+public enum PlRankMethod: byte
+{
+    Average = 0, // Default
+    Min = 1,
+    Max = 2,
+    Dense = 3,
+    Ordinal = 4,
+    Random = 5,
+}
+public enum PlRollingRankMethod: byte
+{
+    Average = 0, // Default
+    Min = 1,
+    Max = 2,
+    Dense = 3,
+    Random = 4,
+}
+public enum PlQuantileMethod : byte
+{
+    Nearest = 0,
+    Higher = 1,
+    Lower = 2,
+    Midpoint = 3,
+    Linear = 4 // Default
+}

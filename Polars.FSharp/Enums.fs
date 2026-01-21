@@ -327,3 +327,33 @@ type Roll =
         | Raise -> PlRoll.Raise
         | Forward -> PlRoll.Forward
         | Backward -> PlRoll.Backward
+
+type QuantileMethod =
+    | Nearest 
+    | Higher 
+    | Lower
+    | Midpoint
+    | Linear
+    member internal this.ToNative() =
+        match this with
+        | Nearest -> PlQuantileMethod.Nearest
+        | Higher -> PlQuantileMethod.Higher
+        | Lower -> PlQuantileMethod.Lower
+        | Midpoint -> PlQuantileMethod.Midpoint
+        | Linear -> PlQuantileMethod.Linear
+
+type RankMethod =
+    | Average 
+    | Min
+    | Max
+    | Dense
+    | Ordinal
+    | Random
+    member internal this.ToNative() =
+        match this with
+        | Average -> PlRankMethod.Average
+        | Min -> PlRankMethod.Min
+        | Max -> PlRankMethod.Max
+        | Dense -> PlRankMethod.Dense
+        | Ordinal -> PlRankMethod.Ordinal
+        | Random -> PlRankMethod.Random

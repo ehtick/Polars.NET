@@ -7,7 +7,7 @@
     <Nullable>disable</Nullable>
 
     <PackageId>Polars.FSharp</PackageId>
-    <Version>0.1.0-beta1</Version>
+    <Version>0.1.0-beta2</Version>
     <Authors>ErrorLSC</Authors>
     <Description>Idiomatic F# API for Polars DataFrame library with strict type safety and pipeline support.</Description>
     <PackageTags>polars;dataframe;fsharp;functional;data-science</PackageTags>

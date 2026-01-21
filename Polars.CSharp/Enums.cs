@@ -121,6 +121,67 @@ public enum Roll
     Backward
 }
 
+public enum QuantileMethod : byte
+{
+    Nearest = 0,
+    Higher = 1,
+    Lower = 2,
+    Midpoint = 3,
+    Linear = 4 // Default
+}
+
+public enum RankMethod : byte
+{
+    /// <summary>
+    ///  The average of the ranks that would have been assigned to all the tied values is assigned to each value.
+    /// </summary>
+    Average = 0, // Default
+    /// <summary>
+    /// The minimum of the ranks that would have been assigned to all the tied values is assigned to each value. (This is also referred to as “competition” ranking.)
+    /// </summary>
+    Min = 1,
+    /// <summary>
+    /// The maximum of the ranks that would have been assigned to all the tied values is assigned to each value.
+    /// </summary>
+    Max = 2,
+    /// <summary>
+    /// Like ‘min’, but the rank of the next highest element is assigned the rank immediately after those assigned to the tied elements.
+    /// </summary>
+    Dense = 3,
+    /// <summary>
+    /// All values are given a distinct rank, corresponding to the order that the values occur in the Series.
+    /// </summary>
+    Ordinal = 4,
+    /// <summary>
+    /// Like ‘ordinal’, but the rank for ties is not dependent on the order that the values occur in the Series.
+    /// </summary>
+    Random = 5
+}
+
+public enum RollingRankMethod : byte
+{
+    /// <summary>
+    ///  The average of the ranks that would have been assigned to all the tied values is assigned to each value.
+    /// </summary>
+    Average = 0, // Default
+    /// <summary>
+    /// The minimum of the ranks that would have been assigned to all the tied values is assigned to each value. (This is also referred to as “competition” ranking.)
+    /// </summary>
+    Min = 1,
+    /// <summary>
+    /// The maximum of the ranks that would have been assigned to all the tied values is assigned to each value.
+    /// </summary>
+    Max = 2,
+    /// <summary>
+    /// Like ‘min’, but the rank of the next highest element is assigned the rank immediately after those assigned to the tied elements.
+    /// </summary>
+    Dense = 3,
+    /// <summary>
+    /// All values are given a distinct rank, corresponding to the order that the values occur in the Series.
+    /// </summary>
+    Random = 4
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlTimeUnit ToNative(this TimeUnit unit) => unit switch
@@ -206,6 +267,34 @@ internal static class EnumExtensions
         Roll.Forward => CoreEnums.PlRoll.Forward,
         Roll.Raise => CoreEnums.PlRoll.Raise,
         _ => throw new ArgumentOutOfRangeException(nameof(roll), roll, null)
+    };
+    internal static CoreEnums.PlQuantileMethod ToNative(this QuantileMethod interpol) => interpol switch
+    {
+        QuantileMethod.Nearest => CoreEnums.PlQuantileMethod.Nearest,
+        QuantileMethod.Higher => CoreEnums.PlQuantileMethod.Higher,
+        QuantileMethod.Lower => CoreEnums.PlQuantileMethod.Lower,
+        QuantileMethod.Midpoint => CoreEnums.PlQuantileMethod.Midpoint,
+        QuantileMethod.Linear => CoreEnums.PlQuantileMethod.Linear,  
+        _ => throw new ArgumentOutOfRangeException(nameof(interpol), interpol, null)
+    };
+    internal static CoreEnums.PlRankMethod ToNative(this RankMethod method) => method switch
+    {
+        RankMethod.Average => CoreEnums.PlRankMethod.Average,
+        RankMethod.Min => CoreEnums.PlRankMethod.Min,
+        RankMethod.Max => CoreEnums.PlRankMethod.Max,
+        RankMethod.Dense => CoreEnums.PlRankMethod.Dense,
+        RankMethod.Ordinal => CoreEnums.PlRankMethod.Ordinal,
+        RankMethod.Random => CoreEnums.PlRankMethod.Random,
+        _ => throw new ArgumentOutOfRangeException(nameof(method), method, null)
+    };
+    internal static CoreEnums.PlRollingRankMethod ToNative(this RollingRankMethod method) => method switch
+    {
+        RollingRankMethod.Average => CoreEnums.PlRollingRankMethod.Average,
+        RollingRankMethod.Min => CoreEnums.PlRollingRankMethod.Min,
+        RollingRankMethod.Max => CoreEnums.PlRollingRankMethod.Max,
+        RollingRankMethod.Dense => CoreEnums.PlRollingRankMethod.Dense,
+        RollingRankMethod.Random => CoreEnums.PlRollingRankMethod.Random,
+        _ => throw new ArgumentOutOfRangeException(nameof(method), method, null)
     };
 }
 

@@ -813,7 +813,7 @@ type Series(handle: SeriesHandle) =
     /// </summary>
     /// <param name="q">Quantile between 0.0 and 1.0.</param>
     /// <param name="interpolation">Interpolation method ("nearest", "higher", "lower", "midpoint", "linear"). Default "linear".</param>
-    member this.Quantile(q: float, ?interpolation: string) =
+    member this.Quantile(q: float, ?interpolation: QuantileMethod) =
         this.ApplyExpr(Expr.Col(this.Name).Quantile(q, ?interpolation=interpolation))
     /// <summary>
     /// Count the occurrences of unique values.

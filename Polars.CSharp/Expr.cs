@@ -36,10 +36,10 @@ public class Expr : IDisposable
             // --- String and Boolean ---
             string str => new Expr(PolarsWrapper.Lit(str)),
             bool b => new Expr(PolarsWrapper.Lit(b)),
-            
+
             // --- Time ---
             DateTime dt => new Expr(PolarsWrapper.Lit(dt)),
-            
+
             // --- Null ---
             null => new Expr(PolarsWrapper.LitNull()),
 
@@ -104,9 +104,9 @@ public class Expr : IDisposable
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.Gt(l, r));
     }
-    public static Expr operator >(Expr left, object right) => 
+    public static Expr operator >(Expr left, object right) =>
         new(PolarsWrapper.Gt(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator >(object left, Expr right) => 
+    public static Expr operator >(object left, Expr right) =>
         new(PolarsWrapper.Gt(MakeLit(left).Handle, right.CloneHandle()));
 
     /// <summary>
@@ -122,9 +122,9 @@ public class Expr : IDisposable
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.Lt(l, r));
     }
-    public static Expr operator <(Expr left, object right) => 
+    public static Expr operator <(Expr left, object right) =>
         new(PolarsWrapper.Lt(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator <(object left, Expr right) => 
+    public static Expr operator <(object left, Expr right) =>
         new(PolarsWrapper.Lt(MakeLit(left).Handle, right.CloneHandle()));
     /// <summary>
     /// Creates an expression evaluating if the left operand is greater than or equal to the right operand.
@@ -137,11 +137,11 @@ public class Expr : IDisposable
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
-        return new Expr(PolarsWrapper.GtEq(l, r)); 
+        return new Expr(PolarsWrapper.GtEq(l, r));
     }
-    public static Expr operator >=(Expr left, object right) => 
+    public static Expr operator >=(Expr left, object right) =>
         new(PolarsWrapper.GtEq(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator >=(object left, Expr right) => 
+    public static Expr operator >=(object left, Expr right) =>
         new(PolarsWrapper.GtEq(MakeLit(left).Handle, right.CloneHandle()));
     /// <summary>
     /// Creates an expression evaluating if the left operand is less than or equal to the right operand.
@@ -154,11 +154,11 @@ public class Expr : IDisposable
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
-        return new Expr(PolarsWrapper.LtEq(l, r)); 
+        return new Expr(PolarsWrapper.LtEq(l, r));
     }
-    public static Expr operator <=(Expr left, object right) => 
+    public static Expr operator <=(Expr left, object right) =>
         new(PolarsWrapper.LtEq(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator <=(object left, Expr right) => 
+    public static Expr operator <=(object left, Expr right) =>
         new(PolarsWrapper.LtEq(MakeLit(left).Handle, right.CloneHandle()));
     /// <summary>
     /// Creates an expression evaluating if the left operand is equal to the right operand.
@@ -171,11 +171,11 @@ public class Expr : IDisposable
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
-        return new Expr(PolarsWrapper.Eq(l, r));   
+        return new Expr(PolarsWrapper.Eq(l, r));
     }
-    public static Expr operator ==(Expr left, object right) => 
+    public static Expr operator ==(Expr left, object right) =>
         new(PolarsWrapper.Eq(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator ==(object left, Expr right) => 
+    public static Expr operator ==(object left, Expr right) =>
         new(PolarsWrapper.Eq(MakeLit(left).Handle, right.CloneHandle()));
     /// <summary>
     /// Creates an expression evaluating if the left operand is not equal to the right operand.
@@ -188,11 +188,11 @@ public class Expr : IDisposable
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
-        return new Expr(PolarsWrapper.Neq(l, r));  
+        return new Expr(PolarsWrapper.Neq(l, r));
     }
-    public static Expr operator !=(Expr left, object right) => 
+    public static Expr operator !=(Expr left, object right) =>
         new(PolarsWrapper.Neq(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator !=(object left, Expr right) => 
+    public static Expr operator !=(object left, Expr right) =>
         new(PolarsWrapper.Neq(MakeLit(left).Handle, right.CloneHandle()));
     // ==========================================
     // Arithmetic Operators
@@ -242,9 +242,9 @@ public class Expr : IDisposable
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.Add(l, r));
     }
-    public static Expr operator +(Expr left, object right) => 
+    public static Expr operator +(Expr left, object right) =>
         new(PolarsWrapper.Add(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator +(object left, Expr right) => 
+    public static Expr operator +(object left, Expr right) =>
         new(PolarsWrapper.Add(MakeLit(left).Handle, right.CloneHandle()));
     /// <summary>
     /// Creates an expression representing the subtraction of the right expression from the left expression.
@@ -259,9 +259,9 @@ public class Expr : IDisposable
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.Sub(l, r));
     }
-    public static Expr operator -(Expr left, object right) => 
+    public static Expr operator -(Expr left, object right) =>
         new(PolarsWrapper.Sub(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator -(object left, Expr right) => 
+    public static Expr operator -(object left, Expr right) =>
         new(PolarsWrapper.Sub(MakeLit(left).Handle, right.CloneHandle()));
     /// <summary>
     /// Creates an expression representing the multiplication of two expressions.
@@ -270,15 +270,15 @@ public class Expr : IDisposable
     /// <param name="right">The right expression.</param>
     /// <returns>A numeric expression representing the product.</returns>
     /// /// <see cref="operator +(Expr, Expr)"/>
-    public static Expr operator *(Expr left, Expr right)   
+    public static Expr operator *(Expr left, Expr right)
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.Mul(l, r));
     }
-    public static Expr operator *(Expr left, object right) => 
+    public static Expr operator *(Expr left, object right) =>
         new(PolarsWrapper.Mul(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator *(object left, Expr right) => 
+    public static Expr operator *(object left, Expr right) =>
         new(PolarsWrapper.Mul(MakeLit(left).Handle, right.CloneHandle()));
     /// <summary>
     /// Creates an expression representing the division of the left expression by the right expression.
@@ -287,15 +287,15 @@ public class Expr : IDisposable
     /// <param name="right">The right expression.</param>
     /// <returns>A numeric expression representing the quotient.</returns>
     /// /// <see cref="operator +(Expr, Expr)"/>
-    public static Expr operator /(Expr left, Expr right)   
+    public static Expr operator /(Expr left, Expr right)
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.Div(l, r));
     }
-    public static Expr operator /(Expr left, object right) => 
+    public static Expr operator /(Expr left, object right) =>
         new(PolarsWrapper.Div(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator /(object left, Expr right) => 
+    public static Expr operator /(object left, Expr right) =>
         new(PolarsWrapper.Div(MakeLit(left).Handle, right.CloneHandle()));
     /// <summary>
     /// Creates an expression representing the remaining of the left expression by the right expression.
@@ -304,15 +304,15 @@ public class Expr : IDisposable
     /// <param name="right">The right expression.</param>
     /// <returns>A numeric expression representing the quotient.</returns>
     /// /// <see cref="operator +(Expr, Expr)"/>
-    public static Expr operator %(Expr left, Expr right)   
+    public static Expr operator %(Expr left, Expr right)
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.Rem(l, r));
     }
-    public static Expr operator %(Expr left, object right) => 
+    public static Expr operator %(Expr left, object right) =>
         new(PolarsWrapper.Rem(left.CloneHandle(), MakeLit(right).Handle));
-    public static Expr operator %(object left, Expr right) => 
+    public static Expr operator %(object left, Expr right) =>
         new(PolarsWrapper.Rem(MakeLit(left).Handle, right.CloneHandle()));
 
     /// <summary>
@@ -322,7 +322,7 @@ public class Expr : IDisposable
         => new(PolarsWrapper.FloorDiv(this.CloneHandle(), other.CloneHandle()));
 
     public Expr FloorDiv(object other)
-        =>new(PolarsWrapper.FloorDiv(this.CloneHandle(), MakeLit(other).Handle));
+        => new(PolarsWrapper.FloorDiv(this.CloneHandle(), MakeLit(other).Handle));
     // ==========================================
     // Bitwise Operators (<<, >>)
     // ==========================================
@@ -393,7 +393,7 @@ public class Expr : IDisposable
         var h = left.CloneHandle();
         return new Expr(PolarsWrapper.BitRightShift(h, right));
     }
-    
+
     // ==========================================
     // Logical Operators
     // ==========================================
@@ -434,13 +434,13 @@ public class Expr : IDisposable
     /// */
     /// </code>
     /// </example>
-    public static Expr operator &(Expr left, Expr right)  
+    public static Expr operator &(Expr left, Expr right)
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.And(l, r));
     }
-    public static Expr operator &(Expr left, bool right) => 
+    public static Expr operator &(Expr left, bool right) =>
         new(PolarsWrapper.And(left.CloneHandle(), MakeLit(right).Handle));
     /// <summary>
     /// Creates an expression representing the logical OR operation.
@@ -448,20 +448,20 @@ public class Expr : IDisposable
     /// <param name="left">The left boolean expression.</param>
     /// <param name="right">The right boolean expression.</param>
     /// <returns>A boolean expression that evaluates to true if at least one operand is true.</returns>
-    public static Expr operator |(Expr left, Expr right)  
+    public static Expr operator |(Expr left, Expr right)
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.Or(l, r));
     }
-    public static Expr operator |(Expr left, bool right) => 
+    public static Expr operator |(Expr left, bool right) =>
         new(PolarsWrapper.Or(left.CloneHandle(), MakeLit(right).Handle));
     /// <summary>
     /// Creates an expression representing the logical NOT operation.
     /// </summary>
     /// <param name="expr">The boolean expression to negate.</param>
     /// <returns>A boolean expression that evaluates to the opposite truth value.</returns>
-    public static Expr operator !(Expr expr)    
+    public static Expr operator !(Expr expr)
     {
         var e = expr.CloneHandle();
         return new Expr(PolarsWrapper.Not(e));
@@ -472,16 +472,16 @@ public class Expr : IDisposable
     /// <param name="left"></param>
     /// <param name="right"></param>
     /// <returns></returns>
-    public static Expr operator ^(Expr left, Expr right)  
+    public static Expr operator ^(Expr left, Expr right)
     {
         var l = left.CloneHandle();
         var r = right.CloneHandle();
         return new Expr(PolarsWrapper.Xor(l, r));
     }
-    public static Expr operator ^(Expr left, bool right) 
+    public static Expr operator ^(Expr left, bool right)
         => new(PolarsWrapper.Xor(left.CloneHandle(), MakeLit(right).Handle));
-        
-    public static Expr operator ^(bool left, Expr right) 
+
+    public static Expr operator ^(bool left, Expr right)
         => new(PolarsWrapper.Xor(MakeLit(left).Handle, right.CloneHandle()));
     // ---------------------------------------------------
     // Methods
@@ -492,7 +492,7 @@ public class Expr : IDisposable
     /// </summary>
     /// <param name="name"></param>
     /// <returns></returns>
-    public Expr Alias(string name) => 
+    public Expr Alias(string name) =>
         new(PolarsWrapper.Alias(Handle, name));
 
     // ==========================================
@@ -554,19 +554,24 @@ public class Expr : IDisposable
     public Expr Sum() => new(PolarsWrapper.Sum(CloneHandle()));
 
     /// <summary>
-    /// Mean
+    /// Compute the mean of an expression
     /// </summary>
     public Expr Mean() => new(PolarsWrapper.Mean(CloneHandle()));
 
     /// <summary>
-    /// Max
+    /// Compute the max of an expression
     /// </summary>
     public Expr Max() => new(PolarsWrapper.Max(CloneHandle()));
 
     /// <summary>
-    /// Min
+    /// Compute the min of an expression
     /// </summary>
     public Expr Min() => new(PolarsWrapper.Min(CloneHandle()));
+    /// <summary>
+    /// Compute the product of an expression
+    /// </summary>
+    /// <returns></returns>
+    public Expr Product() => new(PolarsWrapper.Product(CloneHandle()));
 
     // ==========================================
     // Math
@@ -595,7 +600,7 @@ public class Expr : IDisposable
     /// <summary>
     /// Calculate the power of the expression with a given numeric exponent.
     /// </summary>
-    public Expr Pow(double exponent) => new(PolarsWrapper.Pow(CloneHandle(),PolarsWrapper.Lit(exponent)));
+    public Expr Pow(double exponent) => new(PolarsWrapper.Pow(CloneHandle(), PolarsWrapper.Lit(exponent)));
 
     /// <summary>
     /// Calculate the power of the Euler's number.
@@ -666,7 +671,7 @@ public class Expr : IDisposable
     /// Fill null values with a specified value.
     /// </summary>
     /// <param name="fillValue">The expression (or literal) to replace nulls with.</param>
-    public Expr FillNull(Expr fillValue) => new (PolarsWrapper.FillNull(CloneHandle(), fillValue.CloneHandle()));
+    public Expr FillNull(Expr fillValue) => new(PolarsWrapper.FillNull(CloneHandle(), fillValue.CloneHandle()));
     /// <summary>
     /// Fill null values with a specified literal value.
     /// </summary>
@@ -681,7 +686,7 @@ public class Expr : IDisposable
     /// <summary>
     /// Fill null values with a specific strategy (Backward).
     /// </summary>
-    public Expr BackwardFill(uint? limit = null)=> new(PolarsWrapper.BackwardFill(CloneHandle(), limit ?? 0));
+    public Expr BackwardFill(uint? limit = null) => new(PolarsWrapper.BackwardFill(CloneHandle(), limit ?? 0));
     /// <summary>
     /// Evaluate whether the expression is null.
     /// </summary>
@@ -724,7 +729,7 @@ public class Expr : IDisposable
             throw new ArgumentException("The length of 'by' and 'reverse' must match.");
 
         var byHandles = System.Array.ConvertAll(by, e => e.CloneHandle());
-        
+
         return new Expr(PolarsWrapper.TopKBy(CloneHandle(), (uint)k, byHandles, reverse));
     }
 
@@ -734,7 +739,7 @@ public class Expr : IDisposable
             throw new ArgumentException("The length of 'by' and 'reverse' must match.");
 
         var byHandles = System.Array.ConvertAll(by, e => e.CloneHandle());
-        
+
         return new Expr(PolarsWrapper.BottomKBy(CloneHandle(), (uint)k, byHandles, reverse));
     }
     // ==========================================
@@ -771,23 +776,170 @@ public class Expr : IDisposable
     /// <summary>
     /// Get the standard deviation.
     /// </summary>
+    /// <param name="ddof">“Delta Degrees of Freedom”: the divisor used in the calculation is N - ddof, where N represents the number of elements. By default ddof is 1.</param>
+    /// <returns>A series which length is 1</returns>
     public Expr Std(int ddof = 1) => new(PolarsWrapper.Std(CloneHandle(), ddof));
 
     /// <summary>
     /// Get the variance.
     /// </summary>
+    /// <param name="ddof">“Delta Degrees of Freedom”: the divisor used in the calculation is N - ddof, where N represents the number of elements. By default ddof is 1.</param>
+    /// <returns>A series which length is 1</returns>
     public Expr Var(int ddof = 1) => new(PolarsWrapper.Var(CloneHandle(), ddof));
 
     /// <summary>
     /// Get the median value.
     /// </summary>
+    /// <returns>A series which length is 1</returns>
     public Expr Median() => new(PolarsWrapper.Median(CloneHandle()));
-
+    /// <summary>
+    /// Compute the sample skewness of a data set.
+    /// </summary>
+    /// <param name="bias">If False, the calculations are corrected for statistical bias.</param>
+    /// <returns>A series which length is 1</returns>
+    public Expr Skew(bool bias = true) => new(PolarsWrapper.Skew(CloneHandle(), bias));
+    /// <summary>
+    /// Compute the kurtosis (Fisher or Pearson) of a dataset.
+    /// </summary>
+    /// <param name="fisher">If True, Fisher’s definition is used (normal ==> 0.0). If False, Pearson’s definition is used (normal ==> 3.0).</param>
+    /// <param name="bias">If False, the calculations are corrected for statistical bias.</param>
+    /// <returns>A series which length is 1</returns>
+    public Expr Kurtosis(bool fisher = true, bool bias = true) => new(PolarsWrapper.Kurtosis(CloneHandle(), fisher, bias));
     /// <summary>
     /// Get the quantile value.
     /// </summary>
-    public Expr Quantile(double quantile, string method = "nearest") 
-        => new(PolarsWrapper.Quantile(CloneHandle(), quantile, method)); // CloneHandle 因为 Quantile 消耗 Expr
+    /// <param name="quantile">Quantile between 0.0 and 1.0.</param>
+    /// <param name="method">['nearest’, ‘higher’, ‘lower’, ‘midpoint’, ‘linear’] Interpolation method.</param>
+    /// <returns>A series which length is 1</returns>
+    public Expr Quantile(double quantile, QuantileMethod method = QuantileMethod.Linear)
+        => new(PolarsWrapper.Quantile(CloneHandle(), quantile, method.ToNative()));
+    /// <summary>
+    /// Computes percentage change between values.
+    /// Percentage change (as fraction) between current element and most-recent non-null element at least n period(s) before the current element.
+    /// Computes the change from the previous row by default.
+    /// </summary>
+    /// <param name="n">periods to shift for forming percent change.</param>
+    /// <returns>A series which length is 1</returns>
+    public Expr PctChange(int n = 1)
+        => new(PolarsWrapper.PctChange(CloneHandle(), n));
+    /// <summary>
+    /// Assign ranks to data, dealing with ties appropriately.
+    /// </summary>
+    /// <param name="method">
+    /// The method used to assign ranks to tied elements. See <see cref="RankMethod"/> for details.
+    /// Default is <see cref="RankMethod.Average"/>.</param>
+    /// <param name="descending">Rank in descending order.</param>
+    /// <param name="seed">If method="random", use this as seed.</param>
+    /// <returns></returns>
+    public Expr Rank(RankMethod method = RankMethod.Average, bool descending = false, ulong? seed = null)
+        => new(PolarsWrapper.Rank(CloneHandle(), method.ToNative(), descending, seed));
+    // ==========================================
+    // Cumulative Functions
+    // ==========================================
+    /// <summary>
+    /// Get an array with the cumulative sum computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    public Expr CumSum(bool reverse = false)
+        => new(PolarsWrapper.CumSum(CloneHandle(), reverse));
+    /// <summary>
+    /// Get an array with the cumulative max computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    public Expr CumMax(bool reverse = false)
+        => new(PolarsWrapper.CumMax(CloneHandle(), reverse));
+    /// <summary>
+    /// Get an array with the cumulative min computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    public Expr CumMin(bool reverse = false)
+        => new(PolarsWrapper.CumMin(CloneHandle(), reverse));
+    /// <summary>
+    /// Get an array with the cumulative prod computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    public Expr CumProd(bool reverse = false)
+        => new(PolarsWrapper.CumProd(CloneHandle(), reverse));
+    /// <summary>
+    /// Get an array with the cumulative count computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    public Expr CumCount(bool reverse = false)
+        => new(PolarsWrapper.CumCount(CloneHandle(), reverse));
+    // ==========================================
+    // EWM Functions
+    // ==========================================
+    /// <summary>
+    /// Compute exponentially-weighted moving average.
+    /// </summary>
+    /// <param name="alpha">
+    /// Specify smoothing factor alpha directly. 
+    /// <para>Constraint: <c>0 &lt; alpha &lt;= 1</c></para>
+    /// </param>
+    /// <param name="adjust">
+    /// If <c>true</c>, divide by decaying adjustment factor in beginning periods to account for imbalance in relative weightings (viewing data as finite history). 
+    /// If <c>false</c>, assume infinite history.
+    /// </param>
+    /// <param name="bias">
+    /// If <c>true</c>, use a biased estimator (Standard deviation uses <c>N</c> in denominator). 
+    /// If <c>false</c>, use an unbiased estimator (Standard deviation uses <c>N-1</c>).
+    /// <para>Note: This is primarily relevant for Variance/StdDev. For Mean, it typically defaults to true.</para>
+    /// </param>
+    /// <param name="minPeriods">Minimum number of observations in window required to have a value (otherwise result is null).</param>
+    /// <param name="ignoreNulls">Ignore missing values when calculating weights.</param>
+    /// <returns>A new expression representing the EWM mean.</returns>
+    public Expr EwmMean(double alpha, bool adjust = true, bool bias = true, int minPeriods = 1, bool ignoreNulls = false)
+        => new(PolarsWrapper.EwmMean(CloneHandle(), alpha, adjust, bias, minPeriods, ignoreNulls));
+    /// <summary>
+    /// Compute exponentially-weighted moving standard deviation.
+    /// </summary>
+    /// <inheritdoc cref="EwmMean"/>
+    /// <returns>A new expression representing the EWM standard deviation.</returns>
+    public Expr EwmStd(double alpha, bool adjust = true, bool bias = true, int minPeriods = 1, bool ignoreNulls = false)
+        => new(PolarsWrapper.EwmStd(CloneHandle(), alpha, adjust, bias, minPeriods, ignoreNulls));
+    /// <summary>
+    /// Compute exponentially-weighted moving variance.
+    /// </summary>
+    /// <inheritdoc cref="EwmMean"/>
+    /// <returns>A new expression representing the EWM variance.</returns>
+    public Expr EwmVar(double alpha, bool adjust = true, bool bias = true, int minPeriods = 1, bool ignoreNulls = false)
+        => new(PolarsWrapper.EwmVar(CloneHandle(), alpha, adjust, bias, minPeriods, ignoreNulls));
+    /// <summary>
+    /// Compute exponentially-weighted moving average based on a temporal or index column.
+    /// </summary>
+    /// <param name="by">
+    /// The column used to determine the distance between observations.
+    /// <para>Supported data types: <c>Date</c>, <c>DateTime</c>, <c>UInt64</c>, <c>UInt32</c>, <c>Int64</c>, or <c>Int32</c>.</para>
+    /// </param>
+    /// <param name="halfLife">
+    /// The unit over which an observation decays to half its value.
+    /// <para>Supported string formats:</para>
+    /// <list type="bullet">
+    ///     <item><term>Time units</term><description><c>ns</c> (nanosecond), <c>us</c> (microsecond), <c>ms</c> (millisecond), <c>s</c> (second), <c>m</c> (minute), <c>h</c> (hour), <c>d</c> (day), <c>w</c> (week).</description></item>
+    ///     <item><term>Index units</term><description><c>i</c> (index count). Example: <c>"2i"</c> means decay by half every 2 index steps.</description></item>
+    ///     <item><term>Compound</term><description>Example: <c>"3d12h4m25s"</c>.</description></item>
+    /// </list>
+    /// <para>
+    /// <b>Warning:</b> <paramref name="halfLife"/> is treated as a constant duration. 
+    /// Calendar durations such as months (<c>mo</c>) or years (<c>y</c>) are <b>NOT</b> supported because they vary in length. 
+    /// Please express such durations in hours (e.g. use <c>'730h'</c> instead of <c>'1mo'</c>).
+    /// </para>
+    /// </param>
+    /// <returns>A new expression representing the time/index-based EWM mean.</returns>
+    public Expr EwmMeanBy(Expr by, string halfLife)
+    {
+        return new Expr(PolarsWrapper.EwmMeanBy(
+            CloneHandle(),
+            by.CloneHandle(),
+            halfLife
+        ));
+    }
+
     // ==========================================
     // Logic / Comparison
     // ==========================================
@@ -795,7 +947,7 @@ public class Expr : IDisposable
     /// <summary>
     /// Check if the value is between lower and upper bounds (inclusive).
     /// </summary>
-    public Expr IsBetween(Expr lower, Expr upper)  
+    public Expr IsBetween(Expr lower, Expr upper)
         => new(PolarsWrapper.IsBetween(CloneHandle(), lower.CloneHandle(), upper.CloneHandle()));
 
     // ==========================================
@@ -824,7 +976,7 @@ public class Expr : IDisposable
     /// </summary>
     public Expr Map<TInput, TOutput>(Func<TInput, TOutput> function, DataType outputType)
         => new(PolarsWrapper.Map(CloneHandle(), UdfUtils.Wrap(function), outputType.Handle));
-    
+
     /// <summary>
     /// Apply a raw Arrow-to-Arrow UDF. (Advanced / Internal use)
     /// </summary>
@@ -880,7 +1032,7 @@ public class Expr : IDisposable
         var partitionHandles = System.Array.ConvertAll(partitionBy, e => e.CloneHandle());
 
         var h = PolarsWrapper.Over(CloneHandle(), partitionHandles);
-        
+
         return new Expr(h);
     }
 
@@ -911,220 +1063,686 @@ public class Expr : IDisposable
     // ==========================================
     // Rolling Window Functions
     // ==========================================
-    
+
     /// <summary>
-    /// Static Rolling Minimum
+    /// Apply a rolling min (moving min) over a window.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <seealso cref="RollingMean(string,int)"/>
-    public Expr RollingMin(string windowSize, int minPeriods = 1) 
-        => new(PolarsWrapper.RollingMin(CloneHandle(), windowSize, minPeriods));
+    /// <inheritdoc cref="RollingMean(string,int,double[],bool)"/>
+    public Expr RollingMin(string windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => new(PolarsWrapper.RollingMin(CloneHandle(), windowSize, minPeriods, weights,center));
     /// <summary>
-    /// Stastic Rolling Minumum by timespan
+    /// Apply a rolling min (moving min) over a window.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <seealso cref="RollingMean(string,int)"/>
-    public Expr RollingMin(TimeSpan windowSize, int minPeriods = 1) 
-        => RollingMin(DurationFormatter.ToPolarsString(windowSize),minPeriods);
+    /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
+    public Expr RollingMin(TimeSpan windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => RollingMin(DurationFormatter.ToPolarsString(windowSize), minPeriods, weights,center);
     /// <summary>
-    /// Static Rolling Maximum
+    /// Apply a rolling max (moving max) over a window.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <seealso cref="RollingMean(string,int)"/>
-    public Expr RollingMax(string windowSize,int minPeriods=1) 
-        => new(PolarsWrapper.RollingMax(CloneHandle(), windowSize, minPeriods));
+    /// <inheritdoc cref="RollingMean(string,int,double[],bool)"/>
+    public Expr RollingMax(string windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => new(PolarsWrapper.RollingMax(CloneHandle(), windowSize, minPeriods,weights,center));
     /// <summary>
-    /// Static Rolling Maximum by timespan
+    /// Apply a rolling max (moving max) over a window.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <seealso cref="RollingMean(string,int)"/>
-    public Expr RollingMax(TimeSpan windowSize, int minPeriods = 1) 
-        => RollingMax(DurationFormatter.ToPolarsString(windowSize),minPeriods);
+    /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
+    public Expr RollingMax(TimeSpan windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => RollingMax(DurationFormatter.ToPolarsString(windowSize), minPeriods,weights,center);
     /// <summary>
     /// Apply a rolling mean (moving average) over a window.
     /// </summary>
     /// <param name="windowSize">
     /// The size of the window formatted as a string duration.
-    /// <para>Examples: "3i" (3 index rows), "1d" (1 day), "1h" (1 hour).</para>
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
     /// </param>
-    /// <param name="minPeriods">The minimum number of observations in the window required to have a value (otherwise null).</param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new expression representing the rolling mean.</returns>
     /// <example>
     /// <code>
-    /// // Rolling mean of 3 rows ("3i")
+    /// // Rolling mean of 3 rows ("3i"), centered
     /// df.Select(
-    ///     Col("val").RollingMean("3i", minPeriods: 1).Alias("roll_mean")
+    ///     Col("val").RollingMean("3i", minPeriods: 1, center: true).Alias("roll_mean")
     /// );
     /// </code>
     /// </example>
-    public Expr RollingMean(string windowSize,int minPeriods=1) 
-        => new(PolarsWrapper.RollingMean(CloneHandle(), windowSize,minPeriods));
+    public Expr RollingMean(string windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => new(PolarsWrapper.RollingMean(CloneHandle(), windowSize, minPeriods,weights,center));
     /// <summary>
-    /// Static Rolling Mean by timespan
+    /// Apply a rolling mean (moving average) over a fixed time window defined by a <see cref="TimeSpan"/>.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>
-    public Expr RollingMean(TimeSpan windowSize, int minPeriods = 1) 
-        => RollingMean(DurationFormatter.ToPolarsString(windowSize),minPeriods);
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// 
+    /// /// <param name="minPeriods">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='minPeriods']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="weights">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='weights']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="center">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='center']/node()"/>
+    /// </param>
+    /// 
+    /// <returns>
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/returns/node()"/>
+    /// </returns>
+    public Expr RollingMean(TimeSpan windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => RollingMean(DurationFormatter.ToPolarsString(windowSize), minPeriods, weights,center);
     /// <summary>
-    /// Static Rolling Sum
+    /// Apply a rolling sum (moving sum) over a window.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <seealso cref="RollingMean(string,int)"/>
-    public Expr RollingSum(string windowSize,int minPeriods=1) 
-        => new(PolarsWrapper.RollingSum(CloneHandle(), windowSize,minPeriods));
+    /// <inheritdoc cref="RollingMean(string,int,double[],bool)"/>
+    public Expr RollingSum(string windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => new(PolarsWrapper.RollingSum(CloneHandle(), windowSize, minPeriods, weights,center));
     /// <summary>
-    /// Static Rolling Sum by timespan
+    /// Apply a rolling sum (moving sum) over a window.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <seealso cref="RollingMean(string,int)"/>
-    public Expr RollingSum(TimeSpan windowSize, int minPeriods = 1) 
-        => RollingSum(DurationFormatter.ToPolarsString(windowSize),minPeriods);
+    /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
+    public Expr RollingSum(TimeSpan windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => RollingSum(DurationFormatter.ToPolarsString(windowSize), minPeriods, weights,center);
     /// <summary>
-    /// Dynamic Rolling Mean By
+    /// Apply a rolling standard deviation (moving std) over a window.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <param name="by"></param>
-    /// <param name="closed"></param>
-    /// <returns></returns>
-    public Expr RollingMeanBy(string windowSize, Expr by, int minPeriods=1,string closed = "left")
+    /// <inheritdoc cref="RollingMean(string,int,double[],bool)"/>
+    public Expr RollingStd(string windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => new(PolarsWrapper.RollingStd(CloneHandle(), windowSize, minPeriods, weights, center));
+    /// <summary>
+    /// Apply a rolling standard deviation (moving std) over a window.
+    /// </summary>
+    /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
+    public Expr RollingStd(TimeSpan windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => RollingStd(DurationFormatter.ToPolarsString(windowSize), minPeriods, weights,center);
+    /// <summary>
+    /// Apply a rolling variance (moving var) over a window.
+    /// </summary>
+    /// <param name="ddof">
+    /// “Delta Degrees of Freedom”: the divisor used in the calculation is N - ddof, where N represents the number of elements. 
+    /// <para>By default ddof is 1.</para>
+    /// </param>
+    /// <param name="windowSize">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='windowSize']/node()"/>
+    /// </param>
+    /// <param name="minPeriods">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='minPeriods']/node()"/>
+    /// </param>
+    /// <param name="weights">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='weights']/node()"/>
+    /// </param>
+    /// <param name="center">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='center']/node()"/>
+    /// </param>
+    /// <returns>A new expression representing the rolling variance.</returns>
+    public Expr RollingVar(string windowSize, int minPeriods = 1,double[]? weights = null,bool center=false, byte ddof =1)
+        => new(PolarsWrapper.RollingVar(CloneHandle(), windowSize, minPeriods,weights,center, ddof));
+    /// <summary>
+    /// Apply a rolling variance (moving var) over a fixed time window defined by a <see cref="TimeSpan"/>.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="ddof">
+    /// <inheritdoc cref="RollingVar(string, int, double[], bool, byte)" path="/param[@name='ddof']/node()"/>
+    /// </param>
+    /// <param name="minPeriods">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='minPeriods']/node()"/>
+    /// </param>
+    /// <param name="weights">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='weights']/node()"/>
+    /// </param>
+    /// <param name="center">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='center']/node()"/>
+    /// </param>
+    /// <returns>A new expression representing the rolling variance.</returns>
+    public Expr RollingVar(TimeSpan windowSize, int minPeriods = 1,double[]? weights = null,bool center=false,byte ddof =1)
+        => RollingVar(DurationFormatter.ToPolarsString(windowSize), minPeriods,weights,center, ddof);
+    /// <summary>
+    /// Apply a rolling median (moving median) over a window.
+    /// </summary>
+    /// <inheritdoc cref="RollingMean(string,int,double[],bool)"/>
+    public Expr RollingMedian(string windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => new(PolarsWrapper.RollingMedian(CloneHandle(), windowSize, minPeriods, weights,center));
+    /// <summary>
+    /// Apply a rolling median (moving median) over a window.
+    /// </summary>
+    /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
+    public Expr RollingMedian(TimeSpan windowSize, int minPeriods = 1)
+        => RollingMedian(DurationFormatter.ToPolarsString(windowSize), minPeriods);
+    /// <summary>
+    /// Apply a rolling skew (moving skew) over a window.
+    /// </summary>
+    /// <inheritdoc cref="RollingMean(string,int,double[],bool)"/>
+    public Expr RollingSkew(string windowSize, int minPeriods = 1,double[]? weights = null,bool center=false, bool bias=true)
+        => new(PolarsWrapper.RollingSkew(CloneHandle(), windowSize, minPeriods, weights,center,bias));
+    /// <summary>
+    /// Apply a rolling skew (moving skew) over a window.
+    /// </summary>
+    /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
+    public Expr RollingSkew(TimeSpan windowSize, int minPeriods = 1,double[]? weights = null,bool center=false, bool bias=true)
+        => RollingSkew(DurationFormatter.ToPolarsString(windowSize), minPeriods, weights,center,bias);
+    /// <summary>
+    /// Apply a rolling kurtosis (moving kurtosis) over a window.
+    /// </summary>
+    /// <inheritdoc cref="RollingMean(string,int,double[],bool)"/>
+    public Expr RollingKurtosis(string windowSize, int minPeriods = 1,double[]? weights = null,bool center=false, bool fisher = true,bool bias=true)
+        => new(PolarsWrapper.RollingKurtosis(CloneHandle(), windowSize, minPeriods, weights,center,fisher, bias));
+    /// <summary>
+    /// Apply a rolling kurtosis (moving kurtosis) over a window.
+    /// </summary>
+    /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
+    public Expr RollingKurtosis(TimeSpan windowSize, int minPeriods = 1,double[]? weights = null,bool center=false, bool fisher = true,bool bias=true)
+        => RollingKurtosis(DurationFormatter.ToPolarsString(windowSize), minPeriods, weights,center,fisher,bias);
+    /// <summary>
+    /// Apply a rolling rank (moving rank) over a window.
+    /// </summary>
+    /// <inheritdoc cref="RollingMean(string,int,double[],bool)"/>
+    public Expr RollingRank(string windowSize, int minPeriods = 1,RankMethod method=RankMethod.Average, ulong? seed=null,double[]? weights = null,bool center=false)
+        => new(PolarsWrapper.RollingRank(CloneHandle(), windowSize, minPeriods,method.ToNative(),seed,weights, center));
+    /// <summary>
+    /// Apply a rolling rank (moving rank) over a window.
+    /// </summary>
+    /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
+    public Expr RollingRank(TimeSpan windowSize,int minPeriods = 1,RankMethod method=RankMethod.Average, ulong? seed=null,double[]? weights = null, bool center= false)
+        => RollingRank(DurationFormatter.ToPolarsString(windowSize), minPeriods, method,seed,weights, center);
+    /// <summary>
+    /// Apply a rolling quantile over a fixed window.
+    /// </summary>
+    /// <param name="quantile">Quantile between 0.0 and 1.0 (e.g., 0.5 for median).</param>
+    /// <param name="method">Interpolation method when the quantile lies between two data points.</param>
+    /// <param name="windowSize">
+    /// The size of the window. 
+    /// <para>Format: <c>"3i"</c> (3 rows) or just a number string <c>"3"</c>.</para>
+    /// <para>For time-based windows (e.g. "2h"), use <see cref="RollingQuantileBy"/> instead.</para>
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights for the window. The length must match the parsed window size.
+    /// <para>If <c>null</c>, equal weights are used.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='minPeriods']/node()"/>
+    /// </param>
+    /// <param name="center">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='center']/node()"/>
+    /// </param>
+    /// <returns>A new expression representing the rolling quantile.</returns>
+    public Expr RollingQuantile(
+        double quantile, 
+        QuantileMethod method, 
+        string windowSize, 
+        int minPeriods = 1, 
+        double[]? weights = null,
+        bool center =false)
+    {
+        return new Expr(PolarsWrapper.RollingQuantile(
+            CloneHandle(), 
+            quantile,
+            method.ToNative(),
+            windowSize, 
+            minPeriods,
+            weights,
+            center
+        ));
+    }
+    /// <summary>
+    /// Apply a rolling quantile over a fixed time window defined by a <see cref="TimeSpan"/>.
+    /// </summary>
+    /// 
+    /// <param name="quantile">
+    /// <inheritdoc cref="RollingQuantile(double, QuantileMethod, string, int, double[], bool)" path="/param[@name='quantile']/node()"/>
+    /// </param>
+    /// 
+    /// <param name="method">
+    /// <inheritdoc cref="RollingQuantile(double, QuantileMethod, string, int, double[], bool)" path="/param[@name='method']/node()"/>
+    /// </param>
+    /// 
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// 
+    /// <param name="minPeriods">
+    /// <inheritdoc cref="RollingQuantile(double, QuantileMethod, string, int, double[], bool)" path="/param[@name='minPeriods']/node()"/>
+    /// </param>
+    /// 
+    /// <param name="weights">
+    /// <inheritdoc cref="RollingQuantile(double, QuantileMethod, string, int, double[], bool)" path="/param[@name='weights']/node()"/>
+    /// </param>
+    /// 
+    /// <param name="center">
+    /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='center']/node()"/>
+    /// </param>
+    /// 
+    /// <returns>
+    /// <inheritdoc cref="RollingQuantile(double, QuantileMethod, string, int, double[], bool)" path="/returns/node()"/>
+    /// </returns>
+    public Expr RollingQuantile(double quantile,QuantileMethod method,TimeSpan windowSize, int minPeriods = 1,double[]? weights= null, bool center=false)
+        => RollingQuantile(quantile,method,DurationFormatter.ToPolarsString(windowSize), minPeriods,weights,center);
+
+    /// <summary>
+    /// Apply a rolling mean (moving average) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the dynamic window.
+    /// <para>Supported duration strings: <c>"1d"</c>, <c>"2h"</c>, <c>"10s"</c>, <c>"500ms"</c>, etc.</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new expression representing the dynamic rolling mean.</returns>
+    /// <example>
+    /// <code>
+    /// // Python: pl.col("index").rolling_mean_by("date", window_size="2h", closed="both")
+    /// // C#:
+    /// Col("index").RollingMeanBy("2h", Col("date"), closed: ClosedWindow.Both);
+    /// </code>
+    /// </example>
+    public Expr RollingMeanBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
     {
         return new Expr(PolarsWrapper.RollingMeanBy(
-            CloneHandle(), 
+            CloneHandle(),
             windowSize,
-            minPeriods, 
-            by.CloneHandle(), 
-            closed
+            minPeriods,
+            by.CloneHandle(),
+            closed.ToNative()
         ));
     }
     /// <summary>
-    /// Dynamic Rolling Mean By timespan
+    /// Apply a rolling mean (moving average) over a dynamic window defined by a <see cref="TimeSpan"/>.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <param name="by"></param>
-    /// <param name="closed"></param>
-    /// <returns></returns>
-    public Expr RollingMeanBy(TimeSpan windowSize, Expr by, int minPeriods=1,string closed = "left")
+    /// <param name="windowSize">
+    /// The size of the dynamic window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g. <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// 
+    /// <param name="by"><inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='by']/node()"/></param>
+    /// <param name="minPeriods"><inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='minPeriods']/node()"/></param>
+    /// <param name="closed"><inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='closed']/node()"/></param>
+    /// 
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/remarks"/>
+    /// <returns><inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/returns/node()"/></returns>
+    public Expr RollingMeanBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
     {
-        return RollingMeanBy( 
+        return RollingMeanBy(
             DurationFormatter.ToPolarsString(windowSize),
-            by, 
-            minPeriods, 
+            by,
+            minPeriods,
             closed
         );
     }
     /// <summary>
-    /// Dynamic Rolling Sum By
+    /// Apply a rolling sum over a dynamic window defined by the values in the <paramref name="by"/> column.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <param name="by"></param>
-    /// <param name="closed"></param>
-    /// <returns></returns>
-    public Expr RollingSumBy(string windowSize, Expr by,int minPeriods=1, string closed = "left")
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling sum.</returns>
+    public Expr RollingSumBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
     {
         return new Expr(PolarsWrapper.RollingSumBy(
-            CloneHandle(), 
-            windowSize, 
+            CloneHandle(),
+            windowSize,
             minPeriods,
-            by.CloneHandle(), 
-            closed
+            by.CloneHandle(),
+            closed.ToNative()
         ));
     }
     /// <summary>
-    /// Dynamic Rolling Sum By timespan
+    /// Apply a rolling sum over a dynamic window defined by the values in the <paramref name="by"/> column.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <param name="by"></param>
-    /// <param name="closed"></param>
-    /// <returns></returns>
-    public Expr RollingSumBy(TimeSpan windowSize, Expr by, int minPeriods=1,string closed = "left")
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling sum.</returns>
+    public Expr RollingSumBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
     {
-        return RollingSumBy( 
+        return RollingSumBy(
             DurationFormatter.ToPolarsString(windowSize),
-            by, 
-            minPeriods, 
+            by,
+            minPeriods,
             closed
         );
     }
     /// <summary>
-    /// Dynamic Rolling Min By
+    /// Apply the rolling minimum over a dynamic window defined by the values in the <paramref name="by"/> column.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <param name="by"></param>
-    /// <param name="closed"></param>
-    /// <returns></returns>
-    public Expr RollingMinBy(string windowSize, Expr by,int minPeriods=1, string closed = "left")
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling minimum.</returns>
+    public Expr RollingMinBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
     {
         return new Expr(PolarsWrapper.RollingMinBy(
-            CloneHandle(), 
-            windowSize, 
+            CloneHandle(),
+            windowSize,
             minPeriods,
-            by.CloneHandle(), 
-            closed
+            by.CloneHandle(),
+            closed.ToNative()
         ));
     }
     /// <summary>
-    /// Dynamic Rolling Min By timespan
+    /// Apply a rolling minimum over a dynamic window defined by the values in the <paramref name="by"/> column.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <param name="by"></param>
-    /// <param name="closed"></param>
-    /// <returns></returns>
-    public Expr RollingMinBy(TimeSpan windowSize, Expr by, int minPeriods=1,string closed = "left")
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling minimum.</returns>
+    public Expr RollingMinBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
     {
-        return RollingMinBy( 
+        return RollingMinBy(
             DurationFormatter.ToPolarsString(windowSize),
-            by, 
-            minPeriods, 
+            by,
+            minPeriods,
             closed
         );
     }
     /// <summary>
-    /// Dynamic Rolling Max By
+    /// Apply the rolling maximum over a dynamic window defined by the values in the <paramref name="by"/> column.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <param name="by"></param>
-    /// <param name="closed"></param>
-    /// <returns></returns>
-    public Expr RollingMaxBy(string windowSize, Expr by,int minPeriods=1,string closed = "left")
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling maximum.</returns>
+    public Expr RollingMaxBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
     {
         return new Expr(PolarsWrapper.RollingMaxBy(
-            CloneHandle(), 
-            windowSize, 
+            CloneHandle(),
+            windowSize,
             minPeriods,
-            by.CloneHandle(), 
-            closed
+            by.CloneHandle(),
+            closed.ToNative()
         ));
     }
     /// <summary>
-    /// Dynamic Rolling Max By timespan
+    /// Apply a rolling maximum over a dynamic window defined by the values in the <paramref name="by"/> column.
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <param name="by"></param>
-    /// <param name="closed"></param>
-    /// <returns></returns>
-    public Expr RollingMaxBy(TimeSpan windowSize, Expr by, int minPeriods=1,string closed = "left")
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling maximum.</returns>
+    public Expr RollingMaxBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
     {
-        return RollingMaxBy( 
+        return RollingMaxBy(
             DurationFormatter.ToPolarsString(windowSize),
-            by, 
-            minPeriods, 
+            by,
+            minPeriods,
             closed
         );
+    }
+    /// <summary>
+    /// Apply the rolling standard deviation over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling standard deviation.</returns>
+    public Expr RollingStdBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+    {
+        return new Expr(PolarsWrapper.RollingStdBy(
+            CloneHandle(),
+            windowSize,
+            minPeriods,
+            by.CloneHandle(),
+            closed.ToNative()
+        ));
+    }
+    /// <summary>
+    /// Apply a rolling standard deviation over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling standard deviation.</returns>
+    public Expr RollingStdBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+    {
+        return RollingStdBy(
+            DurationFormatter.ToPolarsString(windowSize),
+            by,
+            minPeriods,
+            closed
+        );
+    }
+    /// <summary>
+    /// Apply the rolling variance over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// 
+    /// /// <param name="windowSize">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='windowSize']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="by">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='by']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="minPeriods">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='minPeriods']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="closed">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='closed']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="ddof">
+    /// “Delta Degrees of Freedom”: the divisor used in the calculation is N - ddof, where N represents the number of elements. 
+    /// <para>By default ddof is 1.</para>
+    /// </param>
+    /// 
+    /// <returns>A new expression representing the dynamic rolling variance.</returns>
+    public Expr RollingVarBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left, byte ddof=1)
+    {
+        return new Expr(PolarsWrapper.RollingVarBy(
+            CloneHandle(),
+            windowSize,
+            minPeriods,
+            by.CloneHandle(),
+            closed.ToNative(),
+            ddof
+        ));
+    }
+    /// <summary>
+    /// Apply a rolling variance over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// 
+    /// /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// 
+    /// /// <param name="by">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='by']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="minPeriods">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='minPeriods']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="closed">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='closed']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="ddof">
+    /// <inheritdoc cref="RollingVarBy(string, Expr, int, ClosedWindow, byte)" path="/param[@name='ddof']/node()"/>
+    /// </param>
+    /// 
+    /// <returns>A new expression representing the dynamic rolling variance.</returns>
+    public Expr RollingVarBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left, byte ddof=1)
+    {
+        return RollingVarBy(
+            DurationFormatter.ToPolarsString(windowSize),
+            by,
+            minPeriods,
+            closed,
+            ddof
+        );
+    }
+    /// <summary>
+    /// Apply the rolling median over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling median.</returns>
+    public Expr RollingMedianBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+    {
+        return new Expr(PolarsWrapper.RollingMedianBy(
+            CloneHandle(),
+            windowSize,
+            minPeriods,
+            by.CloneHandle(),
+            closed.ToNative()
+        ));
+    }
+    /// <summary>
+    /// Apply a rolling median over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="RollingMeanBy(TimeSpan,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling median.</returns>
+    public Expr RollingMedianBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+    {
+        return RollingMedianBy(
+            DurationFormatter.ToPolarsString(windowSize),
+            by,
+            minPeriods,
+            closed
+        );
+    }
+    /// <summary>
+    /// Compute the rolling rank over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// 
+    /// /// <param name="windowSize">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='windowSize']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="by">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='by']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="method">The method used to assign ranks to tied elements.</param>
+    /// 
+    /// /// <param name="seed">Seed for the random method (only relevant when method is Random).</param>
+    /// 
+    /// /// <param name="minPeriods">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='minPeriods']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="closed">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='closed']/node()"/>
+    /// </param>
+    /// 
+    /// <returns>A new expression representing the dynamic rolling rank.</returns>
+    public Expr RollingRankBy(
+        string windowSize, 
+        Expr by, 
+        RollingRankMethod method = RollingRankMethod.Average, 
+        ulong? seed = null,
+        int minPeriods = 1, 
+        ClosedWindow closed = ClosedWindow.Left)
+    {
+        return new Expr(PolarsWrapper.RollingRankBy(
+            CloneHandle(),
+            windowSize,
+            by.CloneHandle(),
+            method.ToNative(),
+            seed,
+            minPeriods,
+            closed.ToNative()
+        ));
+    }
+    /// <summary>
+    /// Apply a rolling rank over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// 
+    /// /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// 
+    /// /// <param name="by">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='by']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="method">
+    /// <inheritdoc cref="RollingRankBy(string, Expr, RollingRankMethod, ulong?, int, ClosedWindow)" path="/param[@name='method']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="seed">
+    /// <inheritdoc cref="RollingRankBy(string, Expr, RollingRankMethod, ulong?, int, ClosedWindow)" path="/param[@name='seed']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="minPeriods">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='minPeriods']/node()"/>
+    /// </param>
+    /// 
+    /// /// <param name="closed">
+    /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='closed']/node()"/>
+    /// </param>
+    /// 
+    /// <returns>A new expression representing the dynamic rolling rank.</returns>
+    public Expr RollingRankBy(TimeSpan windowSize,       
+        Expr by, 
+        RollingRankMethod method = RollingRankMethod.Average, 
+        ulong? seed = null,
+        int minPeriods = 1, 
+        ClosedWindow closed = ClosedWindow.Left)
+    {
+        return RollingRankBy(
+            DurationFormatter.ToPolarsString(windowSize),
+            by,
+            method,
+            seed,
+            minPeriods,
+            closed
+        );
+    }
+    /// <summary>
+    /// Compute the rolling quantile over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// <param name="quantile">Quantile between 0.0 and 1.0 (e.g., 0.5 for median).</param>
+    /// <param name="method">Interpolation method when the quantile lies between two data points.</param>
+    ///     
+    /// <param name="windowSize"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='windowSize']/node()"/></param>
+    /// <param name="by"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='by']/node()"/></param>
+    /// <param name="minPeriods"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='minPeriods']/node()"/></param>
+    /// <param name="closed"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='closed']/node()"/></param>
+    ///
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling quantile.</returns>
+    public Expr RollingQuantileBy(
+        double quantile,
+        QuantileMethod method,
+        string windowSize,
+        Expr by,
+        int minPeriods = 1,
+        ClosedWindow closed = ClosedWindow.Left)
+    {
+        return new Expr(PolarsWrapper.RollingQuantileBy(
+            CloneHandle(),
+            quantile,
+            method.ToNative(),
+            windowSize,
+            minPeriods,
+            by.CloneHandle(),
+            closed.ToNative()
+        ));
     }
     /// <summary>
     /// Explode a list expression.
@@ -1221,9 +1839,9 @@ public class Expr : IDisposable
     /// Access column renaming operations.
     /// </summary>
     public NameOps Name => new(this);
-    
+
     public ArrayOps Array => new(this);
-    
+
     // ---------------------------------------------------
     // Clean Up
     // ---------------------------------------------------
@@ -1255,7 +1873,7 @@ public class Expr : IDisposable
     public override int GetHashCode()
     {
         if (Handle.IsInvalid) return 0;
-        
+
         return Handle.DangerousGetHandle().GetHashCode();
     }
 }
@@ -1270,7 +1888,7 @@ public class Expr : IDisposable
 public class DtOps
 {
     private readonly Expr _expr;
-    
+
     internal DtOps(Expr expr)
     {
         _expr = expr;
@@ -1354,7 +1972,7 @@ public class DtOps
     /// <summary>
     /// Format the date/datetime as a string using the default format "%Y-%m-%dT%H:%M:%S%.f".
     /// </summary>
-    public override string ToString() => "DtOps"; 
+    public override string ToString() => "DtOps";
     /// <summary>
     /// Cast to Date (remove time component).
     /// </summary>
@@ -1554,9 +2172,9 @@ public class DtOps
     /// </code>
     /// </example>
     public Expr AddBusinessDays(
-        int n, 
-        IEnumerable<DateOnly>? holidays = null, 
-        bool[]? weekMask = null, 
+        int n,
+        IEnumerable<DateOnly>? holidays = null,
+        bool[]? weekMask = null,
         Roll roll = Roll.Raise)
     {
         return AddBusinessDays(Polars.Lit(n), holidays, weekMask, roll);
@@ -1566,13 +2184,13 @@ public class DtOps
     /// Add business days to the date column.
     /// </summary>
     public Expr AddBusinessDays(
-        Expr n, 
-        IEnumerable<DateOnly>? holidays = null, 
-        bool[]? weekMask = null, 
+        Expr n,
+        IEnumerable<DateOnly>? holidays = null,
+        bool[]? weekMask = null,
         Roll roll = Roll.Raise)
     {
         var mask = weekMask ?? DefaultWeekMask;
-        
+
         int[] holidayInts;
         if (holidays == null)
         {
@@ -1589,12 +2207,12 @@ public class DtOps
 
         var nHandle = PolarsWrapper.CloneExpr(n.Handle);
         var handle = PolarsWrapper.CloneExpr(_expr.Handle);
-        
+
         return new Expr(PolarsWrapper.DtAddBusinessDays(
-            handle, 
-            nHandle, 
-            mask, 
-            holidayInts, 
+            handle,
+            nHandle,
+            mask,
+            holidayInts,
             roll.ToNative()
         ));
     }
@@ -1605,7 +2223,7 @@ public class DtOps
     public Expr IsBusinessDay(IEnumerable<DateOnly>? holidays = null, bool[]? weekMask = null)
     {
         var mask = weekMask ?? DefaultWeekMask;
-        
+
         int[] holidayInts;
         if (holidays == null)
         {
@@ -1765,8 +2383,8 @@ public class StringOps
     /// </summary>
     public Expr Split(string separator)
     {
-         var h = PolarsWrapper.CloneExpr(_expr.Handle);
-         return new Expr(PolarsWrapper.StrSplit(h, separator));
+        var h = PolarsWrapper.CloneExpr(_expr.Handle);
+        return new Expr(PolarsWrapper.StrSplit(h, separator));
     }
     // ==========================================
     // Strip / Clean
@@ -1964,7 +2582,7 @@ public class ListOps
     /// // df.Explode(Col("scores")).Show();
     /// </code>
     /// </example>
-    public Expr Get(int index) 
+    public Expr Get(int index)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.ListGet(h, index));
@@ -1996,10 +2614,10 @@ public class ListOps
     /// <param name="nullsLast"></param>
     /// <param name="maintainOrder"></param>
     /// <returns></returns>
-    public Expr Sort(bool descending=false, bool nullsLast=false, bool maintainOrder=false)
+    public Expr Sort(bool descending = false, bool nullsLast = false, bool maintainOrder = false)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
-        return new Expr(PolarsWrapper.ListSort(h, descending,nullsLast,maintainOrder));
+        return new Expr(PolarsWrapper.ListSort(h, descending, nullsLast, maintainOrder));
     }
     /// <summary>
     /// Calculate the sum of the values in the list (row-wise).
@@ -2056,9 +2674,9 @@ public class ListOps
     public Expr Concat(params Expr[] others)
     {
         var allExprs = new ExprHandle[others.Length + 1];
-        
+
         allExprs[0] = PolarsWrapper.CloneExpr(_expr.Handle);
-        
+
         for (int i = 0; i < others.Length; i++)
         {
             allExprs[i + 1] = PolarsWrapper.CloneExpr(others[i].Handle);
@@ -2066,9 +2684,9 @@ public class ListOps
 
         return new Expr(PolarsWrapper.ConcatList(allExprs));
     }
-    
+
     public Expr Concat(Expr other) => Concat([other]);
-    public Expr Reverse() => Wrap(PolarsWrapper.ListReverse); 
+    public Expr Reverse() => Wrap(PolarsWrapper.ListReverse);
 }
 // ==========================================
 // ArrayOps Helper Class
@@ -2100,7 +2718,7 @@ public class ArrayOps
     public Expr All() => Wrap(PolarsWrapper.ArrayAll); // New
 
     // --- Sort & Search ---
-    public Expr Sort(bool descending = false, bool nullsLast = false,bool maintainOrder = false) 
+    public Expr Sort(bool descending = false, bool nullsLast = false, bool maintainOrder = false)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         return new Expr(PolarsWrapper.ArraySort(h, descending, nullsLast, maintainOrder));
@@ -2117,7 +2735,7 @@ public class ArrayOps
         var idx = PolarsWrapper.CloneExpr(index.Handle);
         return new Expr(PolarsWrapper.ArrayGet(h, idx, nullOnOob));
     }
-    
+
     public Expr Join(string separator, bool ignoreNulls = true)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
@@ -2130,7 +2748,7 @@ public class ArrayOps
     /// Convert array to struct. Fields will be named field_0, field_1, etc.
     /// </summary>
     public Expr ToStruct() => Wrap(PolarsWrapper.ArrayToStruct); // New
-    
+
     public Expr ToList() => Wrap(PolarsWrapper.ArrayToList);
 
     // [Update] Updated Contains signature
@@ -2142,7 +2760,7 @@ public class ArrayOps
     }
     public Expr Contains(int item, bool nullsEqual = false) => Contains(Polars.Lit(item), nullsEqual);
     public Expr Contains(double item, bool nullsEqual = false) => Contains(Polars.Lit(item), nullsEqual);
-    
+
     // Unique
     public Expr Unique(bool stable = false)
     {
@@ -2252,7 +2870,7 @@ public class NameOps
     public Expr Prefix(string prefix)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
-        return new(PolarsWrapper.Prefix(h, prefix)); 
+        return new(PolarsWrapper.Prefix(h, prefix));
     }
 
     /// <summary>
@@ -2260,9 +2878,9 @@ public class NameOps
     /// </summary>
     /// <param name="suffix"></param>
     /// <returns></returns>
-    public Expr Suffix(string suffix) 
+    public Expr Suffix(string suffix)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
-        return new(PolarsWrapper.Suffix(h, suffix)); 
+        return new(PolarsWrapper.Suffix(h, suffix));
     }
 }

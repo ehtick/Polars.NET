@@ -24,11 +24,6 @@ public static partial class PolarsWrapper
         }
     }
 
-    // public static ExprHandle Map(ExprHandle expr, Func<IArrowArray, IArrowArray> func)
-    // {
-    //     return Map(expr, func);
-    // }
-
     public static ExprHandle Map(ExprHandle expr, Func<IArrowArray, IArrowArray> func, DataTypeHandle outputType)
     {
         unsafe int Trampoline(CArrowArray* inArr, CArrowSchema* inSch, CArrowArray* outArr, CArrowSchema* outSch, byte* msgBuf)

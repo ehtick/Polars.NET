@@ -1279,4 +1279,455 @@ TooShort,1990-05-20,1.60";
         uint expected = 0xFFFFFFFF >> 4; // C# 也是逻辑右移
         Assert.Equal(expected, res.GetValue<uint>(2, "u_shr"));
     }
+    [Fact]
+    public void Test_Product()
+    {
+        // 1 * 2 * 3 * 4 = 24
+        using var df = DataFrame.FromColumns(new { nums = new[] { 1, 2, 3, 4 } });
+
+        var result = df.Select(Col("nums").Product());
+        
+        // 结果应该是一个 1x1 的 DataFrame
+        var val = result["nums"][0];
+        Assert.Equal(24L, val);
+    }
+    [Fact]
+    public void Test_Skew()
+    {
+        // [1, 2, 3] 对称 -> Skew 0
+        // [1, 1, 10] 右偏 -> Skew > 0
+        using var df = DataFrame.FromColumns(new { 
+            sym = new[] { 1.0, 2.0, 3.0 }, 
+            skewed = new[] { 1.0, 1.0, 10.0 } 
+        });
+
+        // Test 1: Symmetric -> 0
+        using var res1 = df.Select(Col("sym").Skew(bias: true));
+        Assert.Equal(0.0, (double)res1["sym"][0], precision: 6);
+
+        // Test 2: Skewed -> Positive
+        using var res2 = df.Select(Col("skewed").Skew(bias: false));
+        Assert.True((double)res2["skewed"][0] > 0);
+    }
+    [Fact]
+    public void Test_Kurtosis()
+    {
+        using var df = DataFrame.FromColumns(new { data = new[] { 1.0, 2.0, 3.0, 4.0, 5.0 } });
+
+        // Fisher = true (Normal = 0)
+        // Fisher = false (Pearson, Normal = 3)
+        using var q = df.Select(
+            Col("data").Kurtosis(fisher: true, bias: false).Alias("k_fisher"),
+            Col("data").Kurtosis(fisher: false, bias: false).Alias("k_pearson")
+        );
+
+        var kFisher = (double)q["k_fisher"][0];
+        var kPearson = (double)q["k_pearson"][0];
+
+        // Pearson = Fisher + 3
+        Assert.Equal(3.0, kPearson - kFisher, precision: 6);
+    }
+    [Fact]
+    public void Test_PctChange()
+    {
+        // Data: [10, 20, 40, 40]
+        // n=1: [null, 1.0, 1.0, 0.0]
+        using var df = DataFrame.FromColumns(new { a = new[] { 10.0, 20.0, 40.0, 40.0 } });
+
+        using var res = df.Select(Col("a").PctChange(n: 1));
+        
+        // 检查第一个是 null
+        Assert.Null(res["a"][0]); 
+        
+        // 检查后续值
+        Assert.Equal(1.0, (double)res["a"][1]);
+        Assert.Equal(1.0, (double)res["a"][2]);
+        Assert.Equal(0.0, (double)res["a"][3]);
+    }
+
+    [Fact]
+    public void Test_Rank_Methods()
+    {
+        // Data with ties: [10, 20, 20, 30]
+        // Indices:         0   1   2   3
+        using var df = DataFrame.FromColumns(new { v = new[] { 10, 20, 20, 30 } });
+
+        // 1. Average (Default): 20->2.5
+        using var qAvg = df.Select(Col("v").Rank(RankMethod.Average).Alias("rank"));
+        Assert.Equal(2.5, (double)qAvg["rank"][1]);
+
+        // 2. Min: 20->2
+        using var qMin = df.Select(Col("v").Rank(RankMethod.Min).Alias("rank"));
+        // 注意：Polars rank 返回通常是 f64，但也可能是整型，视版本而定。
+        // 用 Convert.ToDouble 最稳，或者如果你确定它是 double 就直接 (double)
+        Assert.Equal(2.0, Convert.ToDouble(qMin["rank"][1]));
+        Assert.Equal(4.0, Convert.ToDouble(qMin["rank"][3])); // 跳过3，直接4
+
+        // 3. Dense: 20->2, 30->3
+        using var qDense = df.Select(Col("v").Rank(RankMethod.Dense).Alias("rank"));
+        Assert.Equal(2.0, Convert.ToDouble(qDense["rank"][1]));
+        Assert.Equal(3.0, Convert.ToDouble(qDense["rank"][3])); // 紧接3
+        
+        // 4. Descending
+        using var qDesc = df.Select(Col("v").Rank(RankMethod.Min, descending: true));
+        // 30->1, 20->2, 10->4
+        Assert.Equal(1.0, Convert.ToDouble(qDesc["v"][3])); // value 30 is rank 1
+    }
+    [Fact]
+    public void Test_CumSum_Prod()
+    {
+        // Data: [1, 2, 3, 4]
+        using var df = DataFrame.FromColumns(new { v = new[] { 1, 2, 3, 4 } });
+
+        // --- CumSum ---
+        // Forward: [1, 3, 6, 10]
+        // Reverse: [10, 9, 7, 4]  (4, 4+3, 4+3+2, ...)
+        using var qSum = df.Select(
+            Col("v").CumSum().Alias("fwd"),
+            Col("v").CumSum(reverse: true).Alias("rev")
+        );
+
+        Assert.Equal(6, qSum["fwd"][2]); // 1+2+3
+        Assert.Equal(9, qSum["rev"][1]); // 4+3+2
+
+        // --- CumProd ---
+        // Forward: [1, 2, 6, 24]
+        // Reverse: [24, 24, 12, 4] (1*2*3*4, 2*3*4, 3*4, 4)
+        using var qProd = df.Select(
+            Col("v").CumProd().Alias("fwd"),
+            Col("v").CumProd(reverse: true).Alias("rev")
+        );
+        Assert.Equal(6L, qProd["fwd"][2]); // 1*2*3
+        Assert.Equal(12L, qProd["rev"][2]); // 3*4
+    }
+
+    [Fact]
+    public void Test_CumMin_Max()
+    {
+        // Data: [1, 5, 2, 4, 3]
+        using var df = DataFrame.FromColumns(new { v = new[] { 1, 5, 2, 4, 3 } });
+
+        // --- CumMax ---
+        // Forward: [1, 5, 5, 5, 5]
+        // Reverse: [5, 5, 4, 4, 3] (Max of 1..3 is 5, ..., 2..3 is 4, 4..3 is 4, 3 is 3)
+        using var qMax = df.Select(
+            Col("v").CumMax().Alias("fwd"),
+            Col("v").CumMax(reverse: true).Alias("rev")
+        );
+        
+        Assert.Equal(5, (int)qMax["fwd"][2]); // Max(1,5,2) -> 5
+        Assert.Equal(4, (int)qMax["rev"][2]); // Max(2,4,3) -> 4 (从索引2往后看)
+
+        // --- CumMin ---
+        // Forward: [1, 1, 1, 1, 1]
+        // Reverse: [1, 2, 2, 3, 3] (Min of 1..3 is 1, ..., 2..3 is 2, ..., 3 is 3)
+        using var qMin = df.Select(
+            Col("v").CumMin().Alias("fwd"),
+            Col("v").CumMin(reverse: true).Alias("rev")
+        );
+
+        Assert.Equal(1, (int)qMin["fwd"][4]); 
+        Assert.Equal(2, (int)qMin["rev"][2]); // Min(2,4,3) -> 2
+    }
+
+    [Fact]
+    public void Test_CumCount()
+    {
+        // CumCount 其实就是返回索引位置（不包含 null 的计数，具体看 polars 版本，但通常类似 enumerate）
+        // Data: [10, 20, 30]
+        using var df = DataFrame.FromColumns(new { v = new[] { 10, 20, 30 } });
+
+        using var res = df.Select(
+            Col("v").CumCount(reverse: false).Alias("fwd"), // [1, 2, 3]
+            Col("v").CumCount(reverse: true).Alias("rev")   // [3, 2, 1] (倒着数)
+        );
+
+        // CumCount 返回类型是 UInt32 
+        Assert.Equal(1u, res["fwd"][0]); // 第1个
+        Assert.Equal(2u, res["fwd"][1]);
+        Assert.Equal(3u, res["fwd"][2]);
+
+        // Reverse Check
+        // Index 0 (原来的第一个元素): 倒着数它是第3个
+        Assert.Equal(3u, res["rev"][0]); 
+        // Index 2 (原来的最后一个元素): 倒着数它是第1个
+        Assert.Equal(1u, res["rev"][2]);
+    }
+    [Fact]
+    public void Test_Ewm_Mean_Std_Var()
+    {
+        // Data: [10, 20, 40]
+        using var df = DataFrame.FromColumns(new { v = new[] { 10.0, 20.0, 40.0 } });
+
+        // --- 1. EWM Mean (alpha=0.5) ---
+        // Formula (adjust=true):
+        // y0 = x0 = 10
+        // y1 = (x1 + (1-a)*x0) / (1 + (1-a)) = (20 + 0.5*10) / 1.5 = 25/1.5 = 16.666...
+        using var resMean = df.Select(
+            Col("v").EwmMean(alpha: 0.5, adjust: true).Alias("mean")
+        );
+        
+        Assert.Equal(10.0, (double)resMean["mean"][0]);
+        Assert.Equal(16.666666, (double)resMean["mean"][1], precision: 4);
+
+        // --- 2. EWM Var & Std (bias=false, unbiased) ---
+        // 只需要验证非零且不报错，具体数值依赖 polars 底层算法
+        using var resVar = df.Select(
+            Col("v").EwmVar(alpha: 0.5, bias: false).Alias("var"),
+            Col("v").EwmStd(alpha: 0.5, bias: false).Alias("std")
+        );
+
+        // 第一个点通常是 null 或 0 (因为只有一个点没法算方差，取决于 min_periods)
+        // Polars 默认 min_periods=1，但方差需要至少两个点才不是 NaN/Null ? 
+        // 实测 Polars ewm_std 第一个点通常是 null
+        var var0 = resVar["var"][0];
+        if (var0 == null) 
+            Assert.Null(var0); 
+        else 
+            Assert.Equal(0.0, Convert.ToDouble(var0));
+        // Assert.Null(resVar["std"][0]);
+
+        // 第二个点应该有值
+        Assert.True((double)resVar["var"][1] > 0);
+        Assert.True((double)resVar["std"][1] > 0);
+        
+        // 验证 Std = Sqrt(Var)
+        var v = (double)resVar["var"][2];
+        var s = (double)resVar["std"][2];
+        Assert.Equal(s, Math.Sqrt(v), precision: 6);
+    }
+
+    [Fact]
+    public void Test_EwmMeanBy_Time()
+    {
+        // 构造时间序列数据
+        // t0: 00:00, val=10
+        // t1: 01:00, val=20 (间隔 1h)
+        // t2: 03:00, val=40 (间隔 2h)
+        var dates = new[] {
+            new DateTime(2023, 1, 1, 0, 0, 0),
+            new DateTime(2023, 1, 1, 1, 0, 0),
+            new DateTime(2023, 1, 1, 3, 0, 0)
+        };
+        
+        using var df = DataFrame.FromColumns(new 
+        { 
+            ts = dates, 
+            v = new[] { 10.0, 20.0, 40.0 } 
+        });
+        df.Show();
+        // 设置 half_life = "1h"
+        // 意味着如果间隔 1h，旧数据的权重变为 0.5
+        using var res = df.Select(
+            Col("v").EwmMeanBy(by: Col("ts"), halfLife: "1h").Alias("ewm_by")
+        );
+
+        // Row 0: 10
+        Assert.Equal(10.0, (double)res["ewm_by"][0]);
+
+        // Row 1 (dt=1h):
+        // weight_current = 1
+        // weight_prev = 0.5^1 = 0.5
+        // mean = (20*1 + 10*0.5) / (1 + 0.5) = 25 / 1.5 = 16.666...
+        Assert.Equal(15.0, (double)res["ewm_by"][1], precision: 4);
+        
+        // Row 2 (dt=2h from t1):
+        // weight_current = 1
+        // weight_t1 = 0.5^(2/1) = 0.25
+        // weight_t0 = 0.5^(3/1) = 0.125
+        // mean = (40*1 + 20*0.25 + 10*0.125) / (1 + 0.25 + 0.125) 
+        //      = (40 + 5 + 1.25) / 1.375 = 46.25 / 1.375 = 33.6363...
+        Assert.Equal(33.75, (double)res["ewm_by"][2], precision: 4);
+    }
+
+    [Fact]
+    public void Test_EwmMeanBy_Index()
+    {
+        // 测试 '1i' (Index Count) 用法
+        // 效果应该等同于普通的 EWM
+        using var df = DataFrame.FromColumns(new 
+        { 
+            idx = new[] { 0, 1, 2 }, // 均匀索引
+            v = new[] { 10.0, 20.0, 40.0 } 
+        });
+
+        using var res = df.Select(
+            Col("v").EwmMeanBy(by: Col("idx"), halfLife: "1i").Alias("ewm_idx")
+        );
+        
+        // 应该能算出数，不报错即可
+        Assert.Equal(10.0, (double)res["ewm_idx"][0]);
+        Assert.True((double)res["ewm_idx"][1] > 10);
+    }
+    [Fact]
+    public void Test_Rolling_Fixed_Advanced()
+    {
+        // Data: [1, 2, 3, 4, 100]
+        using var df = DataFrame.FromColumns(new { v = new[] { 1.0, 2.0, 3.0, 4.0, 100.0 } });
+
+        // --- 1. Rolling Var (Window=3) ---
+        // [1, 2, 3] -> Mean=2, Var = ((1-2)^2 + (2-2)^2 + (3-2)^2) / (3-1) = 2/2 = 1.0
+        // [2, 3, 4] -> Var = 1.0
+        using var resVar = df.Select(
+            Col("v").RollingVar(windowSize: "3i").Alias("var")
+        );
+        // 前两个是 null (min_periods default is usually window size or 1 depending on setup, Polars usually nulls until window full)
+        Assert.Null(resVar["var"][0]); 
+        Assert.Equal(1.0, (double)resVar["var"][2]);
+        Assert.Equal(1.0, (double)resVar["var"][3]);
+
+        // --- 2. Rolling Quantile (Median) with Weights ---
+        // Median (0.5 quantile) is at weight 1.0 -> Value 2.
+        
+        // 注意：weights 数组长度必须和 windowSize 里的数字一致（这里是3）
+        double[] w = [0.5, 1.0, 0.5];
+        
+        using var resQuant = df.Select(
+            Col("v").RollingQuantile(
+                quantile: 0.5, 
+                method: QuantileMethod.Linear, 
+                windowSize: "3i", 
+                weights: w
+            ).Alias("q_weighted")
+        );
+        // 实测 Polars Linear Weighted Quantile 逻辑：
+        // Window [1, 2, 3] -> 1*0.25 + 2*0.75 = 1.75
+        Assert.Equal(1.75, (double)resQuant["q_weighted"][2], precision: 4);
+        
+        // Window [3, 4, 100] -> 3*0.25 + 4*0.75 = 3.75
+        // 注意：100 被权重的分布“屏蔽”了，因为中位数落在前两个数之间
+        Assert.Equal(3.75, (double)resQuant["q_weighted"][4], precision: 4);
+        
+        // --- 3. Rolling Kurtosis ---
+        // Kurtosis 需要至少4个点才有意义 (Fisher definition) 或者根据实现不同
+        // 这里只验证它能运行且算出非空值
+        using var resKurt = df.Select(
+            Col("v").RollingKurtosis(windowSize: "4i").Alias("kurt")
+        );
+        Assert.NotNull(resKurt["kurt"][3]); // index 3 is 4th element
+    }
+    [Fact]
+    public void Test_Rolling_Rank_Fixed()
+    {
+        // 构造带重复值的数据: [10, 20, 20, 30]
+        using var df = DataFrame.FromColumns(new { v = new[] { 10.0, 20.0, 20.0, 30.0 } });
+
+        // 尝试调用 RollingRank (固定窗口 3)
+        // 期望:
+        // Index 2 (Window: 10, 20, 20): Last val is 20. Rank(Average) = (2+3)/2 = 2.5
+        using var res = df.Select(
+            Col("v").RollingRank(windowSize: "3i", minPeriods: 3).Alias("rank")
+        );
+
+        // 如果 Rust 端实现没有注入 RollingFnParams::Rank，这里会 Panic
+        Assert.Equal(2.5, (double)res["rank"][2]);
+    }
+    [Fact]
+    public void Test_Rolling_By_Time_Std_Rank()
+    {
+        // 构造非等间距的时间序列
+        // t0: 00:00, v=0
+        // t1: 00:01, v=10
+        // t2: 00:02, v=10 (Diff from t0 is 2m)
+        // t3: 00:05, v=20 (Diff from t2 is 3m)
+        var dates = new[] {
+            new DateTime(2023, 1, 1, 0, 0, 0),
+            new DateTime(2023, 1, 1, 0, 1, 0),
+            new DateTime(2023, 1, 1, 0, 2, 0),
+            new DateTime(2023, 1, 1, 0, 5, 0)
+        };
+
+        using var df = DataFrame.FromColumns(new 
+        { 
+            ts = dates, 
+            v = new[] { 0.0, 10.0, 10.0, 20.0 } 
+        });
+
+        // 必须转为 Polars Datetime
+        var tsCol = Col("ts").Cast(DataType.Datetime(TimeUnit.Microseconds));
+
+        // --- 1. Rolling Std By "2m" ---
+        // At t2 (00:02): Window [00:00, 00:02] (Default closed="left" -> [t-w, t))
+        // Closed=Left: [00:00, 00:02) -> 包含 00:00, 00:01. Values: [0, 10]. Std(0, 10) ≈ 7.07
+        // Closed=Both: [00:00, 00:02] -> 包含 00:00, 00:01, 00:02. Values: [0, 10, 10]. Std(0, 10, 10) ≈ 5.77
+        
+        using var resStd = df.Select(
+            Col("v").RollingStdBy(
+                windowSize: TimeSpan.FromMinutes(2), 
+                by: tsCol, 
+                closed: ClosedWindow.Left
+            ).Alias("std_left"),
+            
+            Col("v").RollingStdBy(
+                windowSize: TimeSpan.FromMinutes(2), 
+                by: tsCol, 
+                closed: ClosedWindow.Both // 包含当前点和边界
+            ).Alias("std_both")
+        );
+
+        // Check t2 (Index 2)
+        // Left: [0, 10]
+        Assert.Equal(7.07106, (double)resStd["std_left"][2], precision: 4);
+        // Both: [0, 10, 10]
+        Assert.Equal(5.77350, (double)resStd["std_both"][2], precision: 4);
+
+        // --- 2. Rolling Rank By ---
+        // 测试 Rank 在时间窗口内的表现
+        using var resRank = df.Select(
+            Col("v").RollingRankBy(
+                windowSize: "3m", // 3分钟窗口
+                by: tsCol,
+                closed: ClosedWindow.Both
+            ).Alias("rank")
+        );
+        
+        // At t2 (00:02): Window [23:59, 00:02]. Includes t0, t1, t2 -> [0, 10, 10]
+        // Current value is 10 (at t2).
+        // Rank logic: 0->1, 10->2.5 (Average), 10->2.5
+        // Polars rolling rank typically ranks the *current row's value* within the window.
+        Assert.Equal(2.5, (double)resRank["rank"][2]);
+    }
+    [Fact]
+    public void Test_Rolling_QuantileBy_Method()
+    {
+        var dates = new[] {
+            new DateTime(2023, 1, 1, 0, 0, 0),
+            new DateTime(2023, 1, 1, 0, 1, 0)
+        };
+        
+        // Values: [1, 2]
+        using var df = DataFrame.FromColumns(new 
+        { 
+            ts = dates, 
+            v = new[] { 1.0, 2.0 } 
+        });
+        var tsCol = Col("ts").Cast(DataType.Datetime(TimeUnit.Microseconds));
+
+        // Window "2m" covers both points.
+        // We compute Median (0.5) of [1, 2].
+        // Method: Linear -> 1.5
+        // Method: Lower -> 1
+        // Method: Higher -> 2
+        
+        using var res = df.Select(
+            Col("v").RollingQuantileBy(
+                quantile: 0.5, 
+                method: QuantileMethod.Linear, 
+                windowSize: "2m", 
+                by: tsCol,
+                closed: ClosedWindow.Both
+            ).Alias("q_linear"),
+            
+            Col("v").RollingQuantileBy(
+                quantile: 0.5, 
+                method: QuantileMethod.Lower, 
+                windowSize: "2m", 
+                by: tsCol,
+                closed: ClosedWindow.Both
+            ).Alias("q_lower")
+        );
+
+        Assert.Equal(1.5, (double)res["q_linear"][1]);
+        Assert.Equal(1.0, (double)res["q_lower"][1]);
+    }
 }

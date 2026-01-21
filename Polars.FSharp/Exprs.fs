@@ -214,9 +214,9 @@ and Expr(handle: ExprHandle) =
         
     member this.Median() = new Expr(PolarsWrapper.Median (this.CloneHandle()))
     
-    member this.Quantile(q: float, ?interpolation: string) =
-        let method = defaultArg interpolation "linear"
-        new Expr(PolarsWrapper.Quantile(this.CloneHandle(), q, method))
+    member this.Quantile(q: float, ?interpolation: QuantileMethod) =
+        let method = defaultArg interpolation QuantileMethod.Linear
+        new Expr(PolarsWrapper.Quantile(this.CloneHandle(), q, method.ToNative()))
     // Logic
     /// <summary> Check if the value is between lower and upper bounds (inclusive). </summary>
     member this.IsBetween(lower: Expr, upper: Expr) =

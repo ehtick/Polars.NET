@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text.Unicode;
 using Apache.Arrow.C;
 using Polars.NET.Core.Arrow;
 
@@ -26,7 +27,6 @@ public unsafe delegate int UdfCallback(
 unsafe internal partial class NativeBindings
 {
     const string LibName = "native_shim";
-    
     [LibraryImport(LibName)] public static partial void pl_expr_free(IntPtr ptr);
     [LibraryImport(LibName)] public static partial void pl_lazy_frame_free(IntPtr ptr);
     [LibraryImport(LibName)] public static partial void pl_selector_free(IntPtr ptr);
@@ -214,6 +214,44 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_max(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_min(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_abs(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_skew(ExprHandle expr,[MarshalAs(UnmanagedType.U1)] bool bias);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_kurtosis(ExprHandle expr,[MarshalAs(UnmanagedType.U1)] bool fisher,[MarshalAs(UnmanagedType.U1)] bool bias);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_product(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_pct_change(ExprHandle expr, long n);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rank(ExprHandle expr, PlRankMethod method,[MarshalAs(UnmanagedType.U1)] bool descending, ulong* seed);
+    // Cumulative Fuctions
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cum_sum(ExprHandle expr,[MarshalAs(UnmanagedType.U1)] bool reverse);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cum_max(ExprHandle expr,[MarshalAs(UnmanagedType.U1)] bool reverse);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cum_min(ExprHandle expr,[MarshalAs(UnmanagedType.U1)] bool reverse);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cum_prod(ExprHandle expr,[MarshalAs(UnmanagedType.U1)] bool reverse);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cum_count(ExprHandle expr,[MarshalAs(UnmanagedType.U1)] bool reverse);
+    // --- EWM Functions ---
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_ewm_mean(
+        ExprHandle expr,
+        double alpha,
+        [MarshalAs(UnmanagedType.U1)] bool adjust,
+        [MarshalAs(UnmanagedType.U1)] bool bias,
+        UIntPtr min_periods,
+        [MarshalAs(UnmanagedType.U1)] bool ignore_nulls);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_ewm_std(
+        ExprHandle expr,
+        double alpha,
+        [MarshalAs(UnmanagedType.U1)] bool adjust,
+        [MarshalAs(UnmanagedType.U1)] bool bias,
+        UIntPtr min_periods,
+        [MarshalAs(UnmanagedType.U1)] bool ignore_nulls);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_ewm_var(
+        ExprHandle expr,
+        double alpha,
+        [MarshalAs(UnmanagedType.U1)] bool adjust,
+        [MarshalAs(UnmanagedType.U1)] bool bias,
+        UIntPtr min_periods,
+        [MarshalAs(UnmanagedType.U1)] bool ignore_nulls);
+    [LibraryImport(LibName,StringMarshalling=StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_ewm_mean_by(
+        ExprHandle expr,
+        ExprHandle by,
+        string half_life
+    );
     // null ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_fill_null(ExprHandle expr, ExprHandle fillValue);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_fill_nan(ExprHandle expr, ExprHandle fillValue);
@@ -396,7 +434,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_read_parquet([MarshalAs(UnmanagedType.LPUTF8Str)] string path);
     [LibraryImport(LibName)]
-    [UnmanagedCallConv(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
+    [UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
     public static partial void pl_dataframe_export_batches(
         DataFrameHandle df,
         ArrowStreamInterop.SinkCallback callback,
@@ -833,30 +871,107 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_forward_fill(ExprHandle expr, uint limit);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_backward_fill(ExprHandle expr, uint limit);
     // Rolling Window
-    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_mean(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,UIntPtr minPeriods);
-    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_sum(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,UIntPtr minPeriods);
-    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_min(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,UIntPtr minPeriods);
-    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_max(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,UIntPtr minPeriods);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_mean(
+        ExprHandle expr,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,
+        UIntPtr minPeriods,
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_sum(
+        ExprHandle expr,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,
+        UIntPtr minPeriods,
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_min(
+        ExprHandle expr, 
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,
+        UIntPtr minPeriods,
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_max(
+        ExprHandle expr, 
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,
+        UIntPtr minPeriods,
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_std(
+        ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,
+        UIntPtr minPeriods,[MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_var(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,UIntPtr minPeriods,        
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center,byte ddof);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_median(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,UIntPtr minPeriods,
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_skew(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,UIntPtr minPeriods,        
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center,
+        [MarshalAs(UnmanagedType.U1)]bool bias);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_kurtosis(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,UIntPtr minPeriods, 
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center,
+        [MarshalAs(UnmanagedType.U1)]bool fisher,
+        [MarshalAs(UnmanagedType.U1)]bool bias);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_rank(
+        ExprHandle expr,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,
+        UIntPtr minPeriods,
+        PlRankMethod method,
+        ulong* seed,
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center
+        );
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_rolling_quantile(
+        ExprHandle expr, 
+        double quantile,
+        PlQuantileMethod interpolation,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string windowSize,
+        UIntPtr minPeriods,
+        [MarshalAs(UnmanagedType.LPArray)] double[]? weights,
+        UIntPtr weights_len,
+        [MarshalAs(UnmanagedType.U1)]bool center
+        );
 
-    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_mean_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, string closed);
-    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_sum_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, string closed);
-    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_min_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, string closed);
-    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_max_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, string closed);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_mean_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, PlClosedWindow closed);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_sum_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, PlClosedWindow closed);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_min_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, PlClosedWindow closed);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_max_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, PlClosedWindow closed);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_std_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, PlClosedWindow closed);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_var_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, PlClosedWindow closed, byte ddof);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_median_by(ExprHandle expr, string windowSize,UIntPtr minPeriods, ExprHandle by, PlClosedWindow closed);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_rank_by(ExprHandle expr, PlRollingRankMethod method,ulong* seed,string windowSize,UIntPtr minPeriods, ExprHandle by, PlClosedWindow closed);
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)] public static partial ExprHandle pl_expr_rolling_quantile_by(
+        ExprHandle expr,
+        double quantile,
+        PlQuantileMethod interpolation,
+        string windowSize,
+        UIntPtr minPeriods,
+        ExprHandle by,
+        PlClosedWindow closed
+    );
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_if_else(ExprHandle pred, ExprHandle ifTrue, ExprHandle ifFalse);
     // Statistical
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_count(ExprHandle e);
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_std(ExprHandle e, byte ddof);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_count(ExprHandle e);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_std(ExprHandle e, byte ddof);
 
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_var(ExprHandle e, byte ddof);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_var(ExprHandle e, byte ddof);
 
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_median(ExprHandle e);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_median(ExprHandle e);
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial ExprHandle pl_expr_quantile(ExprHandle e, double quantile, string interpol);
+    public static partial ExprHandle pl_expr_quantile(ExprHandle e, double quantile, PlQuantileMethod interpol);
     // --- Series Lifecycle ---
     [LibraryImport(LibName)]
     public static partial void pl_series_free(IntPtr ptr);
