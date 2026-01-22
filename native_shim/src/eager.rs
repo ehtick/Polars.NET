@@ -85,6 +85,24 @@ gen_eager_op_vec!(pl_select, select);
 gen_eager_op_vec!(pl_with_columns, with_columns);
 
 // ==========================================
+// Slice
+// ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_dataframe_slice(
+    df: *mut DataFrame,
+    offset: i64,
+    length: usize,
+) -> *mut DataFrame {
+    ffi_try!({
+        let df = unsafe { &*df };
+        let result_df = df.slice(offset, length);
+
+        Ok(Box::into_raw(Box::new(result_df)))
+    })
+}
+
+
+// ==========================================
 // GroupBy
 // ==========================================
 

@@ -833,4 +833,37 @@ B,5";
         Assert.Equal(20, rVals[0]); // 10:00 matched 10:00
         Assert.Equal(30, rVals[1]); // 10:02 matched 10:01 (closest previous)
     }
+    [Fact]
+    public void Test_DataFrame_Slice()
+    {
+        // 1. 准备数据: 水果和颜色
+        var df = new DataFrame(
+            new Series("Fruit", ["Apple", "Grape", "Grape", "Fig", "Fig"]),
+            new Series("Color", ["Green", "Red", "White", "White", "Red"])
+        );
+
+        // 2. 执行切片: df.slice(2, 3)
+        // 意思是从索引 2 开始，取 3 行
+        // 原数据:
+        // 0: Apple, Green
+        // 1: Grape, Red
+        // 2: Grape, White  <-- Start
+        // 3: Fig,   White
+        // 4: Fig,   Red    <-- End (Length 3)
+        using var sl = df.Slice(2, 3);
+
+        // 3. 验证形状
+        Assert.Equal(3, sl.Height);
+        Assert.Equal(2, sl.Width);
+
+        // 4. 验证内容
+        Assert.Equal("Grape", sl["Fruit"].GetValue<string>(0));
+        Assert.Equal("Fig",   sl["Fruit"].GetValue<string>(1));
+        Assert.Equal("Fig",   sl["Fruit"].GetValue<string>(2));
+        
+        // 验证越界情况（Polars 通常会截断而不是报错）
+        using var slOverflow = df.Slice(4, 100);
+        Assert.Equal(1, slOverflow.Height); // 只剩最后一行 "Fig"
+        Assert.Equal("Fig", slOverflow["Fruit"].GetValue<string>(0));
+    }
 }

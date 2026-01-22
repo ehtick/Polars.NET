@@ -65,6 +65,8 @@ public static partial class PolarsWrapper
 
     public static DataFrameHandle Tail(DataFrameHandle df, uint n)
         => ErrorHelper.Check(NativeBindings.pl_tail(df, n));
+    public static DataFrameHandle Slice(DataFrameHandle df, long offset,ulong length)
+        => ErrorHelper.Check(NativeBindings.pl_dataframe_slice(df,offset,(UIntPtr)length));
     public static DataFrameHandle Drop(DataFrameHandle df, string name)
         => ErrorHelper.Check(NativeBindings.pl_dataframe_drop(df, name));
 

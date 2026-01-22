@@ -91,6 +91,24 @@ gen_lazy_scalar_op!(pl_lazy_limit, limit, u32);
 gen_lazy_scalar_op!(pl_lazy_tail, tail, u32);
 
 // ==========================================
+// Slice
+// ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_slice(
+    lf_ptr: *mut LazyFrameContext,
+    offset: i64,
+    len: IdxSize, 
+) -> *mut LazyFrame {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(lf_ptr) };
+        
+        let new_lf = ctx.inner.slice(offset, len);
+
+        Ok(Box::into_raw(Box::new(new_lf)))
+    })
+}
+
+// ==========================================
 // Sort
 // ==========================================
 #[unsafe(no_mangle)]

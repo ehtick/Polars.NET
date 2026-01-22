@@ -467,6 +467,25 @@ public class LazyFrame : IDisposable
         return new LazyFrame(PolarsWrapper.LazyWithColumns(lfClone, handles));
     }
     /// <summary>
+    /// Slice the LazyFrame.
+    /// <para>This operation is lazy; it only affects the query plan.</para>
+    /// </summary>
+    /// <param name="offset">Start index. Negative values count from the end.</param>
+    /// <param name="length">Number of rows to return.</param>
+    public LazyFrame Slice(long offset, uint length)
+    {
+        var handle = PolarsWrapper.LazySlice(CloneHandle(), offset, length);
+        return new LazyFrame(handle);
+    }
+    /// <summary>
+    /// Slice the LazyFrame (Convenience overload).
+    /// </summary>
+    public LazyFrame Slice(long offset, int length)
+    {
+        if (length < 0) throw new ArgumentOutOfRangeException(nameof(length), "Length must be non-negative.");
+        return Slice(offset, (uint)length);
+    }
+    /// <summary>
     /// Sort the LazyFrame by a single column.
     /// </summary>
     public LazyFrame Sort(

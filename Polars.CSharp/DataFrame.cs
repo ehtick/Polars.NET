@@ -796,6 +796,22 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     /// <param name="subset">Column names to consider. If null/empty, checks all columns.</param>
     public DataFrame DropNulls(params string[]? subset) => new(PolarsWrapper.DropNulls(Handle, subset));
+    /// <summary>
+    /// Slice the DataFrame along the rows.
+    /// </summary>
+    /// <param name="offset">Start index. Negative values work as expected (counting from the end).</param>
+    /// <param name="length">Length of the slice.</param>
+    /// <returns>A new sliced DataFrame.</returns>
+    public DataFrame Slice(long offset, ulong length)
+        => new(PolarsWrapper.Slice(Handle, offset, length));
+    /// <summary>
+    /// Slice the DataFrame along the rows (Convenience overload for int).
+    /// </summary>
+    public DataFrame Slice(int offset, int length)
+    {
+        if (length < 0) throw new ArgumentOutOfRangeException(nameof(length), "Length must be non-negative.");
+        return Slice((long)offset, (ulong)length);
+    }
 
     // ==========================================
     // Sampling

@@ -379,6 +379,10 @@ unsafe internal partial class NativeBindings
     );
     [LibraryImport(LibName)] 
     public static partial ExprHandle pl_expr_cast(ExprHandle expr, DataTypeHandle dtype, [MarshalAs(UnmanagedType.U1)] bool strict);
+    [LibraryImport(LibName)] 
+    public static partial DataFrameHandle pl_dataframe_slice(DataFrameHandle df, long offset, UIntPtr length);
+    [LibraryImport(LibName)] 
+    public static partial LazyFrameHandle pl_lazyframe_slice(LazyFrameHandle lf, long offset, UIntPtr length);
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_groupby_agg(
         DataFrameHandle df, 

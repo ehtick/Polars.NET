@@ -62,6 +62,12 @@ public static partial class PolarsWrapper
         expr.TransferOwnership(); 
         return ErrorHelper.Check(h);
     }
+    public static LazyFrameHandle LazySlice(LazyFrameHandle lf, long offset, uint len)
+    {
+        var h = NativeBindings.pl_lazyframe_slice(lf, offset,len);
+        lf.TransferOwnership();   
+        return ErrorHelper.Check(h);
+    }
     public static LazyFrameHandle LazyFrameSort(
         LazyFrameHandle lf, 
         ExprHandle[] exprs, 

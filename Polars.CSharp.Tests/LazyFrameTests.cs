@@ -645,4 +645,27 @@ HR,50";
         Assert.Contains(1, bottomVals);
         Assert.Contains(5, bottomVals);
     }
+    [Fact]
+    public void Test_LazyFrame_Slice()
+    {
+        // 1. 准备 CSV: 5 行数据 (0, 1, 2, 3, 4)
+        using var csv = new DisposableFile("val\n0\n1\n2\n3\n4", ".csv");
+        using var lf = LazyFrame.ScanCsv(csv.Path);
+
+        // 2. 定义切片计划: Slice(-3, 2)
+        // 意思是从倒数第 3 行开始，取 2 行
+        // 数据: 0, 1, [2], [3], 4
+        // 倒数第三行是 "2"
+        var slicedLf = lf.Slice(-3, 2);
+
+        // 3. 执行计划 (Collect)
+        using var df = slicedLf.Collect();
+
+        // 4. 验证结果
+        Assert.Equal(2, df.Height);
+        
+        // 验证值
+        Assert.Equal(2, df["val"].GetValue<int>(0));
+        Assert.Equal(3, df["val"].GetValue<int>(1));
+    }
 }
