@@ -2,7 +2,7 @@
 
 using Apache.Arrow;
 using Apache.Arrow.Types;
-
+using static Polars.CSharp.Polars;
 
 namespace Polars.CSharp.Tests;
 
@@ -649,5 +649,326 @@ public class SeriesTests
         // 验证概率: apple = 3/6 = 0.5
         var probApple = dfNorm["prob"][0];
         Assert.Equal(0.5, probApple); 
+    }
+    [Fact]
+    public void Test_Series_TopKBy_BottomKBy_With_StringLength()
+    {
+        // 1. 准备数据
+        // 长度: 1, 3, 2
+        var s = new Series("words", ["a", "ccc", "bb"]);
+
+        // 2. 定义排序规则：按字符串长度 (使用你指定的 Str.Len())
+        // 注意：Col("words") 必须匹配 Series 的 Name
+        var byLength = Polars.Col("words").Str.Len();
+
+        // ---------------------------------------------------
+        // 测试 TopKBy (取最长的2个)
+        // ---------------------------------------------------
+        // 预期结果: ["ccc", "bb"]
+        var top2 = s.TopKBy(2, byLength);
+        
+        Assert.Equal(2, top2.Length);
+        Assert.Equal("ccc", top2[0]);
+        Assert.Equal("bb", top2[1]);
+
+        // ---------------------------------------------------
+        // 测试 BottomKBy (取最短的2个)
+        // ---------------------------------------------------
+        // 预期结果: ["a", "bb"]
+        var bot2 = s.BottomKBy(2, byLength);
+        
+        Assert.Equal(2, bot2.Length);
+        Assert.Equal("a", bot2[0]);
+        Assert.Equal("bb", bot2[1]);
+    }
+    [Fact]
+    public void Test_Series_Statistics_Methods()
+    {
+        // ---------------------------------------------------
+        // 1. 基础统计 (Std, Var, Median)
+        // 数据: [1, 2, 3, 4, 5]
+        // 均值: 3
+        // 方差 (ddof=1): ((1-3)^2 + ... + (5-3)^2) / 4 = 10 / 4 = 2.5
+        // 标准差: sqrt(2.5) ≈ 1.58113883
+        // ---------------------------------------------------
+        var s1 = new Series("s1", [1, 2, 3, 4, 5]);
+
+        // 验证 Var
+        var varSeries = s1.Var(ddof: 1);
+        Assert.Equal(2.5, (double)varSeries[0]!, precision: 5);
+
+        // 验证 Std
+        var stdSeries = s1.Std(ddof: 1);
+        Assert.Equal(1.58114, (double)stdSeries[0]!, precision: 5);
+
+        // 验证 Median
+        var medianSeries = s1.Median();
+        Assert.Equal(3.0, medianSeries[0]);
+
+        // ---------------------------------------------------
+        // 2. 分位数 (Quantile)
+        // ---------------------------------------------------
+        // 中位数 (0.5) 应该是 3
+        Assert.Equal(3.0, s1.Quantile(0.5, QuantileMethod.Linear)[0]);
+
+        // ---------------------------------------------------
+        // 3. 变化率 (PctChange)
+        // 数据: [10, 20, 10]
+        // 10 -> 20: +100% (1.0)
+        // 20 -> 10: -50% (-0.5)
+        // ---------------------------------------------------
+        var s2 = new Series("s2", [10, 20, 10]);
+        var pct = s2.PctChange(); // 默认 n=1
+
+        Assert.Null(pct[0]); // 第一个值通常是 null
+        Assert.Equal(1.0, (double)pct[1]!, precision: 2);
+        Assert.Equal(-0.5, (double)pct[2]!, precision: 2);
+
+        // ---------------------------------------------------
+        // 4. 排名 (Rank) - 处理并列值
+        // 数据: [10, 20, 20, 10]
+        // 排序后位置: 10(pos1), 10(pos2), 20(pos3), 20(pos4)
+        // Method=Average:
+        // 10 的排名 = (1+2)/2 = 1.5
+        // 20 的排名 = (3+4)/2 = 3.5
+        // ---------------------------------------------------
+        var s3 = new Series("s3", [10, 20, 20, 10]);
+        var ranks = s3.Rank(RankMethod.Average);
+
+        Assert.Equal(1.5, ranks[0]);
+        Assert.Equal(3.5, ranks[1]);
+        Assert.Equal(3.5, ranks[2]);
+        Assert.Equal(1.5, ranks[3]);
+    }
+    [Fact]
+    public void Test_Series_Cumulative_Methods()
+    {
+        // 数据: [1, 3, 2, 4]
+        var s = new Series("nums", [1, 3, 2, 4]);
+
+        // ---------------------------------------------------
+        // 1. CumSum (累加)
+        // 预期: [1, 1+3, 1+3+2, 1+3+2+4] -> [1, 4, 6, 10]
+        // ---------------------------------------------------
+        var cumSum = s.CumSum();
+        var arrSum = cumSum.ToArray<int>(); // 假设 ToArray 支持泛型
+        
+        Assert.Equal([1, 4, 6, 10], arrSum);
+
+        // ---------------------------------------------------
+        // 2. CumMax (累积最大值)
+        // 预期: [1, 3, 3, 4] (2比3小，所以保持3)
+        // ---------------------------------------------------
+        var cumMax = s.CumMax();
+        var arrMax = cumMax.ToArray<int>();
+
+        Assert.Equal([1, 3, 3, 4], arrMax);
+
+        // ---------------------------------------------------
+        // 3. CumMin (累积最小值)
+        // 预期: [1, 1, 1, 1]
+        // ---------------------------------------------------
+        var cumMin = s.CumMin();
+        var arrMin = cumMin.ToArray<int>();
+
+        Assert.Equal([1, 1, 1, 1], arrMin);
+
+        // ---------------------------------------------------
+        // 4. CumProd (累积乘积)
+        // 预期: [1, 1*3, 3*2, 6*4] -> [1, 3, 6, 24]
+        // ---------------------------------------------------
+        var cumProd = s.CumProd();
+        var arrProd = cumProd.ToArray<int>(); // 注意：如果数很大可能会溢出变成 long
+
+        Assert.Equal([1, 3, 6, 24], arrProd);
+
+        // ---------------------------------------------------
+        // 5. Reverse 测试 (从后往前算)
+        // 数据: [1, 3, 2]
+        // CumSum Reverse: 
+        // index 2 (val 2) -> 2
+        // index 1 (val 3) -> 3 + 2 = 5
+        // index 0 (val 1) -> 1 + 5 = 6
+        // 结果: [6, 5, 2]
+        // ---------------------------------------------------
+        var sRev = new Series("rev", [1, 3, 2]);
+        var revSum = sRev.CumSum(reverse: true);
+        var arrRev = revSum.ToArray<int>();
+
+        Assert.Equal([6, 5, 2], arrRev);
+    }
+    [Fact]
+public void Test_Series_Ewm_Methods()
+{
+    // ---------------------------------------------------
+    // 1. EwmMean (Standard)
+    // 数据: [10, 20, 40]
+    // Alpha = 0.5 (Com = 1)
+    // Adjust = false (Infinite history approximation for simple math)
+    // 
+    // t0: 10
+    // t1: (1-0.5)*10 + 0.5*20 = 5 + 10 = 15
+    // t2: (1-0.5)*15 + 0.5*40 = 7.5 + 20 = 27.5
+    // ---------------------------------------------------
+    var s = new Series("val", [10.0, 20.0, 40.0]);
+    
+    // 注意：Adjust=false 让计算公式更简单，直接测试核心逻辑
+    var ewm = s.EwmMean(alpha: 0.5, adjust: false);
+    
+    Assert.Equal(10.0, ewm[0]);
+    Assert.Equal(15.0, ewm[1]);
+    Assert.Equal(27.5, ewm[2]);
+
+    // ---------------------------------------------------
+    // 2. EwmVar
+    // 只要能跑通且不抛异常，且结果为非负数
+    // ---------------------------------------------------
+    var ewmVar = s.EwmVar(alpha: 0.5);
+    Assert.NotNull(ewmVar[0]); // 第一个可能是 NaN 或者 0
+    Assert.True((double?)ewmVar[1] >= 0);
+}
+
+    [Fact]
+    public void Test_Series_EwmMeanBy_Time()
+    {
+        // ---------------------------------------------------
+        // 验证基于时间的衰减
+        // 场景：两个数据点，值都是 10 和 20。
+        // 情况 A：时间间隔很短 (1秒) -> EWM 应该接近平均值 (15)
+        // 情况 B：时间间隔很长 (10天) -> 之前的值权重衰减没了，EWM 应该接近当前值 (20)
+        // ---------------------------------------------------
+        
+        // 构造 DataFrame 因为 EwmMeanBy 需要两列协同
+        var times = new[] 
+        { 
+            new DateTime(2023, 1, 1), 
+            new DateTime(2023, 1, 11) // 间隔 10 天
+        };
+        var values = new[] { 10.0, 20.0 };
+
+        using var df = DataFrame.FromColumns(new
+        {
+            tm = times,
+            val = values
+        });
+
+        // Case 1: HalfLife = "1d" (1天)
+        // 经过 10 天 (10个 HalfLife)，第一个值 10 的权重几乎为 0
+        // 结果应该非常接近 20
+        var resDecay = df.Select(
+            Col("val").EwmMeanBy(Col("tm"), halfLife: "1d").Alias("ewm")
+        );
+        
+        var arrDecay = resDecay["ewm"].ToArray<double>();
+        // 10天后，旧值的权重只有 (0.5)^10 ≈ 0.0009
+        // 所以结果会非常接近 20.0
+        Assert.Equal(20.0, arrDecay[1], precision: 1); 
+
+        // Case 2: HalfLife = "100d" (100天)
+        // 经过 10 天，只是 0.1 个 HalfLife，权重还很高
+        // 结果应该在 10 和 20 之间，偏向 15 左右
+        var resStable = df.Select(
+            Col("val").EwmMeanBy(Col("tm"), halfLife: "100d").Alias("ewm")
+        );
+        var arrStable = resStable["ewm"].ToArray<double>();
+        Assert.True(arrStable[1] < 19.0); // 肯定小于 20
+        Assert.True(arrStable[1] > 10.0); // 肯定大于 10
+    }
+    [Fact]
+    public void Test_RollingMeanBy_TimeWindow_And_ClosedBoundary()
+    {
+        // ---------------------------------------------------
+        // 场景构造：
+        // 时间点：09:00, 10:00, 11:00
+        // 数值：  10,    20,    30
+        // ---------------------------------------------------
+        var start = new DateTime(2023, 1, 1, 9, 0, 0);
+        var times = new[] 
+        { 
+            start, 
+            start.AddHours(1), // 10:00
+            start.AddHours(2)  // 11:00
+        };
+        var values = new[] { 10.0, 20.0, 30.0 };
+
+        using var df = DataFrame.FromColumns(new { tm = times, val = values });
+
+        // ---------------------------------------------------
+        // Case 1: Window = 2h, Closed = Left [t-w, t)
+        // ---------------------------------------------------
+        // At 11:00 (t): Window is [09:00, 11:00)
+        // 包含: 09:00 (10), 10:00 (20) -> 不包含 11:00 本身
+        // Mean = (10 + 20) / 2 = 15.0
+        // ---------------------------------------------------
+        var resLeft = df.Select(
+            Col("val").RollingMeanBy(
+                windowSize: TimeSpan.FromHours(2), // 测试 TimeSpan 转发
+                by: Col("tm"), 
+                closed: ClosedWindow.Left          // 测试 Enum 转发
+            ).Alias("mean_left")
+        );
+
+        var leftArr = resLeft["mean_left"].ToArray<double>();
+        // index 0 (09:00): [07:00, 09:00) -> empty? Polars handle minPeriods=1 -> 10 (itself is excluded? No, usually start includes itself if window is large enough, but left closed excludes current 't'? Let's check logic)
+        // Polars Left closed definition: [t - period, t). 
+        // Wait, Polars behavior for 'Left': Includes the start of the window, excludes the exact 't'.
+        // 实际上 Polars 的 RollingBy 默认行为：
+        // Closed="left": (t-w, t] ? No.
+        // Let's verify the most obvious check: The last point (11:00).
+        // Window [09:00, 11:00). Contains 09:00, 10:00.
+        // Result should be 15.0.
+        
+        // 如果这里挂了，说明 ClosedWindow.ToNative() 映射反了，或者 WindowSize 没传对
+        Assert.Equal(15.0, leftArr[2]); 
+
+
+        // ---------------------------------------------------
+        // Case 2: Window = 2h, Closed = Both [t-w, t]
+        // ---------------------------------------------------
+        // At 11:00 (t): Window is [09:00, 11:00]
+        // 包含: 09:00 (10), 10:00 (20), 11:00 (30)
+        // Mean = (10+20+30) / 3 = 20.0
+        // ---------------------------------------------------
+        var resBoth = df.Select(
+            Col("val").RollingMeanBy(
+                windowSize: TimeSpan.FromHours(2), 
+                by: Col("tm"), 
+                closed: ClosedWindow.Both
+            ).Alias("mean_both")
+        );
+
+        var bothArr = resBoth["mean_both"].ToArray<double>();
+        Assert.Equal(20.0, bothArr[2]);
+    }
+    [Fact]
+    public void Test_RollingQuantileBy_ComplexSignature()
+    {
+        // 数据: 1, 2, 3, 4, 5 (每秒一个)
+        var times = Enumerable.Range(0, 5).Select(i => new DateTime(2023, 1, 1).AddSeconds(i)).ToArray();
+        var values = new[] { 1.0, 2.0, 3.0, 4.0, 5.0 };
+
+        using var df = DataFrame.FromColumns(new { tm = times, val = values });
+
+        // 目标：计算过去 3秒内的中位数 (Quantile 0.5)
+        // Window="3s", Closed="Both"
+        // At t=4 (00:00:04, val=5): Window [00:00:01, 00:00:04] -> {2, 3, 4, 5}
+        // Median of {2,3,4,5} -> (3+4)/2 = 3.5 (Linear interpolation)
+        
+        var res = df.Select(
+            Col("val").RollingQuantileBy(
+                quantile: 0.5,
+                method: QuantileMethod.Linear,
+                windowSize: TimeSpan.FromSeconds(3), // "3s"
+                by: Col("tm"),
+                closed: ClosedWindow.Both
+            ).Alias("q50")
+        );
+
+        var arr = res["q50"].ToArray<double>();
+        
+        // Check last element
+        // 如果这里算出来是 3.0 或 4.0，说明 Linear 插值没生效
+        // 如果结果是 NaN，说明 WindowSize 传错了
+        Assert.Equal(3.5, arr[4]); 
     }
 }

@@ -723,6 +723,22 @@ public class Expr : IDisposable
     /// <para>This is much faster than Sort().Tail(k) for large datasets.</para>
     /// </summary>
     public Expr BottomK(int k) => new(PolarsWrapper.BottomK(CloneHandle(), (uint)k));
+    /// <summary>
+    /// Get the top <paramref name="k"/> rows according to the sorting criteria defined by <paramref name="by"/>.
+    /// </summary>
+    /// <param name="k">Number of rows to return.</param>
+    /// <param name="by">The expressions (columns) to sort by.</param>
+    /// <param name="reverse">
+    /// Controls the sorting direction for each expression in <paramref name="by"/>.
+    /// <para>
+    /// For <b>TopK</b>: 
+    /// <br/>- <c>false</c> (default): Sorts <b>descending</b> (picks largest values).
+    /// <br/>- <c>true</c>: Sorts <b>ascending</b> (picks smallest values, acting like BottomK for this column).
+    /// </para>
+    /// Length must match <paramref name="by"/>.
+    /// </param>
+    /// <returns>A new expression.</returns>
+    /// <exception cref="ArgumentException">If the length of <paramref name="by"/> and <paramref name="reverse"/> do not match.</exception>
     public Expr TopKBy(int k, Expr[] by, bool[] reverse)
     {
         if (by.Length != reverse.Length)
@@ -733,6 +749,34 @@ public class Expr : IDisposable
         return new Expr(PolarsWrapper.TopKBy(CloneHandle(), (uint)k, byHandles, reverse));
     }
 
+    /// <summary>
+    /// Get the top <paramref name="k"/> rows according to a single sorting criterion.
+    /// <para>This is a convenience overload for a single expression.</para>
+    /// </summary>
+    /// <param name="k">Number of rows to return.</param>
+    /// <param name="by">The expression (column) to sort by.</param>
+    /// <param name="reverse">
+    /// <inheritdoc cref="TopKBy(int, Expr[], bool[])" path="/param[@name='reverse']/node()"/>
+    /// </param>
+    /// <returns>A new expression.</returns>
+    public Expr TopKBy(int k, Expr by, bool reverse = false)
+        => TopKBy(k, [by], [reverse]);
+
+    /// <summary>
+    /// Get the bottom <paramref name="k"/> rows according to the sorting criteria defined by <paramref name="by"/>.
+    /// </summary>
+    /// <param name="k">Number of rows to return.</param>
+    /// <param name="by">The expressions (columns) to sort by.</param>
+    /// <param name="reverse">
+    /// Controls the sorting direction for each expression in <paramref name="by"/>.
+    /// <para>
+    /// For <b>BottomK</b>: 
+    /// <br/>- <c>false</c> (default): Sorts <b>ascending</b> (picks smallest values).
+    /// <br/>- <c>true</c>: Sorts <b>descending</b> (picks largest values, acting like TopK for this column).
+    /// </para>
+    /// Length must match <paramref name="by"/>.
+    /// </param>
+    /// <returns>A new expression.</returns>
     public Expr BottomKBy(int k, Expr[] by, bool[] reverse)
     {
         if (by.Length != reverse.Length)
@@ -742,6 +786,18 @@ public class Expr : IDisposable
 
         return new Expr(PolarsWrapper.BottomKBy(CloneHandle(), (uint)k, byHandles, reverse));
     }
+
+    /// <summary>
+    /// Get the bottom <paramref name="k"/> rows according to a single sorting criterion.
+    /// <para>This is a convenience overload for a single expression.</para>
+    /// </summary>
+    /// <inheritdoc cref="BottomKBy(int, Expr[], bool[])" path="/param[@name='reverse']"/>
+    /// <param name="k">Number of rows to return.</param>
+    /// <param name="by">The expression (column) to sort by.</param>
+    /// <param name="reverse">See <see cref="BottomKBy(int, Expr[], bool[])"/>.</param>
+    /// <returns>A new expression.</returns>
+    public Expr BottomKBy(int k, Expr by, bool reverse = false)
+        => BottomKBy(k, [by], [reverse]);
     // ==========================================
     // Unique and Duplicated
     // ==========================================
@@ -1267,7 +1323,7 @@ public class Expr : IDisposable
     /// <param name="windowSize">
     /// The size of the window. 
     /// <para>Format: <c>"3i"</c> (3 rows) or just a number string <c>"3"</c>.</para>
-    /// <para>For time-based windows (e.g. "2h"), use <see cref="RollingQuantileBy"/> instead.</para>
+    /// <para>For time-based windows (e.g. "2h"), use <see cref="RollingQuantileBy(double,QuantileMethod,string,Expr,int,ClosedWindow)"/> instead.</para>
     /// </param>
     /// <param name="weights">
     /// Optional weights for the window. The length must match the parsed window size.
@@ -1671,7 +1727,7 @@ public class Expr : IDisposable
     /// Apply a rolling rank over a dynamic window defined by the values in the <paramref name="by"/> column.
     /// </summary>
     /// 
-    /// /// <param name="windowSize">
+    /// <param name="windowSize">
     /// The size of the time window as a <see cref="TimeSpan"/>.
     /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
     /// </param>
@@ -1719,7 +1775,10 @@ public class Expr : IDisposable
     /// <param name="quantile">Quantile between 0.0 and 1.0 (e.g., 0.5 for median).</param>
     /// <param name="method">Interpolation method when the quantile lies between two data points.</param>
     ///     
-    /// <param name="windowSize"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='windowSize']/node()"/></param>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
     /// <param name="by"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='by']/node()"/></param>
     /// <param name="minPeriods"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='minPeriods']/node()"/></param>
     /// <param name="closed"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='closed']/node()"/></param>
@@ -1739,6 +1798,37 @@ public class Expr : IDisposable
             quantile,
             method.ToNative(),
             windowSize,
+            minPeriods,
+            by.CloneHandle(),
+            closed.ToNative()
+        ));
+    }
+    /// <summary>
+    /// Compute the rolling quantile over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// </summary>
+    /// <param name="quantile">Quantile between 0.0 and 1.0 (e.g., 0.5 for median).</param>
+    /// <param name="method">Interpolation method when the quantile lies between two data points.</param>
+    ///     
+    /// <param name="windowSize"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='windowSize']/node()"/></param>
+    /// <param name="by"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='by']/node()"/></param>
+    /// <param name="minPeriods"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='minPeriods']/node()"/></param>
+    /// <param name="closed"><inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/param[@name='closed']/node()"/></param>
+    ///
+    /// <inheritdoc cref="RollingMeanBy(string,Expr,int,ClosedWindow)" path="/remarks"/>
+    /// <returns>A new expression representing the dynamic rolling quantile.</returns>
+    public Expr RollingQuantileBy(
+        double quantile,
+        QuantileMethod method,
+        TimeSpan windowSize,
+        Expr by,
+        int minPeriods = 1,
+        ClosedWindow closed = ClosedWindow.Left)
+    {
+        return new Expr(PolarsWrapper.RollingQuantileBy(
+            CloneHandle(),
+            quantile,
+            method.ToNative(),
+            DurationFormatter.ToPolarsString(windowSize),
             minPeriods,
             by.CloneHandle(),
             closed.ToNative()

@@ -517,6 +517,11 @@ public partial class Series : IDisposable
     /// </summary>
     /// <returns></returns>
     public Series Max() => new(PolarsWrapper.SeriesMax(Handle));
+    /// <summary>
+    /// Product series into 1 length series(Scalar)
+    /// </summary>
+    /// <returns></returns>
+    public Series Product() => ApplyExpr(Polars.Col(Name).Product());
 
     /// <summary>
     /// Sum series into scalar
@@ -542,7 +547,12 @@ public partial class Series : IDisposable
     /// <typeparam name="T"></typeparam>
     /// <returns></returns>
     public T? Max<T>() => Max().GetValue<T>(0);
-
+    /// <summary>
+    /// Product series into scalar
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    /// <returns></returns>
+    public T? Product<T>() => Product().GetValue<T>(0);
     // ==========================================
     // Constructors
     // ==========================================
@@ -856,6 +866,182 @@ public partial class Series : IDisposable
     /// Get the bottom k values.
     /// </summary>
     public Series BottomK(int k) => ApplyExpr(Polars.Col(Name).BottomK(k));
+    /// <summary>
+    /// <inheritdoc cref="Expr.TopKBy(int, Expr[], bool[])" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.TopKBy(int, Expr[], bool[])" path="/param"/>
+    /// <returns>A new <see cref="Series"/> containing the top k elements.</returns>
+    public Series TopKBy(int k, Expr[] by, bool[] reverse)
+        => ApplyExpr(Polars.Col(Name).TopKBy(k, by, reverse));
+    /// <summary>
+    /// <inheritdoc cref="Expr.BottomKBy(int, Expr[], bool[])" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.BottomKBy(int, Expr[], bool[])" path="/param"/>
+    /// <returns>A new <see cref="Series"/> containing the bottom k elements.</returns>
+    public Series BottomKBy(int k, Expr[] by, bool[] reverse)
+        => ApplyExpr(Polars.Col(Name).BottomKBy(k, by, reverse));
+    /// <summary>
+    /// <inheritdoc cref="Expr.TopKBy(int, Expr[], bool[])" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.TopKBy(int, Expr[], bool[])" path="/param"/>
+    /// <returns>A new <see cref="Series"/> containing the top k elements.</returns>
+    public Series TopKBy(int k, Expr by, bool reverse = false) 
+        => TopKBy(k, [by], [reverse]);
+    /// <summary>
+    /// <inheritdoc cref="Expr.BottomKBy(int, Expr[], bool[])" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.BottomKBy(int, Expr[], bool[])" path="/param"/>
+    /// <returns>A new <see cref="Series"/> containing the bottom k elements.</returns>
+    public Series BottomKBy(int k, Expr by, bool reverse = false)
+        => BottomKBy(k, [by], [reverse]);
+
+    // ==========================================
+    // Statistical Ops
+    // ==========================================
+    /// <summary>
+    /// <inheritdoc cref="Expr.Count()" path="/summary"/>
+    /// </summary>
+    /// <returns>A new <see cref="Series"/> containing the count of non-null values.</returns>
+    public Series Count() => ApplyExpr(Polars.Col(Name).Count());
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.Std(int)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.Std(int)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> containing the standard deviation (length 1).</returns>
+    public Series Std(int ddof = 1) => ApplyExpr(Polars.Col(Name).Std(ddof));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.Var(int)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.Var(int)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> containing the variance (length 1).</returns>
+    public Series Var(int ddof = 1) => ApplyExpr(Polars.Col(Name).Var(ddof));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.Median()" path="/summary"/>
+    /// </summary>
+    /// <returns>A new <see cref="Series"/> containing the median value (length 1).</returns>
+    public Series Median() => ApplyExpr(Polars.Col(Name).Median());
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.Skew(bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.Skew(bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> containing the skewness (length 1).</returns>
+    public Series Skew(bool bias = true) => ApplyExpr(Polars.Col(Name).Skew(bias));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.Kurtosis(bool, bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.Kurtosis(bool, bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> containing the kurtosis (length 1).</returns>
+    public Series Kurtosis(bool fisher = true, bool bias = true) 
+        => ApplyExpr(Polars.Col(Name).Kurtosis(fisher, bias));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.Quantile(double, QuantileMethod)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.Quantile(double, QuantileMethod)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> containing the quantile value (length 1).</returns>
+    public Series Quantile(double quantile, QuantileMethod method = QuantileMethod.Linear)
+        => ApplyExpr(Polars.Col(Name).Quantile(quantile, method));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.PctChange(int)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.PctChange(int)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the percentage change.</returns>
+    public Series PctChange(int n = 1) => ApplyExpr(Polars.Col(Name).PctChange(n));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.Rank(RankMethod, bool, ulong?)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.Rank(RankMethod, bool, ulong?)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the ranks.</returns>
+    public Series Rank(RankMethod method = RankMethod.Average, bool descending = false, ulong? seed = null)
+        => ApplyExpr(Polars.Col(Name).Rank(method, descending, seed));
+    // ==========================================
+    // Cumulative Functions
+    // ==========================================
+    /// <summary>
+    /// <inheritdoc cref="Expr.CumSum(bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.CumSum(bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the cumulative sum.</returns>
+    public Series CumSum(bool reverse = false) 
+        => ApplyExpr(Polars.Col(Name).CumSum(reverse));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.CumMax(bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.CumMax(bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the cumulative maximum.</returns>
+    public Series CumMax(bool reverse = false) 
+        => ApplyExpr(Polars.Col(Name).CumMax(reverse));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.CumMin(bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.CumMin(bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the cumulative minimum.</returns>
+    public Series CumMin(bool reverse = false) 
+        => ApplyExpr(Polars.Col(Name).CumMin(reverse));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.CumProd(bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.CumProd(bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the cumulative product.</returns>
+    public Series CumProd(bool reverse = false) 
+        => ApplyExpr(Polars.Col(Name).CumProd(reverse));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.CumCount(bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.CumCount(bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the cumulative count.</returns>
+    public Series CumCount(bool reverse = false) 
+        => ApplyExpr(Polars.Col(Name).CumCount(reverse));
+    // ==========================================
+    // EWM Functions
+    // ==========================================
+    /// <summary>
+    /// <inheritdoc cref="Expr.EwmMean(double, bool, bool, int, bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.EwmMean(double, bool, bool, int, bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the EWM mean.</returns>
+    public Series EwmMean(double alpha, bool adjust = true, bool bias = true, int minPeriods = 1, bool ignoreNulls = false)
+        => ApplyExpr(Polars.Col(Name).EwmMean(alpha, adjust, bias, minPeriods, ignoreNulls));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.EwmStd(double, bool, bool, int, bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.EwmStd(double, bool, bool, int, bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the EWM standard deviation.</returns>
+    public Series EwmStd(double alpha, bool adjust = true, bool bias = true, int minPeriods = 1, bool ignoreNulls = false)
+        => ApplyExpr(Polars.Col(Name).EwmStd(alpha, adjust, bias, minPeriods, ignoreNulls));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.EwmVar(double, bool, bool, int, bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.EwmVar(double, bool, bool, int, bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the EWM variance.</returns>
+    public Series EwmVar(double alpha, bool adjust = true, bool bias = true, int minPeriods = 1, bool ignoreNulls = false)
+        => ApplyExpr(Polars.Col(Name).EwmVar(alpha, adjust, bias, minPeriods, ignoreNulls));
+    
+    // -------------------------------------------------------------------------
+    // EWM By (Time/Index based)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.EwmMeanBy(Expr, string)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.EwmMeanBy(Expr, string)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the time/index-based EWM mean.</returns>
+    public Series EwmMeanBy(Expr by, string halfLife)
+        => ApplyExpr(Polars.Col(Name).EwmMeanBy(by, halfLife));
+
     // ==========================================
     // Float Checks
     // ==========================================
@@ -1019,70 +1205,327 @@ public partial class Series : IDisposable
     /// </summary>
     public Series IsBetween(object lower, object upper) 
         => ApplyExpr(Polars.Col(Name).IsBetween(Expr.MakeLit(lower), Expr.MakeLit(upper)));
+    /// <summary>  
+    /// <inheritdoc cref="Expr.RollingMin(string, int, double[], bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMin(string, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling minimum.</returns>
+    public Series RollingMin(string windowSize, int minPeriods = 1, double[]? weights= null, bool center=false) 
+        => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods,weights,center));
     /// <summary>
-    /// Static Rolling Minimum
+    /// <inheritdoc cref="Expr.RollingMin(TimeSpan, int, double[], bool)" path="/summary"/>
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>
-    public Series RollingMin(string windowSize, int minPeriods = 1) 
-        => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods));
+    /// <inheritdoc cref="Expr.RollingMin(TimeSpan, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling minimum.</returns>
+    public Series RollingMin(TimeSpan windowSize, int minPeriods = 1, double[]? weights= null, bool center=false) 
+        => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods, weights, center));
+    /// <summary>  
+    /// <inheritdoc cref="Expr.RollingMax(string, int, double[], bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMax(string, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling maximum.</returns>
+    public Series RollingMax(string windowSize, int minPeriods = 1, double[]? weights= null, bool center=false) 
+        => ApplyExpr(Polars.Col(Name).RollingMax(windowSize, minPeriods,weights,center));
     /// <summary>
-    /// Static Rolling Minimum, windowSize is timespan
+    /// <inheritdoc cref="Expr.RollingMax(TimeSpan, int, double[], bool)" path="/summary"/>
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>
-    public Series RollingMin(TimeSpan windowSize, int minPeriods = 1) 
-        => ApplyExpr(Polars.Col(Name).RollingMin(windowSize, minPeriods));
+    /// <inheritdoc cref="Expr.RollingMax(TimeSpan, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling maximum.</returns>
+    public Series RollingMax(TimeSpan windowSize, int minPeriods = 1,double[]? weights= null, bool center=false) 
+        => ApplyExpr(Polars.Col(Name).RollingMax(windowSize, minPeriods, weights,center));
     /// <summary>
-    /// Static Rolling Maximum
+    /// <inheritdoc cref="Expr.RollingMean(string, int, double[], bool)" path="/summary"/>
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>
-    public Series RollingMax(string windowSize, int minPeriods = 1) 
-        => ApplyExpr(Polars.Col(Name).RollingMax(windowSize, minPeriods));
+    /// <inheritdoc cref="Expr.RollingMean(string, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling mean.</returns>
+    public Series RollingMean(string windowSize, int minPeriods = 1,double[]? weights= null, bool center=false) 
+        => ApplyExpr(Polars.Col(Name).RollingMean(windowSize, minPeriods, weights,center));
     /// <summary>
-    /// Static Rolling Maximum
+    /// <inheritdoc cref="Expr.RollingMean(TimeSpan, int, double[], bool)" path="/summary"/>
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>
-    public Series RollingMax(TimeSpan windowSize, int minPeriods = 1) 
-        => ApplyExpr(Polars.Col(Name).RollingMax(windowSize, minPeriods));
+    /// <inheritdoc cref="Expr.RollingMean(TimeSpan, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling maximum.</returns>
+    public Series RollingMean(TimeSpan windowSize, int minPeriods = 1,double[]? weights= null, bool center=false) 
+        => ApplyExpr(Polars.Col(Name).RollingMean(windowSize, minPeriods,weights,center));
     /// <summary>
-    /// Static Rolling Mean
+    /// <inheritdoc cref="Expr.RollingSum(string, int, double[], bool)" path="/summary"/>
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>
-    public Series RollingMean(string windowSize, int minPeriods = 1) 
-        => ApplyExpr(Polars.Col(Name).RollingMean(windowSize, minPeriods));
+    /// <inheritdoc cref="Expr.RollingSum(string, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling sum.</returns>
+    public Series RollingSum(string windowSize, int minPeriods = 1,double[]? weights= null, bool center=false) 
+        => ApplyExpr(Polars.Col(Name).RollingSum(windowSize, minPeriods,weights,center));
     /// <summary>
-    /// Static Rolling Mean
+    /// <inheritdoc cref="Expr.RollingMean(TimeSpan, int, double[], bool)" path="/summary"/>
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>
-    public Series RollingMean(TimeSpan windowSize, int minPeriods = 1) 
-        => ApplyExpr(Polars.Col(Name).RollingMean(windowSize, minPeriods));
+    /// <inheritdoc cref="Expr.RollingMean(TimeSpan, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling maximum.</returns>
+    public Series RollingSum(TimeSpan windowSize, int minPeriods = 1,double[]? weights= null, bool center=false) 
+        => ApplyExpr(Polars.Col(Name).RollingSum(windowSize, minPeriods,weights,center));
     /// <summary>
-    /// Static Rolling Sum
+    /// <inheritdoc cref="Expr.RollingStd(string, int, double[], bool)" path="/summary"/>
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>   
-    public Series RollingSum(string windowSize, int minPeriods = 1) 
-        => ApplyExpr(Polars.Col(Name).RollingSum(windowSize, minPeriods));
-        /// <summary>
-    /// Static Rolling Sum
+    /// <inheritdoc cref="Expr.RollingStd(string, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling standard deviation.</returns>
+    public Series RollingStd(string windowSize, int minPeriods = 1, double[]? weights = null, bool center = false)
+        => ApplyExpr(Polars.Col(Name).RollingStd(windowSize, minPeriods, weights, center));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingStd(TimeSpan, int, double[], bool)" path="/summary"/>
     /// </summary>
-    /// <param name="windowSize"></param>
-    /// <param name="minPeriods"></param>
-    /// <returns></returns>   
-    public Series RollingSum(TimeSpan windowSize, int minPeriods = 1) 
-        => ApplyExpr(Polars.Col(Name).RollingSum(windowSize, minPeriods));
+    /// <inheritdoc cref="Expr.RollingStd(TimeSpan, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling standard deviation.</returns>
+    public Series RollingStd(TimeSpan windowSize, int minPeriods = 1, double[]? weights = null, bool center = false)
+        => ApplyExpr(Polars.Col(Name).RollingStd(windowSize, minPeriods, weights, center));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingVar(string, int, double[], bool, byte)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingVar(string, int, double[], bool, byte)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling variance.</returns>
+    public Series RollingVar(string windowSize, int minPeriods = 1, double[]? weights = null, bool center = false, byte ddof = 1)
+        => ApplyExpr(Polars.Col(Name).RollingVar(windowSize, minPeriods, weights, center, ddof));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingVar(TimeSpan, int, double[], bool, byte)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingVar(TimeSpan, int, double[], bool, byte)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling variance.</returns>
+    public Series RollingVar(TimeSpan windowSize, int minPeriods = 1, double[]? weights = null, bool center = false, byte ddof = 1)
+        => ApplyExpr(Polars.Col(Name).RollingVar(windowSize, minPeriods, weights, center, ddof));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMedian(string, int, double[], bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMedian(string, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling median.</returns>
+    public Series RollingMedian(string windowSize, int minPeriods = 1, double[]? weights = null, bool center = false)
+        => ApplyExpr(Polars.Col(Name).RollingMedian(windowSize, minPeriods, weights, center));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMedian(TimeSpan, int)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMedian(TimeSpan, int)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling median.</returns>
+    public Series RollingMedian(TimeSpan windowSize, int minPeriods = 1)
+        => ApplyExpr(Polars.Col(Name).RollingMedian(windowSize, minPeriods));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingSkew(string, int, double[], bool, bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingSkew(string, int, double[], bool, bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling skew.</returns>
+    public Series RollingSkew(string windowSize, int minPeriods = 1, double[]? weights = null, bool center = false, bool bias = true)
+        => ApplyExpr(Polars.Col(Name).RollingSkew(windowSize, minPeriods, weights, center, bias));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingSkew(TimeSpan, int, double[], bool, bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingSkew(TimeSpan, int, double[], bool, bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling skew.</returns>
+    public Series RollingSkew(TimeSpan windowSize, int minPeriods = 1, double[]? weights = null, bool center = false, bool bias = true)
+        => ApplyExpr(Polars.Col(Name).RollingSkew(windowSize, minPeriods, weights, center, bias));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingKurtosis(string, int, double[], bool, bool, bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingKurtosis(string, int, double[], bool, bool, bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling kurtosis.</returns>
+    public Series RollingKurtosis(string windowSize, int minPeriods = 1, double[]? weights = null, bool center = false, bool fisher = true, bool bias = true)
+        => ApplyExpr(Polars.Col(Name).RollingKurtosis(windowSize, minPeriods, weights, center, fisher, bias));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingKurtosis(TimeSpan, int, double[], bool, bool, bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingKurtosis(TimeSpan, int, double[], bool, bool, bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling kurtosis.</returns>
+    public Series RollingKurtosis(TimeSpan windowSize, int minPeriods = 1, double[]? weights = null, bool center = false, bool fisher = true, bool bias = true)
+        => ApplyExpr(Polars.Col(Name).RollingKurtosis(windowSize, minPeriods, weights, center, fisher, bias));
+
+    // -------------------------------------------------------------------------
+    // Rolling Rank & Quantile
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingRank(string, int, RankMethod, ulong?, double[], bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingRank(string, int, RankMethod, ulong?, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling rank.</returns>
+    public Series RollingRank(string windowSize, int minPeriods = 1, RankMethod method = RankMethod.Average, ulong? seed = null, double[]? weights = null, bool center = false)
+        => ApplyExpr(Polars.Col(Name).RollingRank(windowSize, minPeriods, method, seed, weights, center));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingRank(TimeSpan, int, RankMethod, ulong?, double[], bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingRank(TimeSpan, int, RankMethod, ulong?, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling rank.</returns>
+    public Series RollingRank(TimeSpan windowSize, int minPeriods = 1, RankMethod method = RankMethod.Average, ulong? seed = null, double[]? weights = null, bool center = false)
+        => ApplyExpr(Polars.Col(Name).RollingRank(windowSize, minPeriods, method, seed, weights, center));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingQuantile(double, QuantileMethod, string, int, double[], bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingQuantile(double, QuantileMethod, string, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling quantile.</returns>
+    public Series RollingQuantile(double quantile, QuantileMethod method, string windowSize, int minPeriods = 1, double[]? weights = null, bool center = false)
+        => ApplyExpr(Polars.Col(Name).RollingQuantile(quantile, method, windowSize, minPeriods, weights, center));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingQuantile(double, QuantileMethod, TimeSpan, int, double[], bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingQuantile(double, QuantileMethod, TimeSpan, int, double[], bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the rolling quantile.</returns>
+    public Series RollingQuantile(double quantile, QuantileMethod method, TimeSpan windowSize, int minPeriods = 1, double[]? weights = null, bool center = false)
+        => ApplyExpr(Polars.Col(Name).RollingQuantile(quantile, method, windowSize, minPeriods, weights, center));
+    // -------------------------------------------------------------------------
+    // Rolling ... By (Dynamic Window based on another column, usually Time)
+    // -------------------------------------------------------------------------
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMeanBy(string, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMeanBy(string, Expr, int, ClosedWindow)" path="/remarks"/>
+    /// <inheritdoc cref="Expr.RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling mean.</returns>
+    public Series RollingMeanBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingMeanBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMeanBy(TimeSpan, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMeanBy(TimeSpan, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling mean.</returns>
+    public Series RollingMeanBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingMeanBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingSumBy(string, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingSumBy(string, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling sum.</returns>
+    public Series RollingSumBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingSumBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingSumBy(TimeSpan, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingSumBy(TimeSpan, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling sum.</returns>
+    public Series RollingSumBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingSumBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMinBy(string, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMinBy(string, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling minimum.</returns>
+    public Series RollingMinBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingMinBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMinBy(TimeSpan, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMinBy(TimeSpan, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling minimum.</returns>
+    public Series RollingMinBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingMinBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMaxBy(string, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMaxBy(string, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling maximum.</returns>
+    public Series RollingMaxBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingMaxBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMaxBy(TimeSpan, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMaxBy(TimeSpan, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling maximum.</returns>
+    public Series RollingMaxBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingMaxBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingStdBy(string, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingStdBy(string, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling standard deviation.</returns>
+    public Series RollingStdBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingStdBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingStdBy(TimeSpan, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingStdBy(TimeSpan, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling standard deviation.</returns>
+    public Series RollingStdBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingStdBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingVarBy(string, Expr, int, ClosedWindow, byte)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingVarBy(string, Expr, int, ClosedWindow, byte)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling variance.</returns>
+    public Series RollingVarBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left, byte ddof = 1)
+        => ApplyExpr(Polars.Col(Name).RollingVarBy(windowSize, by, minPeriods, closed, ddof));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingVarBy(TimeSpan, Expr, int, ClosedWindow, byte)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingVarBy(TimeSpan, Expr, int, ClosedWindow, byte)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling variance.</returns>
+    public Series RollingVarBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left, byte ddof = 1)
+        => ApplyExpr(Polars.Col(Name).RollingVarBy(windowSize, by, minPeriods, closed, ddof));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMedianBy(string, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMedianBy(string, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling median.</returns>
+    public Series RollingMedianBy(string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingMedianBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingMedianBy(TimeSpan, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingMedianBy(TimeSpan, Expr, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling median.</returns>
+    public Series RollingMedianBy(TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingMedianBy(windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingRankBy(string, Expr, RollingRankMethod, ulong?, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingRankBy(string, Expr, RollingRankMethod, ulong?, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling rank.</returns>
+    public Series RollingRankBy(string windowSize, Expr by, RollingRankMethod method = RollingRankMethod.Average, ulong? seed = null, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingRankBy(windowSize, by, method, seed, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingRankBy(TimeSpan, Expr, RollingRankMethod, ulong?, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingRankBy(TimeSpan, Expr, RollingRankMethod, ulong?, int, ClosedWindow)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling rank.</returns>
+    public Series RollingRankBy(TimeSpan windowSize, Expr by, RollingRankMethod method = RollingRankMethod.Average, ulong? seed = null, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingRankBy(windowSize, by, method, seed, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingQuantileBy(double, QuantileMethod, string, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingQuantileBy(double, QuantileMethod, string, Expr, int, ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="Expr.RollingQuantileBy(double, QuantileMethod, string, Expr, int, ClosedWindow)" path="/remarks"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling quantile.</returns>
+    public Series RollingQuantileBy(double quantile, QuantileMethod method, string windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingQuantileBy(quantile, method, windowSize, by, minPeriods, closed));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.RollingQuantileBy(double, QuantileMethod, string, Expr, int, ClosedWindow)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.RollingQuantileBy(double, QuantileMethod, string, Expr, int, ClosedWindow)" path="/param"/>
+    /// <inheritdoc cref="Expr.RollingQuantileBy(double, QuantileMethod, string, Expr, int, ClosedWindow)" path="/remarks"/>
+    /// <returns>A new <see cref="Series"/> with the dynamic rolling quantile.</returns>
+    public Series RollingQuantileBy(double quantile, QuantileMethod method, TimeSpan windowSize, Expr by, int minPeriods = 1, ClosedWindow closed = ClosedWindow.Left)
+        => ApplyExpr(Polars.Col(Name).RollingQuantileBy(quantile, method, windowSize, by, minPeriods, closed));
+
     // ==========================================
     // UDF
     // ==========================================
