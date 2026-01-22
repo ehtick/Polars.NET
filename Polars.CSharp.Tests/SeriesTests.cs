@@ -357,7 +357,7 @@ public class SeriesTests
     public void Test_NullCount()
     {
         // Case 1: 整数 Series (含 Null)
-        using var sInt = new Series("nums", [1, null, 3, null, 5]);
+        using var sInt = new Series("nums", (int?[])[1, null, 3, null, 5]);
         
         // 验证: 应该有 2 个 null
         Assert.Equal(2, sInt.NullCount);
@@ -970,5 +970,46 @@ public void Test_Series_Ewm_Methods()
         // 如果这里算出来是 3.0 或 4.0，说明 Linear 插值没生效
         // 如果结果是 NaN，说明 WindowSize 传错了
         Assert.Equal(3.5, arr[4]); 
+    }
+    [Fact]
+    public void Test_Series_Direct_Aggregations()
+    {
+        // 1. Reverse 测试
+        var s = new Series("nums", [1, 2, 3]);
+        var sRev = s.Reverse();
+        Assert.Equal([3, 2, 1], sRev.ToArray<int>());
+
+        // 2. First / Last 测试
+        Assert.Equal(1, s.First()[0]); // 注意：返回的是 Series，通过 [0] 取值
+        Assert.Equal(3, s.Last()[0]);
+
+        // 3. Any / All 测试
+        var sBool = new Series("bools", [true, false, null]); // 包含 null
+        
+        // Any (ignoreNulls=false): true | false | null -> true (只要有 true 就是 true)
+        Assert.Equal(true, sBool.Any(ignoreNulls: false)[0]);
+        
+        // All (ignoreNulls=true): true & false -> false
+        Assert.Equal(false, sBool.All(ignoreNulls: true)[0]);
+        
+        // 构造全 true
+        var sAllTrue = new Series("all_true", [true, true]);
+        Assert.Equal(true, sAllTrue.All()[0]);
+    }
+    [Fact]
+    public void Test_Series_Long_Nullable_Constructor()
+    {
+        // 准备一个超过 int 范围的大数 (30亿)
+        long bigNumber = 3_000_000_000L;
+
+        // C# 编译器会自动推断这是 long?[]
+        // 注意数字后缀 L
+        var sLong = new Series("longs", [bigNumber, null, 123L]);
+
+        // 验证
+        // 如果这里挂了，说明底层可能误转成了 int，发生了截断
+        Assert.Equal(bigNumber, sLong.GetValue<long?>(0));
+        Assert.Null(sLong.GetValue<long?>(1));
+        Assert.Equal(123L, sLong.GetValue<long?>(2));
     }
 }

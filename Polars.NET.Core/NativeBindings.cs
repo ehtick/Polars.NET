@@ -165,7 +165,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lt(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lt_eq(ExprHandle l, ExprHandle r);
 
-    //Top-k & Bottom-k
+    // Top-k & Bottom-k
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_top_k(ExprHandle expr, uint k);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_bottom_k(ExprHandle expr, uint k);
 
@@ -188,7 +188,8 @@ unsafe internal partial class NativeBindings
         bool* descending, 
         UIntPtr desc_len
     );
-
+    // Reverse
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_reverse(ExprHandle expr);
     // Arithmetic
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_add(ExprHandle l, ExprHandle r);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sub(ExprHandle l, ExprHandle r);
@@ -209,6 +210,11 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_not(ExprHandle e);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_xor(ExprHandle l, ExprHandle r);
     // Aggregation
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_first(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_last(ExprHandle expr);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_all(ExprHandle expr, [MarshalAs(UnmanagedType.U1)] bool ignoreNulls);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_any(ExprHandle expr, [MarshalAs(UnmanagedType.U1)] bool ignoreNulls);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_item(ExprHandle expr, [MarshalAs(UnmanagedType.U1)] bool allowEmpty);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sum(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_mean(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_max(ExprHandle expr);
@@ -983,6 +989,12 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     [return: MarshalAs(UnmanagedType.I1)]
     public static partial bool pl_series_get_i64(SeriesHandle s, UIntPtr idx, out long val);
+    [LibraryImport(LibName)]
+    [return: MarshalAs(UnmanagedType.I1)]
+    public static partial bool pl_series_get_i128(SeriesHandle s, UIntPtr idx, out Int128 val);
+    [LibraryImport(LibName)]
+    [return: MarshalAs(UnmanagedType.I1)]
+    public static partial bool pl_series_get_u128(SeriesHandle series, UIntPtr idx, out UInt128 val);
 
     [LibraryImport(LibName)]
     [return: MarshalAs(UnmanagedType.I1)]
@@ -1031,10 +1043,28 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_series_to_frame(SeriesHandle s);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_i8(string name, sbyte[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_u8(string name, byte[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_i16(string name, short[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_u16(string name, ushort[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_i32(string name, int[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_u32(string name, uint[] ptr, byte[]? validity, UIntPtr len);
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_i64(string name, long[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_u64(string name, ulong[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_i128(string name, Int128[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_u128(string name, UInt128[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_f32(string name, float[] ptr, byte[]? validity, UIntPtr len);
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_f64(string name, double[] ptr, byte[]? validity, UIntPtr len);

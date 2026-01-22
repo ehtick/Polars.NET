@@ -9,106 +9,49 @@ use polars_arrow::datatypes::ArrowDataType;
 // ==========================================
 // Constructors 
 // ==========================================
+macro_rules! gen_series_new {
+    ($func_name:ident, $rs_type:ty) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $func_name(
+            name: *const c_char,
+            ptr: *const $rs_type,
+            validity: *const bool,
+            len: usize,
+        ) -> *mut SeriesContext {
+            ffi_try!({
+                let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
+                let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
 
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_series_new_i32(
-    name: *const c_char, 
-    ptr: *const i32, 
-    validity: *const bool, 
-    len: usize
-) -> *mut SeriesContext {
-    ffi_try!({
-        let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
-        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-        
-        let series = if validity.is_null() {
-            Series::new(name.into(), slice)
-        } else {
-            let v_slice = unsafe { std::slice::from_raw_parts(validity, len) };
-            let opts: Vec<Option<i32>> = slice.iter().zip(v_slice.iter())
-                .map(|(&v, &valid)| if valid { Some(v) } else { None })
-                .collect();
-            Series::new(name.into(), &opts)
-        };
+                let series = if validity.is_null() {
+                    Series::new(name.into(), slice)
+                } else {
+                    let v_slice = unsafe { std::slice::from_raw_parts(validity, len) };
+                    let opts: Vec<Option<$rs_type>> = slice
+                        .iter()
+                        .zip(v_slice.iter())
+                        .map(|(&v, &valid)| if valid { Some(v) } else { None })
+                        .collect();
+                    Series::new(name.into(), &opts)
+                };
 
-        Ok(Box::into_raw(Box::new(SeriesContext { series })))
-    })
+                Ok(Box::into_raw(Box::new(SeriesContext { series })))
+            })
+        }
+    };
 }
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_series_new_i64(
-    name: *const c_char, 
-    ptr: *const i64, 
-    validity: *const bool, 
-    len: usize
-) -> *mut SeriesContext {
-    ffi_try!({
-        let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
-        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-
-        let series = if validity.is_null() {
-            Series::new(name.into(), slice)
-        } else {
-            let v_slice = unsafe { std::slice::from_raw_parts(validity, len) };
-            let opts: Vec<Option<i64>> = slice.iter().zip(v_slice.iter())
-                .map(|(&v, &valid)| if valid { Some(v) } else { None })
-                .collect();
-            Series::new(name.into(), &opts)
-        };
-
-        Ok(Box::into_raw(Box::new(SeriesContext { series })))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_series_new_f64(
-    name: *const c_char, 
-    ptr: *const f64, 
-    validity: *const bool, 
-    len: usize
-) -> *mut SeriesContext {
-    ffi_try!({
-        let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
-        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-
-        let series = if validity.is_null() {
-            Series::new(name.into(), slice)
-        } else {
-            let v_slice = unsafe { std::slice::from_raw_parts(validity, len) };
-            let opts: Vec<Option<f64>> = slice.iter().zip(v_slice.iter())
-                .map(|(&v, &valid)| if valid { Some(v) } else { None })
-                .collect();
-            Series::new(name.into(), &opts)
-        };
-
-        Ok(Box::into_raw(Box::new(SeriesContext { series })))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_series_new_bool(
-    name: *const c_char, 
-    ptr: *const bool, 
-    validity: *const bool, 
-    len: usize
-) -> *mut SeriesContext {
-    ffi_try!({
-        let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
-        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-
-        let series = if validity.is_null() {
-            Series::new(name.into(), slice)
-        } else {
-            let v_slice = unsafe { std::slice::from_raw_parts(validity, len) };
-            let opts: Vec<Option<bool>> = slice.iter().zip(v_slice.iter())
-                .map(|(&v, &valid)| if valid { Some(v) } else { None })
-                .collect();
-            Series::new(name.into(), &opts)
-        };
-
-        Ok(Box::into_raw(Box::new(SeriesContext { series })))
-    })
-}
+gen_series_new!(pl_series_new_i8, i8);
+gen_series_new!(pl_series_new_u8, u8);
+gen_series_new!(pl_series_new_i16, i16);
+gen_series_new!(pl_series_new_u16, u16);
+gen_series_new!(pl_series_new_i32, i32);
+gen_series_new!(pl_series_new_u32, u32);
+gen_series_new!(pl_series_new_i64, i64);
+gen_series_new!(pl_series_new_u64, u64);
+gen_series_new!(pl_series_new_i128, i128);
+gen_series_new!(pl_series_new_u128, u128);
+gen_series_new!(pl_series_new_f32, f32);
+gen_series_new!(pl_series_new_f64, f64);
+gen_series_new!(pl_series_new_bool, bool);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_series_new_str(
@@ -469,6 +412,47 @@ pub extern "C" fn pl_series_get_i64(s_ptr: *mut SeriesContext, idx: usize, out_v
         Ok(AnyValue::UInt64(v)) => { unsafe { *out_val = v as i64 }; true } 
         Ok(AnyValue::UInt32(v)) => { unsafe { *out_val = v as i64 }; true }
         _ => false // Null or type mismatch
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_get_i128(s_ptr: *mut SeriesContext, idx: usize, out_val: *mut i128) -> bool {
+    let ctx = unsafe { &*s_ptr };
+    if idx >= ctx.series.len() { return false; }
+
+    match ctx.series.get(idx) {
+        Ok(AnyValue::Int128(v)) => { unsafe { *out_val = v }; true }
+        
+        Ok(AnyValue::Int64(v))  => { unsafe { *out_val = v as i128 }; true }
+        Ok(AnyValue::Int32(v))  => { unsafe { *out_val = v as i128 }; true }
+        Ok(AnyValue::Int16(v))  => { unsafe { *out_val = v as i128 }; true }
+        Ok(AnyValue::Int8(v))   => { unsafe { *out_val = v as i128 }; true }
+        
+        Ok(AnyValue::UInt64(v)) => { unsafe { *out_val = v as i128 }; true }
+        Ok(AnyValue::UInt32(v)) => { unsafe { *out_val = v as i128 }; true }
+        Ok(AnyValue::UInt16(v)) => { unsafe { *out_val = v as i128 }; true }
+        Ok(AnyValue::UInt8(v))  => { unsafe { *out_val = v as i128 }; true }
+        
+        _ => false // Null or mismatch
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_series_get_u128(s_ptr: *mut SeriesContext, idx: usize, out_val: *mut u128) -> bool {
+    let ctx = unsafe { &*s_ptr };
+    if idx >= ctx.series.len() { return false; }
+
+    match ctx.series.get(idx) {
+        Ok(AnyValue::UInt128(v)) => { unsafe { *out_val = v }; true }
+        
+        Ok(AnyValue::UInt64(v)) => { unsafe { *out_val = v as u128 }; true }
+        Ok(AnyValue::UInt32(v)) => { unsafe { *out_val = v as u128 }; true }
+        Ok(AnyValue::UInt16(v)) => { unsafe { *out_val = v as u128 }; true }
+        Ok(AnyValue::UInt8(v))  => { unsafe { *out_val = v as u128 }; true }
+        
+        Ok(AnyValue::Int64(v)) if v >= 0 => { unsafe { *out_val = v as u128 }; true }
+
+        _ => false
     }
 }
 

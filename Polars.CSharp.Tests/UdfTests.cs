@@ -1,4 +1,5 @@
 using Apache.Arrow;
+using Polars.NET.Core;
 using static Polars.CSharp.Polars; // 方便使用 Col, Lit
 
 namespace Polars.CSharp.Tests;
@@ -197,7 +198,7 @@ public class UdfTests
         Func<IArrowArray, IArrowArray> udf = UdfLogic.AlwaysFail;
 
         // 2. 断言会抛出异常
-        var ex = Assert.Throws<Exception>(() => 
+        var ex = Assert.Throws<PolarsException>(() => 
         {
             lf.Select(
                 Col("num").Map(udf, DataType.SameAsInput)

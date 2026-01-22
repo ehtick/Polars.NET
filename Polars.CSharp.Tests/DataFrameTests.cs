@@ -118,6 +118,106 @@ HR,50";
             if (File.Exists(fileName)) File.Delete(fileName);
         }
     }
+    [Fact]
+    public void Test_GroupBy_Advanced_Aggregations()
+    {
+        // 1. 准备数据 (使用匿名对象和集合表达式，无需读写 CSV)
+        // Group A: [true, false], [1, 2] -> 混合布尔，多行
+        // Group B: [true],       [3]    -> 单一行 (适合测试 Item)
+        // Group C: [false, false],[4, 5] -> 全 False
+        var groups = new[] { "A", "A", "B", "C", "C" };
+        var bools = new[] { true, false, true, false, false };
+        var values = new[] { 1, 2, 3, 4, 5 };
+
+        using var df = DataFrame.FromColumns(new { groups, bools, values });
+
+        // 2. 执行 GroupBy 和 聚合
+        using var result = df
+            .GroupBy("groups")
+            .Agg(
+                // Boolean 聚合
+                Col("bools").Any().Alias("is_any_true"),   // 只要有一个 true 就是 true
+                Col("bools").All().Alias("is_all_true"),   // 必须全是 true 才是 true
+                
+                // 位置聚合
+                Col("values").First().Alias("v_first"),
+                Col("values").Last().Alias("v_last"),
+                
+                // 验证 Reverse (配合 First 使用，Reverse().First() 等于 Last)
+                Col("values").Reverse().First().Alias("v_rev_first") 
+            )
+            .Sort("groups");
+
+        // 3. 断言验证
+        Assert.Equal(3, result.Height); // A, B, C 三组
+
+        // --- Group A (Mixed) ---
+        // bools: [true, false] -> Any: True, All: False
+        // values: [1, 2] -> First: 1, Last: 2
+        Assert.Equal("A", result.GetValue<string>(0, "groups"));
+        Assert.True(result.GetValue<bool>(0, "is_any_true"));
+        Assert.False(result.GetValue<bool>(0, "is_all_true"));
+        Assert.Equal(1, result.GetValue<int>(0, "v_first"));
+        Assert.Equal(2, result.GetValue<int>(0, "v_last"));
+        Assert.Equal(2, result.GetValue<int>(0, "v_rev_first")); // Reverse 后的 First 应该是 2
+
+        // --- Group B (Single) ---
+        // bools: [true] -> Any: True, All: True
+        Assert.Equal("B", result.GetValue<string>(1, "groups"));
+        Assert.True(result.GetValue<bool>(1, "is_all_true")); // 只有一个 true，所以 all 也是 true
+
+        // --- Group C (All False) ---
+        // bools: [false, false] -> Any: False, All: False
+        Assert.Equal("C", result.GetValue<string>(2, "groups"));
+        Assert.False(result.GetValue<bool>(2, "is_any_true"));
+    }
+
+    [Fact]
+    public void Test_GroupBy_Item_Safe()
+    {
+        // Item() 是个狠角色。
+        // 如果组里只有 1 个元素，它返回该元素。
+        // 如果组里有多个元素，Polars 可能会报错或者行为未定义（取决于版本和 allow_empty）。
+        // 我们这里测试最标准的用法：取单元素组的值。
+        
+        var groups = new[] { "X", "Y" };
+        var codes = new[] { 101, 102 }; // 每个组只有一个值
+
+        using var df = DataFrame.FromColumns(new { groups, codes });
+
+        using var res = df.GroupBy("groups")
+            .Agg(
+                Col("codes").Item().Alias("code_item")
+            )
+            .Sort("groups");
+
+        Assert.Equal(2, res.Height);
+        Assert.Equal(101, res.GetValue<int>(0, "code_item"));
+        Assert.Equal(102, res.GetValue<int>(1, "code_item"));
+    }
+
+    [Fact]
+    public void Test_Expr_Reverse_Standalone()
+    {
+        // 单独测试 Reverse，不通过 GroupBy
+        // [1, 2, 3] -> [3, 2, 1]
+        
+        using var df = DataFrame.FromColumns(new 
+        { 
+            nums = new[] { 1, 2, 3 } 
+        });
+
+        using var res = df.Select(
+            Col("nums").Reverse().Alias("nums_rev")
+        );
+
+        var revArr = res["nums_rev"].ToArray<int>();
+        
+        Assert.Equal(3, revArr.Length);
+        Assert.Equal(3, revArr[0]);
+        Assert.Equal(2, revArr[1]);
+        Assert.Equal(1, revArr[2]);
+    }
     // ==========================================
     // Join Tests
     // ==========================================

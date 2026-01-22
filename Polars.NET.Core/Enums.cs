@@ -26,7 +26,9 @@ public enum PlDataType : int
     List = 20,
     Categorical=21,
     Decimal=22,
-    Array = 23
+    Array = 23,
+    Int128= 24,
+    UInt128 =25
 }
 
 public enum PlJoinType

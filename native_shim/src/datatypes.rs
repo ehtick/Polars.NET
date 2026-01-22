@@ -70,6 +70,8 @@ define_pl_datatype_kind! {
         Categorical = 21 <=> DataType::Categorical(_, _) => DataType::Categorical(Categories::random(PlSmallStr::EMPTY, CategoricalPhysical::U32),Categories::random(PlSmallStr::EMPTY, CategoricalPhysical::U32).mapping()),
         Decimal     = 22 <=> DataType::Decimal(_, _)   => DataType::Decimal(38, 0),
         Array       = 23 <=> DataType::Array(_, _)     => DataType::Array(Box::new(DataType::Null), 0),
+        Int128      = 24  <=> DataType::Int128        => DataType::Int128,
+        UInt128     = 26  <=> DataType::UInt128        => DataType::UInt128
     }
 }
 // --- Constructors ---

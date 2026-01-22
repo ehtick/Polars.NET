@@ -151,6 +151,12 @@ public partial class Series : IDisposable
         if (underlying == typeof(long)) 
             return (T?)(object?)PolarsWrapper.SeriesGetInt(Handle, index);
 
+        if (underlying == typeof(Int128)) 
+            return (T?)(object?)PolarsWrapper.SeriesGetInt128(Handle, index);
+
+        if (underlying == typeof(UInt128)) 
+            return (T?)(object?)PolarsWrapper.SeriesGetUInt128(Handle, index);
+
         if (underlying == typeof(double)) 
             return (T?)(object?)PolarsWrapper.SeriesGetDouble(Handle, index);
 
@@ -220,10 +226,12 @@ public partial class Series : IDisposable
                     DataTypeKind.Int16 => GetValue<short?>(index),
                     DataTypeKind.Int32 => GetValue<int?>(index),
                     DataTypeKind.Int64 => GetValue<long?>(index),
+                    DataTypeKind.Int128 => GetValue<Int128?>(index),
                     DataTypeKind.UInt8 => GetValue<byte?>(index),
                     DataTypeKind.UInt16 => GetValue<ushort?>(index),
                     DataTypeKind.UInt32 => GetValue<uint?>(index),
                     DataTypeKind.UInt64 => GetValue<ulong?>(index),
+                    DataTypeKind.UInt128 => GetValue<UInt128?>(index),
                     DataTypeKind.Decimal => GetValue<decimal?>(index),
 
                     // float
@@ -493,10 +501,39 @@ public partial class Series : IDisposable
     /// <returns></returns>
     public Series LtEq(Series other) => this <= other;
 
-    // ==========================================
-    // Aggregations
-    // ==========================================
+    // -------------------------------------------------------------------------
+    // Boolean Aggregation
+    // -------------------------------------------------------------------------
 
+    /// <summary>
+    /// <inheritdoc cref="Expr.Any(bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.Any(bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> (boolean, length 1).</returns>
+    public Series Any(bool ignoreNulls = false) => ApplyExpr(Polars.Col(Name).Any(ignoreNulls));
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.All(bool)" path="/summary"/>
+    /// </summary>
+    /// <inheritdoc cref="Expr.All(bool)" path="/param"/>
+    /// <returns>A new <see cref="Series"/> (boolean, length 1).</returns>
+    public Series All(bool ignoreNulls = false) => ApplyExpr(Polars.Col(Name).All(ignoreNulls));
+
+    // -------------------------------------------------------------------------
+    // Aggregation
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.First" path="/summary"/>
+    /// </summary>
+    /// <returns>A new <see cref="Series"/> containing the first value (length 1).</returns>
+    public Series First() => ApplyExpr(Polars.Col(Name).First());
+
+    /// <summary>
+    /// <inheritdoc cref="Expr.Last" path="/summary"/>
+    /// </summary>
+    /// <returns>A new <see cref="Series"/> containing the last value (length 1).</returns>
+    public Series Last() => ApplyExpr(Polars.Col(Name).Last());
     /// <summary>
     /// Sum series into 1 length series(Scalar)
     /// </summary>
@@ -560,16 +597,139 @@ public partial class Series : IDisposable
     // ------------------------------------------
     // 🚀 1. Fast Path (Primitives)
     // ------------------------------------------
-    
+    private static (T[] values, bool[] validity) UnzipNullable<T>(T?[] data, T defaultValue = default) 
+    where T : struct
+    {
+        int len = data.Length;
+        var values = new T[len];
+        var validity = new bool[len];
+
+        ReadOnlySpan<T?> srcSpan = data.AsSpan();
+        Span<T> valSpan = values.AsSpan();
+        Span<bool> validSpan = validity.AsSpan();
+
+        for (int i = 0; i < len; i++)
+        {
+            var v = srcSpan[i];
+            if (v.HasValue)
+            {
+                valSpan[i] = v.GetValueOrDefault();
+                validSpan[i] = true;
+            }
+            else
+            {
+                valSpan[i] = defaultValue;
+                validSpan[i] = false;
+            }
+        }
+        
+        return (values, validity);
+    }
+    /// <summary>
+    /// Create a Series from an array of sbyte(i8)
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="validity"></param>
+    public Series(string name, sbyte[] data, bool[]? validity = null) 
+            => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from an array of nullable sbyte(i8)
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, sbyte?[] data)
+    {
+        var (vals, mask) = UnzipNullable(data); 
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
+    }
+    /// <summary>
+    /// Create a Series from an array of byte(u8)
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="validity"></param>
+    public Series(string name, byte[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from an array of unsigned byte(u8)
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, byte?[] data)
+    {
+        var (vals, mask) = UnzipNullable(data);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
+    }
+    /// <summary>
+    /// Create a Series from an array of shorts(i16)
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="validity"></param>
+    public Series(string name, short[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from an array of shorts(i16)
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, short?[] data)
+    {
+        var (vals, mask) = UnzipNullable(data);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
+    }
+    /// <summary>
+    /// Create a Series from an array of unsigned shorts(u16)
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="validity"></param>
+    public Series(string name, ushort[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from an array of unsigned short(i16)
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, ushort?[] data)
+    {
+        var (vals, mask) = UnzipNullable(data);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
+    }
     /// <summary>
     /// Create a Series from an array of integers.
     /// </summary>
     /// <param name="name"></param>
     /// <param name="data"></param>
     /// <param name="validity"></param>
-    public Series(string name, int[] data, bool[]? validity = null)
+    public Series(string name, int[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from a nullable int array using Span optimization.
+    /// <para>Example: <c>new Series("a", [1, null, 2])</c></para>
+    /// </summary>
+    public Series(string name, int?[] data)
     {
-        Handle = PolarsWrapper.SeriesNew(name, data, validity);
+        var (vals, mask) = UnzipNullable(data);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
+    }
+    /// <summary>
+    /// Create a Series from an array of unsigned integers.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="validity"></param>
+    public Series(string name, uint[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from a nullable unsigned int array using Span optimization.
+    /// <para>Example: <c>new Series("a", [1u, null, 2u])</c></para>
+    /// </summary>
+    public Series(string name, uint?[] data)
+    {
+        var (vals, mask) = UnzipNullable(data);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
     }
     /// <summary>
     /// Create a Series from an array of longs.
@@ -577,9 +737,84 @@ public partial class Series : IDisposable
     /// <param name="name"></param>
     /// <param name="data"></param>
     /// <param name="validity"></param>
-    public Series(string name, long[] data, bool[]? validity = null)
+    public Series(string name, long[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from a nullable long array using Span optimization.
+    /// <para>Example: <c>new Series("ts", [10000L, null, 20000L])</c></para>
+    /// </summary>
+    public Series(string name, long?[] data)
     {
-        Handle = PolarsWrapper.SeriesNew(name, data, validity);
+        var (vals, mask) = UnzipNullable(data);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
+    }
+    /// <summary>
+    /// Create a Series from an array of unsigned longs.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="validity"></param>
+    public Series(string name, ulong[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from a nullable unsigned long array using Span optimization.
+    /// <para>Example: <c>new Series("ts", [10000UL, null, 20000UL])</c></para>
+    /// </summary>
+    public Series(string name, ulong?[] data)
+    {
+        var (vals, mask) = UnzipNullable(data);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
+    }
+    /// <summary>
+    /// Create a Series from an array of Int128.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="validity"></param>
+    public Series(string name, Int128[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from a nullable Int128 array using Span optimization.
+    /// <para>Example: <c>new Series("big_int", [10000, null, 20000])</c></para>
+    /// </summary>
+    public Series(string name, Int128?[] data)
+    {
+        var (vals, mask) = UnzipNullable(data);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
+    }
+    /// <summary>
+    /// Create a Series from an array of Unsigned Int128.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="validity"></param>
+    public Series(string name, UInt128[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from a nullable UInt128 array using Span optimization.
+    /// <para>Example: <c>new Series("big_uint", [10000UL, null, 20000UL])</c></para>
+    /// </summary>
+    public Series(string name, UInt128?[] data)
+    {
+        var (vals, mask) = UnzipNullable(data);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
+    }
+    /// <summary>
+    /// Create a Series from an array of floats.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="validity"></param>
+    public Series(string name, float[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from a nullable float array using Span optimization.
+    /// <para>Example: <c>new Series("b", [1.5, null, 2.0])</c></para>
+    /// </summary>
+    public Series(string name, float?[] data)
+    {
+        var (vals, mask) = UnzipNullable(data, float.NaN); 
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
     }
     /// <summary>
     /// Create a Series from an array of doubles.
@@ -587,9 +822,16 @@ public partial class Series : IDisposable
     /// <param name="name"></param>
     /// <param name="data"></param>
     /// <param name="validity"></param>
-    public Series(string name, double[] data, bool[]? validity = null)
+    public Series(string name, double[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from a nullable double array using Span optimization.
+    /// <para>Example: <c>new Series("b", [1.5, null, 2.0])</c></para>
+    /// </summary>
+    public Series(string name, double?[] data)
     {
-        Handle = PolarsWrapper.SeriesNew(name, data, validity);
+        var (vals, mask) = UnzipNullable(data, double.NaN);
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
     }
     /// <summary>
     /// Create a Series from an array of booleans.
@@ -597,9 +839,16 @@ public partial class Series : IDisposable
     /// <param name="name"></param>
     /// <param name="data"></param>
     /// <param name="validity"></param>
-    public Series(string name, bool[] data, bool[]? validity = null)
+    public Series(string name, bool[] data, bool[]? validity = null) 
+        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
+    /// <summary>
+    /// Create a Series from a nullable bool array using Span optimization.
+    /// <para>Example: <c>new Series("c", [true, false, null])</c></para>
+    /// </summary>
+    public Series(string name, bool?[] data)
     {
-        Handle = PolarsWrapper.SeriesNew(name, data, validity);
+        var (vals, mask) = UnzipNullable(data); // false
+        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
     }
     /// <summary>
     /// Create a Series from an array of strings.
@@ -625,7 +874,6 @@ public partial class Series : IDisposable
         using var arrowArray = ArrowConverter.Build(data);
         Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
     }
-
     /// <summary>
     /// Create a Series from an array of Nullable DateTime values.
     /// </summary>
@@ -783,6 +1031,12 @@ public partial class Series : IDisposable
         var newHandle = PolarsWrapper.SeriesSlice(Handle, offset, length);
         return new Series(newHandle);
     }
+    
+    /// <summary>
+    /// <inheritdoc cref="Expr.Reverse" path="/summary"/>
+    /// </summary>
+    /// <returns>A new <see cref="Series"/> with the order reversed.</returns>
+    public Series Reverse() => ApplyExpr(Polars.Col(Name).Reverse());
     /// <summary>
     /// Convert Series to Arrow Array
     /// </summary>

@@ -494,10 +494,62 @@ public class Expr : IDisposable
     /// <returns></returns>
     public Expr Alias(string name) =>
         new(PolarsWrapper.Alias(Handle, name));
+    /// <summary>
+    /// Reverse the selection.
+    /// <para>This is useful in a GroupBy context to reverse the order of the group.</para>
+    /// </summary>
+    /// <returns>A new expression with the order reversed.</returns>
+    public Expr Reverse() => new(PolarsWrapper.Reverse(CloneHandle()));
 
     // ==========================================
     // Aggregation
     // ==========================================
+    /// <summary>
+    /// Get the first value of the group/series.
+    /// </summary>
+    /// <returns>A new expression representing the first value.</returns>
+    public Expr First() => new(PolarsWrapper.First(CloneHandle()));
+    /// <summary>
+    /// Get the last value of the group/series.
+    /// </summary>
+    /// <returns>A new expression representing the last value.</returns>
+    public Expr Last() => new(PolarsWrapper.Last(CloneHandle()));
+    /// <summary>
+    /// Check if <b>all</b> values in the boolean expression are <c>true</c>.
+    /// <para>This is a boolean aggregation.</para>
+    /// </summary>
+    /// <param name="ignoreNulls">
+    /// If <c>true</c>, null values are ignored. 
+    /// If <c>false</c> (default), the result propagates nulls (i.e., if there is a null and no false, the result might be null).
+    /// </param>
+    /// <returns>A new expression representing the boolean result.</returns>
+    public Expr All(bool ignoreNulls=false) => new(PolarsWrapper.All(CloneHandle(),ignoreNulls));
+    /// <summary>
+    /// Check if <b>any</b> value in the boolean expression is <c>true</c>.
+    /// <para>This is a boolean aggregation.</para>
+    /// </summary>
+    /// <param name="ignoreNulls">
+    /// If <c>true</c>, null values are ignored. 
+    /// If <c>false</c> (default), the result propagates nulls.
+    /// </param>
+    /// <returns>A new expression representing the boolean result.</returns>
+    public Expr Any(bool ignoreNulls=false) => new(PolarsWrapper.Any(CloneHandle(),ignoreNulls));
+    /// <summary>
+    /// Return the single value in the group or series.
+    /// <para>
+    /// This is strict: it expects the group/series to contain exactly <b>one</b> element.
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// If the group contains more than one element, this will throw an error at runtime.
+    /// It is safer than <see cref="First"/> when you expect uniqueness (e.g., getting the ID of a group).
+    /// </remarks>
+    /// <param name="allowEmpty">
+    /// If <c>true</c> and the group is empty, it returns <c>null</c> instead of throwing an error.
+    /// Default is <c>true</c>.
+    /// </param>
+    /// <returns>A new expression representing the single item.</returns>
+    public Expr Item(bool allowEmpty=true) => new(PolarsWrapper.Item(CloneHandle(),allowEmpty));
 
     /// <summary>
     /// Calculate the sum of the values in the group or column.

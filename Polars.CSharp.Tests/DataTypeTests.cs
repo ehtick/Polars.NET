@@ -471,4 +471,143 @@ public class DataTypeTests
         // 验证 Inner Type (复用已有的 Inner 逻辑)
         Assert.Equal(DataTypeKind.Int32, dtype.InnerType.Kind);
     }
+    [Fact]
+    public void Test_Float_vs_Double_Resolution()
+    {
+        // 1. 测试 Double (f64) - C# 默认行为
+        // 不加后缀，默认 double
+        var sF64 = new Series("f64", [1.1, 2.2, null]); 
+        
+        // 验证它调用的确实是 double 版本
+        // (可以通过 GetValue<double?> 成功读取来验证)
+        Assert.Equal(1.1, sF64.GetValue<double?>(0));
+        Assert.Null(sF64.GetValue<double?>(2));
+        
+        // 2. 测试 Float (f32) - 必须加 'f' 后缀
+        var sF32 = new Series("f32", [1.1f, 2.2f, null]);
+        
+        // 验证精度 (Float 精度较低，但在赋值场景下应当一致)
+        Assert.Equal(1.1f, sF32.GetValue<float?>(0));
+        Assert.Null(sF32.GetValue<float?>(2));
+
+        // 3. 验证“迷茫”情况：
+        // 下面这行代码如果解开注释，C# 编译器会直接报错，根本不会运行到 Polars
+        // 错误：无法从 double 隐式转换为 float，数组类型推断失败
+        // var sMixed = new Series("mixed", [1.1, 2.2f]); 
+    }
+
+    [Fact]
+    public void Test_Tiny_Integers_i8_u8_i16_u16()
+    {
+        // --- i8 (SByte) [-128, 127] ---
+        var sI8 = new Series("i8", [ (sbyte)-10, (sbyte)127, null ]);
+        Assert.Equal((sbyte)-10, sI8.GetValue<sbyte?>(0));
+        Assert.Equal((sbyte)127, sI8.GetValue<sbyte?>(1));
+
+        // --- u8 (Byte) [0, 255] ---
+        // 注意：C# 字面量 255 默认是 int，在集合表达式里如果目标确认为 byte[] 会自动转换
+        // 但这里为了保险和明确，我们看看 new Series("u8", [10, 255]) 能否工作
+        // 编译器需要知道我们要调哪个构造函数，对于 Collection Expression 有时需要指引
+        byte[] u8Raw = [10, 255]; 
+        var sU8 = new Series("u8", u8Raw); // 显式传数组肯定没问题
+        
+        // 测试直接推断 (Nullable):
+        var sU8_Null = new Series("u8_n", [(byte)10, (byte)255, null]);
+        Assert.Equal((byte)255, sU8_Null.GetValue<byte?>(1));
+
+        // --- i16 (Short) ---
+        var sI16 = new Series("i16", [(short)-30000, null, (short)30000]);
+        Assert.Equal((short)-30000, sI16.GetValue<short?>(0));
+
+        // --- u16 (UShort) ---
+        var sU16 = new Series("u16", [(ushort)60000, null, (ushort)0]);
+        Assert.Equal((ushort)60000, sU16.GetValue<ushort?>(0));
+    }
+
+    [Fact]
+    public void Test_Large_Unsigned_Integers_u32_u64()
+    {
+        // --- u32 (UInt) ---
+        // 超过 Int32.MaxValue (21亿) 来测试
+        uint bigUInt = 3_000_000_000u; // 注意 u 后缀
+        var sU32 = new Series("u32", [bigUInt, null, 0u]);
+        
+        Assert.Equal(bigUInt, sU32.GetValue<uint?>(0));
+
+        // --- u64 (ULong) ---
+        // 超过 Int64.MaxValue
+        ulong hugeULong = 10_000_000_000_000_000ul; // 注意 ul 后缀
+        var sU64 = new Series("u64", [hugeULong, null, 123ul]);
+        
+        Assert.Equal(hugeULong, sU64.GetValue<ulong?>(0));
+    }
+
+    [Fact]
+    public void Test_Edge_Case_Mixed_Numeric_Types()
+    {
+        // 这是一个特别有意思的测试
+        // Polars (Rust) 实际上非常严格。
+        // 如果我们在 C# 这边把 sbyte 转成 int 传进去，它就是 Int32 类型。
+        
+        sbyte[] smallData = [1, 2, 3];
+        // 隐式转换：Series(string, int[]) 会被匹配吗？
+        // 不会，因为 sbyte[] 无法隐式转换为 int[] (这是协变问题，C# 数组不支持值类型协变)
+        // 所以用户必须明确类型，这非常好，避免了意外的内存拷贝或类型提升。
+        
+        // var s = new Series("fail", smallData); // 应该编译报错，因为没匹配到 sbyte[] 的非空重载？
+        // 只要我们定义了 sbyte[] 重载，它就会匹配到 sbyte 版本。
+        
+        var s = new Series("sbyte", smallData);
+        // 验证它没有被提升为 int
+        // 如果它被提升为 int，GetValue<sbyte> 可能会报错或者需要转换
+        Assert.Equal((sbyte)1, s.GetValue<sbyte>(0));
+    }
+    [Fact]
+    public void Test_Int128_Beyond_Int64_Range()
+    {
+        // 1. 构造一个 Int64 绝对装不下的大数
+        // Int64.MaxValue 大约是 9 x 10^18
+        // 我们构造一个 2^100，这绝对需要 128 位才能存下
+        Int128 bigVal = (Int128)1 << 100; 
+        
+        // 验证一下它真的很大
+        Assert.True(bigVal > Int64.MaxValue);
+
+        // 2. 创建 Series
+        // C# 还没有 Int128 字面量后缀，所以这里用显式转换
+        var s = new Series("big_i128", [bigVal, -bigVal, null]);
+
+        // 3. 验证取出
+        // 如果底层按照 i64 截断，这个数会变成 0 或者其他奇怪的数
+        Assert.Equal(bigVal, s.GetValue<Int128?>(0));
+        Assert.Equal(-bigVal, s.GetValue<Int128?>(1));
+        Assert.Null(s.GetValue<Int128?>(2));
+    }
+
+    [Fact]
+    public void Test_UInt128_Max_Value()
+    {
+        // 测试无符号最大值：340282366920938463463374607431768211455
+        UInt128 maxVal = UInt128.MaxValue;
+        
+        // 构造 Series
+        var s = new Series("max_u128", [maxVal, UInt128.MinValue,null]);
+        // 验证
+        // 如果底层当作 signed i128 处理，MaxValue 可能会变成 -1，所以这个测试能验证 signed/unsigned 没搞混
+        Assert.Equal(maxVal, s.GetValue<UInt128?>(0));
+        Assert.Equal(UInt128.Zero, s.GetValue<UInt128?>(1));
+        Assert.Null(s.GetValue<UInt128?>(2));
+    }
+
+    [Fact]
+    public void Test_Int128_Span_Optimization()
+    {
+        // 验证我们那个通用的 UnzipNullable<T> 泛型方法是否对 16字节的结构体生效
+        Int128?[] data = [1, null, 2];
+        
+        var s = new Series("opt_test", data);
+        
+        Assert.Equal((Int128)1, s.GetValue<Int128?>(0));
+        Assert.Null(s.GetValue<Int128?>(1));
+    }
 }

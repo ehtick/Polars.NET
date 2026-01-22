@@ -59,6 +59,8 @@ public enum DataTypeKind
     Struct=19,List=20,Categorical=21,
     Decimal=22,
     Array=23,
+    Int128 = 24,
+    UInt128=25,
     Unknown = 0,
     SameAsInput=0
 }

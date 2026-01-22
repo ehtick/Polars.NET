@@ -1,55 +1,100 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 
 namespace Polars.NET.Core;
 
+
+[Serializable]
+public class PolarsException : Exception
+{
+    public PolarsException(string message) : base(message) { }
+    public PolarsException(string message, Exception inner) : base(message, inner) { }
+}
 internal static class ErrorHelper
 {
+    // =========================================================================
+    // 1Handle Check
+    // =========================================================================
     public static T Check<T>(T handle) where T : PolarsHandle
     {
-        if (!handle.IsInvalid) return handle;
+        if (!handle.IsInvalid) 
+        {
+            return handle;
+        }
 
+        ThrowRustError();
+        
+        return null!; 
+    }
+
+    // =========================================================================
+    // 2. Void Check
+    // =========================================================================
+    public static void CheckVoid()
+    {
+        IntPtr msgPtr = NativeBindings.pl_get_last_error();
+        
+        if (msgPtr != IntPtr.Zero)
+        {
+            HandleErrorPtrAndThrow(msgPtr);
+        }
+    }
+
+    // =========================================================================
+    // 3. String Check
+    // =========================================================================
+    public static string CheckString(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) 
+        {
+            IntPtr errPtr = NativeBindings.pl_get_last_error();
+            if (errPtr != IntPtr.Zero)
+            {
+                HandleErrorPtrAndThrow(errPtr);
+            }
+            
+            return string.Empty; 
+        }
+
+        try 
+        { 
+            return Marshal.PtrToStringUTF8(ptr) ?? string.Empty; 
+        }
+        finally 
+        { 
+            NativeBindings.pl_free_string(ptr); 
+        }
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    [DoesNotReturn] 
+    private static void ThrowRustError()
+    {
         IntPtr msgPtr = NativeBindings.pl_get_last_error();
         if (msgPtr == IntPtr.Zero)
         {
-            throw new Exception("Polars operation failed (Unknown Error).");
+            throw new PolarsException("Polars operation failed with an unknown error (Handle is invalid but no error message set).");
         }
 
+        HandleErrorPtrAndThrow(msgPtr);
+    }
+
+    [DoesNotReturn]
+    private static void HandleErrorPtrAndThrow(IntPtr msgPtr)
+    {
+        string msg;
         try
         {
-            string msg = Marshal.PtrToStringUTF8(msgPtr) ?? "Unknown Rust Error";
-            throw new Exception($"[Polars Error] {msg}");
+            msg = Marshal.PtrToStringUTF8(msgPtr) ?? "Unknown Rust Error (UTF8 Decode Failed)";
         }
         finally
         {
             NativeBindings.pl_free_error_msg(msgPtr);
         }
-    }
 
-    // For situation with void return
-    public static void CheckVoid()
-    {
-        IntPtr msgPtr = NativeBindings.pl_get_last_error();
-        if (msgPtr != IntPtr.Zero)
-        {
-            try
-            {
-                string msg = Marshal.PtrToStringUTF8(msgPtr) ?? "Unknown Rust Error";
-                throw new Exception($"[Polars Void Error] {msg}");
-            }
-            finally
-            {
-                NativeBindings.pl_free_error_msg(msgPtr);
-            }
-        }
-    }
-    internal static string CheckString(IntPtr ptr)
-    {
-        if (ptr == IntPtr.Zero) 
-        {
-            CheckVoid();
-            return string.Empty; 
-        }
-        try { return Marshal.PtrToStringUTF8(ptr) ?? ""; }
-        finally { NativeBindings.pl_free_string(ptr); }
+        throw new PolarsException(msg);
     }
 }

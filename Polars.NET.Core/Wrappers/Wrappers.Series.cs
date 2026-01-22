@@ -16,12 +16,28 @@ public static partial class PolarsWrapper
         return bytes;
     }
     // --- Constructors ---
-
+    public static SeriesHandle SeriesNew(string name, sbyte[] data, bool[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_i8(name, data, ToBytes(validity), (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, byte[] data, bool[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u8(name, data, ToBytes(validity), (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, short[] data, bool[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_i16(name, data, ToBytes(validity), (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, ushort[] data, bool[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u16(name, data, ToBytes(validity), (UIntPtr)data.Length));
     public static SeriesHandle SeriesNew(string name, int[] data, bool[]? validity) => 
         ErrorHelper.Check(NativeBindings.pl_series_new_i32(name, data, ToBytes(validity), (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, uint[] data, bool[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u32(name, data, ToBytes(validity), (UIntPtr)data.Length));
     public static SeriesHandle SeriesNew(string name, long[] data, bool[]? validity) => 
         ErrorHelper.Check(NativeBindings.pl_series_new_i64(name, data, ToBytes(validity), (UIntPtr)data.Length));
-
+    public static SeriesHandle SeriesNew(string name, ulong[] data, bool[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u64(name, data, ToBytes(validity), (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, Int128[] data, bool[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_i128(name, data, ToBytes(validity), (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, UInt128[] data, bool[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u128(name, data, ToBytes(validity), (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, float[] data, bool[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_f32(name, data, ToBytes(validity), (UIntPtr)data.Length));
     public static SeriesHandle SeriesNew(string name, double[] data, bool[]? validity) => 
         ErrorHelper.Check(NativeBindings.pl_series_new_f64(name, data, ToBytes(validity), (UIntPtr)data.Length));
         
@@ -155,6 +171,16 @@ public static partial class PolarsWrapper
         if (NativeBindings.pl_series_get_i64(s, (UIntPtr)idx, out long val)) return val;
         return null;
     }
+    public static Int128? SeriesGetInt128(SeriesHandle s, long idx)
+    {
+        if (NativeBindings.pl_series_get_i128(s, (UIntPtr)idx, out Int128 val)) return val;
+        return null;
+    }
+    public static UInt128? SeriesGetUInt128(SeriesHandle s, long idx)
+    {
+        if (NativeBindings.pl_series_get_u128(s, (UIntPtr)idx, out UInt128 val)) return val;
+        return null;
+    }
 
     public static double? SeriesGetDouble(SeriesHandle s, long idx)
     {
@@ -171,7 +197,7 @@ public static partial class PolarsWrapper
     public static string? SeriesGetString(SeriesHandle s, long idx)
     {
         IntPtr ptr = NativeBindings.pl_series_get_str(s, (UIntPtr)idx);
-        return ErrorHelper.CheckString(ptr); // CheckString 会处理 IntPtr.Zero -> null
+        return ErrorHelper.CheckString(ptr); 
     }
 
     public static decimal? SeriesGetDecimal(SeriesHandle s, long idx)
@@ -231,7 +257,7 @@ public static partial class PolarsWrapper
             // .NET Ticks = 100ns. 1 us = 10 ticks.
             // Unix Epoch Ticks = 621355968000000000
             long ticks = (us * 10) + 621355968000000000L;
-            return new DateTime(ticks, DateTimeKind.Utc); // 默认 UTC 语义
+            return new DateTime(ticks, DateTimeKind.Utc); // Default UTC 
         }
         return null;
     }

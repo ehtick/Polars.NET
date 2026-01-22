@@ -16,7 +16,6 @@ pub extern "C" fn pl_expr_free(ptr: *mut ExprContext) {
 // ==========================================
 // Marcos
 // ==========================================
-
 /// Literal Constructor
 /// like: fn pl_expr_lit_i32(val: i32) -> *mut ExprContext
 macro_rules! gen_lit_ctor {
@@ -55,6 +54,32 @@ macro_rules! gen_unary_op {
             ffi_try!({
                 let ctx = unsafe { Box::from_raw(ptr) };
                 let new_expr = ctx.inner.$method(); 
+                Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+            })
+        }
+    };
+}
+
+macro_rules! gen_unary_op_arg_bool {
+    ($func_name:ident, $method:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $func_name(ptr: *mut ExprContext, param: bool) -> *mut ExprContext {
+            ffi_try!({
+                let ctx = unsafe { Box::from_raw(ptr) };
+                let new_expr = ctx.inner.$method(param); 
+                Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+            })
+        }
+    };
+}
+
+macro_rules! gen_unary_op_u8 {
+    ($func_name:ident, $method:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $func_name(ptr: *mut ExprContext, param: u8) -> *mut ExprContext {
+            ffi_try!({
+                let ctx = unsafe { Box::from_raw(ptr) };
+                let new_expr = ctx.inner.$method(param); 
                 Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
             })
         }
@@ -195,24 +220,6 @@ macro_rules! gen_rolling_by_op {
     };
 }
 
-/// Cumulative Ops Macro
-/// Signature: fn name(ptr: *mut ExprContext, reverse: bool) -> *mut ExprContext
-macro_rules! gen_cum_op {
-    ($func_name:ident, $method:ident) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $func_name(
-            expr_ptr: *mut ExprContext, 
-            reverse: bool
-        ) -> *mut ExprContext {
-            ffi_try!({
-                let ctx = unsafe { Box::from_raw(expr_ptr) };
-                let new_expr = ctx.inner.$method(reverse);
-                Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
-            })
-        }
-    };
-}
-
 /// EWM Ops Macro (Unified)
 /// Signature: fn name(ptr, alpha, adjust, bias, min_periods, ignore_nulls)
 macro_rules! gen_ewm_op {
@@ -266,6 +273,12 @@ gen_unary_op!(pl_expr_max, max);
 gen_unary_op!(pl_expr_min, min);
 gen_unary_op!(pl_expr_abs, abs);
 gen_unary_op!(pl_expr_product, product);
+gen_unary_op!(pl_expr_first, first);
+gen_unary_op!(pl_expr_last, last);
+gen_unary_op!(pl_expr_reverse, reverse);
+gen_unary_op_arg_bool!(pl_expr_any, any);
+gen_unary_op_arg_bool!(pl_expr_all, all);
+gen_unary_op_arg_bool!(pl_expr_item, item);
 // Logic Not (!)
 gen_unary_op!(pl_expr_not, not);
 // is_null()
@@ -327,11 +340,11 @@ gen_binary_op!(pl_expr_fill_null, fill_null);
 // Math Ops
 gen_binary_op!(pl_expr_pow,pow);
 // --- Cumulative Functions ---
-gen_cum_op!(pl_expr_cum_sum, cum_sum);
-gen_cum_op!(pl_expr_cum_max, cum_max);
-gen_cum_op!(pl_expr_cum_min, cum_min);
-gen_cum_op!(pl_expr_cum_prod, cum_prod);
-gen_cum_op!(pl_expr_cum_count, cum_count);
+gen_unary_op_arg_bool!(pl_expr_cum_sum, cum_sum);
+gen_unary_op_arg_bool!(pl_expr_cum_max, cum_max);
+gen_unary_op_arg_bool!(pl_expr_cum_min, cum_min);
+gen_unary_op_arg_bool!(pl_expr_cum_prod, cum_prod);
+gen_unary_op_arg_bool!(pl_expr_cum_count, cum_count);
 
 // --- EWM Functions ---
 // Mean/Std/Var all share the same signature now
@@ -1561,18 +1574,7 @@ pub extern "C" fn pl_expr_rolling_var_by(
 }
 
 // --- Skews ---
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_skew(
-    expr_ptr: *mut ExprContext,
-    bias: bool
-) -> *mut ExprContext {
-    ffi_try!({
-        let ctx = unsafe { Box::from_raw(expr_ptr) };
-        let new_expr = ctx.inner.skew(bias);
-        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
-    })
-}
+gen_unary_op_arg_bool!(pl_expr_skew, skew);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_rolling_skew(
@@ -1936,34 +1938,10 @@ pub extern "C" fn pl_expr_if_else(
 }
 
 // --- Statistics ---
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_count(expr_ptr: *mut ExprContext) -> *mut ExprContext {
-    let ctx = unsafe { Box::from_raw(expr_ptr) };
-    let new_expr = ctx.inner.count();
-    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_std(expr_ptr: *mut ExprContext, ddof: u8) -> *mut ExprContext {
-    let ctx = unsafe { Box::from_raw(expr_ptr)};
-    // std(ddof) -> ddof usually 1 for sample std dev
-    let new_expr = ctx.inner.std(ddof);
-    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_var(expr_ptr: *mut ExprContext, ddof: u8) -> *mut ExprContext {
-    let ctx = unsafe { Box::from_raw(expr_ptr)};
-    let new_expr = ctx.inner.var(ddof);
-    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_median(expr_ptr: *mut ExprContext) -> *mut ExprContext {
-    let ctx = unsafe { Box::from_raw(expr_ptr)};
-    let new_expr = ctx.inner.median();
-    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
-}
+gen_unary_op!(pl_expr_count, count);
+gen_unary_op!(pl_expr_median, median);
+gen_unary_op_u8!(pl_expr_std, std);
+gen_unary_op_u8!(pl_expr_var, var);
 
 // quantile(quantile, interpolation)
 // interpolation: "nearest", "higher", "lower", "midpoint", "linear"

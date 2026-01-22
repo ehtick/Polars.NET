@@ -83,7 +83,29 @@ public static partial class PolarsWrapper
         expr.TransferOwnership();
         return ErrorHelper.Check(h);
     }
+    // Reverse
+    public static ExprHandle Reverse(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_reverse, e);
     // Aggregate
+    public static ExprHandle First(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_first, e);
+    public static ExprHandle Last(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_last, e);
+    public static ExprHandle All(ExprHandle e, bool ignoreNulls)
+    {
+        var h = NativeBindings.pl_expr_all(e,ignoreNulls);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle Any(ExprHandle e, bool ignoreNulls)
+    {
+        var h = NativeBindings.pl_expr_any(e,ignoreNulls);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle Item(ExprHandle e, bool allowEmpty)
+    {
+        var h = NativeBindings.pl_expr_item(e,allowEmpty);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
     public static ExprHandle Sum(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_sum, e);
     public static ExprHandle Mean(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_mean, e);
     public static ExprHandle Max(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_max, e);
