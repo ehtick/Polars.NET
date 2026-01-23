@@ -1520,8 +1520,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             case bool?[] v:    series = new Series(name, v); return true;
 
             // --- String ---
-            case string[] v:   series = new Series(name, v); return true;
-            // case string?[] v:  series = new Series(name, v); return true;
+            case string?[] v:   series = new Series(name, v); return true;
                 
             // --- Default ---
             default:

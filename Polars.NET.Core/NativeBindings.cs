@@ -1087,7 +1087,15 @@ unsafe internal partial class NativeBindings
         [In, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string?[] strs, 
         UIntPtr len
         );
-
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_str_simd(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        ref byte values_ptr,  // Values
+        UIntPtr values_len,
+        ref long offsets_ptr, // Offsets
+        IntPtr validity_ptr,  // Validity (IntPtr.Zero allowed)
+        UIntPtr len // Row count
+    );
     [LibraryImport(LibName)] 
     public static partial SeriesHandle pl_series_clone(SeriesHandle s);
     // --- Series Properties ---

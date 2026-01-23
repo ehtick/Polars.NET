@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Apache.Arrow;
 using Apache.Arrow.C; 
 
@@ -39,6 +40,49 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(
             NativeBindings.pl_series_new_str(name, data, (UIntPtr)data.Length)
         );
+    }
+    /// <summary>
+    /// [SIMD High Performance] Create String Series using Arrow Layout (Values + Offsets).
+    /// </summary>
+    public unsafe static SeriesHandle SeriesNewStringSimd(string name, string?[] data)
+    {
+        // 0. Blank data edge case
+        if (data.Length == 0)
+        {
+            byte dummyByte = 0;
+            long dummyOff = 0;
+            return ErrorHelper.Check(
+                NativeBindings.pl_series_new_str_simd(
+                    name, 
+                    ref dummyByte, UIntPtr.Zero, 
+                    ref dummyOff, IntPtr.Zero, UIntPtr.Zero
+                )
+            );
+        }
+
+        // 1. 调用屠龙刀 Packer
+        // 结果: values (扁平字节流), offsets (偏移量), validity (位图或null)
+        var (values, offsets, validity) = StringPacker.Pack(data);
+
+        // 2. 准备指针并调用 Rust
+        // validity may be null，so we need to fix to get pointer (null [] -> null ptr)
+        fixed (byte* pValid = validity)
+        {
+            
+            ref byte pValsRef = ref MemoryMarshal.GetArrayDataReference(values);
+            ref long pOffsRef = ref MemoryMarshal.GetArrayDataReference(offsets);
+
+            return ErrorHelper.Check(
+                NativeBindings.pl_series_new_str_simd(
+                    name,
+                    ref pValsRef,
+                    (UIntPtr)values.Length,
+                    ref pOffsRef,
+                    (IntPtr)pValid,
+                    (UIntPtr)data.Length
+                )
+            );
+        }
     }
     
     private static readonly decimal[] PowersOf10;

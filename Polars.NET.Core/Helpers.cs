@@ -1118,4 +1118,100 @@ namespace Polars.NET.Core
             return (valuesBits, validityBits);
         }
     }
+    public static unsafe class StringPacker
+    {
+        /// <summary>
+        /// 将 C# string[] 拍扁为 Arrow LargeUtf8 格式 (Values + Offsets + Validity)。
+        /// 这是传输字符串到 Polars 的最快方式。
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static (byte[] values, long[] offsets, byte[]? validity) Pack(string?[] data)
+        {
+            int len = data.Length;
+            
+            // 1. Offsets 数组 (长度是 len + 1)
+            // Arrow 规范：Offsets[i] 是第 i 个字符串的起始，Offsets[len] 是总长度
+            var offsets = new long[len + 1];
+
+            // 2. 预计算总大小 & 填充 Offsets
+            // 虽然遍历了两次，但这避免了巨大的 List<byte> 扩容开销，绝对值得
+            long currentOffset = 0;
+            bool hasNull = false;
+
+            // Pass 1: 计算长度 & Offsets
+            fixed (long* pOffsets = offsets)
+            {
+                for (int i = 0; i < len; i++)
+                {
+                    pOffsets[i] = currentOffset;
+                    string? s = data[i];
+                    if (s != null)
+                    {
+                        // .NET 8 极速 API
+                        currentOffset += Encoding.UTF8.GetByteCount(s);
+                    }
+                    else
+                    {
+                        hasNull = true;
+                    }
+                }
+                pOffsets[len] = currentOffset; // 最后一个是总长度
+            }
+
+            // 3. 分配 Values
+            var values = GC.AllocateUninitializedArray<byte>((int)currentOffset);
+
+            // 4. Validity Bitmap (如果没有 Null，就是 null)
+            byte[]? validity = null;
+            if (hasNull)
+            {
+                // 这里复用你的 BoolPacker 逻辑，或者简单写一个
+                // 既然我们要极致，这里手写一个简单的 loop 填充
+                int validLen = (len + 7) >> 3;
+                validity = new byte[validLen];
+                // 默认全 0? 不，通常默认全 0 或全 1 取决于怎么写。
+                // Arrow Validity: 1 = Valid, 0 = Null.
+                // 我们先初始化为 0 (全 Null)，然后把 Valid 的置 1？
+                // 或者初始化为 0xFF (全 Valid)，把 Null 的置 0？后者更快。
+                Array.Fill(validity, (byte)0xFF);
+                
+                // 处理尾部剩余位，防止脏数据 (可选，Rust 端通常会忽略)
+            }
+
+            // Pass 2: 转码填充 Values & 设置 Validity
+            fixed (long* pOffsets = offsets) // 其实不需要再读 offsets，只需要长度
+            fixed (byte* pValues = values)
+            fixed (byte* pValid = validity) // 如果 null，这里是 null 指针
+            {
+                byte* pCurrentVal = pValues;
+                
+                for (int i = 0; i < len; i++)
+                {
+                    string? s = data[i];
+                    if (s != null)
+                    {
+                        // 极速转码：直接写内存
+                        fixed (char* pChar = s)
+                        {
+                            // GetBytes(char*, charCount, byte*, byteCount)
+                            int written = Encoding.UTF8.GetBytes(pChar, s.Length, pCurrentVal, (int)(pOffsets[i+1] - pOffsets[i]));
+                            pCurrentVal += written;
+                        }
+                    }
+                    else
+                    {
+                        // 设置 Validity 为 0 (Null)
+                        // 位操作: byteIndex = i / 8, bitIndex = i % 8
+                        // target &= ~(1 << bit)
+                        if (pValid != null)
+                        {
+                            pValid[i >> 3] &= (byte)~(1 << (i & 7));
+                        }
+                    }
+                }
+            }
+
+            return (values, offsets, validity);
+        }
+    }
 }

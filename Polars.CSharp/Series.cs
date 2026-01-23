@@ -819,7 +819,7 @@ public partial class Series : IDisposable
     }
 
     /// <summary>
-    /// Create a Series from a nullable bool array using Span optimization.
+    /// Create a Series from a nullable bool array using SIMD optimization.
     /// <para>Example: <c>new Series("c", [true, false, null])</c></para>
     /// </summary>
     public Series(string name, bool?[] data)
@@ -835,7 +835,7 @@ public partial class Series : IDisposable
     /// <param name="data"></param>
     public Series(string name, string?[] data)
     {
-        Handle = PolarsWrapper.SeriesNew(name, data);
+        Handle = PolarsWrapper.SeriesNewStringSimd(name, data);
     }
 
     // ------------------------------------------

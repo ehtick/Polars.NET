@@ -1,5 +1,6 @@
 use polars::prelude::*;
 use polars_arrow::array::{Array, ListArray};
+use polars_arrow::offset::OffsetsBuffer;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use crate::types::{DataFrameContext, DataTypeContext, SeriesContext};
@@ -9,6 +10,7 @@ use polars_arrow::buffer::Buffer;
 use polars_arrow::array::PrimitiveArray;
 use polars_arrow::array::BooleanArray;
 use polars_arrow::bitmap::Bitmap;
+use polars_arrow::array::Utf8Array;
 
 // ==========================================
 // Constructors 
@@ -42,7 +44,7 @@ macro_rules! gen_series_new {
                     Some(Bitmap::try_new(v_vec, len).unwrap())
                 };
 
-                // 3. 组装
+                // 3. Assemble
                 let arrow_dtype = <$pl_type as PolarsDataType>::get_static_dtype().to_arrow(CompatLevel::newest());
                 
                 let arrow_array = PrimitiveArray::new(
@@ -132,6 +134,55 @@ pub extern "C" fn pl_series_new_str(
         Ok(Box::into_raw(Box::new(SeriesContext { series: ca.into_series() })))
     })
 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_series_new_str_simd(
+    name: *const c_char,
+    values_ptr: *const u8,  // Values Buffer (u8)
+    values_len: usize,
+    offsets_ptr: *const i64, // Offsets Buffer (i64)
+    validity_ptr: *const u8,// Validity Bitmap (u8) 
+    len: usize // Logical Length
+) -> *mut SeriesContext {
+    ffi_try!({
+        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+
+        // Values (u8) -> Buffer<u8>
+        let values_slice = unsafe { std::slice::from_raw_parts(values_ptr, values_len) };
+        let values_vec = values_slice.to_vec(); 
+        let values_buffer = Buffer::from(values_vec);
+
+        // Offsets (i64) -> OffsetsBuffer<i64> 
+        let offsets_slice = unsafe { std::slice::from_raw_parts(offsets_ptr, len + 1) };
+        let offsets_vec = offsets_slice.to_vec();
+        
+        let offsets_buffer = OffsetsBuffer::try_from(offsets_vec).expect("Invalid offsets buffer from C#");
+
+        // Validity (Bitmap)
+        let validity = if validity_ptr.is_null() {
+            None
+        } else {
+            let bytes_len = (len + 7) / 8;
+            let v_slice = unsafe { std::slice::from_raw_parts(validity_ptr, bytes_len) };
+            let v_vec = v_slice.to_vec();
+            Some(Bitmap::try_new(v_vec, len).expect("Invalid validity bitmap"))
+        };
+
+        // Build Arrow LargeUtf8Array
+        let array = Utf8Array::<i64>::new(
+            ArrowDataType::LargeUtf8,
+            offsets_buffer,
+            values_buffer,
+            validity
+        );
+
+        // Convert to Series
+        let series = Series::from_arrow(name_str.as_ref().into(), Box::new(array)).expect("Failed to create Series");
+
+        Ok(Box::into_raw(Box::new(SeriesContext { series })))
+    })
+}
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_series_clone(ptr: *mut SeriesContext) -> *mut SeriesContext {
