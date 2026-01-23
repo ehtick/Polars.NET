@@ -837,7 +837,7 @@ B,5";
     public void Test_DataFrame_Slice()
     {
         // 1. 准备数据: 水果和颜色
-        var df = new DataFrame(
+        var df = DataFrame.FromSeries(
             new Series("Fruit", ["Apple", "Grape", "Grape", "Fig", "Fig"]),
             new Series("Color", ["Green", "Red", "White", "White", "Red"])
         );

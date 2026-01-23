@@ -1076,21 +1076,18 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_bool(
         string name, 
-        byte[] ptr, 
-        byte[]? validity, 
+        [In] byte[] data, 
+        [In] byte[]? validity, 
         UIntPtr len
     );
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial SeriesHandle pl_series_new_str(string name, IntPtr[] strs, UIntPtr len);
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial SeriesHandle pl_series_new_decimal(
+    public static partial SeriesHandle pl_series_new_str(
         string name, 
-        Int128[] ptr, 
-        byte[]? validity, 
-        UIntPtr len,
-        UIntPtr scale
-    );
+        [In, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string?[] strs, 
+        UIntPtr len
+        );
+
     [LibraryImport(LibName)] 
     public static partial SeriesHandle pl_series_clone(SeriesHandle s);
     // --- Series Properties ---

@@ -5,61 +5,40 @@ namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
 {
-    private static byte[]? ToBytes(bool[]? bools)
-    {
-        if (bools == null) return null;
-        var bytes = new byte[bools.Length];
-        for (int i = 0; i < bools.Length; i++)
-        {
-            bytes[i] = bools[i] ? (byte)1 : (byte)0;
-        }
-        return bytes;
-    }
     // --- Constructors ---
-    public static SeriesHandle SeriesNew(string name, sbyte[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_i8(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, byte[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_u8(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, short[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_i16(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, ushort[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_u16(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, int[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_i32(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, uint[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_u32(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, long[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_i64(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, ulong[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_u64(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, Int128[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_i128(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, UInt128[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_u128(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, float[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_f32(name, data, ToBytes(validity), (UIntPtr)data.Length));
-    public static SeriesHandle SeriesNew(string name, double[] data, bool[]? validity) => 
-        ErrorHelper.Check(NativeBindings.pl_series_new_f64(name, data, ToBytes(validity), (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, sbyte[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_i8(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, byte[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u8(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, short[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_i16(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, ushort[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u16(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, int[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_i32(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, uint[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u32(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, long[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_i64(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, ulong[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u64(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, Int128[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_i128(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, UInt128[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_u128(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, float[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_f32(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, double[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_f64(name, data, validity, (UIntPtr)data.Length));
         
-    public static SeriesHandle SeriesNew(string name, bool[] data, bool[]? validity)
-    {
-        var dataBytes = ToBytes(data)!; 
-        var validBytes = ToBytes(validity);
-        return ErrorHelper.Check(NativeBindings.pl_series_new_bool(name, dataBytes, validBytes, (UIntPtr)data.Length));
-    }
+    public static SeriesHandle SeriesNew(string name, byte[] valuesBitmask, byte[]? validityBitmask, UIntPtr length)
+        => ErrorHelper.Check(NativeBindings.pl_series_new_bool(name, valuesBitmask, validityBitmask, length));
 
     public static SeriesHandle SeriesNew(string name, string?[] data)
     {
-        return UseNullableUtf8StringArray(data, ptrs => 
-        {
-            return ErrorHelper.Check(
-                NativeBindings.pl_series_new_str(
-                    name, 
-                    ptrs, 
-                    (UIntPtr)data.Length
-                )
-            );
-        });
+        return ErrorHelper.Check(
+            NativeBindings.pl_series_new_str(name, data, (UIntPtr)data.Length)
+        );
     }
     
     private static readonly decimal[] PowersOf10;
@@ -74,66 +53,6 @@ public static partial class PolarsWrapper
         }
     }
 
-    public static SeriesHandle SeriesNewDecimal(string name, decimal[] data, bool[]? validity, int scale)
-    {
-        if (scale < 0 || scale >= PowersOf10.Length)
-        {
-            throw new ArgumentOutOfRangeException(nameof(scale), $"Scale must be between 0 and {PowersOf10.Length - 1} for C# decimal conversion.");
-        }
-        var len = data.Length;
-        var scaledValues = new Int128[len];
-        var multiplier = PowersOf10[scale];
-
-        // Convert C# decimal to Int128
-        for (int i = 0; i < len; i++)
-        {
-            scaledValues[i] = (Int128)(data[i] * multiplier);
-        }
-
-        return ErrorHelper.Check(NativeBindings.pl_series_new_decimal(
-            name, 
-            scaledValues, 
-            ToBytes(validity), 
-            (UIntPtr)len, 
-            (UIntPtr)scale
-        ));
-    }
-    
-    // Nullable Decimal
-    public static SeriesHandle SeriesNewDecimal(string name, decimal?[] data, int scale)
-    {
-        if (scale < 0 || scale >= PowersOf10.Length)
-        {
-            throw new ArgumentOutOfRangeException(nameof(scale), $"Scale must be between 0 and {PowersOf10.Length - 1} for C# decimal conversion.");
-        }
-        var len = data.Length;
-        var scaledValues = new Int128[len];
-        var validity = new byte[len];
-        var multiplier = PowersOf10[scale];
-
-        for (int i = 0; i < len; i++)
-        {
-            var value = data[i];
-            if (value.HasValue)
-            {
-                scaledValues[i] = (Int128)(value.Value * multiplier);
-                validity[i] = 1;
-            }
-            else
-            {
-                scaledValues[i] = 0;
-                validity[i] = 0;
-            }
-        }
-
-        return ErrorHelper.Check(NativeBindings.pl_series_new_decimal(
-            name, 
-            scaledValues, 
-            validity, 
-            (UIntPtr)len, 
-            (UIntPtr)scale
-        ));
-    }
     public static SeriesHandle CloneSeries(SeriesHandle handle)
     {
         return ErrorHelper.Check(NativeBindings.pl_series_clone(handle));

@@ -81,48 +81,6 @@ public static partial class PolarsWrapper
         }
     }
     /// <summary>
-    /// Deal with nullable UTF-8 String
-    /// Null string will be converted to IntPtr.Zero。
-    /// </summary>
-    internal static T UseNullableUtf8StringArray<T>(string?[]? arr, Func<IntPtr[], T> action)
-    {
-        if (arr == null || arr.Length == 0)
-        {
-            return action(Array.Empty<IntPtr>());
-        }
-
-        int len = arr.Length;
-        var ptrs = new IntPtr[len];
-
-        try
-        {
-            for (int i = 0; i < len; i++)
-            {
-                // Null -> Zero, Non-Null -> Alloc
-                if (arr[i] == null)
-                {
-                    ptrs[i] = IntPtr.Zero;
-                }
-                else
-                {
-                    ptrs[i] = Marshal.StringToCoTaskMemUTF8(arr[i]);
-                }
-            }
-
-            return action(ptrs);
-        }
-        finally
-        {
-            for (int i = 0; i < len; i++)
-            {
-                if (ptrs[i] != IntPtr.Zero)
-                {
-                    Marshal.FreeCoTaskMem(ptrs[i]);
-                }
-            }
-        }
-    }
-    /// <summary>
     /// Lock a set of SafeHandles and get its raw pointer.
     /// Use ref struct for zero GC and stack only.
     /// </summary>

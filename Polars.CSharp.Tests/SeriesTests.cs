@@ -985,7 +985,6 @@ public void Test_Series_Ewm_Methods()
 
         // 3. Any / All 测试
         var sBool = new Series("bools", [true, false, null]); // 包含 null
-        
         // Any (ignoreNulls=false): true | false | null -> true (只要有 true 就是 true)
         Assert.Equal(true, sBool.Any(ignoreNulls: false)[0]);
         
@@ -1011,5 +1010,90 @@ public void Test_Series_Ewm_Methods()
         Assert.Equal(bigNumber, sLong.GetValue<long?>(0));
         Assert.Null(sLong.GetValue<long?>(1));
         Assert.Equal(123L, sLong.GetValue<long?>(2));
+    }
+    [Fact]
+    public void Test_Bool_Packing_Boundaries_And_Performance()
+    {
+        // ================================================================
+        // Case 1: 纯 Fallback 通道 (Length < 32)
+        // 测试目的：确保标量循环逻辑正确，没有被 SIMD 逻辑误伤
+        // ================================================================
+        bool[] dataSmall = new bool[] { true, false, true, true, false, true, false, false }; // Len 8
+        using var sSmall = new Series("small", dataSmall);
+        
+        // 验证：回读数据必须完全一致
+        Assert.Equal(dataSmall, sSmall.ToArray<bool>());
+        Console.WriteLine("Case 1 (Scalar < 32): Passed");
+
+
+        // ================================================================
+        // Case 2: 纯 SIMD 通道 (Length = 32, 64)
+        // 测试目的：确保 AVX2 MoveMask 逻辑正确，且正好填满 int 边界时不出错
+        // ================================================================
+        bool[] dataExact = new bool[64];
+        for(int i=0; i<64; i++) dataExact[i] = (i % 2 == 0); // T, F, T, F...
+        
+        using var sExact = new Series("exact", dataExact);
+        Assert.Equal(dataExact, sExact.ToArray<bool>());
+        Console.WriteLine("Case 2 (SIMD Exact 64): Passed");
+
+
+        // ================================================================
+        // Case 3: 混合通道 (SIMD + Fallback, Length = 100)
+        // 测试目的：最关键的测试！
+        // 前 96 个走 SIMD (32 * 3)，最后 4 个走 Scalar。
+        // 重点检查：SIMD 结束后，Scalar 的 offset 指针是否指到了正确位置？
+        // ================================================================
+        int lenMixed = 100;
+        bool[] dataMixed = new bool[lenMixed];
+        for (int i = 0; i < lenMixed; i++)
+        {
+            // 搞点稍微复杂的模式，防止全是 true 或全是 false 掩盖位移错误
+            // 模式：每 3 个 true，每 5 个 false...
+            dataMixed[i] = (i % 3 == 0) || (i % 5 != 0);
+        }
+
+        using var sMixed = new Series("mixed", dataMixed);
+        var resMixed = sMixed.ToArray<bool>();
+
+        // 逐个比对，如果出错，打印具体是哪个 Index 挂了
+        for (int i = 0; i < lenMixed; i++)
+        {
+            if (dataMixed[i] != resMixed[i])
+            {
+                throw new Exception($"Mismatch at index {i}. Expected {dataMixed[i]}, Got {resMixed[i]}. " +
+                                    $"This is likely a SIMD/Scalar boundary issue around index {i - (i % 32)}.");
+            }
+        }
+        Assert.Equal(dataMixed, resMixed);
+        Console.WriteLine("Case 3 (Hybrid 100): Passed");
+
+
+        // ================================================================
+        // Case 4: 压力测试 (尝尝咸淡) - 1000万数据
+        // 测试目的：验证在大数据量下 AVX2 是否稳定，以及是否足够快
+        // ================================================================
+        int lenHuge = 10_000_000;
+        var dataHuge = new bool[lenHuge];
+        // 填充数据：让它不是全 0 或 全 1
+        // 这种交错数据能防止 CPU 分支预测作弊
+        Parallel.For(0, lenHuge, i => 
+        {
+            dataHuge[i] = (i % 2 == 0); 
+        });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        
+        // 这一步会触发 BoolPacker.Pack (AVX2) -> Rust Memcpy
+        using var sHuge = new Series("huge", dataHuge);
+        
+        sw.Stop();
+        Console.WriteLine($"Case 4 (10M Rows): Time = {sw.ElapsedMilliseconds} ms");
+
+        // 简单的抽样验证，防止全盘错误
+        var resHuge = sHuge.ToArray<bool>();
+        Assert.Equal(dataHuge[0], resHuge[0]);
+        Assert.Equal(dataHuge[lenHuge - 1], resHuge[lenHuge - 1]);
+        Assert.Equal(dataHuge[lenHuge / 2], resHuge[lenHuge / 2]);
     }
 }

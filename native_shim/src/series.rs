@@ -5,53 +5,109 @@ use std::os::raw::c_char;
 use crate::types::{DataFrameContext, DataTypeContext, SeriesContext};
 use crate::utils::*;
 use polars_arrow::datatypes::ArrowDataType;
+use polars_arrow::buffer::Buffer;
+use polars_arrow::array::PrimitiveArray;
+use polars_arrow::array::BooleanArray;
+use polars_arrow::bitmap::Bitmap;
 
 // ==========================================
 // Constructors 
 // ==========================================
 macro_rules! gen_series_new {
-    ($func_name:ident, $rs_type:ty) => {
+    ($func_name:ident, $rs_type:ty, $pl_type:ty) => {
         #[unsafe(no_mangle)]
-        pub extern "C" fn $func_name(
+        pub unsafe extern "C" fn $func_name(
             name: *const c_char,
             ptr: *const $rs_type,
-            validity: *const bool,
+            validity: *const u8, 
             len: usize,
         ) -> *mut SeriesContext {
             ffi_try!({
-                let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
-                let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+                let name = unsafe {CStr::from_ptr(name).to_string_lossy()};
+                
+                // 1. Values: Convert to Vec 
+                // slice.to_vec() is memcpy
+                let slice = unsafe {std::slice::from_raw_parts(ptr, len)};
+                let values_vec = slice.to_vec(); 
+                let values_buffer = Buffer::from(values_vec);
 
-                let series = if validity.is_null() {
-                    Series::new(name.into(), slice)
+                // 2. Validity: Convert to Vec<u8> 
+                let validity_bitmap = if validity.is_null() {
+                    None
                 } else {
-                    let v_slice = unsafe { std::slice::from_raw_parts(validity, len) };
-                    let opts: Vec<Option<$rs_type>> = slice
-                        .iter()
-                        .zip(v_slice.iter())
-                        .map(|(&v, &valid)| if valid { Some(v) } else { None })
-                        .collect();
-                    Series::new(name.into(), &opts)
+                    let bytes_len = (len + 7) / 8;
+                    let v_slice =unsafe { std::slice::from_raw_parts(validity, bytes_len)};
+                    let v_vec = v_slice.to_vec(); 
+                    
+                    Some(Bitmap::try_new(v_vec, len).unwrap())
                 };
 
-                Ok(Box::into_raw(Box::new(SeriesContext { series })))
+                // 3. 组装
+                let arrow_dtype = <$pl_type as PolarsDataType>::get_static_dtype().to_arrow(CompatLevel::newest());
+                
+                let arrow_array = PrimitiveArray::new(
+                    arrow_dtype,
+                    values_buffer,
+                    validity_bitmap
+                );
+
+                let ca = ChunkedArray::<$pl_type>::with_chunk(
+                    name.as_ref().into(),
+                    arrow_array,
+                );
+                
+                Ok(Box::into_raw(Box::new(SeriesContext { series: ca.into_series() })))
             })
         }
     };
 }
-gen_series_new!(pl_series_new_i8, i8);
-gen_series_new!(pl_series_new_u8, u8);
-gen_series_new!(pl_series_new_i16, i16);
-gen_series_new!(pl_series_new_u16, u16);
-gen_series_new!(pl_series_new_i32, i32);
-gen_series_new!(pl_series_new_u32, u32);
-gen_series_new!(pl_series_new_i64, i64);
-gen_series_new!(pl_series_new_u64, u64);
-gen_series_new!(pl_series_new_i128, i128);
-gen_series_new!(pl_series_new_u128, u128);
-gen_series_new!(pl_series_new_f32, f32);
-gen_series_new!(pl_series_new_f64, f64);
-gen_series_new!(pl_series_new_bool, bool);
+gen_series_new!(pl_series_new_i8,  i8,  Int8Type);
+gen_series_new!(pl_series_new_u8,  u8,  UInt8Type);
+gen_series_new!(pl_series_new_i16, i16, Int16Type);
+gen_series_new!(pl_series_new_u16, u16, UInt16Type);
+gen_series_new!(pl_series_new_i32, i32, Int32Type);
+gen_series_new!(pl_series_new_u32, u32, UInt32Type);
+gen_series_new!(pl_series_new_i64, i64, Int64Type);
+gen_series_new!(pl_series_new_u64, u64, UInt64Type);
+gen_series_new!(pl_series_new_f32, f32, Float32Type);
+gen_series_new!(pl_series_new_f64, f64, Float64Type);
+gen_series_new!(pl_series_new_i128, i128, Int128Type);
+gen_series_new!(pl_series_new_u128, u128, UInt128Type);
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_series_new_bool(
+    name: *const c_char,
+    ptr: *const u8,     
+    validity: *const u8,
+    len: usize,
+) -> *mut SeriesContext {
+    ffi_try!({
+        let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
+        let bytes_len = (len + 7) / 8;
+
+        let slice = unsafe {std::slice::from_raw_parts(ptr, bytes_len)};
+        let values_vec = slice.to_vec();
+        let values_bitmap = Bitmap::try_new(values_vec, len).unwrap();
+
+        let validity_bitmap = if validity.is_null() {
+            None
+        } else {
+            let v_slice = unsafe { std::slice::from_raw_parts(validity, bytes_len)};
+            let v_vec = v_slice.to_vec();
+            Some(Bitmap::try_new(v_vec, len).unwrap())
+        };
+
+        let arrow_array = BooleanArray::new(
+            ArrowDataType::Boolean, 
+            values_bitmap, 
+            validity_bitmap
+        );
+
+        let ca = BooleanChunked::with_chunk(name.as_ref().into(), arrow_array);
+        
+        Ok(Box::into_raw(Box::new(SeriesContext { series: ca.into_series() })))
+    })
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_series_new_str(
@@ -63,52 +119,17 @@ pub extern "C" fn pl_series_new_str(
         let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
         let slice = unsafe { std::slice::from_raw_parts(strs, len) };
         
-        let vec_opts: Vec<Option<&str>> = slice.iter()
-            .map(|&p| {
-                if p.is_null() {
-                    None 
-                } else {
-                    unsafe { Some(CStr::from_ptr(p).to_str().unwrap_or("")) }
-                }
-            })
-            .collect();
+        let iter = slice.iter().map(|&p| {
+            if p.is_null() {
+                None 
+            } else {
+                unsafe { CStr::from_ptr(p).to_str().ok() }
+            }
+        });
 
-        let series = Series::new(name.into(), &vec_opts);
-        Ok(Box::into_raw(Box::new(SeriesContext { series })))
-    })
-}
+        let ca = StringChunked::from_iter_options(name.into(), iter);
 
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_series_new_decimal(
-    name: *const c_char,
-    ptr: *const i128,
-    validity: *const bool,
-    len: usize,
-    scale: usize
-) -> *mut SeriesContext {
-    ffi_try!({
-        let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
-        
-        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-        let series = if validity.is_null() {
-            Series::new(name.clone().into(), slice)
-        } else {
-            let v_slice = unsafe { std::slice::from_raw_parts(validity, len) };
-            let opts: Vec<Option<i128>> = slice.iter().zip(v_slice.iter())
-                .map(|(&v, &valid)| if valid { Some(v) } else { None })
-                .collect();
-            Series::new(name.clone().into(), &opts)
-        };
-
-        let decimal_series = series
-            .i128()
-            .map_err(|_| PolarsError::ComputeError("Failed to cast to i128 for decimal creation".into()))?
-            .clone()
-            .into_decimal(38, scale)
-            .map_err(|e| PolarsError::ComputeError(format!("Decimal creation failed: {}", e).into()))?
-            .into_series();
-
-        Ok(Box::into_raw(Box::new(SeriesContext { series: decimal_series })))
+        Ok(Box::into_raw(Box::new(SeriesContext { series: ca.into_series() })))
     })
 }
 
