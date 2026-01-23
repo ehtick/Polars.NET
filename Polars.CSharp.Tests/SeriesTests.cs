@@ -1096,4 +1096,169 @@ public void Test_Series_Ewm_Methods()
         Assert.Equal(dataHuge[lenHuge - 1], resHuge[lenHuge - 1]);
         Assert.Equal(dataHuge[lenHuge / 2], resHuge[lenHuge / 2]);
     }
+    // =================================================================================
+    // 1. [Stride 2] Int8 / SByte (每次吞 16 个)
+    // =================================================================================
+    [Fact]
+    public void Test_Int8_Simd_Boundaries()
+    {
+        Console.WriteLine("Testing Int8 (sbyte)...");
+
+        // 场景：35个元素 (16*2 SIMD + 3 Scalar)
+        int count = 35; 
+        sbyte?[] data = new sbyte?[count];
+        for (int i = 0; i < count; i++)
+        {
+            // 制造数据：每3个放一个Null，其余放数值
+            if (i % 3 == 0) data[i] = null;
+            else data[i] = (sbyte)(i % 127);
+        }
+
+        // 这里的 data 类型是明确的 sbyte?[]，会自动匹配 Series(string, sbyte?[]) 构造函数
+        using var s = new Series("s8", data);
+        
+        // 验证
+        var result = s.ToArray<sbyte?>();
+        Assert.Equal(data, result);
+    }
+
+    // =================================================================================
+    // 2. [Stride 4] Int16 / Short (每次吞 8 个)
+    // =================================================================================
+    [Fact]
+    public void Test_Int16_Simd_Boundaries()
+    {
+        Console.WriteLine("Testing Int16 (short)...");
+
+        // 场景：19个元素 (8*2 SIMD + 3 Scalar)
+        int count = 19;
+        short?[] data = new short?[count];
+        for (int i = 0; i < count; i++)
+        {
+            if (i % 3 == 0) data[i] = null;
+            else data[i] = (short)(i * 100);
+        }
+
+        using var s = new Series("s16", data);
+        
+        var result = s.ToArray<short?>();
+        Assert.Equal(data, result);
+    }
+
+    // =================================================================================
+    // 3. [Stride 8] Int32 / Int (每次吞 4 个)
+    // =================================================================================
+    [Fact]
+    public void Test_Int32_Simd_Boundaries()
+    {
+        Console.WriteLine("Testing Int32 (int)...");
+
+        // 场景：13个元素 (4*3 SIMD + 1 Scalar) -> 那个 +1 是最容易越界的
+        int count = 13;
+        int?[] data = new int?[count];
+        for (int i = 0; i < count; i++)
+        {
+            if (i % 3 == 0) data[i] = null;
+            else data[i] = i * 1000;
+        }
+
+        using var s = new Series("s32", data);
+        
+        var result = s.ToArray<int?>();
+        Assert.Equal(data, result);
+    }
+
+    // =================================================================================
+    // 4. [Stride 16] Int64 / Long (每次吞 2 个)
+    // =================================================================================
+    [Fact]
+    public void Test_Int64_Simd_Boundaries()
+    {
+        Console.WriteLine("Testing Int64 (long)...");
+
+        // 场景：5个元素 (2*2 SIMD + 1 Scalar)
+        int count = 5;
+        long?[] data = new long?[count];
+        for (int i = 0; i < count; i++)
+        {
+            if (i % 3 == 0) data[i] = null;
+            else data[i] = i * 10000L;
+        }
+
+        using var s = new Series("s64", data);
+        
+        var result = s.ToArray<long?>();
+        Assert.Equal(data, result);
+    }
+
+    // =================================================================================
+    // 5. [Stride 32] Int128 (每次吞 1 个)
+    // =================================================================================
+    [Fact]
+    public void Test_Int128_Simd_Layout()
+    {
+        Console.WriteLine("Testing Int128...");
+
+        // 测试 Type A / Type B 布局检测是否正确
+        // 如果检测错误，MaxValue 可能会变成 1 或其他值
+        Int128?[] data = new Int128?[] 
+        { 
+            Int128.MaxValue, // 验证 Value 读取
+            Int128.One, 
+            null,            // 验证 Validity 写入
+            Int128.Zero 
+        };
+
+        using var s = new Series("s128", data);
+        
+        Assert.Equal(data[0], s[0]); // MaxValue Check
+        Assert.Equal(data[1], s[1]);
+        Assert.Null(s[2]);
+        Assert.Equal(data[3], s[3]);
+    }
+
+    // =================================================================================
+    // 6. [UInt32] 测试无符号拆箱是否修复 (Unsafe.As 验证)
+    // =================================================================================
+    [Fact]
+    public void Test_UInt32_Unboxing_Fix()
+    {
+        Console.WriteLine("Testing UInt32 Unboxing...");
+        
+        // 这个测试之前会报错 "InvalidCastException"，现在应该能过
+        uint?[] data = new uint?[] { uint.MaxValue, 0, null, 123 };
+        
+        using var s = new Series("u32", data);
+        
+        var result = s.ToArray<uint?>();
+        Assert.Equal(data, result);
+    }
+
+    // =================================================================================
+    // 7. [Performance] 性能测试
+    // =================================================================================
+    [Fact]
+    public void Test_Performance_10M()
+    {
+        // 只测最常用的 Int32
+        int len = 10_000_000;
+        var data = new int?[len];
+        Parallel.For(0, len, i => 
+        {
+            if (i % 31 == 0) data[i] = null;
+            else data[i] = i;
+        });
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        
+        // 这里会触发 ArrayHelper.UnzipInt32SIMD
+        using var s = new Series("perf", data);
+        
+        sw.Stop();
+        Console.WriteLine($"Int32 (10M) Pack Time: {sw.ElapsedMilliseconds} ms");
+        
+        // 简单验证
+        Assert.Null(s.GetValue<int?>(0));
+        Assert.Equal(1, s.GetValue<int?>(1));
+    }
 }

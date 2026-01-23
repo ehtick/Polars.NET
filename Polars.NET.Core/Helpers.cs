@@ -68,20 +68,28 @@ namespace Polars.NET.Core
             int len,                
             T defaultValue) where T : struct
         {
+            // 1. Init validRef
             ref byte validRef = ref Unsafe.NullRef<byte>();
-            if (validity != null) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+            if (validity != null) 
+                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
 
             for (int i = startIdx; i < len; i++)
             {
                 ref T? v = ref Unsafe.Add(ref baseSrcRef, i);
-                
+
                 if (v.HasValue)
                 {
+                    // 1. Write Value
                     Unsafe.Add(ref baseValRef, i) = v.GetValueOrDefault();
+
+                    // 2. Input Validity
                     if (validity != null)
                     {
-                        ref byte targetByte = ref Unsafe.Add(ref validRef, i >> 3);
-                        targetByte |= (byte)(1 << (i & 7));
+                        if (Unsafe.IsNullRef(ref validRef)) 
+                            validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+
+                        ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                        target |= (byte)(1 << (i & 7));
                     }
                 }
                 else
@@ -89,20 +97,21 @@ namespace Polars.NET.Core
                     if (validity == null)
                     {
                         int byteLen = (len + 7) >> 3;
-                        validity = GC.AllocateUninitializedArray<byte>(byteLen);
-                        Array.Clear(validity, 0, byteLen); // 必须清零
-                        validRef = ref MemoryMarshal.GetArrayDataReference(validity); // 更新引用
+                        validity = new byte[byteLen]; 
+                        validRef = ref MemoryMarshal.GetArrayDataReference(validity);
 
-                        // Backfill 1s
-                        int fullBytes = i >> 3;
-                        if (fullBytes > 0) validity.AsSpan(0, fullBytes).Fill(0xFF);
+                        int bytesToFill = i >> 3;
+                        if (bytesToFill > 0) 
+                        {
+                            Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                        }
                         int remainingBits = i & 7;
                         if (remainingBits > 0)
                         {
-                            ref byte currentByte = ref Unsafe.Add(ref validRef, fullBytes);
-                            currentByte |= (byte)((1 << remainingBits) - 1);
+                            Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
                         }
                     }
+                    
                     Unsafe.Add(ref baseValRef, i) = defaultValue;
                 }
             }
@@ -112,10 +121,10 @@ namespace Polars.NET.Core
         //  Layout: [Val(1), Bool(1)] or [Bool(1), Val(1)]
         // =================================================================================
         private static readonly Vector256<byte> Int8ShuffleMask = Vector256.Create(
-            // --- Output 0-15: 16 Values (提取奇数位置: 1, 3, 5...) ---
+            // --- Output 0-15: 16 Values  1, 3, 5...) ---
             (byte)1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31,
             
-            // --- Output 16-31: 16 Bools (提取偶数位置: 0, 2, 4...) ---
+            // --- Output 16-31: 16 Bools  0, 2, 4...) ---
             (byte)0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30
         );
         // =================================================================================
@@ -374,12 +383,12 @@ namespace Polars.NET.Core
             var values = GC.AllocateUninitializedArray<byte>(len);
             int byteLen = (len + 7) >> 3;
             
-            byte[]? validity = null; // Lazy Allocation
+            byte[]? validity = null; 
 
             fixed (byte?* pSrc = data)
             fixed (byte* pDstVal = values)
             {
-                byte* pDstValid = null;
+                ref byte validRef = ref Unsafe.NullRef<byte>();
                 int i = 0;
 
                 // ---------------------------------------------------------
@@ -401,11 +410,10 @@ namespace Polars.NET.Core
                         // Upper 128 bits = 16 Bools
                         Vector256<byte> shuffled = Vector256.Shuffle(raw, mask);
 
-                        // 3. Store Values: Insert lower 128 bits (16 bytes) into values array
+                        // 3. Store Values
                         shuffled.GetLower().Store(pDstVal + i);
 
                         // 4. Validity Check
-                        // Extract upper 128 bits (Bools)
                         Vector128<byte> bools = shuffled.GetUpper();
 
                         // Check Null (0x00)
@@ -416,43 +424,38 @@ namespace Polars.NET.Core
                         // Extract 16 bits mask (1 = Null, 0 = Valid)
                         uint nullMask = isNullVec.ExtractMostSignificantBits();
 
-                        // If nullMask != 0，说明这 16 个里有 Null
                         if (nullMask != 0)
                         {
                             if (validity == null)
                             {
-                                validity = new byte[byteLen];
-                                pDstValid = (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(validity));
+                                validity = GC.AllocateUninitializedArray<byte>(byteLen);
+                                Array.Clear(validity, 0, byteLen); 
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
                                 
-                                // Backfill: 前面 i 个全是 Valid (1)
                                 int bytesToFill = i >> 3;
-                                if (bytesToFill > 0) new Span<byte>(pDstValid, bytesToFill).Fill(0xFF);
-                                // Int8 对齐很好，i 肯定是 16 的倍数 (byte 对齐)，
-                                // 所以 i >> 3 肯定是偶数，不会有 remainingBits 需要处理。
+                                if (bytesToFill > 0)
+                                {
+                                    Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                                }
                             }
                         }
 
                         if (validity != null)
                         {
-                            // nullMask: 1=Null
-                            // validMask: 1=Valid (取反)
-                            // 注意：ExtractMostSignificantBits 返回 uint，但在处理 Vector128<byte> 时
-                            // 它只用了低 16 位。
+                            if (Unsafe.IsNullRef(ref validRef)) 
+                            {
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                            }
                             ushort validMask16 = (ushort)(~nullMask);
 
-                            // 直接写入 2 个字节 (ushort)
-                            // 因为 i 是 16 的倍数，i >> 3 必定是 2 的倍数，内存对齐没问题
-                            *(ushort*)(pDstValid + (i >> 3)) = validMask16;
+                            Unsafe.WriteUnaligned(
+                                ref Unsafe.Add(ref validRef, i >> 3), 
+                                validMask16
+                            );
 
                             // Handle Default Value
-                            // 如果有 Null，我们需要把对应位置的 Value 设为 Default
-                            // (虽然 Polars 可能不看，但保持一致性)
-                            // 这里如果是追求极致写操作，且 defaultValue 是 0，其实不用动（因为之前 Store 进去的是 0）
-                            // 如果 defaultValue != 0，且 nullMask != 0，才需要修补
                             if (nullMask != 0)
                             {
-                                // 这是一个慢路径，但在 SIMD 吞吐量中占比较小
-                                // 手动展开或者循环修补 16 个
                                 for (int k = 0; k < 16; k++)
                                 {
                                     if ((nullMask & (1 << k)) != 0) // Is Null
@@ -487,45 +490,28 @@ namespace Polars.NET.Core
         private static unsafe (short[] values, byte[]? validity) UnzipInt16SIMD(short?[] data, short defaultValue)
         {
             int len = data.Length;
-            // 1. Allocate Values (Uninitialized)
             var values = GC.AllocateUninitializedArray<short>(len);
             int byteLen = (len + 7) >> 3;
-            
-            byte[]? validity = null; // Lazy Allocation
+            byte[]? validity = null; 
 
             fixed (short?* pSrc = data)
             fixed (short* pDstVal = values)
             {
-                byte* pDstValid = null;
+                ref byte validRef = ref Unsafe.NullRef<byte>();
                 int i = 0;
 
-                // ---------------------------------------------------------
-                // SIMD Loop: 8 short? items (32 Bytes)
-                // ---------------------------------------------------------
                 if (Vector256.IsHardwareAccelerated && len >= 8)
                 {
                     int limit = len - 8;
                     Vector256<byte> mask = Int16ShuffleMask;
-                    Vector128<byte> zero = Vector128<byte>.Zero;
 
                     for (; i <= limit; i += 8)
                     {
-                        // 1. Load 32 bytes (8 items)
                         Vector256<byte> raw = Vector256.Load((byte*)pSrc + (i * 4));
-
-                        // 2. Shuffle
-                        // Lower 128: 8 Values (16 bytes)
-                        // Upper 128: 8 Bools (at bytes 0-7), others garbage
                         Vector256<byte> shuffled = Vector256.Shuffle(raw, mask);
-
-                        // 3. Store Values (16 bytes = 8 shorts)
                         shuffled.GetLower().Store((byte*)(pDstVal + i));
 
-                        // 4. Validity Check
-                        // Extract Upper Half
                         Vector128<byte> upper = shuffled.GetUpper();
-
-                        // Read
                         ulong boolsChunk = upper.AsUInt64().GetElement(0);
 
                         if (boolsChunk != 0x0101010101010101UL)
@@ -533,18 +519,20 @@ namespace Polars.NET.Core
                             if (validity == null)
                             {
                                 validity = new byte[byteLen];
-                                pDstValid = (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(validity));
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
                                 
-                                // Backfill 1s
                                 int bytesToFill = i >> 3;
-                                if (bytesToFill > 0) new Span<byte>(pDstValid, bytesToFill).Fill(0xFF);
-                                int remainingBits = i & 7;
-                                if (remainingBits > 0) *(pDstValid + bytesToFill) = (byte)((1 << remainingBits) - 1);
+                                if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
                             }
                         }
 
                         if (validity != null)
                         {
+                            if (Unsafe.IsNullRef(ref validRef)) 
+                            {
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                            }
+
                             int packedByte = 0;
                             if (upper.GetElement(0) != 0) packedByte |= 1;
                             if (upper.GetElement(1) != 0) packedByte |= 2;
@@ -555,64 +543,48 @@ namespace Polars.NET.Core
                             if (upper.GetElement(6) != 0) packedByte |= 64;
                             if (upper.GetElement(7) != 0) packedByte |= 128;
 
-                            *(pDstValid + (i >> 3)) = (byte)packedByte;
+                            Unsafe.Add(ref validRef, i >> 3) = (byte)packedByte;
 
-                            // Handle Default Value for Nulls
                             if (packedByte != 0xFF) 
                             {
-                                if (defaultValue != 0)
-                                {
-                                    if ((packedByte & 1) == 0) pDstVal[i] = defaultValue;
-                                    if ((packedByte & 2) == 0) pDstVal[i+1] = defaultValue;
-                                    if ((packedByte & 4) == 0) pDstVal[i+2] = defaultValue;
-                                    if ((packedByte & 8) == 0) pDstVal[i+3] = defaultValue;
-                                    if ((packedByte & 16) == 0) pDstVal[i+4] = defaultValue;
-                                    if ((packedByte & 32) == 0) pDstVal[i+5] = defaultValue;
-                                    if ((packedByte & 64) == 0) pDstVal[i+6] = defaultValue;
-                                    if ((packedByte & 128) == 0) pDstVal[i+7] = defaultValue;
-                                }
+                                if ((packedByte & 1) == 0) pDstVal[i] = defaultValue;
+                                if ((packedByte & 2) == 0) pDstVal[i+1] = defaultValue;
+                                if ((packedByte & 4) == 0) pDstVal[i+2] = defaultValue;
+                                if ((packedByte & 8) == 0) pDstVal[i+3] = defaultValue;
+                                if ((packedByte & 16) == 0) pDstVal[i+4] = defaultValue;
+                                if ((packedByte & 32) == 0) pDstVal[i+5] = defaultValue;
+                                if ((packedByte & 64) == 0) pDstVal[i+6] = defaultValue;
+                                if ((packedByte & 128) == 0) pDstVal[i+7] = defaultValue;
                             }
                         }
                     }
                 }
-
-                // ---------------------------------------------------------
-                // Scalar Tail
-                // ---------------------------------------------------------
+                
                 if (i < len)
                 {
                     UnzipScalarLoop(
                         ref Unsafe.AsRef<short?>(pSrc), 
                         ref Unsafe.AsRef<short>(pDstVal), 
-                        ref validity, 
-                        i, 
-                        len, 
-                        defaultValue
+                        ref validity, i, len, defaultValue
                     );
                 }
             }
             return (values, validity);
         }
-
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static unsafe (int[] values, byte[]? validity) UnzipInt32SIMD(int?[] data, int defaultValue)
         {
             int len = data.Length;
-            // 1. Allocate Values Array without init memory
             var values = GC.AllocateUninitializedArray<int>(len);
-            
             int byteLen = (len + 7) >> 3;
-            byte[]? validity = null; // Lazy Allocation
-
+            byte[]? validity = null; 
+            
             fixed (int?* pSrc = data)
             fixed (int* pDstVal = values)
             {
-                byte* pDstValid = null;
+                ref byte validRef = ref Unsafe.NullRef<byte>();
                 int i = 0;
 
-                // ---------------------------------------------------------
-                // SIMD Loop: 4 int? every cycle (32 Bytes)
-                // ---------------------------------------------------------
                 if (Vector256.IsHardwareAccelerated && len >= 4)
                 {
                     int limit = len - 4;
@@ -620,51 +592,41 @@ namespace Polars.NET.Core
 
                     for (; i <= limit; i += 4)
                     {
-                        // Load 32 bytes (4 items)
                         Vector256<byte> raw = Vector256.Load((byte*)pSrc + (i * 8));
-
-                        // Shuffle: Values to higher 16 bytes，HasValues to lower 16 bytes
                         Vector256<byte> shuffled = Vector256.Shuffle(raw, mask);
-
-                        // Store Values: directly write 128 bytes
                         *(Vector128<byte>*)(pDstVal + i) = shuffled.GetLower();
 
-                        // Extract Validity Info
-                        // Extract 16-19 bytes (HasValues)
-                        // 1 = True, 0 = False
-                        // To int: [000000B3 000000B2 000000B1 000000B0]
                         int v0 = shuffled.GetElement(16);
                         int v1 = shuffled.GetElement(17);
                         int v2 = shuffled.GetElement(18);
                         int v3 = shuffled.GetElement(19);
-
-                        // Check：If all 1 (All Valid) , this int should be 0x01010101
                         int validityCheck = v0 | (v1 << 8) | (v2 << 16) | (v3 << 24);
 
-                        // Null here，trigger allocation
-                        if (validityCheck != 0x01010101)
+                        if (validityCheck != 0x01010101) 
                         {
                             if (validity == null)
                             {
                                 validity = new byte[byteLen];
-                                pDstValid = (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(validity));
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
                                 
                                 int bytesToFill = i >> 3;
-                                if (bytesToFill > 0) new Span<byte>(pDstValid, bytesToFill).Fill(0xFF);
+                                if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
                                 int remainingBits = i & 7;
-                                if (remainingBits > 0)
-                                {
-                                    *(pDstValid + bytesToFill) = (byte)((1 << remainingBits) - 1);
-                                }
+                                if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
                             }
                         }
 
                         if (validity != null)
                         {
-                            if (v0 != 0) SetBit(pDstValid, i);
-                            if (v1 != 0) SetBit(pDstValid, i + 1);
-                            if (v2 != 0) SetBit(pDstValid, i + 2);
-                            if (v3 != 0) SetBit(pDstValid, i + 3);
+                            if (Unsafe.IsNullRef(ref validRef)) 
+                            {
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                            }
+
+                            if (v0 != 0) SetBitRef(ref validRef, i);
+                            if (v1 != 0) SetBitRef(ref validRef, i + 1);
+                            if (v2 != 0) SetBitRef(ref validRef, i + 2);
+                            if (v3 != 0) SetBitRef(ref validRef, i + 3);
 
                             if (v0 == 0) pDstVal[i] = defaultValue;
                             if (v1 == 0) pDstVal[i + 1] = defaultValue;
@@ -674,22 +636,17 @@ namespace Polars.NET.Core
                     }
                 }
 
-                // ---------------------------------------------------------
-                // Scalar Tail
-                // ---------------------------------------------------------
                 if (i < len)
                 {
+                    // Fallback
                     UnzipScalarLoop(
                         ref Unsafe.AsRef<int?>(pSrc), 
                         ref Unsafe.AsRef<int>(pDstVal), 
                         ref validity, 
-                        i, 
-                        len, 
-                        defaultValue
+                        i, len, defaultValue
                     );
                 }
             }
-            
             return (values, validity);
         }
 
@@ -697,15 +654,19 @@ namespace Polars.NET.Core
         private static unsafe (long[] values, byte[]? validity) UnzipInt64SIMD(long?[] data, long defaultValue)
         {
             int len = data.Length;
+            // 1. Allocate Values (Uninitialized)
             var values = GC.AllocateUninitializedArray<long>(len); 
             int byteLen = (len + 7) >> 3;
             
-            byte[]? validity = null; // Lazy Allocation
+            byte[]? validity = null; 
+            
+            // 【Key Change 1】GC Safe ref
+            
 
             fixed (long?* pSrc = data)
             fixed (long* pDstVal = values)
             {
-                byte* pDstValid = null;
+                ref byte validRef = ref Unsafe.NullRef<byte>();
                 int i = 0;
 
                 // ---------------------------------------------------------
@@ -737,20 +698,29 @@ namespace Polars.NET.Core
                         {
                             if (validity == null)
                             {
+                                // 【Key Change 2】Allocate & Clear & Init
                                 validity = new byte[byteLen];
-                                pDstValid = (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(validity));
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
                                 
                                 int bytesToFill = i >> 3;
-                                if (bytesToFill > 0) new Span<byte>(pDstValid, bytesToFill).Fill(0xFF);
+                                if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
                                 int remainingBits = i & 7;
-                                if (remainingBits > 0) *(pDstValid + bytesToFill) = (byte)((1 << remainingBits) - 1);
+                                if (remainingBits > 0)
+                                {
+                                    Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                                }
                             }
                         }
 
                         if (validity != null)
                         {
-                            if (b0 != 0) SetBit(pDstValid, i);
-                            if (b1 != 0) SetBit(pDstValid, i + 1);
+                            if (Unsafe.IsNullRef(ref validRef)) 
+                            {
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                            }
+                            // 【Key Change 3】Use SetBitRef
+                            if (b0 != 0) SetBitRef(ref validRef, i);
+                            if (b1 != 0) SetBitRef(ref validRef, i + 1);
 
                             // Handle Default Value
                             if (b0 == 0) pDstVal[i] = defaultValue;
@@ -767,7 +737,7 @@ namespace Polars.NET.Core
                     UnzipScalarLoop(
                         ref Unsafe.AsRef<long?>(pSrc), 
                         ref Unsafe.AsRef<long>(pDstVal), 
-                        ref validity, 
+                        ref validity, // auto sync
                         i, 
                         len, 
                         defaultValue
@@ -785,18 +755,19 @@ namespace Polars.NET.Core
         private static unsafe (Int128[] values, byte[]? validity) UnzipInt128SIMD(Int128?[] data, Int128 defaultValue)
         {
             int len = data.Length;
+            // 1. Allocate Values (Uninitialized)
             var values = GC.AllocateUninitializedArray<Int128>(len);
             int byteLen = (len + 7) >> 3;
 
             byte[]? validity = null; 
 
-            // Micro-optimization
+            // Cache static field to local for speed
             bool isTypeA = IsInt128TypeA; 
 
             fixed (Int128?* pSrc = data)
             fixed (Int128* pDstVal = values)
             {
-                byte* pDstValid = null;
+                ref byte validRef = ref Unsafe.NullRef<byte>();
                 int i = 0;
 
                 if (Vector256.IsHardwareAccelerated)
@@ -812,17 +783,13 @@ namespace Polars.NET.Core
                         if (isTypeA)
                         {
                             // Type A: [Value(0-15), Bool(16)]
-                            // Value is Lower 128
                             raw.GetLower().Store((byte*)(pDstVal + i));
-                            // Bool 在 Offset 16
                             hasValue = raw.GetElement(16);
                         }
                         else
                         {
                             // Type B: [Bool(0), Pad, Value(16-31)]
-                            // Value is Upper 128
                             raw.GetUpper().Store((byte*)(pDstVal + i));
-                            // Bool 在 Offset 0
                             hasValue = raw.GetElement(0);
                         }
 
@@ -831,22 +798,30 @@ namespace Polars.NET.Core
                         {
                             if (validity == null)
                             {
-                                validity = GC.AllocateUninitializedArray<byte>(byteLen);
-                                Array.Clear(validity, 0, byteLen);
-                                pDstValid = (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(validity));
+                                validity = new byte[byteLen]; 
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
                                 
+                                // Backfill 1s
                                 int bytesToFill = i >> 3;
-                                if (bytesToFill > 0) new Span<byte>(pDstValid, bytesToFill).Fill(0xFF);
+                                if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
                                 int remainingBits = i & 7;
-                                if (remainingBits > 0) *(pDstValid + bytesToFill) = (byte)((1 << remainingBits) - 1);
+                                if (remainingBits > 0) 
+                                {
+                                    Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                                }
                             }
                         }
 
                         if (validity != null)
                         {
+                            if (Unsafe.IsNullRef(ref validRef)) 
+                            {
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                            }
                             if (hasValue != 0) // Valid
                             {
-                                *(pDstValid + (i >> 3)) |= (byte)(1 << (i & 7));
+                                ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                                target |= (byte)(1 << (i & 7));
                             }
                             else // Null
                             {
@@ -894,15 +869,13 @@ namespace Polars.NET.Core
         // Helper to cast result back
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static (T[], byte[]?) Reinterpret<S, T>((S[], byte[]?) res)
-        {
-            // Item1 is Values array (非 Nullable)，所以这里是 S[] -> T[]
-            return (Unsafe.As<S[], T[]>(ref res.Item1), res.Item2);
-        }
+            => (Unsafe.As<S[], T[]>(ref res.Item1), res.Item2);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static unsafe void SetBit(byte* basePtr, int bitIndex)
+        private static void SetBitRef(ref byte baseRef, int bitIndex)
         {
-            *(basePtr + (bitIndex >> 3)) |= (byte)(1 << (bitIndex & 7));
+            ref byte target = ref Unsafe.Add(ref baseRef, bitIndex >> 3);
+            target |= (byte)(1 << (bitIndex & 7));
         }
     }
     public static class BoolPacker
@@ -970,8 +943,10 @@ namespace Polars.NET.Core
         (byte)0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, // Low 128: Values
         1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31       // High 128: Validity
         );
+
         /// <summary>
-        /// Compress bool?[] into Values Bitmask & Validity Bitmask
+        /// Compress bool?[] into Values Bitmask & Validity Bitmask.
+        /// Fixed: Uses ref byte for validity array to ensure GC safety.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public static unsafe (byte[] values, byte[]? validity) PackNullable(bool?[] data)
@@ -980,16 +955,17 @@ namespace Polars.NET.Core
             int byteLen = (len + 7) >> 3;
 
             var valuesBits = GC.AllocateUninitializedArray<byte>(byteLen);
-            byte[]? validityBits = null; // Lazy Allocation
+            byte[]? validityBits = null; 
+
+            ref byte validRef = ref Unsafe.NullRef<byte>();
 
             fixed (bool?* pSrc = data)
             fixed (byte* pDstVal = valuesBits)
             {
-                byte* pDstValid = null; 
                 int i = 0;
 
                 // =========================================================
-                //  Unified SIMD Path (.NET 8+)
+                // 1. Unified SIMD Path (.NET 8+) 
                 // =========================================================
                 if (Vector256.IsHardwareAccelerated && len >= 16)
                 {
@@ -998,70 +974,60 @@ namespace Polars.NET.Core
 
                     for (; i <= limit; i += 16)
                     {
-                        // 1. Load: load 16 bool? 
-                        // Memory: [Val, HasVal, Val, HasVal ...] 
                         Vector256<byte> vec = Vector256.Load((byte*)pSrc + (i * 2));
-
-                        // 2. Shuffle: 
-                        // Result: [Val0...Val15 | HasVal0...HasVal15]
                         Vector256<byte> shuffled = Vector256.Shuffle(vec, DeinterleaveMask);
-
-                        // 3. Compare: Check whether True (0x01)
-                        // True(01) == 0 -> 00 (MSB 0)
-                        // False/Null(00) == 0 -> FF (MSB 1)
                         Vector256<byte> cmp = Vector256.Equals(shuffled, zero);
-
-                        // 4. Extract MSB: compress to 32-bit uint
                         uint mask = Vector256.ExtractMostSignificantBits(cmp);
-
-                        // 5. Invert
                         uint finalMask = ~mask;
 
-                        // 6. Split: 
-                        // Warning：if Values and Validity is reverted，shuffle below two lines
-                        ushort valMask16 = (ushort)(finalMask & 0xFFFF);       // Values
-                        ushort validMask16 = (ushort)(finalMask >>> 16);       // Validity
+                        ushort valMask16 = (ushort)(finalMask & 0xFFFF);
+                        ushort validMask16 = (ushort)(finalMask >>> 16);
 
-                        // 7. Store Values
                         *(ushort*)(pDstVal + (i >> 3)) = valMask16;
 
-                        // 8. Handle Lazy Validity
+                        // Lazy Allocation Logic
                         if (validMask16 != 0xFFFF)
                         {
                             if (validityBits == null)
                             {
                                 validityBits = GC.AllocateUninitializedArray<byte>(byteLen);
-                                
-                                pDstValid = (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(validityBits));
+                                validRef = ref MemoryMarshal.GetArrayDataReference(validityBits);
 
+                                // Backfill 1s (All valid until now)
                                 int bytesToFill = i >> 3;
                                 if (bytesToFill > 0)
                                 {
-                                    new Span<byte>(pDstValid, bytesToFill).Fill(0xFF);
+                                    Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
                                 }
                             }
                         }
 
                         if (validityBits != null)
                         {
-                            *(ushort*)(pDstValid + (i >> 3)) = validMask16;
+                            Unsafe.WriteUnaligned(
+                                ref Unsafe.Add(ref validRef, i >> 3), 
+                                validMask16
+                            );
                         }
                     }
                 }
 
                 // =========================================================
-                //  Scalar Path 
+                // 2. Optimized Scalar Path
                 // =========================================================
                 if (i < len)
                 {
-                    ref bool? srcRef = ref Unsafe.AsRef<bool?>(pSrc);
-                    ref byte valRef = ref Unsafe.AsRef<byte>(pDstVal);
-                    ref byte validRef = ref Unsafe.NullRef<byte>();
-
-                    if (validityBits != null)
+                    if (validityBits != null && Unsafe.IsNullRef(ref validRef))
                     {
-                        validRef = ref MemoryMarshal.GetArrayDataReference(validityBits);
+                         validRef = ref MemoryMarshal.GetArrayDataReference(validityBits);
                     }
+
+                    int byteOffset = i >> 3;
+                    byte curValByte = 0;
+                    byte curValidByte = 0; 
+                    int bitPos = 0;
+
+                    ref bool? srcRef = ref Unsafe.AsRef<bool?>(pSrc);
 
                     for (; i < len; i++)
                     {
@@ -1069,34 +1035,52 @@ namespace Polars.NET.Core
 
                         if (v.HasValue)
                         {
+                            curValidByte |= (byte)(1 << bitPos);
+                            
                             if (v.GetValueOrDefault())
                             {
-                                ref byte targetByte = ref Unsafe.Add(ref valRef, i >> 3);
-                                targetByte |= (byte)(1 << (i & 7));
-                            }
-
-                            if (validityBits != null)
-                            {
-                                ref byte targetValidByte = ref Unsafe.Add(ref validRef, i >> 3);
-                                targetValidByte |= (byte)(1 << (i & 7));
+                                curValByte |= (byte)(1 << bitPos);
                             }
                         }
                         else
                         {
                             if (validityBits == null)
                             {
-                                validityBits = new byte[byteLen];
+                                validityBits = GC.AllocateUninitializedArray<byte>(byteLen);
                                 validRef = ref MemoryMarshal.GetArrayDataReference(validityBits);
-
-                                int fullBytes = i >> 3;
-                                if (fullBytes > 0) validityBits.AsSpan(0, fullBytes).Fill(0xFF);
-                                int remainingBits = i & 7;
-                                if (remainingBits > 0)
+                                
+                                if (byteOffset > 0)
                                 {
-                                    ref byte currentByte = ref Unsafe.Add(ref validRef, fullBytes);
-                                    currentByte |= (byte)((1 << remainingBits) - 1);
+                                    Unsafe.InitBlock(ref validRef, 0xFF, (uint)byteOffset);
                                 }
                             }
+                        }
+
+                        bitPos++;
+
+                        if (bitPos == 8)
+                        {
+                            // Flush register to mem
+                            pDstVal[byteOffset] = curValByte;
+                            
+                            if (validityBits != null)
+                            {
+                                Unsafe.Add(ref validRef, byteOffset) = curValidByte;
+                            }
+
+                            byteOffset++;
+                            curValByte = 0;
+                            curValidByte = 0;
+                            bitPos = 0;
+                        }
+                    }
+
+                    if (bitPos > 0)
+                    {
+                        pDstVal[byteOffset] = curValByte;
+                        if (validityBits != null)
+                        {
+                            Unsafe.Add(ref validRef, byteOffset) = curValidByte;
                         }
                     }
                 }
