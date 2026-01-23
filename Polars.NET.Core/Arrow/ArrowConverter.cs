@@ -28,35 +28,54 @@ public static class ArrowConverter
         return new RecordBatch(schema, emptyStruct.Fields, 0);
     }
     /// <summary>
+    /// Convert any IEnumerable/Array into Arrow Array
+    /// </summary>
+    public static IArrowArray? BuildSingleColumn(object colValue)
+    {
+        if (colValue == null) return null;
+
+        // Get Element type
+        Type? elemType = ArrowTypeResolver.GetEnumerableElementType(colValue.GetType());
+        
+        if (elemType == null) 
+            return null; // 或者抛错，看策略
+
+        // Build Generic Method
+        var buildMethod = _buildMethodDef.MakeGenericMethod(elemType);
+        
+        try 
+        {
+            // Call Apache.Arrow Build Method
+            return (IArrowArray)buildMethod.Invoke(null, [colValue])!;
+        }
+        catch (TargetInvocationException ex) 
+        { 
+            throw ex.InnerException ?? ex; 
+        }
+    }
+    /// <summary>
     /// Read object typeinfo by reflection and transform to Arrow Arrays。
     /// </summary>
     public static List<(string Name, IArrowArray Array)> BuildColumnsFromObject(object columns)
     {
         ArgumentNullException.ThrowIfNull(columns);
-
         var members = ArrowTypeResolver.GetReadableMembers(columns.GetType());
-        
-        if (members.Length == 0)
-            throw new ArgumentException("The provided object has no public properties/fields to treat as columns.");
+        if (members.Length == 0) throw new ArgumentException("No properties found.");
 
         var result = new List<(string, IArrowArray)>(members.Length);
 
         foreach (var member in members)
         {
             var colName = member.Name;
-            
-            var colValue = GetMemberValue(member, columns) ?? throw new ArgumentNullException($"Column '{colName}' cannot be null.");
+            var colValue = GetMemberValue(member, columns);
 
-            Type elemType = ArrowTypeResolver.GetEnumerableElementType(colValue.GetType()) 
-                ?? throw new ArgumentException($"Member '{colName}' is not an IEnumerable<T> or Array.");
+            if (colValue == null) 
+                throw new ArgumentNullException($"Column '{colName}' cannot be null.");
 
-            var buildMethod = _buildMethodDef.MakeGenericMethod(elemType);
-            try 
-            {
-                var arrowArray = (IArrowArray)buildMethod.Invoke(null, new[]{colValue})!;
-                result.Add((colName, arrowArray));
-            }
-            catch (TargetInvocationException ex) { throw ex.InnerException ?? ex; }
+            var arrowArray = BuildSingleColumn(colValue) 
+                ?? throw new ArgumentException($"Column '{colName}' is not a valid collection.");
+
+            result.Add((colName, arrowArray));
         }
         return result;
     }

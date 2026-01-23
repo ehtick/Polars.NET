@@ -7,7 +7,7 @@ namespace Polars.CSharp;
 /// Represents a Polars data type. 
 /// Wraps the underlying Rust DataType Handle and provides high-level metadata.
 /// </summary>
-public class DataType : IDisposable
+public class DataType : IDisposable, IEquatable<DataType>
 {
     internal DataTypeHandle Handle { get; }
     
@@ -96,6 +96,65 @@ public class DataType : IDisposable
         }
     }
 
+    // =========================================================================
+    // Value Equality Implementation (修复测试报错的关键)
+    // =========================================================================
+
+    public override bool Equals(object? obj)
+    {
+        return Equals(obj as DataType);
+    }
+
+    public bool Equals(DataType? other)
+    {
+        if (other is null) return false;
+        if (ReferenceEquals(this, other)) return true;
+
+        if (Kind != other.Kind) return false;
+
+        switch (Kind)
+        {
+            case DataTypeKind.Datetime:
+                return Unit == other.Unit && TimeZone == other.TimeZone;
+
+            case DataTypeKind.Duration:
+                return Unit == other.Unit;
+
+            case DataTypeKind.Decimal:
+                return Precision == other.Precision && Scale == other.Scale;
+
+            case DataTypeKind.Array:
+                if (ArrayWidth != other.ArrayWidth) return false;
+                goto case DataTypeKind.List;
+
+            case DataTypeKind.List:
+                using (var myInner = InnerType)
+                using (var otherInner = other.InnerType)
+                {
+                    if (myInner == null && otherInner == null) return true;
+                    if (myInner == null || otherInner == null) return false;
+                    return myInner.Equals(otherInner);
+                }
+
+            default:
+                return true;
+        }
+    }
+
+    public override int GetHashCode()
+        => ToString().GetHashCode();
+
+    public static bool operator ==(DataType? left, DataType? right)
+    {
+        if (left is null) return right is null;
+        return left.Equals(right);
+    }
+
+    public static bool operator !=(DataType? left, DataType? right)
+    {
+        return !(left == right);
+    }
+
     // ==========================================
     // Helper Properties
     // ==========================================
@@ -107,7 +166,8 @@ public class DataType : IDisposable
     {
         DataTypeKind.Int8 or DataTypeKind.Int16 or DataTypeKind.Int32 or DataTypeKind.Int64 or
         DataTypeKind.UInt8 or DataTypeKind.UInt16 or DataTypeKind.UInt32 or DataTypeKind.UInt64 or
-        DataTypeKind.Float32 or DataTypeKind.Float64 or DataTypeKind.Decimal => true,
+        DataTypeKind.Float32 or DataTypeKind.Float64 or DataTypeKind.Decimal or 
+        DataTypeKind.Int128 or DataTypeKind.UInt128=> true,
         _ => false
     };
 

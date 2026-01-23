@@ -895,6 +895,35 @@ namespace Polars.NET.Core
                 // =========================================================
                 // Unified SIMD Path (.NET 8+)
                 // =========================================================
+
+                // =========================================================
+                // AVX-512 Path (64 bool per cycle)
+                // =========================================================
+                if (Vector512.IsHardwareAccelerated && len >= 64)
+                {
+                    int limit = len - 64;
+                    Vector512<byte> zero = Vector512<byte>.Zero;
+
+                    for (; i <= limit; i += 64)
+                    {
+                        // 1. Load 64 bytes
+                        Vector512<byte> vec = Vector512.Load((byte*)pSrc + i);
+                        
+                        // 2. Compare (0x00 or 0xFF)
+                        // False(0) == Zero -> True(0xFF)
+                        // True(1)  == Zero -> False(0x00)
+                        Vector512<byte> cmp = Vector512.Equals(vec, zero);
+                        
+                        // 3. Compress to 64 bits (ulong)
+                        ulong mask = Vector512.ExtractMostSignificantBits(cmp);
+                        
+                        // 4. Invert & Store
+                        *(ulong*)(pDst + (i >> 3)) = ~mask;
+                    }
+                }
+                // =========================================================
+                // AVX2 Path (32 bool per cycle)
+                // =========================================================
                 if (Vector256.IsHardwareAccelerated && len >= 32)
                 {
                     Vector256<byte> zero = Vector256<byte>.Zero;

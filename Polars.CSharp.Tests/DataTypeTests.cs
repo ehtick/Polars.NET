@@ -610,4 +610,33 @@ public class DataTypeTests
         Assert.Equal((Int128)1, s.GetValue<Int128?>(0));
         Assert.Null(s.GetValue<Int128?>(1));
     }
+    [Fact]
+    public void Test_Empty_Arrays_Preserve_Schema()
+    {
+        // 1. Int32 Empty
+        int[] emptyInt = [];
+        using var sInt = new Series("empty_int", emptyInt);
+        Assert.Equal(0, sInt.Length);
+
+        // 2. DateTime Empty (测试 UnzipDateTimeToUs 逻辑)
+        DateTime?[] emptyDt = [];
+        using var sDt = new Series("empty_dt", emptyDt);
+        Assert.Equal(0, sDt.Length);
+
+        // 3. String Empty (测试 StringPacker 逻辑)
+        string[] emptyStr = [];
+        using var sStr = new Series("empty_str", emptyStr);
+        Assert.Equal(0, sStr.Length);
+        
+        // 4. DataFrame Schema Alignment
+        // 验证空 Series 能否组装成 DataFrame 且 Schema 正确
+        var df = new DataFrame(sInt, sDt, sStr);
+        Assert.Equal((0,3), df.Shape);
+        
+        // 验证 Schema 并没有丢失
+        var schema = df.Schema;
+        Assert.Equal(DataType.Int32, schema["empty_int"]);
+        Assert.Equal(DataType.Datetime(TimeUnit.Microseconds), schema["empty_dt"]);
+        Assert.Equal(DataType.String, schema["empty_str"]);
+    }
 }

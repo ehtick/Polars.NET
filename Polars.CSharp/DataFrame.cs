@@ -7,6 +7,8 @@ using System.Collections.Concurrent;
 using System.Collections;
 using System.Text;
 using Apache.Arrow.Types;
+using System.Reflection.Metadata;
+using System.Reflection;
 
 namespace Polars.CSharp;
 
@@ -258,6 +260,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// Return DataFrame Width
     /// </summary>
     public long Width => PolarsWrapper.DataFrameWidth(Handle);  
+    /// <summary>
+    /// Return DataFrame Shape(Len,Width)
+    /// </summary>
+    public (long Len, long Width) Shape => (Len,Width);
     /// <summary>
     /// Return DataFrame Columns' Name
     /// </summary>
@@ -1472,7 +1478,56 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     // Object Mapping (From Records)
     // ==========================================
+    private static bool TryCreateSeriesFast(string name, object values, out Series? series)
+    {
+        series = null;
+        if (values == null) return false;
 
+        switch (values)
+        {
+            // --- Signed Integers ---
+            case sbyte[] v:    series = new Series(name, v); return true;
+            case sbyte?[] v:   series = new Series(name, v); return true;
+            case short[] v:    series = new Series(name, v); return true;
+            case short?[] v:   series = new Series(name, v); return true;
+            case int[] v:      series = new Series(name, v); return true;
+            case int?[] v:     series = new Series(name, v); return true;
+            case long[] v:     series = new Series(name, v); return true;
+            case long?[] v:    series = new Series(name, v); return true;
+            case Int128[] v:   series = new Series(name, v); return true;
+            case Int128?[] v:  series = new Series(name, v); return true;
+
+            // --- Unsigned Integers (Zero-Copy Cast inside Series) ---
+            case byte[] v:     series = new Series(name, v); return true;
+            case byte?[] v:    series = new Series(name, v); return true;
+            case ushort[] v:   series = new Series(name, v); return true;
+            case ushort?[] v:  series = new Series(name, v); return true;
+            case uint[] v:     series = new Series(name, v); return true;
+            case uint?[] v:    series = new Series(name, v); return true;
+            case ulong[] v:    series = new Series(name, v); return true;
+            case ulong?[] v:   series = new Series(name, v); return true;
+            case UInt128[] v:  series = new Series(name, v); return true;
+            case UInt128?[] v: series = new Series(name, v); return true;
+
+            // --- Floating Point ---
+            case float[] v:    series = new Series(name, v); return true;
+            case float?[] v:   series = new Series(name, v); return true;
+            case double[] v:   series = new Series(name, v); return true;
+            case double?[] v:  series = new Series(name, v); return true;
+            
+            // --- Boolean (Bit Packing) ---
+            case bool[] v:     series = new Series(name, v); return true;
+            case bool?[] v:    series = new Series(name, v); return true;
+
+            // --- String ---
+            case string[] v:   series = new Series(name, v); return true;
+            // case string?[] v:  series = new Series(name, v); return true;
+                
+            // --- Default ---
+            default:
+                return false; 
+        }
+    }
     /// <summary>
     /// Create a DataFrame from a collection of strongly-typed objects (POCOs).
     /// <para>
@@ -1517,11 +1572,78 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </example>
     public static DataFrame From<T>(IEnumerable<T> data)
     {
-        using var structSeries = Series.From("data", data);
-        
-        using var tmpDf = new DataFrame(structSeries);
-        
-        return tmpDf.Unnest("data");
+        if (data == null) return new DataFrame();
+
+        Type type = typeof(T);
+
+        // =========================================================
+        // Primitive Types: int, double, string...
+        // =========================================================
+        if (IsSimpleType(type))
+        {
+            T[] array = data as T[] ?? data.ToArray();
+            
+            if (TryCreateSeriesFast("value", array, out var s))
+            {
+                return new DataFrame(s!);
+            }
+            
+            // Fallback to Arrow
+            var arrowArray = ArrowConverter.BuildSingleColumn(array);
+            if (arrowArray != null)
+            {
+                using var sArrow = Series.FromArrow("value", arrowArray);
+                return new DataFrame(sArrow);
+            }
+            
+            throw new NotSupportedException($"Type {type.Name} is not supported for single-column DataFrame.");
+        }
+
+        // =========================================================
+        // Complex Type: Pivot (Row -> Column)
+        // =========================================================
+        var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        if (props.Length == 0) return new DataFrame();
+
+        int capacity = data is ICollection<T> c ? c.Count : 16;
+
+        // Column Buffers
+        var buffers = new IColumnBuffer[props.Length];
+        for (int i = 0; i < props.Length; i++)
+        {
+            buffers[i] = ColumnBufferFactory.Create(props[i].PropertyType, capacity);
+        }
+
+        foreach (var item in data)
+        {
+            for (int i = 0; i < props.Length; i++)
+            {
+                var val = props[i].GetValue(item);
+                buffers[i].Add(val!);
+            }
+        }
+
+        // =========================================================
+        // Build Series then combine to DataFrame
+        // =========================================================
+        var seriesList = new Series[props.Length];
+        for (int i = 0; i < props.Length; i++)
+        {
+            string name = props[i].Name;
+            seriesList[i] = buffers[i].ToSeries(name);
+        }
+
+        return new DataFrame(seriesList);
+    }
+
+    private static bool IsSimpleType(Type type)
+    {
+        return type.IsPrimitive || 
+               type == typeof(string) || 
+               type == typeof(decimal) || 
+               type == typeof(DateTime) || 
+               type == typeof(TimeSpan) ||
+               (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>) && IsSimpleType(Nullable.GetUnderlyingType(type)!));
     }
     /// <summary>
     /// Create a DataFrame from an object where properties represent columns (Arrays/Lists).
@@ -1535,15 +1657,124 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </example>
     public static DataFrame FromColumns(object columns)
     {
-        var rawColumns = ArrowConverter.BuildColumnsFromObject(columns);
+        ArgumentNullException.ThrowIfNull(columns);
 
-        var seriesList = new List<Series>(rawColumns.Count);
-        foreach (var (name, array) in rawColumns)
+        var properties = columns.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        
+        var cols = new (string, object)[properties.Length];
+
+        for (int i = 0; i < properties.Length; i++)
         {
-            seriesList.Add(Series.FromArrow(name, array));
+            var p = properties[i];
+            var val = p.GetValue(columns) ?? throw new ArgumentNullException($"Property '{p.Name}' cannot be null.");
+            cols[i] = (p.Name, val);
+        }
+
+        return FromColumns(cols);
+    }
+    /// <summary>
+    /// [AOT Safe] Create DataFrame from explicitly named columns.
+    /// No reflection used. Best performance.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"></exception>
+    /// <exception cref="NotSupportedException"></exception>
+    public static DataFrame FromColumns(params (string Name, object Data)[] columns)
+    {
+        if (columns == null || columns.Length == 0)
+            return new DataFrame(); // Return empty DF
+
+        var seriesList = new List<Series>(columns.Length);
+
+        foreach (var (name, val) in columns.AsSpan())
+        {
+            if (val == null)
+                throw new ArgumentNullException($"Column '{name}' data cannot be null.");
+
+            // SIMD Highway
+            if (TryCreateSeriesFast(name, val, out var fastSeries))
+            {
+                seriesList.Add(fastSeries!);
+            }
+            else
+            {
+                // Fallback to Arrow
+                var arrowArray = ArrowConverter.BuildSingleColumn(val);
+
+                if (arrowArray != null)
+                {
+                    seriesList.Add(Series.FromArrow(name, arrowArray));
+                }
+                else
+                {
+                    throw new NotSupportedException(
+                        $"Column '{name}' has unsupported data type: {val.GetType().Name}. " +
+                        "Only primitives (int, double, bool...), strings, DateTimes, and IEnumerables supported by Arrow are allowed.");
+                }
+            }
         }
 
         return new DataFrame(seriesList.ToArray());
+    }
+    // =========================================================
+    // Internal Column Buffers
+    // =========================================================
+
+    private interface IColumnBuffer
+    {
+        void Add(object? val);
+        Series ToSeries(string name);
+    }
+
+    /// <summary>
+    /// Strong Type Column Buffer 
+    /// </summary>
+    /// <typeparam name="TCol">Column Type(Example: int, string, DateTime?)</typeparam>
+    private sealed class ColumnBuffer<TCol> : IColumnBuffer
+    {
+        private readonly List<TCol?> _data; 
+
+        public ColumnBuffer(int capacity)
+        {
+            _data = new List<TCol?>(capacity);
+        }
+
+        public void Add(object? val)
+        {
+            _data.Add((TCol?)val);
+        }
+
+        public Series ToSeries(string name)
+        {
+            TCol?[] arr = _data.ToArray(); 
+            
+            // SIMD Highway (Int32[], Double[]...)
+            if (TryCreateSeriesFast(name, arr, out var s))
+                return s!;
+            
+            // Fallback to Arrow (List<int>, Decimal...)
+            var arrowArr = ArrowConverter.BuildSingleColumn(arr);
+            if (arrowArr != null) 
+                return Series.FromArrow(name, arrowArr);
+            
+            throw new NotSupportedException($"Column '{name}' of type {typeof(TCol)} is not supported.");
+        }
+    }
+
+    private static class ColumnBufferFactory
+    {
+        public static IColumnBuffer Create(Type propType, int capacity)
+        {
+            
+            Type targetType = propType;
+
+            if (propType.IsValueType && Nullable.GetUnderlyingType(propType) == null)
+            {
+                targetType = typeof(Nullable<>).MakeGenericType(propType);
+            }
+
+            var bufferType = typeof(ColumnBuffer<>).MakeGenericType(targetType);
+            return (IColumnBuffer)Activator.CreateInstance(bufferType, capacity)!;
+        }
     }
     /// <summary>
     /// Create a DataFrame from a list of Series.
