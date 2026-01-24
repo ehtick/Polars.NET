@@ -323,6 +323,52 @@ pub unsafe extern "C" fn pl_series_new_duration(
     })
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_series_new_decimal(
+    name: *const c_char,
+    ptr: *const i128,      // physical data: 128位整数
+    validity: *const u8,   // Bitmap
+    len: usize,
+    precision: usize,      
+    scale: usize           
+) -> *mut SeriesContext {
+    
+    ffi_try!({
+        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+        let bytes_len = (len + 7) / 8;
+
+        // 1. Data Copy (i128)
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let vec = slice.to_vec();
+
+        // 2. Validity
+        let validity_bitmap = if validity.is_null() {
+            None
+        } else {
+            let v_slice = unsafe { std::slice::from_raw_parts(validity, bytes_len) };
+            let v_vec = v_slice.to_vec();
+            Some(Bitmap::try_new(v_vec, len).unwrap())
+        };
+
+        // 3. Build Arrow Decimal Array
+        let data_type = ArrowDataType::Decimal(
+            if precision == 0 { 38 } else { precision }, 
+            scale
+        );
+        
+        let arrow_array = PrimitiveArray::new(
+            data_type,
+            vec.into(),
+            validity_bitmap
+        );
+
+        // 4. Wrap into Series
+        let series = Series::from_arrow(name_str.as_ref().into(), Box::new(arrow_array)).unwrap();
+        
+        Ok(Box::into_raw(Box::new(SeriesContext { series })))
+    })
+}
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_series_clone(ptr: *mut SeriesContext) -> *mut SeriesContext {

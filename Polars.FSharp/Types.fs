@@ -577,7 +577,7 @@ type Series(handle: SeriesHandle) =
         and 'T :> System.ValueType>
         (name: string, data: 'T option seq, constructor: string * 'T array * byte array -> SeriesHandle) =
         
-        let struct (vals, validity) = Series.UnzipOption<'T>(data)
+        let struct (vals, validity) = Series.UnzipOption<'T> data
         new Series(constructor(name, vals, validity))
 
     /// VOption Factory
@@ -587,7 +587,7 @@ type Series(handle: SeriesHandle) =
         and 'T :> System.ValueType>
         (name: string, data: 'T voption seq, constructor: string * 'T array * byte array -> SeriesHandle) =
         
-        let struct (vals, validity) = Series.UnzipVOption<'T>(data)
+        let struct (vals, validity) = Series.UnzipVOption<'T> data
         new Series(constructor(name, vals, validity))
 
     // -------------------------------------------------------------------------

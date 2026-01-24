@@ -1127,6 +1127,15 @@ unsafe internal partial class NativeBindings
         UIntPtr len,
         PlTimeUnit unit           // 0=ns, 1=us, 2=ms
     );
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_decimal(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        ref Int128 ptr,   
+        IntPtr validity,
+        UIntPtr len,
+        UIntPtr precision,
+        UIntPtr scale
+    );
     [LibraryImport(LibName)] 
     public static partial SeriesHandle pl_series_clone(SeriesHandle s);
     // --- Series Properties ---

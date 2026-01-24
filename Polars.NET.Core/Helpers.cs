@@ -931,43 +931,28 @@ namespace Polars.NET.Core
         public static unsafe (long[] values, byte[]? validity) UnzipDateTimeToUs(DateTime?[] data)
         {
             int len = data.Length;
-            // 1. 分配目标内存 (未初始化，极速)
+            // Alloc target mem
             var values = GC.AllocateUninitializedArray<long>(len);
             int byteLen = (len + 7) >> 3;
             
             byte[]? validity = null;
-            // 为了避免每次循环都判断 validity != null，我们使用 lazy loading 模式
-            // 但在循环内部，我们使用局部 ref 来加速
+            // lazy loading
             ref byte validRef = ref Unsafe.NullRef<byte>();
 
-            // 常量提取到局部变量
             long mask = 0x3FFFFFFFFFFFFFFF; // Ticks Mask
             long epoch = 621355968000000000; // 1970-01-01 Ticks
 
-            fixed (DateTime?* pSrc = data) // DateTime? 布局: [Bool(1), Pad(7), Val(8)] (Stride 16)
+            fixed (DateTime?* pSrc = data) // DateTime? mem layout: [Bool(1), Pad(7), Val(8)] (Stride 16)
             fixed (long* pDst = values)
             {
-                long* pRawSrc = (long*)pSrc; // 强转为 long 指针方便步进
+                long* pRawSrc = (long*)pSrc;
 
-                // ---------------------------------------------------------
-                // 1. SIMD Validity Check (Fast Path)
-                // ---------------------------------------------------------
-                // 我们复用 Int64 的 SIMD 逻辑来快速生成 Validity Bitmap
-                // 因为 DateTime? 的内存布局和 long? 是一模一样的 (16 bytes)
-                // 这里只负责分配 validity 数组，不负责写数值
                 int i = 0;
-                if (Vector256.IsHardwareAccelerated && len >= 4)
-                {
-                    // 预先扫描是否有 Null，如果有，直接把 Validity 数组建好
-                    // 这一步可以跳过，直接在下面的标量循环里做，
-                    // 但为了极致性能，我们可以像 UnzipInt64 那样做。
-                    // 偷个懒：先用纯标量循环，因为这里的数学计算(除法)才是大头。
-                }
 
                 // ---------------------------------------------------------
-                // 2. Main Loop (Scalar Unroll 4)
+                // Main Loop (Scalar Unroll 4)
                 // ---------------------------------------------------------
-                // 既然每次都要做除法，Unroll 可以让 CPU 流水线填得更满
+                // Unroll Method
                 int limit = len - 4;
                 for (; i <= limit; i += 4)
                 {
@@ -991,11 +976,10 @@ namespace Polars.NET.Core
             return (values, validity);
         }
 
-        // 强内联的核心处理逻辑
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe void HandleSingleDate(
             int i, 
-            long* pRawSrc, // 其实指向的是 DateTime? 数组
+            long* pRawSrc, // DateTime? Array
             long* pDst, 
             ref byte[]? validity, 
             ref byte validRef, 
@@ -1064,12 +1048,10 @@ namespace Polars.NET.Core
             int len = data.Length;
             var values = GC.AllocateUninitializedArray<long>(len);
 
-            // 1. 常量
             long epoch = 621355968000000000; 
 
-            // 2. 指针操作
-            // DateTimeOffset 是一个结构体，包含 (DateTime DateTime, short OffsetMinutes)
-            // 直接读内存略显复杂，我们这里利用 ref 和 属性访问，JIT 会优化得很好。
+            // Pointer Ops
+            // DateTimeOffset is a struct contains (DateTime DateTime, short OffsetMinutes)
             ref DateTimeOffset srcRef = ref MemoryMarshal.GetArrayDataReference(data);
             ref long dstRef = ref MemoryMarshal.GetArrayDataReference(values);
 
@@ -1078,8 +1060,6 @@ namespace Polars.NET.Core
             int limit = len - 8;
             for (; i <= limit; i += 8)
             {
-                // UtcTicks 属性会自动处理 Offset：(Ticks - Offset)
-                // 这是一个纯数学计算，非常快
                 Unsafe.Add(ref dstRef, i)     = (Unsafe.Add(ref srcRef, i).UtcTicks     - epoch) / 10;
                 Unsafe.Add(ref dstRef, i + 1) = (Unsafe.Add(ref srcRef, i + 1).UtcTicks - epoch) / 10;
                 Unsafe.Add(ref dstRef, i + 2) = (Unsafe.Add(ref srcRef, i + 2).UtcTicks - epoch) / 10;
@@ -1118,7 +1098,6 @@ namespace Polars.NET.Core
                 
                 if (item.HasValue)
                 {
-                    // 核心修正：使用 UtcTicks
                     long utcTicks = item.GetValueOrDefault().UtcTicks;
                     Unsafe.Add(ref dstRef, i) = (utcTicks - epoch) / 10;
 
@@ -1412,23 +1391,23 @@ namespace Polars.NET.Core
             int byteLen,
             long multiplier)
         {
-            // 计算当前元素的指针位置
-            // i * 2 是因为 long* 指针每次 +1 移动 8 字节，而 Item 是 16 字节
+            // Calc current element ptr location
+            // i * 2 because long* ptr +1 will move 8 bytes，but Item is 16 bytes
             long* pItem = pRawSrc + (i * 2);
             
-            // 读取 Header (Bool + Padding)
-            // 只要低 8 位不为 0，就是 HasValue
+            // Read Header (Bool + Padding)
+            // If Lower 8 bits != 0，that means HasValue
             byte hasValue = *(byte*)pItem; 
 
             if (hasValue != 0)
             {
-                // 读取 Value (偏移 8 字节，即 pItem + 1)
+                // Read Value 
                 long ticks = *(pItem + 1);
                 
-                // 数学变换: Ticks * 100 = ns
+                // Ticks * 100 = ns
                 pDst[i] = ticks * multiplier;
 
-                // 维护 Validity
+                // Maintain Validity
                 if (validity != null)
                 {
                     if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
@@ -1438,7 +1417,7 @@ namespace Polars.NET.Core
             }
             else
             {
-                // Null 处理 (Lazy Init Validity)
+                // Null Handle (Lazy Init Validity)
                 if (validity == null)
                 {
                     validity = new byte[byteLen];
@@ -1546,7 +1525,7 @@ namespace Polars.NET.Core
             ref byte validRef,
             int byteLen)
         {
-            // 计算当前 Item 地址
+            // Calc Current Item Address
             long* pItem = pRawSrc + (i * 2);
             
             // Header (Bool)
@@ -1910,5 +1889,183 @@ namespace Polars.NET.Core
             return (values, offsets, validity);
         }
     }
-    
+    public static unsafe class DecimalPacker
+    {
+        // C# decimal mem layout(Sequential): flags, hi, lo, mid (4 int)
+        internal static readonly Int128[] PowersOf10Int128;
+        static DecimalPacker() // Static Constructor
+        {
+            PowersOf10Int128 = new Int128[30]; // decimal max scale is 28
+            PowersOf10Int128[0] = 1;
+            for (int i = 1; i < PowersOf10Int128.Length; i++)
+            {
+                PowersOf10Int128[i] = PowersOf10Int128[i - 1] * 10;
+            }
+        }
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static (Int128[] values, int scale) Pack(decimal[] data)
+        {
+            int len = data.Length;
+            if (len == 0) return (Array.Empty<Int128>(), 0);
+
+            byte maxScale = 0;
+
+            // Pass 1: Scan Max Scale
+            fixed (decimal* pSrc = data)
+            {
+                // decimal is 16 bytes (4 int)
+                int* pInt = (int*)pSrc;
+                
+                // Unroll 
+                for (int i = 0; i < len; i++)
+                {
+                    int flags = pInt[i * 4]; 
+                    byte s = (byte)((flags >> 16) & 0xFF);
+                    if (s > maxScale) maxScale = s;
+                }
+            }
+
+            var values = GC.AllocateUninitializedArray<Int128>(len);
+
+            // Pass 2: Convert
+            fixed (decimal* pSrc = data)
+            fixed (Int128* pDst = values)
+            {
+                // pSrc -> decimal[] Array
+                // treat it as int array
+                int* pRawDec = (int*)pSrc;
+                
+                for (int i = 0; i < len; i++)
+                {
+                    // Calc decimal int* start position
+                    int baseIdx = i * 4;
+                    
+                    int flags = pRawDec[baseIdx];     // [0] Flags
+                    int hi    = pRawDec[baseIdx + 1]; // [1] Hi
+                    int lo    = pRawDec[baseIdx + 2]; // [2] Lo
+                    int mid   = pRawDec[baseIdx + 3]; // [3] Mid
+
+                    // Assemble 96-bit Mantissa -> Int128
+                    Int128 mantissa = ((Int128)(uint)hi << 64) | ((Int128)(uint)mid << 32) | (Int128)(uint)lo;
+
+                    // Handle +- (Flags & highest bit)
+                    if ((flags & 0x80000000) != 0)
+                    {
+                        mantissa = -mantissa;
+                    }
+
+                    // Rescale
+                    int currentScale = (flags >> 16) & 0xFF;
+                    int diff = maxScale - currentScale;
+                    
+                    if (diff > 0)
+                    {
+                        mantissa *= PowersOf10Int128[diff];
+                    }
+
+                    pDst[i] = mantissa;
+                }
+            }
+
+            return (values, maxScale);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static (Int128[] values, byte[]? validity, int scale) Pack(decimal?[] data)
+        {
+            int len = data.Length;
+            
+            // Pass 1: Scan max Scale
+            byte maxScale = 0;
+            
+            fixed (decimal?* pSrc = data)
+            {
+                for (int i = 0; i < len; i++)
+                {
+                    if (data[i].HasValue)
+                    {
+                        byte s = data[i].GetValueOrDefault().Scale;
+                        if (s > maxScale) maxScale = s;
+                    }
+                }
+            }
+            
+            // Pass 2: Convert
+            var values = GC.AllocateUninitializedArray<Int128>(len);
+            byte[]? validity = null;
+            ref byte validRef = ref Unsafe.NullRef<byte>();
+            
+            fixed (decimal?* pSrc = data)
+            fixed (Int128* pDst = values)
+            {
+                // Ref ptr scan
+                ref decimal? srcRef = ref MemoryMarshal.GetArrayDataReference(data);
+                ref Int128 dstRef = ref MemoryMarshal.GetArrayDataReference(values);
+
+                for (int i = 0; i < len; i++)
+                {
+                    ref decimal? item = ref Unsafe.Add(ref srcRef, i);
+                    
+                    if (item.HasValue)
+                    {
+                        decimal d = item.GetValueOrDefault();
+                        
+                        // Treat decimal as 4 int struct
+                        int* pDec = (int*)Unsafe.AsPointer(ref d);
+                        
+                        int flags = pDec[0];
+                        int hi    = pDec[1];
+                        int lo    = pDec[2];
+                        int mid   = pDec[3];
+
+                        // Convert 96-bit Int to Int128
+                        // Int128 = (Hi << 64) | (Mid << 32) | Lo
+                        Int128 mantissa = ((Int128)(uint)hi << 64) | ((Int128)(uint)mid << 32) | (Int128)(uint)lo;
+
+                        // deal +-
+                        if ((flags & 0x80000000) != 0)
+                        {
+                            mantissa = -mantissa;
+                        }
+                        
+                        // Get current Scale
+                        int scale = (flags >> 16) & 0xFF;
+                        
+                        // Rescale
+                        // Target = Val * 10^(MaxScale - CurScale)
+                        int diff = maxScale - scale;
+                        if (diff > 0)
+                        {
+                            mantissa *= PowersOf10Int128[diff];
+                        }
+                        
+                        Unsafe.Add(ref dstRef, i) = mantissa;
+                        
+                        // Validity
+                        if (validity != null)
+                        {
+                            if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                            ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                            target |= (byte)(1 << (i & 7));
+                        }
+                    }
+                    else
+                    {
+                        if (validity == null)
+                        {
+                            validity = new byte[(len + 7) >> 3];
+                            validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                            int bytesToFill = i >> 3;
+                            if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                            int remainingBits = i & 7;
+                            if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                        }
+                        Unsafe.Add(ref dstRef, i) = Int128.Zero;
+                    }
+                }
+            }
+
+            return (values, validity, maxScale);
+        }
+    }
 }

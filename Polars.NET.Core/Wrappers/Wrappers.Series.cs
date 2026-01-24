@@ -180,15 +180,27 @@ public static partial class PolarsWrapper
             );
         }
     }
-    private static readonly decimal[] PowersOf10;
-
-    static PolarsWrapper()
+    public unsafe static SeriesHandle SeriesNewDecimal(string name, Int128[] values, byte[]? validity, int scale)
     {
-        PowersOf10 = new decimal[29]; // 0 .. 28
-        PowersOf10[0] = 1m;
-        for (int i = 1; i < PowersOf10.Length; i++)
+        if (values.Length == 0)
         {
-            PowersOf10[i] = PowersOf10[i - 1] * 10m;
+            Int128 dummy = 0;
+            return ErrorHelper.Check(NativeBindings.pl_series_new_decimal(name, ref dummy, IntPtr.Zero, UIntPtr.Zero, UIntPtr.Zero, (UIntPtr)scale));
+        }
+
+        ref Int128 pVals = ref MemoryMarshal.GetArrayDataReference(values);
+        fixed (byte* pValid = validity)
+        {
+            return ErrorHelper.Check(
+                NativeBindings.pl_series_new_decimal(
+                    name, 
+                    ref pVals, 
+                    (IntPtr)pValid, 
+                    (UIntPtr)values.Length, 
+                    UIntPtr.Zero, // Precision=0 (Auto)
+                    (UIntPtr)scale
+                )
+            );
         }
     }
 
@@ -260,22 +272,40 @@ public static partial class PolarsWrapper
 
     public static decimal? SeriesGetDecimal(SeriesHandle s, long idx)
     {
+        // Get Int128 raw value and scale
         if (NativeBindings.pl_series_get_decimal(s, (UIntPtr)idx, out Int128 val, out UIntPtr scalePtr))
         {
             int scale = (int)scalePtr;
+
+            // Boundary Check ：C# decimal max Scale is 28
+            // If Polars Scale > 28，C# decimal is not able to save such data
+            if (scale >= DecimalPacker.PowersOf10Int128.Length) 
+            {
+                // Fallback: lose accuracy or return null
+                try { return (decimal)val / (decimal)Math.Pow(10, scale); }
+                catch { return null; }
+            }
+
+            // Int128 -> Decimal
             
+            Int128 divisor = DecimalPacker.PowersOf10Int128[scale];
+
+            // Integer Part
+            Int128 intPart = val / divisor;
+            // Fractional Part
+            Int128 remPart = val % divisor;
+
             try 
             {
-                decimal d = (decimal)val; 
+                // Int part
+                decimal dInt = (decimal)intPart;
                 
-                if (scale >= 0 && scale < PowersOf10.Length)
-                {
-                    return d / PowersOf10[scale];
-                }
-                else
-                {
-                    return d / (decimal)Math.Pow(10, scale);
-                }
+                // rem part
+                decimal dRem = (decimal)remPart;
+                decimal dDivisor = (decimal)divisor; 
+                
+                // Assemble
+                return dInt + (dRem / dDivisor);
             }
             catch (OverflowException)
             {
@@ -315,7 +345,7 @@ public static partial class PolarsWrapper
             // .NET Ticks = 100ns. 1 us = 10 ticks.
             // Unix Epoch Ticks = 621355968000000000
             long ticks = (us * 10) + 621355968000000000L;
-            return new DateTime(ticks, DateTimeKind.Utc); // Default UTC 
+            return new DateTime(ticks, DateTimeKind.Unspecified); // Default Unspecified
         }
         return null;
     }

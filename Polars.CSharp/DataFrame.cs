@@ -1566,6 +1566,15 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             case TimeSpan?[] v:
                 series = new Series(name, v);
                 return true;
+
+            // --- Decimal ---
+            case decimal[] v:
+                series = new Series(name, v);
+                return true;
+
+            case decimal?[] v:
+                series = new Series(name, v);
+                return true;
             // --- Default ---
             default:
                 return false; 
@@ -1683,9 +1692,12 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     {
         return type.IsPrimitive || 
                type == typeof(string) || 
+               type == typeof(DateOnly) || 
                type == typeof(decimal) || 
                type == typeof(DateTime) || 
                type == typeof(TimeSpan) ||
+               type == typeof(TimeOnly) || 
+               type == typeof(DateTimeOffset) || 
                (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>) && IsSimpleType(Nullable.GetUnderlyingType(type)!));
     }
     /// <summary>

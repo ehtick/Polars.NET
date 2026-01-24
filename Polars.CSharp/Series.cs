@@ -193,6 +193,8 @@ public partial class Series : IDisposable
             
         if (underlying == typeof(TimeSpan))
             return (T?)(object?)PolarsWrapper.SeriesGetDuration(Handle, index);
+        // if (underlying == typeof(DateTime))
+        //     return (T?)(object?)PolarsWrapper.SeriesGetDatetime(Handle, index);
 
         // ==============================================================
         // 🐢 Universal Path - using Arrow Infrastructure
@@ -953,20 +955,15 @@ public partial class Series : IDisposable
         var (values, validity) = ArrayHelper.UnzipTimeSpanToUs(data);
         Handle = PolarsWrapper.SeriesNewDuration(name, values, validity);
     }
-
-    // ------------------------------------------
-    // 🐢 2. Universal Path (Complex Types)
-    // ------------------------------------------
-    
     /// <summary>
-    /// Create a Series from an array of decimals.
+    /// Create a Series from an array of  decimals.
     /// </summary>
     /// <param name="name"></param>
     /// <param name="data"></param>
     public Series(string name, decimal[] data)
     {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
+        var (values, scale) = DecimalPacker.Pack(data);
+        Handle = PolarsWrapper.SeriesNewDecimal(name, values, null, scale);
     }
     /// <summary>
     /// Create a Series from an array of nullable decimals.
@@ -975,9 +972,27 @@ public partial class Series : IDisposable
     /// <param name="data"></param>
     public Series(string name, decimal?[] data)
     {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
+        var (values, validity, scale) = DecimalPacker.Pack(data);
+        
+        Handle = PolarsWrapper.SeriesNewDecimal(name, values, validity, scale);
     }
+
+    // ------------------------------------------
+    // 🐢 2. Universal Path (Complex Types)
+    // ------------------------------------------
+    
+
+    // public Series(string name, decimal[] data)
+    // {
+    //     using var arrowArray = ArrowConverter.Build(data);
+    //     Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
+    // }
+
+    // public Series(string name, decimal?[] data)
+    // {
+    //     using var arrowArray = ArrowConverter.Build(data);
+    //     Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
+    // }
 
     // ==========================================
     // Properties

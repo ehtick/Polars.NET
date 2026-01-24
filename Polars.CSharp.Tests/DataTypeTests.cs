@@ -952,4 +952,128 @@ public class DataTypeTests
         CheckIndex(s, data, count - 2); // Tail
         CheckIndex(s, data, count - 3); // Main Loop End
     }
+    [Fact]
+    public void Test_Decimal_Integration_MixedScale()
+    {
+        // 1. 准备数据：标度大乱炖
+        // C# Decimal 的特性：1.2m (Scale=1) != 1.20m (Scale=2)
+        var data = new decimal?[]
+        {
+            1.5m,               // Scale 1 -> 补齐到 5
+            -2.123m,            // Scale 3 -> 补齐到 5
+            100m,               // Scale 0 -> 补齐到 5
+            0.00005m,           // Scale 5 (Max) -> 决定了 Series 的 Scale
+            decimal.MaxValue,   // 验证 96位 整数提取
+            decimal.MinValue,   // 验证 负号处理
+            null
+        };
+
+        // 2. 创建 Series (命中 DecimalPacker.Pack 可空路径)
+        using var s = new Series("mixed_decimal", data);
+
+        // 3. 验证基础
+        Assert.Equal(7, s.Length);
+        Assert.Equal(1, s.NullCount);
+
+        // 4. 验证数值
+        // 注意：Series[i] 取出来的 decimal 可能会带有统一的 Scale (5)
+        // 但 C# decimal.Equals(1.50000m, 1.5m) 是 True，所以直接比较即可
+        Assert.Equal(data[0], s[0]);
+        Assert.Equal(data[1], s[1]);
+        Assert.Equal(data[2], s[2]);
+        Assert.Equal(data[3], s[3]);
+        Assert.Equal(data[4], s[4]);
+        Assert.Equal(data[5], s[5]);
+        Assert.Null(s[6]);
+
+        // 5. 验证底层 Scale (可选)
+        // 这一步虽然我们没暴露 Scale 属性，但通过数值正确性侧面验证了
+        // 比如 100m 如果 Scale 没补对，取出来可能变成 0.001m 或者 100000m
+    }
+    [Fact]
+    public void Test_Decimal_NonNullable_FastPath()
+    {
+        // 1. 准备数据
+        var data = new decimal[]
+        {
+            1234567890.1234567890m, // High Precision
+            0.0000000000000000001m, // High Scale (19)
+            -99.9m,                 // Negative
+            0m                      // Zero
+        };
+
+        // 2. 创建 Series (命中 DecimalPacker.Pack 非空路径)
+        using var s = new Series("fast_decimal", data);
+
+        // 3. 验证
+        Assert.Equal(4, s.Length);
+        Assert.Equal(0, s.NullCount);
+
+        Assert.Equal(data[0], s[0]);
+        Assert.Equal(data[1], s[1]);
+        Assert.Equal(data[2], s[2]);
+        Assert.Equal(data[3], s[3]);
+    }
+    [Fact]
+    public void Test_Decimal_LargeScale_Stress()
+    {
+        // 1. 准备 100 万数据
+        int count = 1_000_000;
+        var data = new decimal[count];
+        
+        // 构造数据：
+        // 偶数索引 Scale=0 (整数)
+        // 奇数索引 Scale=2 (小数)
+        // 这样 Packer 必须把偶数索引乘 100 来补齐
+        for (int i = 0; i < count; i++)
+        {
+            if (i % 2 == 0) data[i] = (decimal)i;       // Scale 0
+            else data[i] = (decimal)i + 0.55m;          // Scale 2
+        }
+
+        // 2. 极速打包
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var s = new Series("stress_decimal", data);
+        sw.Stop();
+        
+        // 3. 验证
+        Console.WriteLine($"Decimal Packed {count} items in {sw.Elapsed.TotalMilliseconds} ms");
+        Assert.Equal(count, s.Length);
+
+        // 4. 抽样检查
+        // Index 0: 0 -> 0.00
+        Assert.Equal(0m, s[0]);
+        // Index 1: 1.55 -> 1.55
+        Assert.Equal(1.55m, s[1]);
+        // Index 100: 100 -> 100.00
+        Assert.Equal(100m, s[100]);
+        // Index End
+        Assert.Equal(data[count - 1], s[count - 1]);
+
+        // 随机抽查
+        var rng = new Random(999);
+        for (int k = 0; k < 100; k++)
+        {
+            int idx = rng.Next(0, count);
+            Assert.Equal(data[idx], s[idx]);
+        }
+    }
+    [Fact]
+    public void Test_Decimal_MaxScale_Limit()
+    {
+        // 构造一个 Scale = 28 的数 (C# 极限)
+        decimal extreme = 0.0000000000000000000000000001m; // 1e-28
+        Assert.Equal(28, extreme.Scale);
+
+        var data = new decimal[] { 1m, extreme };
+        
+        // 此时 MaxScale = 28
+        // 1m 会被乘 10^28 (变成 huge integer)
+        // extreme 会保持 1
+        
+        using var s = new Series("limit_decimal", data);
+        
+        Assert.Equal(1m, s[0]);
+        Assert.Equal(extreme, s[1]);
+    }
 }
