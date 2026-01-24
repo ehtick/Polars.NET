@@ -11,6 +11,7 @@ use polars_arrow::array::PrimitiveArray;
 use polars_arrow::array::BooleanArray;
 use polars_arrow::bitmap::Bitmap;
 use polars_arrow::array::Utf8Array;
+use crate::datatypes::parse_timeunit;
 
 // ==========================================
 // Constructors 
@@ -180,6 +181,145 @@ pub unsafe extern "C" fn pl_series_new_str_simd(
         let series = Series::from_arrow(name_str.as_ref().into(), Box::new(array)).expect("Failed to create Series");
 
         Ok(Box::into_raw(Box::new(SeriesContext { series })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_series_new_datetime(
+    name: *const c_char,
+    ptr: *const i64,       
+    validity: *const u8,   // Bitmap
+    len: usize,
+    unit: u8,   // "ms", "us", "ns"
+    zone: *const c_char    // null is Naive (No timezone), or we need "Asia/Shanghai" and etc.
+) -> *mut SeriesContext {
+    ffi_try!({
+        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+        
+        // Build Int64 ChunkedArray
+        let bytes_len = (len + 7) / 8;
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let vec = slice.to_vec(); // Copy from C# to Rust Heap
+        
+        let validity_bitmap = if validity.is_null() {
+            None
+        } else {
+            let v_slice = unsafe { std::slice::from_raw_parts(validity, bytes_len) };
+            let v_vec = v_slice.to_vec();
+            Some(Bitmap::try_new(v_vec, len).unwrap())
+        };
+
+        // Use Arrow Interface to build
+        let arrow_array = PrimitiveArray::new(
+            ArrowDataType::Int64, 
+            vec.into(), 
+            validity_bitmap
+        );
+        
+        // Generate Int64Chunked
+        let ca_i64 = Int64Chunked::with_chunk(name_str.as_ref().into(), arrow_array);
+
+        // Parse TimeUnit
+        let time_unit = parse_timeunit(unit);
+
+        // Parse TimeZone
+        let pl_tz = if zone.is_null() {
+            None
+        } else {
+            let s = unsafe { CStr::from_ptr(zone).to_str().unwrap() };
+            
+            Some(unsafe { TimeZone::new_unchecked(s) })
+        };
+
+        // Logical Cast
+        let ca_dt = ca_i64.into_datetime(time_unit,pl_tz);
+
+        Ok(Box::into_raw(Box::new(SeriesContext { series: ca_dt.into_series() })))
+    })
+}
+
+macro_rules! create_physical_ca {
+    ($name:ident, $ptr:ident, $len:ident, $validity:ident, $phys_ty:ty, $arrow_ty:expr, $ca_ty:ident) => {{
+        let name_str = unsafe { CStr::from_ptr($name).to_string_lossy() };
+        let bytes_len = ($len + 7) / 8;
+
+        // 1. Data Copy (C# -> Rust Heap)
+        let slice = unsafe { std::slice::from_raw_parts($ptr, $len) };
+        let vec = slice.to_vec();
+
+        // 2. Validity Bitmap Copy
+        let validity_bitmap = if $validity.is_null() {
+            None
+        } else {
+            let v_slice = unsafe { std::slice::from_raw_parts($validity, bytes_len) };
+            let v_vec = v_slice.to_vec();
+            Some(Bitmap::try_new(v_vec, $len).unwrap()) // unwrap is safe if C# logic is correct
+        };
+
+        // 3. Arrow Array Construction
+        let arrow_array = PrimitiveArray::new(
+            $arrow_ty,
+            vec.into(),
+            validity_bitmap
+        );
+
+        // 4. Polars ChunkedArray (Physical)
+        $ca_ty::with_chunk(name_str.as_ref().into(), arrow_array)
+    }}
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_series_new_date(
+    name: *const c_char,
+    ptr: *const i32,      // Days since epoch
+    validity: *const u8,
+    len: usize,
+) -> *mut SeriesContext {
+    ffi_try!({
+        // Build Int32Chunked
+        let ca = create_physical_ca!(name, ptr, len, validity, i32, ArrowDataType::Int32, Int32Chunked);
+        
+        // Convert -> Date
+        let ca_date = ca.into_date();
+        
+        Ok(Box::into_raw(Box::new(SeriesContext { series: ca_date.into_series() })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_series_new_time(
+    name: *const c_char,
+    ptr: *const i64,      // Nanoseconds since midnight
+    validity: *const u8,
+    len: usize,
+) -> *mut SeriesContext {
+    ffi_try!({
+        // 1. 使用宏创建 Int64Chunked
+        let ca = create_physical_ca!(name, ptr, len, validity, i64, ArrowDataType::Int64, Int64Chunked);
+        
+        // 2. 逻辑转换 -> Time
+        let ca_time = ca.into_time();
+        
+        Ok(Box::into_raw(Box::new(SeriesContext { series: ca_time.into_series() })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_series_new_duration(
+    name: *const c_char,
+    ptr: *const i64,      
+    validity: *const u8,
+    len: usize,
+    unit: u8,             // 0=ns, 1=us, 2=ms
+) -> *mut SeriesContext {
+    ffi_try!({
+        let ca = create_physical_ca!(name, ptr, len, validity, i64, ArrowDataType::Int64, Int64Chunked);
+        
+        let time_unit = parse_timeunit(unit);
+
+        let ca_duration = ca.into_duration(time_unit);
+        
+        Ok(Box::into_raw(Box::new(SeriesContext { series: ca_duration.into_series() })))
     })
 }
 

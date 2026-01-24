@@ -60,11 +60,10 @@ public static partial class PolarsWrapper
             );
         }
 
-        // 1. 调用屠龙刀 Packer
-        // 结果: values (扁平字节流), offsets (偏移量), validity (位图或null)
+        // SIMD Packer
         var (values, offsets, validity) = StringPacker.Pack(data);
 
-        // 2. 准备指针并调用 Rust
+        // Prepare ptrs for Rust
         // validity may be null，so we need to fix to get pointer (null [] -> null ptr)
         fixed (byte* pValid = validity)
         {
@@ -84,7 +83,103 @@ public static partial class PolarsWrapper
             );
         }
     }
-    
+    /// <summary>
+    /// [SIMD] Create DateTime Series from pre-calculated Microseconds.
+    /// </summary>
+    /// <param name="name">Series Name</param>
+    /// <param name="values">Physical values (Microseconds from 1970-01-01)</param>
+    /// <param name="validity">Null bitmap (can be null)</param>
+    /// <param name="timeZone">"Asia/Shanghai", "UTC" or null (Naive)</param>
+    public unsafe static SeriesHandle SeriesNewDatetime(
+        string name, 
+        long[] values, 
+        byte[]? validity, 
+        string? timeZone = null)
+    {
+        // 0. Deal blank array
+        if (values.Length == 0)
+        {
+            long dummy = 0;
+            return ErrorHelper.Check(
+                NativeBindings.pl_series_new_datetime(
+                    name, 
+                    ref dummy, 
+                    IntPtr.Zero, 
+                    UIntPtr.Zero, 
+                    PlTimeUnit.Microseconds, // unit=us
+                    timeZone
+                )
+            );
+        }
+
+        // Get ref
+        ref long pValsRef = ref MemoryMarshal.GetArrayDataReference(values);
+
+        // Fix Validity
+        fixed (byte* pValid = validity)
+        {
+            return ErrorHelper.Check(
+                NativeBindings.pl_series_new_datetime(
+                    name, 
+                    ref pValsRef, 
+                    (IntPtr)pValid, 
+                    (UIntPtr)values.Length,
+                    PlTimeUnit.Microseconds,
+                    timeZone
+                )
+            );
+        }
+    }
+    public unsafe static SeriesHandle SeriesNewDate(string name, int[] values, byte[]? validity)
+    {
+         if (values.Length == 0) 
+         {
+             int dummy = 0;
+             return ErrorHelper.Check(NativeBindings.pl_series_new_date(name, ref dummy, IntPtr.Zero, UIntPtr.Zero));
+         }
+
+         ref int pVals = ref MemoryMarshal.GetArrayDataReference(values);
+         fixed (byte* pValid = validity)
+         {
+             return ErrorHelper.Check(
+                 NativeBindings.pl_series_new_date(name, ref pVals, (IntPtr)pValid, (UIntPtr)values.Length)
+             );
+         }
+    }
+    public unsafe static SeriesHandle SeriesNewTime(string name, long[] values, byte[]? validity)
+    {
+        if (values.Length == 0)
+        {
+            long dummy = 0;
+            return ErrorHelper.Check(NativeBindings.pl_series_new_time(name, ref dummy, IntPtr.Zero, UIntPtr.Zero));
+        }
+
+        ref long pVals = ref MemoryMarshal.GetArrayDataReference(values);
+        fixed (byte* pValid = validity)
+        {
+            return ErrorHelper.Check(
+                NativeBindings.pl_series_new_time(name, ref pVals, (IntPtr)pValid, (UIntPtr)values.Length)
+            );
+        }
+    }
+    public unsafe static SeriesHandle SeriesNewDuration(string name, long[] values, byte[]? validity)
+    {
+        if (values.Length == 0)
+        {
+            long dummy = 0;
+            // Unit = 1 (Microseconds)
+            return ErrorHelper.Check(NativeBindings.pl_series_new_duration(name, ref dummy, IntPtr.Zero, UIntPtr.Zero, PlTimeUnit.Microseconds));
+        }
+
+        ref long pVals = ref MemoryMarshal.GetArrayDataReference(values);
+        fixed (byte* pValid = validity)
+        {
+            // Unit = 1 (Microseconds)
+            return ErrorHelper.Check(
+                NativeBindings.pl_series_new_duration(name, ref pVals, (IntPtr)pValid, (UIntPtr)values.Length, PlTimeUnit.Microseconds)
+            );
+        }
+    }
     private static readonly decimal[] PowersOf10;
 
     static PolarsWrapper()

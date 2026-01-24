@@ -1096,6 +1096,37 @@ unsafe internal partial class NativeBindings
         IntPtr validity_ptr,  // Validity (IntPtr.Zero allowed)
         UIntPtr len // Row count
     );
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_datetime(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        ref long ptr,
+        IntPtr validity,
+        UIntPtr len,
+        PlTimeUnit unit, // 0=ns, 1=us, 2=ms
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? zone
+    );
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_date(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        ref int ptr,        // Int32
+        IntPtr validity,
+        UIntPtr len
+    );
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_time(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        ref long ptr,       // Int64
+        IntPtr validity,
+        UIntPtr len
+    );
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_duration(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        ref long ptr,       // Int64
+        IntPtr validity,
+        UIntPtr len,
+        PlTimeUnit unit           // 0=ns, 1=us, 2=ms
+    );
     [LibraryImport(LibName)] 
     public static partial SeriesHandle pl_series_clone(SeriesHandle s);
     // --- Series Properties ---
@@ -1179,9 +1210,9 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     public static partial DataTypeHandle pl_datatype_new_list(DataTypeHandle inner);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial DataTypeHandle pl_datatype_new_datetime(int unit, string? timezone);
+    public static partial DataTypeHandle pl_datatype_new_datetime(byte unit, string? timezone);
     [LibraryImport(LibName)]
-    public static partial DataTypeHandle pl_datatype_new_duration(int unit);
+    public static partial DataTypeHandle pl_datatype_new_duration(byte unit);
     [LibraryImport(LibName)]
     public static partial DataTypeHandle pl_datatype_new_array(
         DataTypeHandle inner, 

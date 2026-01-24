@@ -1521,7 +1521,51 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
             // --- String ---
             case string?[] v:   series = new Series(name, v); return true;
-                
+
+            // --- DateTime ---
+            case DateTime[] v:
+                series = new Series(name, v);
+                return true;
+
+            case DateTime?[] v:
+                series = new Series(name, v);
+                return true;
+
+            // --- DateTimeOffset ---
+            case DateTimeOffset[] v:
+                series = new Series(name, v);
+                return true;
+
+            case DateTimeOffset?[] v:
+                series = new Series(name, v);
+                return true;
+
+            // --- DateOnly ---
+            case DateOnly[] v:
+                series = new Series(name, v);
+                return true;
+
+            case DateOnly?[] v:
+                series = new Series(name, v);
+                return true;
+
+            // --- TimeOnly ---
+            case TimeOnly[] v:
+                series = new Series(name, v);
+                return true;
+
+            case TimeOnly?[] v:
+                series = new Series(name, v);
+                return true;
+            
+            // --- TimeSpan ---
+            case TimeSpan[] v:
+                series = new Series(name, v);
+                return true;
+
+            case TimeSpan?[] v:
+                series = new Series(name, v);
+                return true;
             // --- Default ---
             default:
                 return false; 

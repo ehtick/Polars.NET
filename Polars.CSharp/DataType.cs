@@ -218,7 +218,7 @@ public class DataType : IDisposable, IEquatable<DataType>
     /// <param name="timeZone">timezone string (e.g. "Asia/Shanghai")， null for no timezone (Naive)</param>
     public static DataType Datetime(TimeUnit unit, string? timeZone = null)
     {
-        var handle = PolarsWrapper.NewDateTimeType((int)unit, timeZone);
+        var handle = PolarsWrapper.NewDateTimeType((byte)unit, timeZone);
         return new DataType(handle,DataTypeKind.Datetime);
     }
     /// <summary>
@@ -226,7 +226,7 @@ public class DataType : IDisposable, IEquatable<DataType>
     /// Usage: DataType.Duration(TimeUnit.Nanoseconds)
     /// </summary>
     public static DataType Duration(TimeUnit unit = TimeUnit.Microseconds)
-        => new(PolarsWrapper.NewDurationType((int)unit), DataTypeKind.Duration);
+        => new(PolarsWrapper.NewDurationType((byte)unit), DataTypeKind.Duration);
     /// <summary>
     /// Creates a List type.
     /// Usage: DataType.List(DataType.Int32)

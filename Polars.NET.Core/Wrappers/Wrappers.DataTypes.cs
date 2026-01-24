@@ -10,9 +10,9 @@ public static partial class PolarsWrapper
     public static DataTypeHandle NewCategoricalType() => ErrorHelper.Check(NativeBindings.pl_datatype_new_categorical());
     public static DataTypeHandle NewListType(DataTypeHandle innerType)
        => ErrorHelper.Check(NativeBindings.pl_datatype_new_list(innerType));
-    public static DataTypeHandle NewDateTimeType(int unit, string? timezone)
+    public static DataTypeHandle NewDateTimeType(byte unit, string? timezone)
         => ErrorHelper.Check(NativeBindings.pl_datatype_new_datetime(unit,timezone));
-    public static DataTypeHandle NewDurationType(int unit) 
+    public static DataTypeHandle NewDurationType(byte unit) 
         => ErrorHelper.Check(NativeBindings.pl_datatype_new_duration(unit));
     public static DataTypeHandle NewArrayType(DataTypeHandle inner, ulong width)
     {

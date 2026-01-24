@@ -1255,7 +1255,7 @@ public void Test_Series_Ewm_Methods()
         using var s = new Series("perf", data);
         
         sw.Stop();
-        Console.WriteLine($"Int32 (10M) Pack Time: {sw.ElapsedMilliseconds} ms");
+        Console.WriteLine($"Nullable Int32 (10M) Pack Time: {sw.ElapsedMilliseconds} ms");
         
         // 简单验证
         Assert.Null(s.GetValue<int?>(0));

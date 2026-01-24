@@ -531,99 +531,241 @@ type Series(handle: SeriesHandle) =
     // ==========================================
     // Static Constructors
     // ==========================================
-    
+    // -------------------------------------------------------------------------
+    // Unzip
+    // -------------------------------------------------------------------------
+
+    /// For Option<'T> 
+    static member inline private UnzipOption<'T 
+        when 'T : struct 
+        and 'T : (new : unit -> 'T) 
+        and 'T :> System.ValueType> 
+        (data: 'T option seq) =
+        
+        // Convert
+        let nullables = 
+            match data with
+            | :? ('T option array) as arr -> arr |> Array.map Option.toNullable
+            | _ -> data |> Seq.toArray |> Array.map Option.toNullable
+            
+        ArrayHelper.UnzipNullable(nullables, Unchecked.defaultof<'T>)
+
+    /// 针对 ValueOption<'T> 的解包 (逻辑完全相同，只是映射函数不同)
+    static member inline private UnzipVOption<'T 
+        when 'T : struct 
+        and 'T : (new : unit -> 'T) 
+        and 'T :> System.ValueType> 
+        (data: 'T voption seq) =
+        
+        // Convert
+        let nullables = 
+            match data with
+            | :? ('T voption array) as arr -> arr |> Array.map ValueOption.toNullable
+            | _ -> data |> Seq.toArray |> Array.map ValueOption.toNullable
+            
+        // Unzip
+        ArrayHelper.UnzipNullable(nullables, Unchecked.defaultof<'T>)
+
+    // -------------------------------------------------------------------------
+    // Generic Factory
+    // -------------------------------------------------------------------------
+
+    /// Option Fctory
+    static member inline private CreateFromOption<'T 
+        when 'T : struct 
+        and 'T : (new : unit -> 'T) 
+        and 'T :> System.ValueType>
+        (name: string, data: 'T option seq, constructor: string * 'T array * byte array -> SeriesHandle) =
+        
+        let struct (vals, validity) = Series.UnzipOption<'T>(data)
+        new Series(constructor(name, vals, validity))
+
+    /// VOption Factory
+    static member inline private CreateFromVOption<'T 
+        when 'T : struct 
+        and 'T : (new : unit -> 'T) 
+        and 'T :> System.ValueType>
+        (name: string, data: 'T voption seq, constructor: string * 'T array * byte array -> SeriesHandle) =
+        
+        let struct (vals, validity) = Series.UnzipVOption<'T>(data)
+        new Series(constructor(name, vals, validity))
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    // --- Int8 ---
+    static member create(name: string, data: sbyte seq) = 
+        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
+    static member create(name: string, data: sbyte option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: sbyte voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
+    // --- UInt8 ---
+    static member create(name: string, data: byte seq) = 
+        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
+    static member create(name: string, data: byte option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: byte voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
+    // --- Int16 ---
+    static member create(name: string, data: int16 seq) = 
+        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
+    static member create(name: string, data: int16 option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: int16 voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
+    // --- UInt16 ---
+    static member create(name: string, data: uint16 seq) = 
+        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
+    static member create(name: string, data: uint16 option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: uint16 voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
     // --- Int32 ---
     static member create(name: string, data: int seq) = 
         new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
     static member create(name: string, data: int option seq) = 
-        let arr = Seq.toArray data
-        let vals = Array.zeroCreate<int> arr.Length
-        let valid = Array.zeroCreate<bool> arr.Length
-        for i in 0 .. arr.Length - 1 do
-            match arr.[i] with
-            | Some v -> vals.[i] <- v; valid.[i] <- true
-            | None -> vals.[i] <- 0; valid.[i] <- false
-        new Series(PolarsWrapper.SeriesNew(name, vals, valid))
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: int voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+    
+    // --- UInt32 ---
+    static member create(name: string, data: uint seq) = 
+        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
+    static member create(name: string, data: uint option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: uint voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
 
     // --- Int64 ---
     static member create(name: string, data: int64 seq) = 
         new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
-
     static member create(name: string, data: int64 option seq) = 
-        let arr = Seq.toArray data
-        let vals = Array.zeroCreate<int64> arr.Length
-        let valid = Array.zeroCreate<bool> arr.Length
-        for i in 0 .. arr.Length - 1 do
-            match arr.[i] with
-            | Some v -> vals.[i] <- v; valid.[i] <- true
-            | None -> vals.[i] <- 0L; valid.[i] <- false
-        new Series(PolarsWrapper.SeriesNew(name, vals, valid))
-        
-    // --- Float64 ---
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: int64 voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
+    // --- UInt64 ---
+    static member create(name: string, data: uint64 seq) = 
+        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
+    static member create(name: string, data: uint64 option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: uint64 voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
+    // --- Int128 ---
+    static member create(name: string, data: Int128 seq) = 
+        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
+    static member create(name: string, data: Int128 option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: Int128 voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
+    // --- UInt128 ---
+    static member create(name: string, data: UInt128 seq) = 
+        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
+    static member create(name: string, data: UInt128 option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: UInt128 voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
+    // --- Float ---
+    static member create(name: string, data: float seq) = 
+        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
+    static member create(name: string, data: float option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: float voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
+    // --- Double ---
     static member create(name: string, data: double seq) = 
         new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
-
     static member create(name: string, data: double option seq) = 
+        Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
+    static member create(name: string, data: double voption seq) = 
+        Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
+
+    // -------------------------------------------------------------------------
+    // Boolean
+    // -------------------------------------------------------------------------
+
+    // bool option 
+    static member inline private UnzipBool(data: bool option seq) =
+        // Route: seq -> array -> nullable[] -> SIMD Pack
+        let nullables = 
+            match data with
+            | :? (bool option array) as arr -> arr |> Array.map Option.toNullable
+            | _ -> data |> Seq.toArray |> Array.map Option.toNullable
+            
+        let struct (vals, validity) = BoolPacker.PackNullable nullables
+        struct (vals, validity, nullables.Length)
+
+    // bool voption 
+    static member inline private UnzipBool(data: bool voption seq) =
+        let nullables = 
+            match data with
+            | :? (bool voption array) as arr -> arr |> Array.map ValueOption.toNullable
+            | _ -> data |> Seq.toArray |> Array.map ValueOption.toNullable
+            
+        let struct (vals, validity) = BoolPacker.PackNullable nullables
+        struct (vals, validity, nullables.Length)
+
+    // -------------------------------------------------------------------------
+    // Boolean Public API
+    // -------------------------------------------------------------------------
+
+    // bool[] -> SIMD Pack -> Bitmap
+    static member create(name: string, data: bool seq) =
         let arr = Seq.toArray data
-        let vals = Array.zeroCreate<double> arr.Length
-        let valid = Array.zeroCreate<bool> arr.Length
-        for i in 0 .. arr.Length - 1 do
-            match arr.[i] with
-            | Some v -> vals.[i] <- v; valid.[i] <- true
-            | None -> vals.[i] <- Double.NaN; valid.[i] <- false
-        new Series(PolarsWrapper.SeriesNew(name, vals, valid))
+        // Compress Value
+        let valuesBitmask = BoolPacker.Pack arr
+        // Convert UIntPtr
+        let len = unativeint arr.Length
+        
+        // Call Wrapper (validity as null)
+        new Series(PolarsWrapper.SeriesNew(name, valuesBitmask, null, len))
 
-    // --- Boolean ---
-    static member create(name: string, data: bool seq) = 
-        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
-
+    // bool option (with Null)
     static member create(name: string, data: bool option seq) = 
-        let arr = Seq.toArray data
-        let vals = Array.zeroCreate<bool> arr.Length
-        let valid = Array.zeroCreate<bool> arr.Length
-        for i in 0 .. arr.Length - 1 do
-            match arr.[i] with
-            | Some v -> vals.[i] <- v; valid.[i] <- true
-            | None -> vals.[i] <- false; valid.[i] <- false
-        new Series(PolarsWrapper.SeriesNew(name, vals, valid))
+        let struct (vals, validity, len) = Series.UnzipBool data
+        
+        new Series(PolarsWrapper.SeriesNew(name, vals, validity, unativeint len))
 
-    // --- String ---
+    // bool voption (with Null)
+    static member create(name: string, data: bool voption seq) = 
+        let struct (vals, validity, len) = Series.UnzipBool data
+        new Series(PolarsWrapper.SeriesNew(name, vals, validity, unativeint len))
+
+    // -------------------------------------------------------------------------
+    // String
+    // -------------------------------------------------------------------------
+
+    /// string option conversion (F# Option -> CLR Null)
+    static member inline private UnzipString(data: string option seq) =
+        data |> Seq.toArray |> Array.map Option.toObj
+
+    /// string voption conversion (F# ValueOption -> CLR Null)
+    static member inline private UnzipString(data: string voption seq) =
+        data |> Seq.toArray |> Array.map (function ValueSome v -> v | ValueNone -> null)
+
+    // -------------------------------------------------------------------------
+    // String Public API
+    // -------------------------------------------------------------------------
+
     static member create(name: string, data: string seq) = 
-        new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data))
+        new Series(PolarsWrapper.SeriesNewStringSimd(name, Seq.toArray data))
 
     static member create(name: string, data: string option seq) = 
-        let arr = Seq.toArray data
-        let vals = arr |> Array.map (fun opt -> match opt with Some s -> s | None -> null)
-        new Series(PolarsWrapper.SeriesNew(name, vals))
-    // --- DateTime ---
-    static member create(name: string, data: DateTime seq) = 
-        let arr = Seq.toArray data
-        let longs = Array.zeroCreate<int64> arr.Length
-        let epoch = 621355968000000000L
-        
-        for i in 0 .. arr.Length - 1 do
-            longs.[i] <- (arr.[i].Ticks - epoch) / 10L
-
-        let s = Series.create(name, longs)
-        s.Cast(Datetime(Microseconds, None))
-
-    static member create(name: string, data: DateTime option seq) = 
-        let arr = Seq.toArray data
-        let longs = Array.zeroCreate<int64> arr.Length
-        let valid = Array.zeroCreate<bool> arr.Length
-        let epoch = 621355968000000000L
-        
-        for i in 0 .. arr.Length - 1 do
-            match arr.[i] with
-            | Some dt -> 
-                longs.[i] <- (dt.Ticks - epoch) / 10L
-                valid.[i] <- true
-            | None -> 
-                longs.[i] <- 0L
-                valid.[i] <- false
-
-        let s = new Series(PolarsWrapper.SeriesNew(name, longs, valid))
-        s.Cast(Datetime(Microseconds, None))
+        let arr = Series.UnzipString data
+        new Series(PolarsWrapper.SeriesNewStringSimd(name, arr))
+    static member create(name: string, data: string voption seq) = 
+        let arr = Series.UnzipString data
+        new Series(PolarsWrapper.SeriesNewStringSimd(name, arr))
 
     // --- Decimal ---
     /// <summary>
@@ -740,6 +882,7 @@ type Series(handle: SeriesHandle) =
         let t = typeof<'T>
         if t = typeof<int> then Series.create(name, data |> Seq.cast<int option>)
         else if t = typeof<int64> then Series.create(name, data |> Seq.cast<int64 option>)
+        else if t = typeof<float> then Series.create(name, data |> Seq.cast<float option>)
         else if t = typeof<double> then Series.create(name, data |> Seq.cast<double option>)
         else if t = typeof<bool> then Series.create(name, data |> Seq.cast<bool option>)
         else if t = typeof<string> then Series.create(name, data |> Seq.cast<string option>)
@@ -754,6 +897,9 @@ type Series(handle: SeriesHandle) =
     /// <summary> Get value as Int64 Option. Handles Int32/Int64 etc. </summary>
     member _.Int(index: int) : int64 option = 
         PolarsWrapper.SeriesGetInt(handle, int64 index) |> Option.ofNullable
+
+    member _.Int128(index: int) : Int128 option = 
+        PolarsWrapper.SeriesGetInt128(handle, int64 index) |> Option.ofNullable
 
     /// <summary> Get value as Double Option. Handles Float32/Float64. </summary>
     member _.Float(index: int) : float option = 
@@ -905,9 +1051,19 @@ type Series(handle: SeriesHandle) =
                 if t = typeof<int option> then box (Some v) |> unbox<'T>
                 else box v |> unbox<'T>
 
+            // else if t = typeof<int64> || t = typeof<int64 option> || t = typeof<Nullable<int64>> then
+            //     let v = PolarsWrapper.SeriesGetInt(handle, index).Value
+            //     if t = typeof<int64 option> then box (Some v) |> unbox<'T>
+            //     else box v |> unbox<'T>
+
             else if t = typeof<int64> || t = typeof<int64 option> || t = typeof<Nullable<int64>> then
                 let v = PolarsWrapper.SeriesGetInt(handle, index).Value
                 if t = typeof<int64 option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
+            else if t = typeof<Int128> || t = typeof<Int128 option> || t = typeof<Nullable<Int128>> then
+                let v = PolarsWrapper.SeriesGetInt128(handle, index).Value
+                if t = typeof<Int128 option> then box (Some v) |> unbox<'T>
                 else box v |> unbox<'T>
 
             // --- Float Family ---
@@ -982,17 +1138,19 @@ type Series(handle: SeriesHandle) =
         let idx = int64 index
         
         match this.DataType with
-        | DataType.Boolean -> box (this.GetValue<bool option> idx) // 使用 Option 以便显示 Some/None
+        | DataType.Boolean -> box (this.GetValue<bool option> idx) 
         
         | DataType.Int8 -> box (this.GetValue<int8 option> idx)
         | DataType.Int16 -> box (this.GetValue<int16 option> idx)
         | DataType.Int32 -> box (this.GetValue<int32 option> idx)
         | DataType.Int64 -> box (this.GetValue<int64 option> idx)
+        | DataType.Int128 -> box (this.GetValue<Int128 option> idx)
         
         | DataType.UInt8 -> box (this.GetValue<uint8 option> idx)
         | DataType.UInt16 -> box (this.GetValue<uint16 option> idx)
         | DataType.UInt32 -> box (this.GetValue<uint32 option> idx)
         | DataType.UInt64 -> box (this.GetValue<uint64 option> idx)
+        | DataType.UInt128 -> box (this.GetValue<UInt128 option> idx)
         
         | DataType.Float32 -> box (this.GetValue<float32 option> idx)
         | DataType.Float64 -> box (this.GetValue<double option> idx)
@@ -1448,13 +1606,13 @@ and DataFrame(handle: DataFrameHandle) =
         
         let batchStream = reader.ToArrowBatches size
         
-        let handle = Polars.NET.Core.Arrow.ArrowStreamInterop.ImportEager(batchStream,schema)
+        let handle = ArrowStreamInterop.ImportEager(batchStream,schema)
         
         if handle.IsInvalid then
 
-            let emptyBatch = new Apache.Arrow.RecordBatch(schema, System.Array.Empty<Apache.Arrow.IArrowArray>(), 0)
+            let emptyBatch = new RecordBatch(schema, System.Array.Empty<IArrowArray>(), 0)
 
-            let safeHandle = Polars.NET.Core.Arrow.ArrowFfiBridge.ImportDataFrame emptyBatch
+            let safeHandle = ArrowFfiBridge.ImportDataFrame emptyBatch
             new DataFrame(safeHandle)
         else
             new DataFrame(handle)

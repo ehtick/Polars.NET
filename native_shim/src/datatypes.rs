@@ -127,29 +127,29 @@ pub extern "C" fn pl_datatype_new_list(inner_ptr: *mut DataTypeContext) -> *mut 
     Box::into_raw(Box::new(DataTypeContext { dtype: list_dtype }))
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_datatype_new_duration(unit: i32) -> *mut DataTypeContext {
+pub fn parse_timeunit(unit: u8) -> TimeUnit {
     let time_unit = match unit {
         0 => TimeUnit::Nanoseconds,
         1 => TimeUnit::Microseconds,
         2 => TimeUnit::Milliseconds,
         _ => TimeUnit::Microseconds, 
     };
+    time_unit
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_datatype_new_duration(unit: u8) -> *mut DataTypeContext {
+    let time_unit = parse_timeunit(unit);
     let dt = DataType::Duration(time_unit);
     Box::into_raw(Box::new(DataTypeContext { dtype:dt }))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_datatype_new_datetime(
-    unit_code: i32,     // 0=ns, 1=us, 2=ms
+    unit_code: u8,     // 0=ns, 1=us, 2=ms
     tz_ptr: *const c_char // null=Naive, string=Aware
 ) -> *mut DataTypeContext {
-    let unit = match unit_code {
-        0 => TimeUnit::Nanoseconds,
-        1 => TimeUnit::Microseconds,
-        2 => TimeUnit::Milliseconds,
-        _ => TimeUnit::Microseconds,
-    };
+    let time_unit = parse_timeunit(unit_code);
 
     let timezone = if tz_ptr.is_null() {
         None
@@ -160,7 +160,7 @@ pub extern "C" fn pl_datatype_new_datetime(
         }
     };
 
-    let dtype = DataType::Datetime(unit, timezone);
+    let dtype = DataType::Datetime(time_unit, timezone);
     Box::into_raw(Box::new(DataTypeContext { dtype }))
 }
 

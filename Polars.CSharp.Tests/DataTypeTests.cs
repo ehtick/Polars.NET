@@ -251,34 +251,145 @@ public class DataTypeTests
         Assert.Equal(new TimeOnly(14, 30, 0), rows[0].Time);
     }
     [Fact]
-    public void Test_DateTimeOffset_Absolute_Consistency()
+    public void Test_DateTimeOffset_Nullable_And_Normalization()
     {
-        // 1. 准备数据
-        // 北京时间 12:00 (+08:00) 
-        // 绝对时间是 UTC 04:00
-        var offsetNow = new DateTimeOffset(2025, 1, 1, 12, 0, 0, TimeSpan.FromHours(8));
+        // 1. 准备数据：同一时刻，不同时区
+        // 2025-01-01 00:00:00 UTC
+        var utcPoint = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
         
-        // 存入 Series
-        using var s = Series.From("offsets", new[] { offsetNow });
-
-        // 读取回来
-        var results = s.ToArray<DateTimeOffset>();
-
-        // 验证
-        long tolerance = 100;
-
-        // 1. 读回来必须是 UTC (Offset 为 0)
-        // 因为 Arrow 内部归一化存储了
-        Assert.Equal(TimeSpan.Zero, results[0].Offset);
-
-        // 2. 绝对时间点 (UtcTicks) 必须相等
-        // 输入的 12:00+8 等于 UTC 的 04:00
-        // 读出来的 04:00+0 等于 UTC 的 04:00
-        Assert.InRange(results[0].UtcTicks - offsetNow.UtcTicks, -tolerance, tolerance);
+        // 北京: 08:00 (+8) -> 对应 UTC 00:00
+        var beijingPoint = new DateTimeOffset(2025, 1, 1, 8, 0, 0, TimeSpan.FromHours(8));
         
-        // 3. 验证字面量变化
-        // 输入是 12点，读出来应该是 4点
-        Assert.Equal(4, results[0].Hour);
+        // 纽约: 19:00 (-5, 前一天) -> 对应 UTC 00:00
+        var nyPoint = new DateTimeOffset(2024, 12, 31, 19, 0, 0, TimeSpan.FromHours(-5));
+
+        // 构造混合数组，包含 Null
+        var data = new DateTimeOffset?[] 
+        { 
+            utcPoint,      // Index 0
+            null,          // Index 1 (Null)
+            beijingPoint,  // Index 2 (绝对时间等于 Index 0)
+            nyPoint,       // Index 3 (绝对时间等于 Index 0)
+            null           // Index 4
+        };
+
+        // 2. 存入 Series
+        // 这会命中 UnzipDateTimeOffsetToUs(DateTimeOffset?[])
+        using var s = new Series("mixed_offsets", data);
+
+        // 3. 验证基础属性
+        Assert.Equal(5, s.Length);
+        Assert.Equal(2, s.NullCount);
+
+        // 4. 读取验证 (假设 Series 有泛型 ToArray 或索引器支持)
+        // 注意：Polars 里的 DateTimeOffset 读出来永远是 UTC (+00:00)
+        var results = s.ToArray<DateTimeOffset?>(); // 需要你的 ToArray 支持 Nullable
+
+        // 验证 Index 0 (UTC)
+        Assert.NotNull(results[0]);
+        Assert.Equal(TimeSpan.Zero, results[0]!.Value.Offset);
+        Assert.Equal(utcPoint.UtcTicks / 10, results[0]!.Value.UtcTicks / 10); // 容忍微秒截断
+
+        // 验证 Index 1 (Null)
+        Assert.Null(results[1]);
+
+        // 验证 Index 2 (北京 -> UTC)
+        Assert.NotNull(results[2]);
+        Assert.Equal(TimeSpan.Zero, results[2]!.Value.Offset); // 必须归一化为 UTC
+        Assert.Equal(0, results[2]!.Value.Hour); // 变成 0 点 (UTC) 而不是 8 点
+        // 绝对时间必须相等
+        Assert.Equal(results[0]!.Value.UtcTicks, results[2]!.Value.UtcTicks);
+
+        // 验证 Index 3 (纽约 -> UTC)
+        Assert.NotNull(results[3]);
+        Assert.Equal(TimeSpan.Zero, results[3]!.Value.Offset);
+        Assert.Equal(results[0]!.Value.UtcTicks, results[3]!.Value.UtcTicks);        
+    }
+    [Fact]
+    public void Test_DateTimeOffset_FastPath_LargeScale()
+    {
+        // 1. 准备 100 万数据
+        int count = 1_000_000;
+        var data = new DateTimeOffset[count];
+        var start = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // 制造“脏”数据：不同的 Offset 混在一起
+        // 验证我们的算法是否能正确处理每一行的 Offset 减法
+        for (int i = 0; i < count; i++)
+        {
+            // 基础时间递增 1 秒
+            var baseTime = start.AddSeconds(i);
+            
+            // 随机分配时区
+            int mode = i % 4;
+            if (mode == 0) data[i] = baseTime.ToOffset(TimeSpan.Zero); // UTC
+            else if (mode == 1) data[i] = baseTime.ToOffset(TimeSpan.FromHours(8)); // Beijing
+            else if (mode == 2) data[i] = baseTime.ToOffset(TimeSpan.FromHours(-5)); // NY
+            else data[i] = baseTime.ToOffset(TimeSpan.FromHours(5.5)); // India
+        }
+
+        // 2. 极速写入
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var s = new Series("fast_offsets", data);
+        sw.Stop();
+        Console.WriteLine($"Processed {count} DateTimeOffsets in {sw.Elapsed.TotalMilliseconds} ms");
+
+        // 3. 验证
+        Assert.Equal(count, s.Length);
+        Assert.Equal(0, s.NullCount);
+
+        // 4. 抽样检查精度
+        // 我们需要验证：Input.UtcTicks 约等于 Output.UtcTicks
+        // 允许误差：10 Ticks (1微秒)，因为我们做了除法截断
+        long tolerance = 10; 
+
+        // 定义个局部验证函数
+        void CheckIndex(int idx)
+        {
+            object val = s[idx];
+            DateTimeOffset result;
+
+            if (val is DateTimeOffset dto) 
+            {
+                result = dto;
+            }
+            else if (val is DateTime dt)
+            {
+                // 如果返回的是 DateTime (Kind=Unspecified), 视作 UTC
+                result = new DateTimeOffset(dt, TimeSpan.Zero);
+            }
+            else
+            {
+                // 如果返回的是 long (microsecond)
+                long micros = Convert.ToInt64(val);
+                long ticks = micros * 10 + 621355968000000000;
+                result = new DateTimeOffset(ticks, TimeSpan.Zero);
+            }
+
+            // 核心校验：绝对时间差值
+            long diff = Math.Abs(data[idx].UtcTicks - result.UtcTicks);
+            
+            if (diff > tolerance)
+            {
+                Assert.Fail($"Mismatch at {idx}. Input Offset: {data[idx].Offset}. Diff: {diff} Ticks.");
+            }
+            
+            // 确保输出永远是 UTC
+            Assert.Equal(TimeSpan.Zero, result.Offset);
+        }
+
+        // 验证头、尾、中
+        CheckIndex(0);
+        CheckIndex(count / 2);
+        CheckIndex(count - 1);
+
+        // 随机验证 1000 个
+        var rng = new Random(12345);
+        for (int k = 0; k < 1000; k++)
+        {
+            CheckIndex(rng.Next(0, count));
+        }
+        
     }
     [Fact]
     public void Test_WallClock_Consistency()
@@ -638,5 +749,207 @@ public class DataTypeTests
         Assert.Equal(DataType.Int32, schema["empty_int"]);
         Assert.Equal(DataType.Datetime(TimeUnit.Microseconds), schema["empty_dt"]);
         Assert.Equal(DataType.String, schema["empty_str"]);
+    }
+    [Fact]
+    public void Test_DateTime_Array_Large_Scale_Accuracy()
+    {
+        // =========================================================================
+        // 1. 准备数据：100万个日期 (约 8MB 数据量)
+        // =========================================================================
+        int count = 1_000_000;
+        var dateArray = new DateTime[count];
+        var start = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        
+        // 模拟真实场景：
+        // 偶数索引放 UTC，奇数索引放 Local
+        // 确保 Mask 逻辑把 Kind 位剥离干净，只保留数值
+        for (int i = 0; i < count; i++)
+        {
+            // AddSeconds 保证了 Ticks 肯定是 10 的倍数，避免 /10 的精度损失干扰测试
+            var dt = start.AddSeconds(i); 
+            
+            if (i % 2 == 0)
+                dateArray[i] = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+            else
+                dateArray[i] = dt.ToLocalTime(); // 转为 Local，Kind位会变化
+        }
+
+        // =========================================================================
+        // 2. 走屠龙刀通道 (Series -> DataFrame)
+        // =========================================================================
+        // 这里会直接命中 Series(string, DateTime[]) -> UnzipDateTimeToUs (Unroll 8)
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var s = new Series("large_dt", dateArray);
+        sw.Stop();
+        Console.WriteLine($"Series Created in: {sw.Elapsed.TotalMilliseconds} ms");
+
+        // =========================================================================
+        // 3. 验证 (使用索引器 s[i])
+        // =========================================================================
+        Assert.Equal(count, s.Length);
+        Assert.Equal(0, s.NullCount);
+
+        // 验证首尾和中间值
+        CheckValue(s, dateArray, 0);
+        CheckValue(s, dateArray, count / 2);
+        CheckValue(s, dateArray, count - 1);
+
+        // 随机抽查 1000 个点，确保没有 Off-by-one 错误
+        var rng = new Random(42);
+        for (int k = 0; k < 1000; k++)
+        {
+            int idx = rng.Next(0, count);
+            CheckValue(s, dateArray, idx);
+        }
+    }
+
+    private void CheckValue(Series s, DateTime[] source, int index)
+    {
+        // 假设 s[i] 返回的是 object (boxed DateTime)
+        // 如果你的索引器是泛型的 s.GetValue<DateTime>(i) 那更好
+        object val = s[index];
+        
+        Assert.NotNull(val);
+        Assert.IsType<DateTime>(val);
+        
+        DateTime actual = (DateTime)val!;
+        DateTime expected = source[index];
+
+        // 核心验证逻辑：
+        // 1. 我们存进去的是 Naive 的物理值，所以出来的 Kind 应该是 Unspecified (或者 UTC，取决于 Rust 返回什么)
+        //    我们不比较 Kind，只比较 Ticks 数值。
+        // 2. 我们的存储精度是微秒 (us)，1 us = 10 Ticks。
+        //    所以比较时，(Expected.Ticks / 10) 必须等于 (Actual.Ticks / 10)
+        
+        // 注意：Local 时间必须先转回逻辑上的“表盘时间”才能比较 Ticks
+        // 比如 source 是 "12:00 Local"，s[i] 出来的是 "12:00 Unspecified"
+        // 它们的 Ticks 属性值应该是一样的（忽略 Kind 位）
+        
+        long expectedTicks = expected.Ticks; // 这里包含了时间值
+        long actualTicks = actual.Ticks;
+
+        // 允许 1us 的精度损失 (虽然上面的 AddSeconds 不会产生损失)
+        long expectedUs = expectedTicks / 10;
+        long actualUs = actualTicks / 10;
+
+        if (expectedUs != actualUs)
+        {
+             // 只有出错时才生成详细信息
+             Assert.Fail($"Mismatch at index {index}. \n" +
+                         $"Expected: {expected} ({expected.Kind}, Ticks={expectedTicks})\n" +
+                         $"Actual:   {actual} ({actual.Kind}, Ticks={actualTicks})");
+        }
+    }
+    [Fact]
+    public void Test_DateOnly_SIMD_Path()
+    {
+        // 1. 准备数据：长度 2050 (故意不是 16 的倍数，测试 SIMD + Tail)
+        int count = 2050;
+        var data = new DateOnly[count];
+        var start = new DateOnly(2000, 1, 1);
+
+        for (int i = 0; i < count; i++)
+        {
+            data[i] = start.AddDays(i); // 日期递增
+        }
+
+        // 2. 创建 Series (这里会根据 CPU 自动命中 AVX-512 或 AVX2)
+        using var s = new Series("simd_dates", data);
+
+        // 3. 验证基础
+        Assert.Equal(count, s.Length);
+        Assert.Equal(0, s.NullCount);
+
+        // 4. 边界验证 (Simd Boundary Checks)
+        // 验证第 15, 16, 17 个元素 (AVX-512 边界)
+        // 验证第 7, 8, 9 个元素 (AVX2 边界)
+        CheckIndex(s, data, 7);
+        CheckIndex(s, data, 8);
+        CheckIndex(s, data, 15);
+        CheckIndex(s, data, 16);
+        
+        // 5. 尾部验证 (Tail Loop)
+        CheckIndex(s, data, count - 1);
+        CheckIndex(s, data, count - 2);
+
+        // 6. 随机抽查
+        var rng = new Random(42);
+        for (int i = 0; i < 100; i++)
+        {
+            CheckIndex(s, data, rng.Next(0, count));
+        }
+    }
+
+    // 泛型验证辅助函数
+    private void CheckIndex<T>(Series s, T[] expectedData, int index)
+    {
+        // 利用万能索引器
+        object actual = s[index];
+        Assert.Equal(expectedData[index], actual);
+    }
+    [Fact]
+    public void Test_TimeOnly_SIMD_Path()
+    {
+        // 1. 准备数据：长度 2050
+        int count = 2050;
+        var data = new TimeOnly[count];
+        var start = new TimeOnly(0, 0, 0);
+
+        for (int i = 0; i < count; i++)
+        {
+            // 每行增加 1 秒 + 100ns (Ticks=1)
+            // 这样能测试到 Ticks * 100 的乘法是否正确
+            data[i] = start.Add(TimeSpan.FromTicks(i * 10000000L + 1)); 
+        }
+
+        // 2. 创建 Series (命中 AVX-512/AVX2 Mul)
+        using var s = new Series("simd_times", data);
+
+        // 3. 验证
+        Assert.Equal(count, s.Length);
+
+        // 4. 关键点验证
+        // 验证 SIMD 块的边缘，确保没有 Off-by-one
+        CheckIndex(s, data, 0);
+        CheckIndex(s, data, 7);  // AVX-512 end of first block? (0-7)
+        CheckIndex(s, data, 8);  // Start of next?
+        CheckIndex(s, data, 15);
+        CheckIndex(s, data, 16);
+
+        // 验证尾部
+        CheckIndex(s, data, count - 1);
+    }
+    [Fact]
+    public void Test_TimeSpan_ILP_Path()
+    {
+        // 1. 准备数据：长度 2050
+        int count = 2050;
+        var data = new TimeSpan[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            // 构造 10 Ticks 的倍数，确保 Assert.Equal 能通过 (无截断)
+            // 如果不是 10 的倍数，我们需要手动计算 Expected 值
+            data[i] = TimeSpan.FromTicks(i * 10); 
+        }
+
+        // 2. 创建 Series (命中 Unroll 8 标量除法)
+        using var s = new Series("ilp_durations", data);
+
+        // 3. 验证
+        Assert.Equal(count, s.Length);
+
+        // 4. 验证 Unroll 边界
+        // Unroll 8 意味着每 8 个处理一次
+        CheckIndex(s, data, 7);
+        CheckIndex(s, data, 8);
+        CheckIndex(s, data, 15);
+        CheckIndex(s, data, 16);
+
+        // 验证尾部 (Tail Loop)
+        // 2050 % 8 = 2，意味着最后两个元素走 Tail Loop
+        CheckIndex(s, data, count - 1); // Tail
+        CheckIndex(s, data, count - 2); // Tail
+        CheckIndex(s, data, count - 3); // Main Loop End
     }
 }

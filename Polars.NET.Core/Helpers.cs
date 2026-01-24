@@ -877,6 +877,712 @@ namespace Polars.NET.Core
             ref byte target = ref Unsafe.Add(ref baseRef, bitIndex >> 3);
             target |= (byte)(1 << (bitIndex & 7));
         }
+        /// <summary>
+        /// DateTime[] -> Microseconds[] (long[])
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static unsafe long[] UnzipDateTimeToUs(DateTime[] data)
+        {
+            int len = data.Length;
+            var values = GC.AllocateUninitializedArray<long>(len);
+
+            // Constants 
+            long mask = 0x3FFFFFFFFFFFFFFF;  // Ticks Mask (no Kind bits)
+            long epoch = 621355968000000000; // 1970-01-01 Ticks
+
+            fixed (DateTime* pSrc = data)
+            fixed (long* pDst = values)
+            {
+                // DateTime in mem is ulong (private ulong _dateData)
+                long* pRawSrc = (long*)pSrc;
+                
+                int i = 0;
+                
+                // ---------------------------------------------------------
+                // Main Loop: Unroll 8
+                // ---------------------------------------------------------
+                int limit = len - 8;
+                for (; i <= limit; i += 8)
+                {
+                    pDst[i]     = ((pRawSrc[i]     & mask) - epoch) / 10;
+                    pDst[i + 1] = ((pRawSrc[i + 1] & mask) - epoch) / 10;
+                    pDst[i + 2] = ((pRawSrc[i + 2] & mask) - epoch) / 10;
+                    pDst[i + 3] = ((pRawSrc[i + 3] & mask) - epoch) / 10;
+                    pDst[i + 4] = ((pRawSrc[i + 4] & mask) - epoch) / 10;
+                    pDst[i + 5] = ((pRawSrc[i + 5] & mask) - epoch) / 10;
+                    pDst[i + 6] = ((pRawSrc[i + 6] & mask) - epoch) / 10;
+                    pDst[i + 7] = ((pRawSrc[i + 7] & mask) - epoch) / 10;
+                }
+
+                // Tail Loop
+                for (; i < len; i++)
+                {
+                    pDst[i] = ((pRawSrc[i] & mask) - epoch) / 10;
+                }
+            }
+
+            return values;
+        }
+        /// <summary>
+        /// DateTime?[] -> (Microseconds[], Validity[])
+        /// Logic：Mask Kind -> Subtract Epoch -> Divide by 10
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static unsafe (long[] values, byte[]? validity) UnzipDateTimeToUs(DateTime?[] data)
+        {
+            int len = data.Length;
+            // 1. 分配目标内存 (未初始化，极速)
+            var values = GC.AllocateUninitializedArray<long>(len);
+            int byteLen = (len + 7) >> 3;
+            
+            byte[]? validity = null;
+            // 为了避免每次循环都判断 validity != null，我们使用 lazy loading 模式
+            // 但在循环内部，我们使用局部 ref 来加速
+            ref byte validRef = ref Unsafe.NullRef<byte>();
+
+            // 常量提取到局部变量
+            long mask = 0x3FFFFFFFFFFFFFFF; // Ticks Mask
+            long epoch = 621355968000000000; // 1970-01-01 Ticks
+
+            fixed (DateTime?* pSrc = data) // DateTime? 布局: [Bool(1), Pad(7), Val(8)] (Stride 16)
+            fixed (long* pDst = values)
+            {
+                long* pRawSrc = (long*)pSrc; // 强转为 long 指针方便步进
+
+                // ---------------------------------------------------------
+                // 1. SIMD Validity Check (Fast Path)
+                // ---------------------------------------------------------
+                // 我们复用 Int64 的 SIMD 逻辑来快速生成 Validity Bitmap
+                // 因为 DateTime? 的内存布局和 long? 是一模一样的 (16 bytes)
+                // 这里只负责分配 validity 数组，不负责写数值
+                int i = 0;
+                if (Vector256.IsHardwareAccelerated && len >= 4)
+                {
+                    // 预先扫描是否有 Null，如果有，直接把 Validity 数组建好
+                    // 这一步可以跳过，直接在下面的标量循环里做，
+                    // 但为了极致性能，我们可以像 UnzipInt64 那样做。
+                    // 偷个懒：先用纯标量循环，因为这里的数学计算(除法)才是大头。
+                }
+
+                // ---------------------------------------------------------
+                // 2. Main Loop (Scalar Unroll 4)
+                // ---------------------------------------------------------
+                // 既然每次都要做除法，Unroll 可以让 CPU 流水线填得更满
+                int limit = len - 4;
+                for (; i <= limit; i += 4)
+                {
+                    // Item 0
+                    HandleSingleDate(i, pRawSrc, pDst, ref validity, ref validRef, byteLen, len, mask, epoch);
+                    // Item 1
+                    HandleSingleDate(i + 1, pRawSrc, pDst, ref validity, ref validRef, byteLen, len, mask, epoch);
+                    // Item 2
+                    HandleSingleDate(i + 2, pRawSrc, pDst, ref validity, ref validRef, byteLen, len, mask, epoch);
+                    // Item 3
+                    HandleSingleDate(i + 3, pRawSrc, pDst, ref validity, ref validRef, byteLen, len, mask, epoch);
+                }
+
+                // Tail
+                for (; i < len; i++)
+                {
+                    HandleSingleDate(i, pRawSrc, pDst, ref validity, ref validRef, byteLen, len, mask, epoch);
+                }
+            }
+
+            return (values, validity);
+        }
+
+        // 强内联的核心处理逻辑
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe void HandleSingleDate(
+            int i, 
+            long* pRawSrc, // 其实指向的是 DateTime? 数组
+            long* pDst, 
+            ref byte[]? validity, 
+            ref byte validRef, 
+            int byteLen, 
+            int totalLen,
+            long mask, 
+            long epoch)
+        {
+            // DateTime? Struct：
+            // Byte 0: HasValue (1=True, 0=False)
+            // Byte 8-15: Ticks (ulong)
+            // Stride = 16 bytes
+            
+            // Safe ptr calc：
+            byte* ptrBase = (byte*)pRawSrc + (i * 16);
+            bool hasValue = *ptrBase != 0; // first byte is bool
+
+            if (hasValue)
+            {
+                long rawTicks = *(long*)(ptrBase + 8); // Offset 8 bytes to read Ticks
+                
+                // 1. Mask Kind
+                long ticks = rawTicks & mask;
+                // 2. Subtract Epoch
+                long delta = ticks - epoch;
+                // 3. Divide 10 (Ticks -> us)
+                pDst[i] = delta / 10;
+
+                // Fill Valid bit
+                if (validity != null)
+                {
+                    // Safety check
+                    if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                    
+                    ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                    target |= (byte)(1 << (i & 7));
+                }
+            }
+            else
+            {
+                // Null
+                if (validity == null)
+                {
+                    // Init Validity
+                    validity = new byte[byteLen];
+                    validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                    
+                    // Backfill:
+                    int bytesToFill = i >> 3;
+                    if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                    int remainingBits = i & 7;
+                    if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                }
+                
+                pDst[i] = 0; 
+            }
+        }
+        /// <summary>
+        /// [ILP Optimized] DateTimeOffset[] -> UTC Microseconds (long[])
+        /// Calc (UtcTicks - Epoch) / 10
+        /// Unified to UTC。
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static long[] UnzipDateTimeOffsetToUs(DateTimeOffset[] data)
+        {
+            int len = data.Length;
+            var values = GC.AllocateUninitializedArray<long>(len);
+
+            // 1. 常量
+            long epoch = 621355968000000000; 
+
+            // 2. 指针操作
+            // DateTimeOffset 是一个结构体，包含 (DateTime DateTime, short OffsetMinutes)
+            // 直接读内存略显复杂，我们这里利用 ref 和 属性访问，JIT 会优化得很好。
+            ref DateTimeOffset srcRef = ref MemoryMarshal.GetArrayDataReference(data);
+            ref long dstRef = ref MemoryMarshal.GetArrayDataReference(values);
+
+            int i = 0;
+            // Unroll 8
+            int limit = len - 8;
+            for (; i <= limit; i += 8)
+            {
+                // UtcTicks 属性会自动处理 Offset：(Ticks - Offset)
+                // 这是一个纯数学计算，非常快
+                Unsafe.Add(ref dstRef, i)     = (Unsafe.Add(ref srcRef, i).UtcTicks     - epoch) / 10;
+                Unsafe.Add(ref dstRef, i + 1) = (Unsafe.Add(ref srcRef, i + 1).UtcTicks - epoch) / 10;
+                Unsafe.Add(ref dstRef, i + 2) = (Unsafe.Add(ref srcRef, i + 2).UtcTicks - epoch) / 10;
+                Unsafe.Add(ref dstRef, i + 3) = (Unsafe.Add(ref srcRef, i + 3).UtcTicks - epoch) / 10;
+                Unsafe.Add(ref dstRef, i + 4) = (Unsafe.Add(ref srcRef, i + 4).UtcTicks - epoch) / 10;
+                Unsafe.Add(ref dstRef, i + 5) = (Unsafe.Add(ref srcRef, i + 5).UtcTicks - epoch) / 10;
+                Unsafe.Add(ref dstRef, i + 6) = (Unsafe.Add(ref srcRef, i + 6).UtcTicks - epoch) / 10;
+                Unsafe.Add(ref dstRef, i + 7) = (Unsafe.Add(ref srcRef, i + 7).UtcTicks - epoch) / 10;
+            }
+
+            // Tail
+            for (; i < len; i++)
+            {
+                Unsafe.Add(ref dstRef, i) = (Unsafe.Add(ref srcRef, i).UtcTicks - epoch) / 10;
+            }
+
+            return values;
+        }
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static (long[] values, byte[]? validity) UnzipDateTimeOffsetToUs(DateTimeOffset?[] data)
+        {
+            int len = data.Length;
+            var values = GC.AllocateUninitializedArray<long>(len);
+            int byteLen = (len + 7) >> 3;
+            byte[]? validity = null;
+            ref byte validRef = ref Unsafe.NullRef<byte>();
+
+            long epoch = 621355968000000000;
+
+            ref DateTimeOffset? srcRef = ref MemoryMarshal.GetArrayDataReference(data);
+            ref long dstRef = ref MemoryMarshal.GetArrayDataReference(values);
+
+            for (int i = 0; i < len; i++)
+            {
+                ref DateTimeOffset? item = ref Unsafe.Add(ref srcRef, i);
+                
+                if (item.HasValue)
+                {
+                    // 核心修正：使用 UtcTicks
+                    long utcTicks = item.GetValueOrDefault().UtcTicks;
+                    Unsafe.Add(ref dstRef, i) = (utcTicks - epoch) / 10;
+
+                    if (validity != null)
+                    {
+                        if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                        ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                        target |= (byte)(1 << (i & 7));
+                    }
+                }
+                else
+                {
+                    if (validity == null)
+                    {
+                        validity = new byte[byteLen];
+                        validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                        int bytesToFill = i >> 3;
+                        if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                        int remainingBits = i & 7;
+                        if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                    }
+                    Unsafe.Add(ref dstRef, i) = 0;
+                }
+            }
+            return (values, validity);
+        }
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static unsafe int[] UnzipDateOnlyToInt32(DateOnly[] data)
+        {
+            int len = data.Length;
+            var values = GC.AllocateUninitializedArray<int>(len);
+            
+            // 1970-01-01 DayNumber
+            int epochShift = 719162; 
+
+            fixed (DateOnly* pSrc = data)
+            fixed (int* pDst = values)
+            {
+                int* pRawSrc = (int*)pSrc;
+                int i = 0;
+
+                // =============================================================
+                // AVX-512 Dual Turbo
+                // =============================================================
+                if (Vector512.IsHardwareAccelerated && len >= 16)
+                {
+                    Vector512<int> vEpoch = Vector512.Create(epochShift);
+                    int limit = len - 16;
+
+                    for (; i <= limit; i += 16)
+                    {
+                        Vector512<int> vData = Vector512.Load(pRawSrc + i);
+                        Vector512<int> vResult = Vector512.Subtract(vData, vEpoch);
+                        vResult.Store(pDst + i);
+                    }
+                }
+                // =============================================================
+                // AVX-256 Turbocharger
+                // =============================================================
+                if (Vector256.IsHardwareAccelerated && (len - i) >= 8)
+                {
+                    Vector256<int> vEpoch = Vector256.Create(epochShift);
+                    int limit = len - 8;
+
+                    for (; i <= limit; i += 8)
+                    {
+                        Vector256<int> vData = Vector256.Load(pRawSrc + i);
+                        Vector256<int> vResult = Vector256.Subtract(vData, vEpoch);
+                        vResult.Store(pDst + i);
+                    }
+                }
+
+                // Scalar Tail
+                for (; i < len; i++)
+                {
+                    pDst[i] = pRawSrc[i] - epochShift;
+                }
+            }
+            return values;
+        }
+        /// <summary>
+        /// [Scalar Extreme] DateOnly?[] -> (Int32[], Validity)
+        /// DateOnly? is 8 bytes, read it as long
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static unsafe (int[] values, byte[]? validity) UnzipDateOnlyToInt32(DateOnly?[] data)
+        {
+            int len = data.Length;
+            var values = GC.AllocateUninitializedArray<int>(len);
+            int byteLen = (len + 7) >> 3;
+            byte[]? validity = null;
+            ref byte validRef = ref Unsafe.NullRef<byte>();
+
+            // Constant Value：1970 Epoch
+            int epochShift = 719162;
+
+            fixed (DateOnly?* pSrc = data)
+            fixed (int* pDst = values)
+            {
+                // Layout: [Bool(1), Pad(3), Int(4)]
+                long* pRawSrc = (long*)pSrc;
+                
+                int i = 0;
+                int limit = len - 8;
+
+                // =========================================================
+                // Unroll 8 
+                // =========================================================
+                for (; i <= limit; i += 8)
+                {
+                    HandleDateOnlyItem(i,     pRawSrc, pDst, ref validity, ref validRef, byteLen, epochShift);
+                    HandleDateOnlyItem(i + 1, pRawSrc, pDst, ref validity, ref validRef, byteLen, epochShift);
+                    HandleDateOnlyItem(i + 2, pRawSrc, pDst, ref validity, ref validRef, byteLen, epochShift);
+                    HandleDateOnlyItem(i + 3, pRawSrc, pDst, ref validity, ref validRef, byteLen, epochShift);
+                    HandleDateOnlyItem(i + 4, pRawSrc, pDst, ref validity, ref validRef, byteLen, epochShift);
+                    HandleDateOnlyItem(i + 5, pRawSrc, pDst, ref validity, ref validRef, byteLen, epochShift);
+                    HandleDateOnlyItem(i + 6, pRawSrc, pDst, ref validity, ref validRef, byteLen, epochShift);
+                    HandleDateOnlyItem(i + 7, pRawSrc, pDst, ref validity, ref validRef, byteLen, epochShift);
+                }
+
+                // Tail
+                for (; i < len; i++)
+                {
+                    HandleDateOnlyItem(i, pRawSrc, pDst, ref validity, ref validRef, byteLen, epochShift);
+                }
+            }
+
+            return (values, validity);
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe void HandleDateOnlyItem(
+            int i,
+            long* pRawSrc,
+            int* pDst,
+            ref byte[]? validity,
+            ref byte validRef,
+            int byteLen,
+            int epochShift)
+        {
+            // Read 8 bytes
+            long raw = pRawSrc[i];
+
+            // Check lower 8 bytes
+            if ((byte)raw != 0)
+            {
+                // Extract upper 32 btis Value 
+                int dayNumber = (int)(raw >> 32);
+                
+                // Sub epoch
+                pDst[i] = dayNumber - epochShift;
+
+                // Maintain Validity
+                if (validity != null)
+                {
+                    if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                    ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                    target |= (byte)(1 << (i & 7));
+                }
+            }
+            else
+            {
+                // Null handle
+                if (validity == null)
+                {
+                    // Init Validity
+                    validity = new byte[byteLen];
+                    validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                    
+                    // Backfill
+                    int bytesToFill = i >> 3;
+                    if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                    int remainingBits = i & 7;
+                    if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                }
+                
+                pDst[i] = 0; // Default
+            }
+        }
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static unsafe long[] UnzipTimeOnlyToNs(TimeOnly[] data)
+        {
+            int len = data.Length;
+            var values = GC.AllocateUninitializedArray<long>(len);
+            
+            long multiplier = 100;
+
+            fixed (TimeOnly* pSrc = data)
+            fixed (long* pDst = values)
+            {
+                long* pRawSrc = (long*)pSrc;
+                int i = 0;
+
+                // =============================================================
+                // AVX-512 Dual Turbo
+                // =============================================================
+                if (Vector512.IsHardwareAccelerated && len >= 8)
+                {
+                    Vector512<long> vMul = Vector512.Create(multiplier);
+                    int limit = len - 8;
+
+                    for (; i <= limit; i += 8)
+                    {
+                        Vector512<long> vData = Vector512.Load(pRawSrc + i);
+                        // .NET 8 JIT will generate vpmullq (AVX512DQ)
+                        Vector512<long> vResult = Vector512.Multiply(vData, vMul);
+                        vResult.Store(pDst + i);
+                    }
+                }
+
+                // =============================================================
+                // AVX-256 Turbocharger
+                // =============================================================
+                if (Vector256.IsHardwareAccelerated && (len - i) >= 4)
+                {
+                    Vector256<long> vMul = Vector256.Create(multiplier);
+                    int limit = len - 4;
+
+                    for (; i <= limit; i += 4)
+                    {
+                        Vector256<long> vData = Vector256.Load(pRawSrc + i);
+                        Vector256<long> vResult = Vector256.Multiply(vData, vMul);
+                        vResult.Store(pDst + i);
+                    }
+                }
+
+                // Scalar Tail
+                for (; i < len; i++)
+                {
+                    pDst[i] = pRawSrc[i] * multiplier;
+                }
+            }
+            return values;
+        }
+        /// <summary>
+        /// [Scalar Extreme] TimeOnly?[] -> (Int64[], Validity)
+        /// Layout: 16 Bytes [Bool(1), Pad(7), Ticks(8)]
+        /// Logic: Ticks * 100 -> Nanoseconds
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static unsafe (long[] values, byte[]? validity) UnzipTimeOnlyToNs(TimeOnly?[] data)
+        {
+            int len = data.Length;
+            var values = GC.AllocateUninitializedArray<long>(len);
+            int byteLen = (len + 7) >> 3;
+            byte[]? validity = null;
+            ref byte validRef = ref Unsafe.NullRef<byte>();
+
+            // 常量：Ticks (100ns) -> ns
+            long multiplier = 100;
+
+            fixed (TimeOnly?* pSrc = data)
+            fixed (long* pDst = values)
+            {
+                // 强转为 long*，方便按 8 字节步进
+                // 每个 Item 占 16 字节，即 2 个 long
+                // Offset 0: Header (Bool)
+                // Offset 1: Value (Ticks)
+                long* pRawSrc = (long*)pSrc;
+                
+                int i = 0;
+                int limit = len - 4;
+
+                // =========================================================
+                // Unroll 4 (每次处理 64 字节 = 1 Cache Line)
+                // =========================================================
+                for (; i <= limit; i += 4)
+                {
+                    HandleTimeOnlyItem(i,     pRawSrc, pDst, ref validity, ref validRef, byteLen, multiplier);
+                    HandleTimeOnlyItem(i + 1, pRawSrc, pDst, ref validity, ref validRef, byteLen, multiplier);
+                    HandleTimeOnlyItem(i + 2, pRawSrc, pDst, ref validity, ref validRef, byteLen, multiplier);
+                    HandleTimeOnlyItem(i + 3, pRawSrc, pDst, ref validity, ref validRef, byteLen, multiplier);
+                }
+
+                // Tail
+                for (; i < len; i++)
+                {
+                    HandleTimeOnlyItem(i, pRawSrc, pDst, ref validity, ref validRef, byteLen, multiplier);
+                }
+            }
+
+            return (values, validity);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe void HandleTimeOnlyItem(
+            int i,
+            long* pRawSrc, 
+            long* pDst,
+            ref byte[]? validity,
+            ref byte validRef,
+            int byteLen,
+            long multiplier)
+        {
+            // 计算当前元素的指针位置
+            // i * 2 是因为 long* 指针每次 +1 移动 8 字节，而 Item 是 16 字节
+            long* pItem = pRawSrc + (i * 2);
+            
+            // 读取 Header (Bool + Padding)
+            // 只要低 8 位不为 0，就是 HasValue
+            byte hasValue = *(byte*)pItem; 
+
+            if (hasValue != 0)
+            {
+                // 读取 Value (偏移 8 字节，即 pItem + 1)
+                long ticks = *(pItem + 1);
+                
+                // 数学变换: Ticks * 100 = ns
+                pDst[i] = ticks * multiplier;
+
+                // 维护 Validity
+                if (validity != null)
+                {
+                    if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                    ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                    target |= (byte)(1 << (i & 7));
+                }
+            }
+            else
+            {
+                // Null 处理 (Lazy Init Validity)
+                if (validity == null)
+                {
+                    validity = new byte[byteLen];
+                    validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                    
+                    // Backfill valid bits (0..i-1)
+                    int bytesToFill = i >> 3;
+                    if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                    int remainingBits = i & 7;
+                    if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                }
+                
+                pDst[i] = 0; 
+            }
+        }
+        /// <summary>
+        /// [ILP Optimized] TimeSpan[] -> Int64[] (Microseconds)
+        /// Logic: Ticks / 10
+        /// Use Unroll 8 to hide integer division latency.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static unsafe long[] UnzipTimeSpanToUs(TimeSpan[] data)
+        {
+            int len = data.Length;
+            var values = GC.AllocateUninitializedArray<long>(len);
+
+            fixed (TimeSpan* pSrc = data)
+            fixed (long* pDst = values)
+            {
+                // TimeSpan is long (Ticks)
+                long* pRawSrc = (long*)pSrc;
+                
+                int i = 0;
+                int limit = len - 8;
+
+                // =========================================================
+                // Unroll 8 (ILP)
+                // =========================================================
+                for (; i <= limit; i += 8)
+                {
+                    pDst[i]     = pRawSrc[i]     / 10;
+                    pDst[i + 1] = pRawSrc[i + 1] / 10;
+                    pDst[i + 2] = pRawSrc[i + 2] / 10;
+                    pDst[i + 3] = pRawSrc[i + 3] / 10;
+                    pDst[i + 4] = pRawSrc[i + 4] / 10;
+                    pDst[i + 5] = pRawSrc[i + 5] / 10;
+                    pDst[i + 6] = pRawSrc[i + 6] / 10;
+                    pDst[i + 7] = pRawSrc[i + 7] / 10;
+                }
+
+                // Tail
+                for (; i < len; i++)
+                {
+                    pDst[i] = pRawSrc[i] / 10;
+                }
+            }
+            return values;
+        }
+        /// <summary>
+        /// [Scalar Extreme] TimeSpan?[] -> (Int64[], Validity)
+        /// Layout: 16 Bytes [Bool(1), Pad(7), Ticks(8)]
+        /// Logic: Ticks / 10 -> Microseconds
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public static unsafe (long[] values, byte[]? validity) UnzipTimeSpanToUs(TimeSpan?[] data)
+        {
+            int len = data.Length;
+            var values = GC.AllocateUninitializedArray<long>(len);
+            int byteLen = (len + 7) >> 3;
+            byte[]? validity = null;
+            ref byte validRef = ref Unsafe.NullRef<byte>();
+
+            fixed (TimeSpan?* pSrc = data)
+            fixed (long* pDst = values)
+            {
+                // convert to 2 long*  (16 bytes)
+                long* pRawSrc = (long*)pSrc;
+                
+                int i = 0;
+                int limit = len - 4; // Unroll 4 (Cache Line friendly for 16-byte items)
+
+                for (; i <= limit; i += 4)
+                {
+                    HandleTimeSpanItem(i,     pRawSrc, pDst, ref validity, ref validRef, byteLen);
+                    HandleTimeSpanItem(i + 1, pRawSrc, pDst, ref validity, ref validRef, byteLen);
+                    HandleTimeSpanItem(i + 2, pRawSrc, pDst, ref validity, ref validRef, byteLen);
+                    HandleTimeSpanItem(i + 3, pRawSrc, pDst, ref validity, ref validRef, byteLen);
+                }
+
+                for (; i < len; i++)
+                {
+                    HandleTimeSpanItem(i, pRawSrc, pDst, ref validity, ref validRef, byteLen);
+                }
+            }
+
+            return (values, validity);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe void HandleTimeSpanItem(
+            int i,
+            long* pRawSrc,
+            long* pDst,
+            ref byte[]? validity,
+            ref byte validRef,
+            int byteLen)
+        {
+            // 计算当前 Item 地址
+            long* pItem = pRawSrc + (i * 2);
+            
+            // Header (Bool)
+            byte hasValue = *(byte*)pItem; 
+
+            if (hasValue != 0)
+            {
+                // Value (Offset 8 bytes)
+                long ticks = *(pItem + 1);
+                
+                // Logic: Ticks / 10
+                pDst[i] = ticks / 10;
+
+                // Validity
+                if (validity != null)
+                {
+                    if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                    ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                    target |= (byte)(1 << (i & 7));
+                }
+            }
+            else
+            {
+                // Null Handling
+                if (validity == null)
+                {
+                    validity = new byte[byteLen];
+                    validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                    int bytesToFill = i >> 3;
+                    if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                    int remainingBits = i & 7;
+                    if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                }
+                pDst[i] = 0; 
+            }
+        }
     }
     public static class BoolPacker
     {
@@ -1121,24 +1827,22 @@ namespace Polars.NET.Core
     public static unsafe class StringPacker
     {
         /// <summary>
-        /// 将 C# string[] 拍扁为 Arrow LargeUtf8 格式 (Values + Offsets + Validity)。
-        /// 这是传输字符串到 Polars 的最快方式。
+        /// Convert C# string[] To Arrow LargeUtf8 (Values + Offsets + Validity)。
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static (byte[] values, long[] offsets, byte[]? validity) Pack(string?[] data)
         {
             int len = data.Length;
             
-            // 1. Offsets 数组 (长度是 len + 1)
-            // Arrow 规范：Offsets[i] 是第 i 个字符串的起始，Offsets[len] 是总长度
+            // Offsets Array
+            // Arrow Protocol：Offsets[i] is the start for the i index string, [len] is total length
             var offsets = new long[len + 1];
 
-            // 2. 预计算总大小 & 填充 Offsets
-            // 虽然遍历了两次，但这避免了巨大的 List<byte> 扩容开销，绝对值得
+            // Pre calculate total size and fill offsetes
             long currentOffset = 0;
             bool hasNull = false;
 
-            // Pass 1: 计算长度 & Offsets
+            // Pass 1: Calculate Length & Offsets
             fixed (long* pOffsets = offsets)
             {
                 for (int i = 0; i < len; i++)
@@ -1147,7 +1851,6 @@ namespace Polars.NET.Core
                     string? s = data[i];
                     if (s != null)
                     {
-                        // .NET 8 极速 API
                         currentOffset += Encoding.UTF8.GetByteCount(s);
                     }
                     else
@@ -1155,33 +1858,26 @@ namespace Polars.NET.Core
                         hasNull = true;
                     }
                 }
-                pOffsets[len] = currentOffset; // 最后一个是总长度
+                pOffsets[len] = currentOffset; 
             }
 
-            // 3. 分配 Values
+            // Allocate Values
             var values = GC.AllocateUninitializedArray<byte>((int)currentOffset);
 
-            // 4. Validity Bitmap (如果没有 Null，就是 null)
+            // 4. Validity Bitmap 
             byte[]? validity = null;
             if (hasNull)
             {
-                // 这里复用你的 BoolPacker 逻辑，或者简单写一个
-                // 既然我们要极致，这里手写一个简单的 loop 填充
                 int validLen = (len + 7) >> 3;
                 validity = new byte[validLen];
-                // 默认全 0? 不，通常默认全 0 或全 1 取决于怎么写。
-                // Arrow Validity: 1 = Valid, 0 = Null.
-                // 我们先初始化为 0 (全 Null)，然后把 Valid 的置 1？
-                // 或者初始化为 0xFF (全 Valid)，把 Null 的置 0？后者更快。
                 Array.Fill(validity, (byte)0xFF);
                 
-                // 处理尾部剩余位，防止脏数据 (可选，Rust 端通常会忽略)
             }
 
-            // Pass 2: 转码填充 Values & 设置 Validity
-            fixed (long* pOffsets = offsets) // 其实不需要再读 offsets，只需要长度
+            // Pass 2: Convert Values & set Validity
+            fixed (long* pOffsets = offsets) 
             fixed (byte* pValues = values)
-            fixed (byte* pValid = validity) // 如果 null，这里是 null 指针
+            fixed (byte* pValid = validity) 
             {
                 byte* pCurrentVal = pValues;
                 
@@ -1190,7 +1886,7 @@ namespace Polars.NET.Core
                     string? s = data[i];
                     if (s != null)
                     {
-                        // 极速转码：直接写内存
+                        // Write memory directly
                         fixed (char* pChar = s)
                         {
                             // GetBytes(char*, charCount, byte*, byteCount)
@@ -1200,8 +1896,8 @@ namespace Polars.NET.Core
                     }
                     else
                     {
-                        // 设置 Validity 为 0 (Null)
-                        // 位操作: byteIndex = i / 8, bitIndex = i % 8
+                        // Set Validity as 0 (Null)
+                        // Bitwise Ops: byteIndex = i / 8, bitIndex = i % 8
                         // target &= ~(1 << bit)
                         if (pValid != null)
                         {
@@ -1214,4 +1910,5 @@ namespace Polars.NET.Core
             return (values, offsets, validity);
         }
     }
+    
 }

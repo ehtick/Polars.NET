@@ -184,7 +184,7 @@ public partial class Series : IDisposable
         if (underlying == typeof(decimal))
             return (T?)(object?)PolarsWrapper.SeriesGetDecimal(Handle, index);
 
-        // // 5. Temporal (Time)
+        // 5. Temporal (Time)
         if (underlying == typeof(DateOnly))
             return (T?)(object?)PolarsWrapper.SeriesGetDate(Handle, index);
             
@@ -837,74 +837,68 @@ public partial class Series : IDisposable
     {
         Handle = PolarsWrapper.SeriesNewStringSimd(name, data);
     }
+    /// <summary>
+    /// Create a DateTime Series (High Performance).
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="timeZone">
+    /// Optional time zone string (e.g. "Asia/Shanghai", "UTC"). 
+    /// If null, creates a "Naive" datetime (no time zone).
+    /// </param>
+    public Series(string name, DateTime[] data, string? timeZone = null)
+    {
+        long[] values = ArrayHelper.UnzipDateTimeToUs(data);
 
-    // ------------------------------------------
-    // 🐢 2. Universal Path (Complex Types)
-    // ------------------------------------------
+        Handle = PolarsWrapper.SeriesNewDatetime(name, values, null, timeZone);
+    }
+    /// <summary>
+    /// Create a nullable DateTime Series (High Performance).
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    /// <param name="timeZone">
+    /// Optional time zone string (e.g. "Asia/Shanghai", "UTC"). 
+    /// If null, creates a "Naive" datetime (no time zone).
+    /// </param>
+    public Series(string name, DateTime?[] data, string? timeZone = null)
+    {
+        // DateTime -> Microseconds (long)
+        var (values, validity) = ArrayHelper.UnzipDateTimeToUs(data);
 
-    /// <summary>
-    /// Create a Series from an array of DateTime values.
+        Handle = PolarsWrapper.SeriesNewDatetime(name, values, validity, timeZone);
+    }
+        /// <summary>
+    /// Create a DateTime Series (High Performance).
     /// </summary>
     /// <param name="name"></param>
     /// <param name="data"></param>
-    public Series(string name, DateTime[] data)
+    /// <param name="timeZone">
+    /// Optional time zone string (e.g. "Asia/Shanghai", "UTC"). 
+    /// If null, creates a "Naive" datetime (no time zone).
+    /// </param>
+    public Series(string name, DateTimeOffset[] data, string? timeZone = null)
     {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
-    }
-    /// <summary>
-    /// Create a Series from an array of Nullable DateTime values.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, DateTime?[] data)
-    {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
-    }
-    /// <summary>
-    /// Create a Series from an array of DateTime with timezone offsets values.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, DateTimeOffset[] data)
-    {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
-    }
+        long[] values = ArrayHelper.UnzipDateTimeOffsetToUs(data);
 
+        Handle = PolarsWrapper.SeriesNewDatetime(name, values, null, timeZone);
+    }
     /// <summary>
-    /// Create a Series from an array of Nullable DateTime with timezone offsets values.
+    /// Create a nullable DateTime Series (High Performance).
     /// </summary>
     /// <param name="name"></param>
     /// <param name="data"></param>
-    public Series(string name, DateTimeOffset?[] data)
+    /// <param name="timeZone">
+    /// Optional time zone string (e.g. "Asia/Shanghai", "UTC"). 
+    /// If null, creates a "Naive" datetime (no time zone).
+    /// </param>
+    public Series(string name, DateTimeOffset?[] data, string? timeZone = null)
     {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
-    }
-    
-    /// <summary>
-    /// Create a Series from an array of TimeSpan values.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, TimeSpan[] data)
-    {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
-    }
-    /// <summary>
-    /// Create a Series from an array of Nullable TimeSpan values.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, TimeSpan?[] data)
-    {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
-    }
+        // DateTime -> Microseconds (long)
+        var (values, validity) = ArrayHelper.UnzipDateTimeOffsetToUs(data);
 
+        Handle = PolarsWrapper.SeriesNewDatetime(name, values, validity, timeZone);
+    }
     /// <summary>
     /// Create a Series from an array of DateOnly values.
     /// </summary>
@@ -912,8 +906,8 @@ public partial class Series : IDisposable
     /// <param name="data"></param>
     public Series(string name, DateOnly[] data)
     {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
+        var values = ArrayHelper.UnzipDateOnlyToInt32(data);
+        Handle = PolarsWrapper.SeriesNewDate(name, values, null);
     }
     /// <summary>
     /// Create a Series from an array of Nullable DateOnly values.
@@ -922,30 +916,48 @@ public partial class Series : IDisposable
     /// <param name="data"></param>
     public Series(string name, DateOnly?[] data)
     {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
+        var (values, validity) = ArrayHelper.UnzipDateOnlyToInt32(data);
+        Handle = PolarsWrapper.SeriesNewDate(name, values, validity);
     }
-
     /// <summary>
-    /// Create a Series from an array of TimeOnly values.
+    /// Create a Series from an array of TimeOnly values (Nanoseconds).
     /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
     public Series(string name, TimeOnly[] data)
     {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
+        var values = ArrayHelper.UnzipTimeOnlyToNs(data);
+        Handle = PolarsWrapper.SeriesNewTime(name, values, null);
     }
     /// <summary>
     /// Create a Series from an array of Nullable TimeOnly values.
     /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
     public Series(string name, TimeOnly?[] data)
     {
-        using var arrowArray = ArrowConverter.Build(data);
-        Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
+        // 极致 Scalar Unroll (Mul + Validity)
+        var (values, validity) = ArrayHelper.UnzipTimeOnlyToNs(data);
+        Handle = PolarsWrapper.SeriesNewTime(name, values, validity);
     }
+    /// <summary>
+    /// Create a Series from an array of TimeSpan values (Microseconds).
+    /// </summary>
+    public Series(string name, TimeSpan[] data)
+    {
+        var values = ArrayHelper.UnzipTimeSpanToUs(data);
+        Handle = PolarsWrapper.SeriesNewDuration(name, values, null);
+    }
+
+    /// <summary>
+    /// Create a Series from an array of Nullable TimeSpan values.
+    /// </summary>
+    public Series(string name, TimeSpan?[] data)
+    {
+        var (values, validity) = ArrayHelper.UnzipTimeSpanToUs(data);
+        Handle = PolarsWrapper.SeriesNewDuration(name, values, validity);
+    }
+
+    // ------------------------------------------
+    // 🐢 2. Universal Path (Complex Types)
+    // ------------------------------------------
+    
     /// <summary>
     /// Create a Series from an array of decimals.
     /// </summary>
