@@ -1527,7 +1527,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             case DateTime[] v:
                 series = new Series(name, v);
                 return true;
-
             case DateTime?[] v:
                 series = new Series(name, v);
                 return true;
@@ -1536,7 +1535,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             case DateTimeOffset[] v:
                 series = new Series(name, v);
                 return true;
-
             case DateTimeOffset?[] v:
                 series = new Series(name, v);
                 return true;
@@ -1545,7 +1543,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             case DateOnly[] v:
                 series = new Series(name, v);
                 return true;
-
             case DateOnly?[] v:
                 series = new Series(name, v);
                 return true;
@@ -1554,7 +1551,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             case TimeOnly[] v:
                 series = new Series(name, v);
                 return true;
-
             case TimeOnly?[] v:
                 series = new Series(name, v);
                 return true;
@@ -1563,7 +1559,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             case TimeSpan[] v:
                 series = new Series(name, v);
                 return true;
-
             case TimeSpan?[] v:
                 series = new Series(name, v);
                 return true;
@@ -1572,8 +1567,45 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             case decimal[] v:
                 series = new Series(name, v);
                 return true;
-
             case decimal?[] v:
+                series = new Series(name, v);
+                return true;
+
+            // --- Fixed Size List with non-null primitive inner type(Array) ---
+            case sbyte[,] v:
+                series = new Series(name, v);
+                return true;
+            case byte[,] v:
+                series = new Series(name, v);
+                return true;
+            case short[,] v:
+                series = new Series(name, v);
+                return true;
+            case ushort[,] v:
+                series = new Series(name, v);
+                return true;
+            case int[,] v:
+                series = new Series(name, v);
+                return true;
+            case uint[,] v:
+                series = new Series(name, v);
+                return true;
+            case long[,] v:
+                series = new Series(name, v);
+                return true;
+            case ulong[,] v:
+                series = new Series(name, v);
+                return true;
+            case Int128[,] v:
+                series = new Series(name, v);
+                return true;
+            case UInt128[,] v:
+                series = new Series(name, v);
+                return true;
+            case float[,] v:
+                series = new Series(name, v);
+                return true;
+            case double[,] v:
                 series = new Series(name, v);
                 return true;
             // --- Default ---

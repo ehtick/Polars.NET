@@ -2,6 +2,7 @@ using System.Data;
 using System.Reflection;
 using Apache.Arrow;
 using Apache.Arrow.Types;
+using Microsoft.FSharp.Core;
 
 namespace Polars.NET.Core.Arrow;
 
@@ -41,17 +42,24 @@ public static class ArrowTypeResolver
     public static Field ResolveField(string name, Type type)
     {
         // F# Option type here
-        bool isFSharpOption = FSharpHelper.IsFSharpOption(type);
+        bool isFSharpOption = type.IsGenericType && type.GetGenericTypeDefinition() == typeof(FSharpOption<>);
         Type coreType;
         if (isFSharpOption)
-            coreType = FSharpHelper.GetUnderlyingType(type);
+        {
+            // Unwrap FSharpOption<T> -> T
+            coreType = type.GetGenericArguments()[0];
+        }
         else
+        {
+            // Unwrap Nullable<T> -> T
             coreType = Nullable.GetUnderlyingType(type) ?? type;
+        }
 
-        // Nullable
+        // Determine Nullability
+        // Reference types, Nullables, and F# Options are always nullable in Arrow Schema
         bool isNullable = !type.IsValueType || Nullable.GetUnderlyingType(type) != null || isFSharpOption;
 
-        // Get Arrow Type
+        // Get Arrow Type Recursively
         IArrowType arrowType = GetArrowTypeRecursively(coreType);
 
         return new Field(name, arrowType, isNullable);
@@ -86,8 +94,8 @@ public static class ArrowTypeResolver
             Type elementType = GetEnumerableElementType(type)!;
             if (elementType != null)
             {
+                // Recursive resolution for inner item (handles List<Option<int>> etc.)
                 var innerField = ResolveField("item", elementType);
-                
                 return new LargeListType(innerField);
             }
         }

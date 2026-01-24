@@ -3,6 +3,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using Apache.Arrow;
 using Apache.Arrow.Types;
+using Microsoft.FSharp.Core;
 
 namespace Polars.NET.Core.Arrow;
 
@@ -12,6 +13,14 @@ public static class ArrowConverter
     private static readonly MethodInfo _buildMethodDef = typeof(ArrowConverter)
         .GetMethod("Build", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("ArrowConverter.Build<T> method not found.");
+    // Cache F# Option Handler
+    private static readonly MethodInfo _buildFSharpValOptMethod = typeof(ArrowConverter)
+        .GetMethod(nameof(BuildFSharpOptionStruct), BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("BuildFSharpOptionStruct method not found.");
+
+    private static readonly MethodInfo _buildFSharpRefOptMethod = typeof(ArrowConverter)
+        .GetMethod(nameof(BuildFSharpOptionClass), BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("BuildFSharpOptionClass method not found.");
     private static class SchemaCache<T>
     {
         public static readonly Schema Default = GetSchemaFromType<T>();
@@ -38,7 +47,7 @@ public static class ArrowConverter
         Type? elemType = ArrowTypeResolver.GetEnumerableElementType(colValue.GetType());
         
         if (elemType == null) 
-            return null; // 或者抛错，看策略
+            return null; 
 
         // Build Generic Method
         var buildMethod = _buildMethodDef.MakeGenericMethod(elemType);
@@ -95,19 +104,25 @@ public static class ArrowConverter
     {
         var type = typeof(T);
         // 0. Unwrap F# Option type
-        if (FSharpHelper.IsFSharpOption(type))
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(FSharpOption<>))
         {
-            var innerType = FSharpHelper.GetUnderlyingType(type);
-            
-            // Get the unwrapper for Option<U>
-            var unwrapper = FSharpHelper.CreateOptionUnwrapper(type);
+            var innerType = type.GetGenericArguments()[0];
 
-            // Call HandleFSharpOption<InnerType> dynamically
-            var method = typeof(ArrowConverter)
-                .GetMethod(nameof(HandleFSharpOption), BindingFlags.NonPublic | BindingFlags.Static)!
-                .MakeGenericMethod(innerType);
-
-            return (IArrowArray)method.Invoke(null,[data, unwrapper])!;
+            // [Modified] Split dispatch logic
+            if (innerType.IsValueType)
+            {
+                // Call BuildFSharpOptionStruct<InnerType>
+                return (IArrowArray)_buildFSharpValOptMethod
+                    .MakeGenericMethod(innerType)
+                    .Invoke(null, [data])!;
+            }
+            else
+            {
+                // Call BuildFSharpOptionClass<InnerType>
+                return (IArrowArray)_buildFSharpRefOptMethod
+                    .MakeGenericMethod(innerType)
+                    .Invoke(null, [data])!;
+            }
         }
         var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
         Type checkType = underlyingType ?? type;
@@ -177,6 +192,40 @@ public static class ArrowConverter
     private static bool IsKeyValuePair(Type t)
     {
         return t.IsGenericType && t.GetGenericTypeDefinition() == typeof(KeyValuePair<,>);
+    }
+
+    // =================================================================
+    // F# Direct Support (Split for Generic Constraints)
+    // =================================================================
+    
+    /// <summary>
+    /// Handler for Value Types: FSharpOption<int> -> int?
+    /// Constraint: T must be struct
+    /// </summary>
+    private static IArrowArray BuildFSharpOptionStruct<T>(IEnumerable<FSharpOption<T>> data) 
+        where T : struct
+    {
+        // Since T is struct, T? is technically Nullable<T>
+        // FSharpOption<T> is a class, so 'opt' can be null (None)
+        
+        var nullableSeq = data.Select(opt => 
+            opt == null ? (T?)null : opt.Value
+        );
+        return Build(nullableSeq);
+    }
+
+    /// <summary>
+    /// Handler for Reference Types: FSharpOption<string> -> string
+    /// Constraint: T must be class
+    /// </summary>
+    private static IArrowArray BuildFSharpOptionClass<T>(IEnumerable<FSharpOption<T>> data) 
+        where T : class
+    {
+        // T is class, so we just return T (which can be null)
+        // FSharpOption<T> is a class
+        
+        var refSeq = data.Select(opt => opt?.Value);
+        return Build(refSeq!);
     }
 
     /// <summary>
@@ -623,75 +672,45 @@ public static class ArrowConverter
         /// </summary>
         private static IArrowArray ProjectAndBuild<TParent>(IList<TParent> data, Type propType, Func<TParent, object?> getter)
         {
-            bool isFSharpOption = FSharpHelper.IsFSharpOption(propType);
-            
-            Type cleanType = propType;
+            // Check for F# Option via Generic Definition
+            bool isFSharpOption = propType.IsGenericType && propType.GetGenericTypeDefinition() == typeof(FSharpOption<>);
 
             if (isFSharpOption)
             {
-                cleanType = FSharpHelper.GetUnderlyingType(propType);
+                // TProp is FSharpOption<Inner>
+                // We call BuildColumn<TParent, FSharpOption<Inner>>
+                // ArrowConverter.Build<FSharpOption<Inner>> will handle the unwrapping automatically.
+                var method = typeof(StructBuilderHelper)
+                    .GetMethod(nameof(BuildColumn), BindingFlags.NonPublic | BindingFlags.Static)!
+                    .MakeGenericMethod(typeof(TParent), propType);
+                return (IArrowArray)method.Invoke(null, [data, getter])!;
             }
             else
             {
-                cleanType = Nullable.GetUnderlyingType(propType) ?? propType;
+                Type cleanType = Nullable.GetUnderlyingType(propType) ?? propType;
+                Type targetType = cleanType.IsValueType ? typeof(Nullable<>).MakeGenericType(cleanType) : cleanType;
+
+                var method = typeof(StructBuilderHelper)
+                    .GetMethod(nameof(BuildColumn), BindingFlags.NonPublic | BindingFlags.Static)!
+                    .MakeGenericMethod(typeof(TParent), targetType);
+                return (IArrowArray)method.Invoke(null, [data, getter])!;
             }
-
-            // For value type (int, double)，let it be Nullable (int?, double?)
-            // For ref type (string, List), keep it as is
-            Type targetType = cleanType;
-            if (cleanType.IsValueType)
-            {
-                targetType = typeof(Nullable<>).MakeGenericType(cleanType);
-            }
-
-            var method = typeof(StructBuilderHelper)
-                .GetMethod(nameof(BuildColumn), BindingFlags.NonPublic | BindingFlags.Static)!
-                .MakeGenericMethod(typeof(TParent), targetType);
-
-            return (IArrowArray)method.Invoke(null,new object[] {data, getter, isFSharpOption})!;
         }
 
         /// <summary>
         /// Data projection and build method
         /// </summary>
-        private static IArrowArray BuildColumn<TParent, TProp>(
-            IList<TParent> data, 
-            Func<TParent, object?> getter, 
-            bool isOption)
+        private static IArrowArray BuildColumn<TParent, TProp>(IList<TParent> data, Func<TParent, object?> getter)
         {
-            Func<object, object?>? unwrapper = null;
-            if (isOption)
-            {
-                // Get TProp Underlying type (e.g. int?, double?)
-                var innerType = Nullable.GetUnderlyingType(typeof(TProp)) ?? typeof(TProp);
-                
-                // Build FSharpOption<Inner> Type
-                var optionType = FSharpHelper.MakeFSharpOptionType(innerType);
-                
-                unwrapper = FSharpHelper.CreateOptionUnwrapper(optionType);
-            }
-            // Projection
-            // Convert List<Parent> to IEnumerable<Prop>
-            var columnData = data.Select(item => 
+            var columnData = data.Select(item =>
             {
                 if (item == null) return default;
-
                 var rawVal = getter(item);
-                
                 if (rawVal == null) return default;
-                if (isOption)
-                {
-                    var unwrapped = unwrapper!(rawVal);
-                    if (unwrapped == null) return default;
-                    return (TProp)unwrapped;
-                }
                 return (TProp)rawVal;
             });
-            // Call common converter
-            // Auto routing:
-            // - TProp is int -> BuildInt32
-            // - TProp is NestedItem -> BuildStructArray (Recurring)
-            // - TProp is List<double> -> BuildListArray
+
+            // ArrowConverter.Build<T> now natively handles FSharpOption<U>
             return Build(columnData);
         }
 

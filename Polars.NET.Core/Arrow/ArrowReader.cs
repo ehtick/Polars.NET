@@ -3,6 +3,8 @@ using System.Reflection;
 using Apache.Arrow;
 using Apache.Arrow.Arrays;
 using Apache.Arrow.Types;
+using Microsoft.FSharp.Collections;
+using Microsoft.FSharp.Core;
 
 namespace Polars.NET.Core.Arrow
 {
@@ -73,29 +75,39 @@ namespace Polars.NET.Core.Arrow
         // =============================================================
         public static Func<int, object?> CreateAccessor(IArrowArray array, Type targetType)
         {
-            // 1. Dynamic Fallback (for object)
             if (targetType == typeof(object))
             {
                 targetType = ArrowTypeResolver.GetNetTypeFromArrowType(array.Data.DataType);
             }
 
-            // 2. Handle F# Option Wrapper
-            bool isFSharpOption = FSharpHelper.IsFSharpOption(targetType);
-            Type underlyingType = isFSharpOption 
-                ? FSharpHelper.GetUnderlyingType(targetType) 
-                : (Nullable.GetUnderlyingType(targetType) ?? targetType);
-
-            // 3. Create Core Accessor
-            Func<int, object?> accessor = CreateCoreAccessor(array, underlyingType);
-
-            // 4. Wrap if F# Option
-            if (isFSharpOption)
+            // Direct check for FSharpOption<U>
+            if (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == typeof(FSharpOption<>))
             {
-                var wrapper = FSharpHelper.CreateOptionWrapper(targetType);
-                return idx => wrapper(accessor(idx));
+                var innerType = targetType.GetGenericArguments()[0];
+                
+                // Use Generic helper to construct specialized accessor
+                var method = typeof(ArrowReader)
+                    .GetMethod(nameof(CreateFSharpOptionAccessor), BindingFlags.NonPublic | BindingFlags.Static)!
+                    .MakeGenericMethod(innerType);
+                
+                return (Func<int, object?>)method.Invoke(null, [array])!;
             }
 
-            return accessor;
+            Type underlyingType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+            return CreateCoreAccessor(array, underlyingType);
+        }
+        // Specialized F# Option Accessor Builder
+        private static Func<int, object?> CreateFSharpOptionAccessor<U>(IArrowArray array)
+        {
+            // 1. Create inner accessor for U
+            var innerAccessor = CreateCoreAccessor(array, typeof(U));
+
+            // 2. Wrap result in FSharpOption<U>
+            return idx =>
+            {
+                var val = innerAccessor(idx);
+                return val == null ? FSharpOption<U>.None : FSharpOption<U>.Some((U)val);
+            };
         }
         private static Func<int, object?> CreateCoreAccessor(IArrowArray array, Type type)
         {
@@ -270,7 +282,7 @@ namespace Polars.NET.Core.Arrow
             if (type.IsGenericType) elementType = type.GetGenericArguments()[0];
             else if (type.IsArray) elementType = type.GetElementType()!;
             
-            bool isFSharpList = FSharpHelper.IsFSharpList(type);
+            bool isFSharpList = type.IsGenericType && type.GetGenericTypeDefinition() == typeof(FSharpList<>);
 
             // Normalize Array Access
             IArrowArray valuesArray;
@@ -300,6 +312,14 @@ namespace Polars.NET.Core.Arrow
 
             var childGetter = CreateAccessor(valuesArray, elementType);
 
+            if (isFSharpList)
+            {
+                var method = typeof(ArrowReader)
+                    .GetMethod(nameof(CreateFSharpListAccessor), BindingFlags.NonPublic | BindingFlags.Static)!
+                    .MakeGenericMethod(elementType);
+                return (Func<int, object?>)method.Invoke(null, [getOffset, isNull, childGetter])!;
+            }
+
             return idx =>
             {
                 if (isNull(idx)) return null;
@@ -324,11 +344,34 @@ namespace Polars.NET.Core.Arrow
                     list.CopyTo(arr, 0);
                     return arr;
                 }
-                if (isFSharpList)
-                {
-                    return FSharpHelper.ToFSharpList(list, elementType);
-                }
                 return list;
+            };
+        }
+
+        // Specialized F# List Accessor Builder
+        private static Func<int, object?> CreateFSharpListAccessor<U>(
+            Func<int, long> getOffset, 
+            Func<int, bool> isNull, 
+            Func<int, object?> childGetter)
+        {
+            return idx =>
+            {
+                if (isNull(idx)) return null; // or FSharpList<U>.Empty? Usually null for "Missing List"
+
+                long start = getOffset(idx);
+                long end = getOffset(idx + 1);
+                int count = (int)(end - start);
+
+                // Build IEnumerable
+                var items = new U[count];
+                for (int k = 0; k < count; k++)
+                {
+                    var val = childGetter((int)(start + k));
+                    items[k] = val == null ? default! : (U)val;
+                }
+
+                // Call direct F# module (Fastest way)
+                return ListModule.OfSeq(items);
             };
         }
 
@@ -336,6 +379,7 @@ namespace Polars.NET.Core.Arrow
         private static bool IsScalarType(Type t)
         {
             var underlying = Nullable.GetUnderlyingType(t) ?? t;
+            if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(FSharpOption<>)) return true;
 
             return underlying.IsPrimitive 
                 || underlying == typeof(string)
@@ -344,8 +388,7 @@ namespace Polars.NET.Core.Arrow
                 || underlying == typeof(DateOnly)
                 || underlying == typeof(TimeOnly)
                 || underlying == typeof(TimeSpan)
-                || underlying == typeof(DateTimeOffset)
-                || FSharpHelper.IsFSharpOption(t); 
+                || underlying == typeof(DateTimeOffset);
         }
         /// <summary>
         /// Create a high-performance accessor for a single Arrow Array.
