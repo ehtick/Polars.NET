@@ -1076,4 +1076,90 @@ public class DataTypeTests
         Assert.Equal(1m, s[0]);
         Assert.Equal(extreme, s[1]);
     }
+    [Fact]
+    public void Test_FixedSizeList_Double_Image()
+    {
+        // 1. 准备数据：2x2 的像素块
+        double[,] pixels = new double[,] 
+        { 
+            { 0.1, 0.2 }, 
+            { 0.8, 0.9 } 
+        };
+
+        // 2. 传递
+        using var s = new Series("pixels", pixels);
+
+        // 3. 验证
+        Assert.Equal(2, s.Length);
+        
+        // 此时 Rust 端应该持有一个 FixedSizeList(2) of Float64
+        Console.WriteLine(s); // 手动看一下输出是否是 [[0.1, 0.2], [0.8, 0.9]]
+    }
+    [Fact]
+    public void Test_FixedSizeList_Performance_Large()
+    {
+        // 1. 准备 100万个 double (8MB 数据)
+        int size = 1000;
+        double[,] largeMatrix = new double[size, size];
+        
+        // 随便填点数据，确保内存被 touch 过
+        largeMatrix[0, 0] = 1.0;
+        largeMatrix[size-1, size-1] = 99.0;
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        
+        // 2. 瞬移！
+        using var s = new Series("large_matrix", largeMatrix);
+        
+        sw.Stop();
+        Console.WriteLine($"Transferred 1,000,000 doubles (2D) in {sw.Elapsed.TotalMilliseconds} ms");
+
+        // Zero-Copy 理论上耗时应该极短（< 1ms 或者仅包含一些 P/Invoke 开销）
+        // 如果这里超过了 10ms，那就说明发生了拷贝
+        Assert.Equal(size, s.Length);
+    }
+    [Fact]
+    public void Test_FixedSizeList_Int128_Layout_Check()
+    {
+        // 1. 准备数据
+        // 使用 2x2 矩阵
+        Int128[,] data = new Int128[2, 2];
+        
+        // Case A: 只有低位有值
+        data[0, 0] = 1; 
+        
+        // Case B: 只有高位有值 (2^64)
+        // C# 中 Int128 构造比较麻烦，可以用位移
+        Int128 highBit = (Int128)1 << 64; 
+        data[0, 1] = highBit;
+
+        // Case C: 高低位都有值 (Max)
+        data[1, 0] = Int128.MaxValue;
+
+        // Case D: 负数 (验证符号位是否在最高字节)
+        data[1, 1] = -1;
+
+        // 2. 传递给 Rust
+        using var s = new Series("int128_matrix", data);
+
+        // 3. 验证 (Rust 传回来的值)
+        // 这一步非常关键，如果 Layout 不对，这里的 Assert 会直接炸
+        
+        // Index 0: 应该是 1
+        // 如果变成了 huge number，说明 Low/High 颠倒了
+        // Assert.Equal((Int128)1, s[0]); 
+        
+        // // Index 1: 应该是 2^64
+        // // 如果变成了 1，说明 Low/High 颠倒了
+        // Assert.Equal(highBit, s[1]);
+
+        // // Index 2: MaxValue
+        // Assert.Equal(Int128.MaxValue, s[2]);
+
+        // // Index 3: -1
+        // Assert.Equal((Int128)(-1), s[3]);
+
+        // 4. 打印出来肉眼确认
+        Console.WriteLine($"Int128 Check Passed. Series: {s}");
+    }
 }

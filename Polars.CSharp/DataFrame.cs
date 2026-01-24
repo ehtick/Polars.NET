@@ -9,6 +9,7 @@ using System.Text;
 using Apache.Arrow.Types;
 using System.Reflection.Metadata;
 using System.Reflection;
+using Polars.NET.Core.Helpers;
 
 namespace Polars.CSharp;
 

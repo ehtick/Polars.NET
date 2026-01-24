@@ -1,5 +1,5 @@
 use polars::prelude::*;
-use polars_arrow::array::{Array, ListArray};
+use polars_arrow::array::{Array,FixedSizeListArray,ListArray};
 use polars_arrow::offset::OffsetsBuffer;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -294,10 +294,8 @@ pub unsafe extern "C" fn pl_series_new_time(
     len: usize,
 ) -> *mut SeriesContext {
     ffi_try!({
-        // 1. 使用宏创建 Int64Chunked
         let ca = create_physical_ca!(name, ptr, len, validity, i64, ArrowDataType::Int64, Int64Chunked);
         
-        // 2. 逻辑转换 -> Time
         let ca_time = ca.into_time();
         
         Ok(Box::into_raw(Box::new(SeriesContext { series: ca_time.into_series() })))
@@ -369,6 +367,83 @@ pub unsafe extern "C" fn pl_series_new_decimal(
     })
 }
 
+macro_rules! impl_fixed_list_ffi {
+    ($func_name:ident, $rust_ty:ty, $arrow_ty:expr) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $func_name(
+            name: *const c_char,
+            flat_ptr: *const $rust_ty,  
+            flat_len: usize,
+            validity: *const u8,
+            parent_len: usize,
+            width: usize,
+        ) -> *mut SeriesContext {
+            ffi_try!({
+                let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+
+                // Build Inner Child (Primitive Array)
+                let slice = unsafe { std::slice::from_raw_parts(flat_ptr, flat_len) };
+                let vec = slice.to_vec();
+                
+                // PrimitiveArray::new is generic type
+                let inner_array = PrimitiveArray::new(
+                    $arrow_ty,
+                    vec.into(),
+                    None
+                );
+
+                // Build Validity
+                let validity_bitmap = if validity.is_null() {
+                    None
+                } else {
+                    let bytes_len = (parent_len + 7) / 8;
+                    let v_slice = unsafe { std::slice::from_raw_parts(validity, bytes_len) };
+                    Some(Bitmap::try_new(v_slice.to_vec(), parent_len).unwrap())
+                };
+
+                // Construct FixedSizeList
+                let inner_field = polars_arrow::datatypes::Field::new("item".into(), $arrow_ty,false);
+                let list_dtype = ArrowDataType::FixedSizeList(
+                    Box::new(inner_field),
+                    width
+                );
+
+                let list_array = FixedSizeListArray::new(
+                    list_dtype,
+                    parent_len,
+                    Box::new(inner_array),
+                    validity_bitmap,
+                );
+
+                // 4. Series Wrap
+                let s = Series::from_arrow(name_str.as_ref().into(), Box::new(list_array)).unwrap();
+                Ok(Box::into_raw(Box::new(SeriesContext { series: s })))
+            })
+        }
+    };
+}
+
+// ============================================================================
+// FixedSizeList (Array) Generators
+// ============================================================================
+
+// Int
+impl_fixed_list_ffi!(pl_series_new_array_i8,  i8,  ArrowDataType::Int8);
+impl_fixed_list_ffi!(pl_series_new_array_i16, i16, ArrowDataType::Int16);
+impl_fixed_list_ffi!(pl_series_new_array_i32, i32, ArrowDataType::Int32);
+impl_fixed_list_ffi!(pl_series_new_array_i64, i64, ArrowDataType::Int64);
+impl_fixed_list_ffi!(pl_series_new_array_i128, i128, ArrowDataType::Int128);
+
+// UInt
+impl_fixed_list_ffi!(pl_series_new_array_u8,  u8,  ArrowDataType::UInt8);
+impl_fixed_list_ffi!(pl_series_new_array_u16, u16, ArrowDataType::UInt16);
+impl_fixed_list_ffi!(pl_series_new_array_u32, u32, ArrowDataType::UInt32);
+impl_fixed_list_ffi!(pl_series_new_array_u64, u64, ArrowDataType::UInt64);
+impl_fixed_list_ffi!(pl_series_new_array_u128, u128, ArrowDataType::UInt128);
+
+// Float
+impl_fixed_list_ffi!(pl_series_new_array_f32, f32, ArrowDataType::Float32);
+impl_fixed_list_ffi!(pl_series_new_array_f64, f64, ArrowDataType::Float64);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_series_clone(ptr: *mut SeriesContext) -> *mut SeriesContext {

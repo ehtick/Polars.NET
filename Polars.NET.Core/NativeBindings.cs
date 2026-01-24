@@ -1136,6 +1136,142 @@ unsafe internal partial class NativeBindings
         UIntPtr precision,
         UIntPtr scale
     );
+    // =================================================================
+    // FixedSizeList (Array) Bindings
+    // 对应 Rust: impl_fixed_list_ffi!
+    // 参数: name, flat_ptr, flat_len, validity, parent_len, width
+    // =================================================================
+
+    #region Signed Integers (i8, i16, i32, i64)
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_i8(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        sbyte* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_i16(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        short* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_i32(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        int* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_i64(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        long* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_i128(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        Int128* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    #endregion
+
+    #region Unsigned Integers (u8, u16, u32, u64)
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_u8(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        byte* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_u16(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        ushort* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_u32(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        uint* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_u64(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        ulong* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_u128(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        UInt128* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    #endregion
+
+    #region Floats (f32, f64)
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_f32(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        float* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_f64(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        double* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
+
+    #endregion
     [LibraryImport(LibName)] 
     public static partial SeriesHandle pl_series_clone(SeriesHandle s);
     // --- Series Properties ---

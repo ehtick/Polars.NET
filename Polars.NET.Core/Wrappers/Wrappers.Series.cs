@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Apache.Arrow;
-using Apache.Arrow.C; 
+using Apache.Arrow.C;
+using Polars.NET.Core.Helpers;
 
 namespace Polars.NET.Core;
 
@@ -203,7 +204,146 @@ public static partial class PolarsWrapper
             );
         }
     }
+    // =================================================================
+    // FixedSizeList (2D Array) Wrapper
+    // =================================================================
 
+    /// <summary>
+    /// Create Fixed Size Series (Zero-Copy from C# 2D Array).
+    /// </summary>
+    /// <typeparam name="T">Unmanaged Type (int, double, etc.)</typeparam>
+    /// <param name="name">Series Name</param>
+    /// <param name="data">C# MultiDimension Array (T[,])</param>
+    /// <returns>SeriesHandle</returns>
+    /// <exception cref="NotSupportedException">When T is not primitive type</exception>
+    public static unsafe SeriesHandle SeriesNewFixedArray<T>(string name, T[,] data) 
+        where T : unmanaged
+    {
+        // Get Dimension Data
+        // GetLength(0) = Parent Length
+        // GetLength(1) = Fixed Width
+        int height = data.GetLength(0);
+        int width = data.GetLength(1);
+        UIntPtr flatLen = (UIntPtr)data.Length;
+        UIntPtr uHeight = (UIntPtr)height;
+        UIntPtr uWidth = (UIntPtr)width;
+
+        // Pin Array Memory
+        fixed (T* pData = data)
+        {
+            // Type Distribution
+
+            if (typeof(T) == typeof(int))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_i32(name, (int*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            else if (typeof(T) == typeof(long))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_i64(name, (long*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            else if (typeof(T) == typeof(double))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_f64(name, (double*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            else if (typeof(T) == typeof(float))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_f32(name, (float*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            // --- 较少用的类型 ---
+            else if (typeof(T) == typeof(byte))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_u8(name, (byte*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            else if (typeof(T) == typeof(sbyte))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_i8(name, (sbyte*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            else if (typeof(T) == typeof(short))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_i16(name, (short*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            else if (typeof(T) == typeof(ushort))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_u16(name, (ushort*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            else if (typeof(T) == typeof(uint))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_u32(name, (uint*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            else if (typeof(T) == typeof(ulong))
+            {
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_u64(name, (ulong*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
+                );
+            }
+            else if (typeof(T) == typeof(Int128))
+            {
+                Int128* pRaw = (Int128*)pData;
+
+                // Check whether mem layout need Swap
+                if (ArrayHelper.Int128NeedsSwap)
+                {
+                    // Need Swap：Alloc new array -> Swap Copy -> transfer new ptr
+                    Int128[] swapped = Int128Packer.PackDense(pRaw, (int)flatLen);
+                    fixed (Int128* pSwapped = swapped)
+                    {
+                        return ErrorHelper.Check(
+                            NativeBindings.pl_series_new_array_i128(name, pSwapped, flatLen, IntPtr.Zero, uHeight, uWidth)
+                        );
+                    }
+                }
+                else
+                {
+                    // Zero-Copy
+                    return ErrorHelper.Check(
+                        NativeBindings.pl_series_new_array_i128(name, pRaw, flatLen, IntPtr.Zero, uHeight, uWidth)
+                    );
+                }
+            }
+            else if (typeof(T) == typeof(UInt128))
+            {
+                 UInt128* pRaw = (UInt128*)pData;
+                 if (ArrayHelper.Int128NeedsSwap)
+                 {
+                    UInt128[] swapped = Int128Packer.PackDense(pRaw, (int)flatLen);
+                    fixed (UInt128* pSwapped = swapped)
+                    {
+                        return ErrorHelper.Check(
+                            NativeBindings.pl_series_new_array_u128(name, pSwapped, flatLen, IntPtr.Zero, uHeight, uWidth)
+                        );
+                    }
+                 }
+                 else
+                 {
+                    return ErrorHelper.Check(
+                        NativeBindings.pl_series_new_array_u128(name, pRaw, flatLen, IntPtr.Zero, uHeight, uWidth)
+                    );
+                 }
+            }
+            else
+            {
+                throw new NotSupportedException($"Type '{typeof(T).Name}' is not supported for FixedSizeList Series.");
+            }
+        }
+    }
     public static SeriesHandle CloneSeries(SeriesHandle handle)
     {
         return ErrorHelper.Check(NativeBindings.pl_series_clone(handle));

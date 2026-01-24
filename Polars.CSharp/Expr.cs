@@ -1,6 +1,7 @@
 #pragma warning disable CS1591
 using Apache.Arrow;
 using Polars.NET.Core;
+using Polars.NET.Core.Helpers;
 
 namespace Polars.CSharp;
 

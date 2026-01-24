@@ -4,6 +4,7 @@ using Apache.Arrow;
 using Polars.NET.Core;
 using Polars.NET.Core.Arrow;
 using Polars.NET.Core.Data;
+using Polars.NET.Core.Helpers;
 
 namespace Polars.CSharp;
 

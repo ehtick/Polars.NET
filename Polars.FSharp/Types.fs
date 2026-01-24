@@ -6,6 +6,7 @@ open Apache.Arrow
 open System.Collections.Generic
 open Polars.NET.Core.Arrow
 open Polars.NET.Core.Data
+open Polars.NET.Core.Helpers
 open System.Data
 open System.Threading.Tasks
 open System.Collections.Concurrent

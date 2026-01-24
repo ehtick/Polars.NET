@@ -1,6 +1,7 @@
 using Polars.NET.Core;
 using Apache.Arrow;
 using Polars.NET.Core.Arrow;
+using Polars.NET.Core.Helpers;
 
 namespace Polars.CSharp;
 
@@ -976,23 +977,90 @@ public partial class Series : IDisposable
         
         Handle = PolarsWrapper.SeriesNewDecimal(name, values, validity, scale);
     }
-
-    // ------------------------------------------
-    // 🐢 2. Universal Path (Complex Types)
-    // ------------------------------------------
-    
-
-    // public Series(string name, decimal[] data)
-    // {
-    //     using var arrowArray = ArrowConverter.Build(data);
-    //     Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
-    // }
-
-    // public Series(string name, decimal?[] data)
-    // {
-    //     using var arrowArray = ArrowConverter.Build(data);
-    //     Handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
-    // }
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of Int8.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, sbyte[,] data)
+       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of UInt8.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, byte[,] data)
+       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of Int16.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, short[,] data)
+       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of UInt16.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, ushort[,] data)
+       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of Int32.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, int[,] data)
+       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of UInt32.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, uint[,] data)
+       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of Int64.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, long[,] data)
+       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of UInt64.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, ulong[,] data)
+        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of Int128.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, Int128[,] data)
+        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of UInt128.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, UInt128[,] data)
+        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of Float.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, float[,] data)
+        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of Double.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, double[,] data)
+        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
 
     // ==========================================
     // Properties

@@ -58,6 +58,7 @@
 
   <ItemGroup>
     <PackageReference Include="Apache.Arrow" Version="22.1.0" />
+    <PackageReference Include="FSharp.Core" Version="10.0.102" />
   </ItemGroup>
 
 </Project>

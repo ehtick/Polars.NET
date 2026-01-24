@@ -190,12 +190,12 @@ and DataType =
         | Datetime(unit, tz) ->
             let code = toUnitCode unit
             let tzStr = Option.toObj tz // None -> null
-            PolarsWrapper.NewDateTimeType(code, tzStr)
+            PolarsWrapper.NewDateTimeType(byte code, tzStr)
 
         // Duration
         | Duration unit ->
             let code = toUnitCode unit
-            PolarsWrapper.NewDurationType code
+            PolarsWrapper.NewDurationType (byte code)
 
         // Categorical
         | Categorical -> 
