@@ -6,6 +6,7 @@ open Apache.Arrow
 open System
 
 type ``Series Tests`` () =
+    let count = 100_000 // 10万行，足够触发底层的 Buffer 扩容逻辑
 
     [<Fact>]
     member _.``Series: Create Int32 with Nulls`` () =
@@ -590,3 +591,185 @@ type ``Series Tests`` () =
         Assert.Equal(3, sRoll.GetValue<int> 1)
         Assert.Equal(5, sRoll.GetValue<int> 2)
         Assert.Equal(7, sRoll.GetValue<int> 3)
+    
+
+    // ==========================================
+    // 1. 测试标准 Option<'T> (引用类型包装)
+    // ==========================================
+
+    [<Fact>]
+    member _.``Series.ofOptionSeq: Int32 (Fast Path)`` () =
+        // 准备数据: [Some 0, Some 1, Some 2, Some 3, None, Some 5 ...]
+        let data = 
+            Array.init count (fun i -> 
+                if i % 5 = 4 then None else Some i
+            )
+        
+        // 调用你的加速 API
+        let s = Series.ofOptionSeq("Ints", data)
+
+        // 验证
+        Assert.Equal("Ints", s.Name)
+        Assert.Equal(int64 count, s.Length)
+        // 验证空值数量: 100000 / 5 = 20000
+        Assert.Equal(20000L, s.NullCount)
+        // 验证具体值
+        Assert.Equal(0, s.GetValue<int>(0))
+        Assert.True(s.IsNullAt 4)
+
+    [<Fact>]
+    member _.``Series.ofOptionSeq: String (Pointer Unwrapped)`` () =
+        let data = 
+            Array.init count (fun i -> 
+                if i % 5 = 4 then None else Some $"Str_{i}"
+            )
+        
+        let s = Series.ofOptionSeq("Strs", data)
+
+        Assert.Equal(int64 count, s.Length)
+        Assert.Equal(20000L, s.NullCount)
+        Assert.Equal("Str_0", s.GetValue<string>(0))
+        Assert.True(s.IsNullAt 4)
+
+    [<Fact>]
+    member _.``Series.ofOptionSeq: DateTime (Turbocharged)`` () =
+        let start = DateTime(2023, 1, 1)
+        let data = 
+            Array.init count (fun i -> 
+                if i % 5 = 4 then None else Some (start.AddDays(float i))
+            )
+        
+        let s = Series.ofOptionSeq("Dates", data)
+
+        Assert.Equal(int64 count, s.Length)
+        Assert.Equal(20000L, s.NullCount)
+        // 验证时间转换是否正确
+        Assert.Equal(start, s.GetValue<DateTime>(0))
+
+    [<Fact>]
+    member _.``Series.ofOptionSeq: Decimal (Scale Auto-Detect)`` () =
+        // Decimal 比较特殊，底层需要处理 Scale
+        let data = 
+            Array.init count (fun i -> 
+                if i % 5 = 4 then None 
+                else Some (decimal i + 0.5m) // 比如 0.5, 1.5...
+            )
+        
+        let s = Series.ofOptionSeq("Decimals", data)
+
+        Assert.Equal(int64 count, s.Length)
+        Assert.Equal(0.5m, s.GetValue<decimal> 0)
+
+    // ==========================================
+    // 2. 测试 ValueOption<'T> (结构体，零GC压力)
+    // ==========================================
+
+    [<Fact>]
+    member _.``Series.ofVOptionSeq: Int64 (Zero Allocation Path)`` () =
+        // 使用 ValueOption，这对内存极度友好
+        let data = 
+            Array.init count (fun i -> 
+                if i % 5 = 4 then ValueNone else ValueSome (int64 i * 1000L)
+            )
+        
+        let s = Series.ofVOptionSeq("BigInts", data)
+
+        Assert.Equal(int64 count, s.Length)
+        Assert.Equal(20000L, s.NullCount)
+        Assert.Equal(0L, s.GetValue<int64> 0)
+        Assert.Equal(1000L, s.GetValue<int64> 1)
+
+    [<Fact>]
+    member _.``Series.ofVOptionSeq: Bool (Bitpacked)`` () =
+        // Bool 在 Arrow 里是按位存储的 (1 bit per bool)
+        // VOption<bool> 虽然本身占 2 bytes (1 value + 1 tag)，但转 Arrow 时应该极快
+        let data = 
+            Array.init count (fun i -> 
+                if i % 5 = 4 then ValueNone 
+                else ValueSome (i % 2 = 0)
+            )
+        
+        let s = Series.ofVOptionSeq("Bools", data)
+
+        Assert.Equal(int64 count, s.Length)
+        Assert.True(s.GetValue<bool> 0)  // 0 is even -> true
+        Assert.False(s.GetValue<bool> 1) // 1 is even -> false
+        Assert.True(s.IsNullAt 4)
+
+    [<Fact>]
+    member _.``Series.ofVOptionSeq: TimeOnly`` () =
+        let start = TimeOnly(12, 0, 0)
+        let data = 
+            Array.init count (fun i -> 
+                if i % 5 = 4 then ValueNone 
+                else ValueSome (start.AddMinutes(float i))
+            )
+        
+        let s = Series.ofVOptionSeq("Times", data)
+        
+        Assert.Equal(int64 count, s.Length)
+        Assert.Equal(start, s.GetValue<TimeOnly> 0)
+    [<Fact>]
+    member _.``Test Decimal Matrix with Auto-Scaling in FSharp``() =
+        // 1. 准备一个混合精度的 F# 二维数组 (decimal[,])
+        // 包含不同 Scale，测试 C# 端的 DecimalPacker 是否能正确同步到 Rust
+        let data = array2D [
+            [ 1.1M;  2.22M; 3.333M ]   // Row 0
+            [ 100M;  0.01M; -1.5M  ]   // Row 1
+        ]
+        
+        // 2. 调用我们要测试的新玩意
+        // 编译器会通过这四个约束：struct, unmanaged, ValueType, new()
+        using (Series.ofArray2D("decimal_matrix", data)) (fun s ->
+            
+            // 3. 验证
+            Assert.Equal(2L, s.Length)
+            
+            // 使用我们之前的 Jagged Array 读取方式验证
+            // 期望：每一行被读取为一个 decimal[]
+            let result = s.ToArray<decimal[]>()
+            
+            Assert.Equal(1.1M, result.[0].[0])
+            Assert.Equal(2.22M, result.[0].[1])
+            Assert.Equal(3.333M, result.[0].[2])
+            
+            Assert.Equal(0.01M, result.[1].[1])
+        )
+
+    [<Fact>]
+    member _.``Test Primitive Matrix (double) Performance Path``() =
+        // 测试标准浮点数路径
+        let data = array2D [
+            [ 1.0; 2.0 ]
+            [ 3.0; 4.0 ]
+            [ 5.0; 6.0 ]
+        ]
+        
+        using (Series.ofArray2D("double_matrix", data)) (fun s ->
+            Assert.Equal(3L, s.Length)
+            let result = s.ToArray<double[]>()
+            Assert.Equal(6.0, result.[2].[1])
+        )
+
+    [<Fact>]
+    member _.``Test Int128 Matrix with Byte Swap``() =
+        // 测试 Int128 路径，验证 C# Wrapper 是否正确处理了字节序交换
+        let val1 = Int128.MaxValue
+        let val2 = Int128.One
+        let data = array2D [ [ val1; val2 ] ]
+        
+        let s = Series.ofArray2D("i128_matrix", data)
+        s.Show()
+
+    [<Fact>]
+    member _.``Test Decimal Matrix Overflow in FSharp``() =
+        // 验证我们在 C# DecimalPacker 中加入的溢出保护在 F# 中也能正确抛出异常
+        let huge = Decimal.MaxValue
+        let tiny = 0.0000000000000000000000000001M // Scale 28
+        
+        let data = array2D [ [ huge ]; [ tiny ] ]
+        
+        // 此时应抛出 OverflowException，因为对齐后超出了 38 位精度
+        Assert.Throws<OverflowException>(fun () -> 
+            Series.ofArray2D("overflow_test", data) |> ignore
+        )

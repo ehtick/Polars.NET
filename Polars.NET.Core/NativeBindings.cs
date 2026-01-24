@@ -1138,8 +1138,8 @@ unsafe internal partial class NativeBindings
     );
     // =================================================================
     // FixedSizeList (Array) Bindings
-    // 对应 Rust: impl_fixed_list_ffi!
-    // 参数: name, flat_ptr, flat_len, validity, parent_len, width
+    // Rust: impl_fixed_list_ffi!
+    // Paras: name, flat_ptr, flat_len, validity, parent_len, width
     // =================================================================
 
     #region Signed Integers (i8, i16, i32, i64)
@@ -1249,7 +1249,7 @@ unsafe internal partial class NativeBindings
 
     #endregion
 
-    #region Floats (f32, f64)
+    #region Floats (f32, f64) and Decimal
 
     [LibraryImport(LibName)]
     public static partial SeriesHandle pl_series_new_array_f32(
@@ -1270,7 +1270,16 @@ unsafe internal partial class NativeBindings
         UIntPtr parent_len,
         UIntPtr width
     );
-
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_decimal(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        Int128* flat_ptr,   // Rust: *const i128
+        UIntPtr flat_len,   // Rust: usize
+        IntPtr validity,    // Rust: *const u8
+        UIntPtr parent_len, // Rust: usize
+        UIntPtr width,      // Rust: usize
+        UIntPtr scale       // Rust: usize (Extra param for Decimal)
+    );
     #endregion
     [LibraryImport(LibName)] 
     public static partial SeriesHandle pl_series_clone(SeriesHandle s);

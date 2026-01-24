@@ -1,185 +1,487 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Text;
+using Microsoft.FSharp.Core;
 
 namespace Polars.NET.Core.Helpers;
 
-  public static unsafe class DecimalPacker
+public static unsafe class DecimalPacker
     {
-        // C# decimal mem layout(Sequential): flags, hi, lo, mid (4 int)
-        internal static readonly Int128[] PowersOf10Int128;
-        static DecimalPacker() // Static Constructor
+    // C# decimal mem layout(Sequential): flags, hi, lo, mid (4 int)
+    internal static readonly Int128[] PowersOf10Int128;
+    static DecimalPacker() // Static Constructor
+    {
+        PowersOf10Int128 = new Int128[30]; // decimal max scale is 28
+        PowersOf10Int128[0] = 1;
+        for (int i = 1; i < PowersOf10Int128.Length; i++)
         {
-            PowersOf10Int128 = new Int128[30]; // decimal max scale is 28
-            PowersOf10Int128[0] = 1;
-            for (int i = 1; i < PowersOf10Int128.Length; i++)
+            PowersOf10Int128[i] = PowersOf10Int128[i - 1] * 10;
+        }
+    }
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static (Int128[] values, int scale) Pack(decimal[] data)
+    {
+        int len = data.Length;
+        if (len == 0) return (Array.Empty<Int128>(), 0);
+
+        byte maxScale = 0;
+
+        // Pass 1: Scan Max Scale
+        fixed (decimal* pSrc = data)
+        {
+            // decimal is 16 bytes (4 int)
+            int* pInt = (int*)pSrc;
+            
+            // Unroll 
+            for (int i = 0; i < len; i++)
             {
-                PowersOf10Int128[i] = PowersOf10Int128[i - 1] * 10;
+                int flags = pInt[i * 4]; 
+                byte s = (byte)((flags >> 16) & 0xFF);
+                if (s > maxScale) maxScale = s;
             }
         }
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        public static (Int128[] values, int scale) Pack(decimal[] data)
+
+        var values = GC.AllocateUninitializedArray<Int128>(len);
+
+        // Pass 2: Convert
+        fixed (decimal* pSrc = data)
+        fixed (Int128* pDst = values)
         {
-            int len = data.Length;
-            if (len == 0) return (Array.Empty<Int128>(), 0);
-
-            byte maxScale = 0;
-
-            // Pass 1: Scan Max Scale
-            fixed (decimal* pSrc = data)
+            // pSrc -> decimal[] Array
+            // treat it as int array
+            int* pRawDec = (int*)pSrc;
+            
+            for (int i = 0; i < len; i++)
             {
-                // decimal is 16 bytes (4 int)
-                int* pInt = (int*)pSrc;
+                // Calc decimal int* start position
+                int baseIdx = i * 4;
                 
-                // Unroll 
-                for (int i = 0; i < len; i++)
+                int flags = pRawDec[baseIdx];     // [0] Flags
+                int hi    = pRawDec[baseIdx + 1]; // [1] Hi
+                int lo    = pRawDec[baseIdx + 2]; // [2] Lo
+                int mid   = pRawDec[baseIdx + 3]; // [3] Mid
+
+                // Assemble 96-bit Mantissa -> Int128
+                Int128 mantissa = ((Int128)(uint)hi << 64) | ((Int128)(uint)mid << 32) | (Int128)(uint)lo;
+
+                // Handle +- (Flags & highest bit)
+                if ((flags & 0x80000000) != 0)
                 {
-                    int flags = pInt[i * 4]; 
-                    byte s = (byte)((flags >> 16) & 0xFF);
+                    mantissa = -mantissa;
+                }
+
+                // Rescale
+                int currentScale = (flags >> 16) & 0xFF;
+                int diff = maxScale - currentScale;
+                
+                if (diff > 0) 
+                {
+                    try 
+                    {
+                        checked 
+                        {
+                            mantissa *= PowersOf10Int128[diff];
+                        }
+                    }
+                    catch (OverflowException)
+                    {
+                         // Since we are in a pointer loop, getting the actual decimal value for the error message 
+                         // requires reconstructing it, or just throwing a generic error.
+                         // For performance, a generic error is fine, or reconstruct 'd' if needed for debug.
+                         throw new OverflowException(
+                            $"Decimal overflow at index {i}. " +
+                            $"Item cannot be rescaled to Scale {maxScale} without exceeding 38-digit limit.");
+                    }
+                }
+
+                pDst[i] = mantissa;
+            }
+        }
+
+        return (values, maxScale);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static (Int128[] values, byte[]? validity, int scale) Pack(decimal?[] data)
+    {
+        int len = data.Length;
+        
+        // Pass 1: Scan max Scale
+        byte maxScale = 0;
+        
+        fixed (decimal?* pSrc = data)
+        {
+            for (int i = 0; i < len; i++)
+            {
+                if (data[i].HasValue)
+                {
+                    byte s = data[i].GetValueOrDefault().Scale;
                     if (s > maxScale) maxScale = s;
                 }
             }
+        }
+        
+        // Pass 2: Convert
+        var values = GC.AllocateUninitializedArray<Int128>(len);
+        byte[]? validity = null;
+        ref byte validRef = ref Unsafe.NullRef<byte>();
+        
+        fixed (decimal?* pSrc = data)
+        fixed (Int128* pDst = values)
+        {
+            // Ref ptr scan
+            ref decimal? srcRef = ref MemoryMarshal.GetArrayDataReference(data);
+            ref Int128 dstRef = ref MemoryMarshal.GetArrayDataReference(values);
 
-            var values = GC.AllocateUninitializedArray<Int128>(len);
-
-            // Pass 2: Convert
-            fixed (decimal* pSrc = data)
-            fixed (Int128* pDst = values)
+            for (int i = 0; i < len; i++)
             {
-                // pSrc -> decimal[] Array
-                // treat it as int array
-                int* pRawDec = (int*)pSrc;
+                ref decimal? item = ref Unsafe.Add(ref srcRef, i);
                 
-                for (int i = 0; i < len; i++)
+                if (item.HasValue)
                 {
-                    // Calc decimal int* start position
-                    int baseIdx = i * 4;
+                    decimal d = item.GetValueOrDefault();
                     
-                    int flags = pRawDec[baseIdx];     // [0] Flags
-                    int hi    = pRawDec[baseIdx + 1]; // [1] Hi
-                    int lo    = pRawDec[baseIdx + 2]; // [2] Lo
-                    int mid   = pRawDec[baseIdx + 3]; // [3] Mid
+                    // Treat decimal as 4 int struct
+                    int* pDec = (int*)Unsafe.AsPointer(ref d);
+                    
+                    int flags = pDec[0];
+                    int hi    = pDec[1];
+                    int lo    = pDec[2];
+                    int mid   = pDec[3];
 
-                    // Assemble 96-bit Mantissa -> Int128
+                    // Convert 96-bit Int to Int128
+                    // Int128 = (Hi << 64) | (Mid << 32) | Lo
                     Int128 mantissa = ((Int128)(uint)hi << 64) | ((Int128)(uint)mid << 32) | (Int128)(uint)lo;
 
-                    // Handle +- (Flags & highest bit)
+                    // deal +-
                     if ((flags & 0x80000000) != 0)
                     {
                         mantissa = -mantissa;
                     }
-
-                    // Rescale
-                    int currentScale = (flags >> 16) & 0xFF;
-                    int diff = maxScale - currentScale;
                     
-                    if (diff > 0)
+                    // Get current Scale
+                    int scale = (flags >> 16) & 0xFF;
+                    
+                    // Rescale
+                    // Target = Val * 10^(MaxScale - CurScale)
+                    int diff = maxScale - scale;
+                    if (diff > 0) 
                     {
-                        mantissa *= PowersOf10Int128[diff];
+                        try 
+                        {
+                            checked 
+                            {
+                                mantissa *= PowersOf10Int128[diff];
+                            }
+                        }
+                        catch (OverflowException)
+                        {
+                            // Since we are in a pointer loop, getting the actual decimal value for the error message 
+                            // requires reconstructing it, or just throwing a generic error.
+                            // For performance, a generic error is fine, or reconstruct 'd' if needed for debug.
+                            throw new OverflowException(
+                                $"Decimal overflow at index {i}. " +
+                                $"Item cannot be rescaled to Scale {maxScale} without exceeding 38-digit limit.");
+                        }
                     }
-
-                    pDst[i] = mantissa;
+                    
+                    Unsafe.Add(ref dstRef, i) = mantissa;
+                    
+                    // Validity
+                    if (validity != null)
+                    {
+                        if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                        ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                        target |= (byte)(1 << (i & 7));
+                    }
+                }
+                else
+                {
+                    if (validity == null)
+                    {
+                        validity = new byte[(len + 7) >> 3];
+                        validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                        int bytesToFill = i >> 3;
+                        if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                        int remainingBits = i & 7;
+                        if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                    }
+                    Unsafe.Add(ref dstRef, i) = Int128.Zero;
                 }
             }
-
-            return (values, maxScale);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        public static (Int128[] values, byte[]? validity, int scale) Pack(decimal?[] data)
+        return (values, validity, maxScale);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static (Int128[] values, int scale) Pack(decimal* pSrc, int len)
+    {
+        if (len == 0) return (Array.Empty<Int128>(), 0);
+
+        byte maxScale = 0;
+        int* pInt = (int*)pSrc; // Treat decimal as int[4]
+
+        // Pass 1: Scan Scale
+        for (int i = 0; i < len; i++)
         {
-            int len = data.Length;
+            int flags = pInt[i * 4];
+            byte s = (byte)((flags >> 16) & 0xFF);
+            if (s > maxScale) maxScale = s;
+        }
+
+        var values = GC.AllocateUninitializedArray<Int128>(len);
+
+        fixed (Int128* pDst = values)
+        {
+            int* pRawDec = (int*)pSrc;
             
-            // Pass 1: Scan max Scale
-            byte maxScale = 0;
-            
-            fixed (decimal?* pSrc = data)
+            for (int i = 0; i < len; i++)
             {
-                for (int i = 0; i < len; i++)
+                int baseIdx = i * 4;
+                int flags = pRawDec[baseIdx];
+                int hi    = pRawDec[baseIdx + 1];
+                int lo    = pRawDec[baseIdx + 2];
+                int mid   = pRawDec[baseIdx + 3];
+
+                Int128 mantissa = ((Int128)(uint)hi << 64) | ((Int128)(uint)mid << 32) | (Int128)(uint)lo;
+
+                if ((flags & 0x80000000) != 0) mantissa = -mantissa;
+
+                int currentScale = (flags >> 16) & 0xFF;
+                int diff = maxScale - currentScale;
+                
+                if (diff > 0) 
                 {
-                    if (data[i].HasValue)
+                    try 
                     {
-                        byte s = data[i].GetValueOrDefault().Scale;
-                        if (s > maxScale) maxScale = s;
-                    }
-                }
-            }
-            
-            // Pass 2: Convert
-            var values = GC.AllocateUninitializedArray<Int128>(len);
-            byte[]? validity = null;
-            ref byte validRef = ref Unsafe.NullRef<byte>();
-            
-            fixed (decimal?* pSrc = data)
-            fixed (Int128* pDst = values)
-            {
-                // Ref ptr scan
-                ref decimal? srcRef = ref MemoryMarshal.GetArrayDataReference(data);
-                ref Int128 dstRef = ref MemoryMarshal.GetArrayDataReference(values);
-
-                for (int i = 0; i < len; i++)
-                {
-                    ref decimal? item = ref Unsafe.Add(ref srcRef, i);
-                    
-                    if (item.HasValue)
-                    {
-                        decimal d = item.GetValueOrDefault();
-                        
-                        // Treat decimal as 4 int struct
-                        int* pDec = (int*)Unsafe.AsPointer(ref d);
-                        
-                        int flags = pDec[0];
-                        int hi    = pDec[1];
-                        int lo    = pDec[2];
-                        int mid   = pDec[3];
-
-                        // Convert 96-bit Int to Int128
-                        // Int128 = (Hi << 64) | (Mid << 32) | Lo
-                        Int128 mantissa = ((Int128)(uint)hi << 64) | ((Int128)(uint)mid << 32) | (Int128)(uint)lo;
-
-                        // deal +-
-                        if ((flags & 0x80000000) != 0)
-                        {
-                            mantissa = -mantissa;
-                        }
-                        
-                        // Get current Scale
-                        int scale = (flags >> 16) & 0xFF;
-                        
-                        // Rescale
-                        // Target = Val * 10^(MaxScale - CurScale)
-                        int diff = maxScale - scale;
-                        if (diff > 0)
+                        checked 
                         {
                             mantissa *= PowersOf10Int128[diff];
                         }
-                        
-                        Unsafe.Add(ref dstRef, i) = mantissa;
-                        
-                        // Validity
-                        if (validity != null)
-                        {
-                            if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
-                            ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
-                            target |= (byte)(1 << (i & 7));
-                        }
                     }
-                    else
+                    catch (OverflowException)
                     {
-                        if (validity == null)
-                        {
-                            validity = new byte[(len + 7) >> 3];
-                            validRef = ref MemoryMarshal.GetArrayDataReference(validity);
-                            int bytesToFill = i >> 3;
-                            if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
-                            int remainingBits = i & 7;
-                            if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
-                        }
-                        Unsafe.Add(ref dstRef, i) = Int128.Zero;
+                         // Since we are in a pointer loop, getting the actual decimal value for the error message 
+                         // requires reconstructing it, or just throwing a generic error.
+                         // For performance, a generic error is fine, or reconstruct 'd' if needed for debug.
+                         throw new OverflowException(
+                            $"Decimal overflow at index {i}. " +
+                            $"Item cannot be rescaled to Scale {maxScale} without exceeding 38-digit limit.");
                     }
                 }
-            }
 
-            return (values, validity, maxScale);
+                pDst[i] = mantissa;
+            }
         }
+
+        return (values, maxScale);
     }
+    
+    // ========================================================================
+    // F# Support (Direct Packing without intermediate array)
+    // ========================================================================
+
+    /// <summary>
+    /// Pack FSharpOption<decimal> directly to Int128[] + Validity
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static (Int128[] values, byte[]? validity, int scale) Pack(FSharpOption<decimal>[] data)
+    {
+        int len = data.Length;
+        
+        // Pass 1: Scan Max Scale
+        byte maxScale = 0;
+        ref FSharpOption<decimal> srcRef = ref MemoryMarshal.GetArrayDataReference(data);
+        
+        for (int i = 0; i < len; i++)
+        {
+            // F# Option is a reference type (pointer)
+            FSharpOption<decimal> item = Unsafe.Add(ref srcRef, i);
+            if (item != null) // Some
+            {
+                byte s = item.Value.Scale; // Accessing .Value is safe and fast here
+                if (s > maxScale) maxScale = s;
+            }
+        }
+        
+        // Pass 2: Convert
+        var values = GC.AllocateUninitializedArray<Int128>(len);
+        byte[]? validity = null;
+        ref byte validRef = ref Unsafe.NullRef<byte>();
+        
+        fixed (Int128* pDst = values)
+        {
+            ref Int128 dstRef = ref MemoryMarshal.GetArrayDataReference(values);
+
+            for (int i = 0; i < len; i++)
+            {
+                FSharpOption<decimal> item = Unsafe.Add(ref srcRef, i);
+                
+                if (item != null)
+                {
+                    decimal d = item.Value;
+                    
+                    // --- Inline Decimal Conversion Logic (Copy from your existing Pack) ---
+                    // Treat decimal as 4 int struct
+                    int* pDec = (int*)Unsafe.AsPointer(ref d);
+                    int flags = pDec[0];
+                    int hi    = pDec[1];
+                    int lo    = pDec[2];
+                    int mid   = pDec[3];
+
+                    Int128 mantissa = ((Int128)(uint)hi << 64) | ((Int128)(uint)mid << 32) | (Int128)(uint)lo;
+
+                    if ((flags & 0x80000000) != 0) mantissa = -mantissa;
+                    
+                    int currentScale = (flags >> 16) & 0xFF;
+                    int diff = maxScale - currentScale;
+                    if (diff > 0) 
+                    {
+                        try 
+                        {
+                            checked 
+                            {
+                                mantissa *= PowersOf10Int128[diff];
+                            }
+                        }
+                        catch (OverflowException)
+                        {
+                            // Since we are in a pointer loop, getting the actual decimal value for the error message 
+                            // requires reconstructing it, or just throwing a generic error.
+                            // For performance, a generic error is fine, or reconstruct 'd' if needed for debug.
+                            throw new OverflowException(
+                                $"Decimal overflow at index {i}. " +
+                                $"Item cannot be rescaled to Scale {maxScale} without exceeding 38-digit limit.");
+                        }
+                    }
+                    
+                    Unsafe.Add(ref dstRef, i) = mantissa;
+
+                    // Validity Set
+                    if (validity != null)
+                    {
+                        if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                        ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                        target |= (byte)(1 << (i & 7));
+                    }
+                }
+                else
+                {
+                    // None
+                    if (validity == null)
+                    {
+                        // Init Validity (Backfill 1s)
+                        validity = new byte[(len + 7) >> 3];
+                        validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                        int bytesToFill = i >> 3;
+                        if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                        int remainingBits = i & 7;
+                        if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                    }
+                    Unsafe.Add(ref dstRef, i) = Int128.Zero;
+                }
+            }
+        }
+        return (values, validity, maxScale);
+    }
+
+    /// <summary>
+    /// Pack FSharpValueOption<decimal> directly to Int128[] + Validity
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static (Int128[] values, byte[]? validity, int scale) Pack(FSharpValueOption<decimal>[] data)
+    {
+        int len = data.Length;
+        
+        // Pass 1: Scan Max Scale
+        byte maxScale = 0;
+        ref FSharpValueOption<decimal> srcRef = ref MemoryMarshal.GetArrayDataReference(data);
+        
+        for (int i = 0; i < len; i++)
+        {
+            ref FSharpValueOption<decimal> item = ref Unsafe.Add(ref srcRef, i);
+            if (item.Tag == FSharpValueOption<decimal>.Tags.ValueSome)
+            {
+                byte s = item.Value.Scale;
+                if (s > maxScale) maxScale = s;
+            }
+        }
+        
+        // Pass 2: Convert
+        var values = GC.AllocateUninitializedArray<Int128>(len);
+        byte[]? validity = null;
+        ref byte validRef = ref Unsafe.NullRef<byte>();
+        
+        fixed (Int128* pDst = values)
+        {
+            ref Int128 dstRef = ref MemoryMarshal.GetArrayDataReference(values);
+
+            for (int i = 0; i < len; i++)
+            {
+                ref FSharpValueOption<decimal> item = ref Unsafe.Add(ref srcRef, i);
+                
+                if (item.Tag == FSharpValueOption<decimal>.Tags.ValueSome)
+                {
+                    decimal d = item.Value;
+                    
+                    // --- Inline Decimal Conversion Logic ---
+                    int* pDec = (int*)Unsafe.AsPointer(ref d);
+                    int flags = pDec[0];
+                    int hi    = pDec[1];
+                    int lo    = pDec[2];
+                    int mid   = pDec[3];
+
+                    Int128 mantissa = ((Int128)(uint)hi << 64) | ((Int128)(uint)mid << 32) | (Int128)(uint)lo;
+
+                    if ((flags & 0x80000000) != 0) mantissa = -mantissa;
+                    
+                    int currentScale = (flags >> 16) & 0xFF;
+                    int diff = maxScale - currentScale;
+                    if (diff > 0) 
+                    {
+                        try 
+                        {
+                            checked 
+                            {
+                                mantissa *= PowersOf10Int128[diff];
+                            }
+                        }
+                        catch (OverflowException)
+                        {
+                            // Since we are in a pointer loop, getting the actual decimal value for the error message 
+                            // requires reconstructing it, or just throwing a generic error.
+                            // For performance, a generic error is fine, or reconstruct 'd' if needed for debug.
+                            throw new OverflowException(
+                                $"Decimal overflow at index {i}. " +
+                                $"Item cannot be rescaled to Scale {maxScale} without exceeding 38-digit limit.");
+                        }
+                    }
+                    
+                    Unsafe.Add(ref dstRef, i) = mantissa;
+
+                    if (validity != null)
+                    {
+                        if (Unsafe.IsNullRef(ref validRef)) validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                        ref byte target = ref Unsafe.Add(ref validRef, i >> 3);
+                        target |= (byte)(1 << (i & 7));
+                    }
+                }
+                else
+                {
+                    // None
+                    if (validity == null)
+                    {
+                        validity = new byte[(len + 7) >> 3];
+                        validRef = ref MemoryMarshal.GetArrayDataReference(validity);
+                        int bytesToFill = i >> 3;
+                        if (bytesToFill > 0) Unsafe.InitBlock(ref validRef, 0xFF, (uint)bytesToFill);
+                        int remainingBits = i & 7;
+                        if (remainingBits > 0) Unsafe.Add(ref validRef, bytesToFill) = (byte)((1 << remainingBits) - 1);
+                    }
+                    Unsafe.Add(ref dstRef, i) = Int128.Zero;
+                }
+            }
+        }
+        return (values, validity, maxScale);
+    }
+}

@@ -35,6 +35,7 @@ open Xunit
 open Polars.FSharp
 open Apache.Arrow
 open System
+open Polars.NET.Core
 
 type ``UDF Tests`` () =
 
@@ -75,7 +76,7 @@ type ``UDF Tests`` () =
         let udf = Func<IArrowArray, IArrowArray> UdfLogic.alwaysFail
 
         // 2. 断言会抛出异常
-        let ex = Assert.Throws<Exception>(fun () -> 
+        let ex = Assert.Throws<PolarsException>(fun () -> 
             lf 
             |> pl.withColumnLazy (
                 pl.col "num" 

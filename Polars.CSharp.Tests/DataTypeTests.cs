@@ -1143,23 +1143,77 @@ public class DataTypeTests
         using var s = new Series("int128_matrix", data);
 
         // 3. 验证 (Rust 传回来的值)
-        // 这一步非常关键，如果 Layout 不对，这里的 Assert 会直接炸
-        
-        // Index 0: 应该是 1
-        // 如果变成了 huge number，说明 Low/High 颠倒了
-        // Assert.Equal((Int128)1, s[0]); 
-        
-        // // Index 1: 应该是 2^64
-        // // 如果变成了 1，说明 Low/High 颠倒了
-        // Assert.Equal(highBit, s[1]);
-
-        // // Index 2: MaxValue
-        // Assert.Equal(Int128.MaxValue, s[2]);
-
-        // // Index 3: -1
-        // Assert.Equal((Int128)(-1), s[3]);
-
-        // 4. 打印出来肉眼确认
         Console.WriteLine($"Int128 Check Passed. Series: {s}");
+    }
+    [Fact]
+    public void Test_Decimal_Matrix_AutoScaling()
+    {
+        // 1. Arrange: 准备一个 "刺激" 的 decimal 矩阵
+        // 我们混合不同的精度 (Scale)，测试 Packer 是否能自动检测到 MaxScale = 3
+        // 结构: 2行 x 3列
+        decimal[,] data = new decimal[2, 3] 
+        {
+            { 1.1m,      2.22m,     3.333m }, // Row 0: Max Scale 3
+            { 100m,      0.00005m,  -1.5m  }  // Row 1: Max Scale 5 (注意这个 0.00005)
+        };
+        
+        // 实际上上面的初始化中：
+        // 3.333 -> Scale 3
+        // 0.00005 -> Scale 5
+        // 所以整个 Series 的 Scale 应该被提升到 5。
+        // 1.1 会变成 1.10000
+        
+        string name = "decimal_matrix";
+
+        // 2. Act: 通过 Wrapper 创建 Series
+        // 注意：这是 C# 侧的调用，假设你有一个 C# Series 类或者直接调 Wrapper
+        // 这里模拟直接调用 Wrapper 并封装 (类似 F# 的行为)
+        
+        using var series = new Series(name, data); // 假设 C# 也有类似的 Create<T>(string, T[,])
+
+        // 3. Assert: 验证结果
+        
+        // A. 验证类型和形状
+        // 假设 Polars 返回的类型字符串类似于 "FixedSizeList[3] (Decimal(38, 5))"
+        // 或者是 List<Decimal>
+        Assert.Equal(DataType.Array(DataType.Decimal(38,5),3),series.DataType); 
+        
+        // B. 验证数据正确性 (Round-trip)
+        // 我们把数据读回来变成 decimal[,] 或者 decimal[][]
+        decimal[][] rows = series.ToArray<decimal[]>();
+
+        Assert.Equal(2, rows.Length); // 应该有 2 行
+
+        // Row 0 Check
+        Assert.Equal(3, rows[0].Length); // 宽度 3
+        Assert.Equal(1.1m, rows[0][0]);
+        Assert.Equal(2.22m, rows[0][1]);
+        Assert.Equal(3.333m, rows[0][2]);
+
+        // Row 1 Check
+        Assert.Equal(3, rows[1].Length); // 宽度 3
+        Assert.Equal(100m, rows[1][0]);
+        Assert.Equal(0.00005m, rows[1][1]);
+        Assert.Equal(-1.5m, rows[1][2]);
+
+        // C. 验证 Scale 提升逻辑 (可选，如果能访问到底层 Arrow 类型)
+        // 1.1m 在内存里应该变成了 110000 (因为 Scale=5)
+        // 0.00005m 在内存里是 5
+    }
+
+    [Fact]
+    public void Test_Decimal_OverflowException()
+    {
+        // Test Decimal Scale Overflow exception
+        decimal huge = decimal.MaxValue; 
+        decimal tiny = 0.0000000000000000000000000001m; // Decimal.MinValue (Scale 28)
+
+        decimal[,] data = new decimal[2, 1] 
+        {
+            { huge },
+            { tiny }
+        };
+
+        Assert.Throws<OverflowException>(() => new Series("huge_decimal", data));
     }
 }

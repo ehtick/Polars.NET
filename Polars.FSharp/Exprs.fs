@@ -3,6 +3,7 @@ namespace Polars.FSharp
 open System
 open Polars.NET.Core
 open Apache.Arrow
+open Polars.NET.Core.Helpers
 /// <summary>
 /// Interface for types that can be converted to one or more Polars Expressions.
 /// </summary>
@@ -392,63 +393,73 @@ and Expr(handle: ExprHandle) =
     /// </summary>
     member this.UniqueStable() =
         new Expr(PolarsWrapper.ExprUniqueStable(this.CloneHandle()))
-    member this.RollingMin(windowSize: string, ?minPeriod: int) =
+    member this.RollingMin(windowSize: string, ?minPeriod: int,?weights: float[],?center:bool) =
         let m = defaultArg minPeriod 1
-        new Expr(PolarsWrapper.RollingMin(this.CloneHandle(), windowSize,m))
-    member this.RollingMin(windowSize: TimeSpan, ?minPeriod: int) =
-        let m = defaultArg minPeriod 1
-        this.RollingMin(DurationFormatter.ToPolarsString windowSize,m)
+        let w = match weights with Some arr -> arr | None -> null
+        let c = defaultArg center false
+        new Expr(PolarsWrapper.RollingMin(this.CloneHandle(), windowSize,m,w,c))
+    member this.RollingMin(windowSize: TimeSpan, ?minPeriod: int, ?weights: float[], ?center: bool) =
+        this.RollingMin(DurationFormatter.ToPolarsString windowSize, ?minPeriod=minPeriod, ?weights=weights, ?center=center)
         
-    member this.RollingMax(windowSize: string, ?minPeriod: int) =
-        let m = defaultArg minPeriod 1 
-        new Expr(PolarsWrapper.RollingMax(this.CloneHandle(), windowSize,m))
-    member this.RollingMax(windowSize: TimeSpan, ?minPeriod: int) =
+    // --- Rolling Max ---
+    member this.RollingMax(windowSize: string, ?minPeriod: int, ?weights: float[], ?center: bool) =
         let m = defaultArg minPeriod 1
-        this.RollingMax(DurationFormatter.ToPolarsString windowSize,m)
+        let w = match weights with Some arr -> arr | None -> null
+        let c = defaultArg center false
+        new Expr(PolarsWrapper.RollingMax(this.CloneHandle(), windowSize, m, w, c))
 
-    member this.RollingMean(windowSize: string, ?minPeriod: int) = 
-        let m = defaultArg minPeriod 1 
-        new Expr(PolarsWrapper.RollingMean(this.CloneHandle(), windowSize, m))
-    member this.RollingMean(windowSize: TimeSpan, ?minPeriod: int) =
+    member this.RollingMax(windowSize: TimeSpan, ?minPeriod: int, ?weights: float[], ?center: bool) =
+        this.RollingMax(DurationFormatter.ToPolarsString windowSize, ?minPeriod=minPeriod, ?weights=weights, ?center=center)
+
+    // --- Rolling Mean ---
+    member this.RollingMean(windowSize: string, ?minPeriod: int, ?weights: float[], ?center: bool) =
         let m = defaultArg minPeriod 1
-        this.RollingMean(DurationFormatter.ToPolarsString windowSize,m)
-        
-    member this.RollingSum(windowSize: string, ?minPeriod: int) =
-        let m = defaultArg minPeriod 1  
-        new Expr(PolarsWrapper.RollingSum(this.CloneHandle(), windowSize, m))
-    member this.RollingSum(windowSize: TimeSpan, ?minPeriod: int) =
+        let w = match weights with Some arr -> arr | None -> null
+        let c = defaultArg center false
+        new Expr(PolarsWrapper.RollingMean(this.CloneHandle(), windowSize, m, w, c))
+
+    member this.RollingMean(windowSize: TimeSpan, ?minPeriod: int, ?weights: float[], ?center: bool) =
+        this.RollingMean(DurationFormatter.ToPolarsString windowSize, ?minPeriod=minPeriod, ?weights=weights, ?center=center)
+
+    // --- Rolling Sum ---
+    member this.RollingSum(windowSize: string, ?minPeriod: int, ?weights: float[], ?center: bool) =
         let m = defaultArg minPeriod 1
-        this.RollingSum(DurationFormatter.ToPolarsString windowSize,m)
-    member this.RollingMeanBy(windowSize: string, by: Expr,?closed: string,?minPeriod: int) =
-        let c = defaultArg closed "left"
+        let w = match weights with Some arr -> arr | None -> null
+        let c = defaultArg center false
+        new Expr(PolarsWrapper.RollingSum(this.CloneHandle(), windowSize, m, w, c))
+
+    member this.RollingSum(windowSize: TimeSpan, ?minPeriod: int, ?weights: float[], ?center: bool) =
+        this.RollingSum(DurationFormatter.ToPolarsString windowSize, ?minPeriod=minPeriod, ?weights=weights, ?center=center)
+    member this.RollingMeanBy(windowSize: string, by: Expr,?closed: ClosedWindow,?minPeriod: int) =
+        let c = defaultArg closed ClosedWindow.Left
         let m = defaultArg minPeriod 1
-        new Expr(PolarsWrapper.RollingMeanBy(this.CloneHandle(), windowSize, m, by.CloneHandle(), c))
-    member this.RollingMeanBy(windowSize: TimeSpan, by: Expr,?closed: string,?minPeriod: int) =
-        let c = defaultArg closed "left"
+        new Expr(PolarsWrapper.RollingMeanBy(this.CloneHandle(), windowSize, m, by.CloneHandle(), c.ToNative()))
+    member this.RollingMeanBy(windowSize: TimeSpan, by: Expr,?closed: ClosedWindow,?minPeriod: int) =
+        let c = defaultArg closed ClosedWindow.Left
         let m = defaultArg minPeriod 1
         this.RollingMeanBy(DurationFormatter.ToPolarsString windowSize,by,c,m)
-    member this.RollingSumBy(windowSize: string, by: Expr, ?closed: string,?minPeriod: int) =
-        let c = defaultArg closed "left"
+    member this.RollingSumBy(windowSize: string, by: Expr, ?closed: ClosedWindow,?minPeriod: int) =
+        let c = defaultArg closed ClosedWindow.Left
         let m = defaultArg minPeriod 1 
-        new Expr(PolarsWrapper.RollingSumBy(this.CloneHandle(), windowSize, m, by.CloneHandle(), c))
-    member this.RollingSumBy(windowSize: TimeSpan, by: Expr,?closed: string,?minPeriod: int) =
-        let c = defaultArg closed "left"
+        new Expr(PolarsWrapper.RollingSumBy(this.CloneHandle(), windowSize, m, by.CloneHandle(), c.ToNative()))
+    member this.RollingSumBy(windowSize: TimeSpan, by: Expr,?closed: ClosedWindow,?minPeriod: int) =
+        let c = defaultArg closed ClosedWindow.Left
         let m = defaultArg minPeriod 1
         this.RollingSumBy(DurationFormatter.ToPolarsString windowSize,by,c,m)
-    member this.RollingMaxBy(windowSize: string, by: Expr, ?closed: string, ?minPeriod: int) =
-        let c = defaultArg closed "left"
+    member this.RollingMaxBy(windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        let c = defaultArg closed ClosedWindow.Left
         let m = defaultArg minPeriod 1 
-        new Expr(PolarsWrapper.RollingMaxBy(this.CloneHandle(), windowSize, m, by.CloneHandle(), c))
-    member this.RollingMaxBy(windowSize: TimeSpan, by: Expr,?closed: string,?minPeriod: int) =
-        let c = defaultArg closed "left"
+        new Expr(PolarsWrapper.RollingMaxBy(this.CloneHandle(), windowSize, m, by.CloneHandle(), c.ToNative()))
+    member this.RollingMaxBy(windowSize: TimeSpan, by: Expr,?closed: ClosedWindow,?minPeriod: int) =
+        let c = defaultArg closed ClosedWindow.Left
         let m = defaultArg minPeriod 1
         this.RollingMaxBy(DurationFormatter.ToPolarsString windowSize,by,c,m)
-    member this.RollingMinBy(windowSize: string, by: Expr, ?closed: string, ?minPeriod: int) =
-        let c = defaultArg closed "left"
+    member this.RollingMinBy(windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        let c = defaultArg closed ClosedWindow.Left
         let m = defaultArg minPeriod 1 
-        new Expr(PolarsWrapper.RollingMinBy(this.CloneHandle(), windowSize, m, by.CloneHandle(), c))
-    member this.RollingMinBy(windowSize: TimeSpan, by: Expr,?closed: string,?minPeriod: int) =
-        let c = defaultArg closed "left"
+        new Expr(PolarsWrapper.RollingMinBy(this.CloneHandle(), windowSize, m, by.CloneHandle(), c.ToNative()))
+    member this.RollingMinBy(windowSize: TimeSpan, by: Expr,?closed: ClosedWindow,?minPeriod: int) =
+        let c = defaultArg closed ClosedWindow.Left
         let m = defaultArg minPeriod 1
         this.RollingMinBy(DurationFormatter.ToPolarsString windowSize,by,c,m)
 

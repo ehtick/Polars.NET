@@ -52,8 +52,8 @@ and DataType =
         | Categorical -> 21
         | Decimal _ -> 22
         | Array _ -> 23
-        | Int128 _ -> 24
-        | UInt128 _ -> 25
+        | Int128 -> 24
+        | UInt128 -> 25
     static member FromHandle (handle: DataTypeHandle) : DataType =
         let kind = PolarsWrapper.GetDataTypeKind handle
 

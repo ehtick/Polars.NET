@@ -435,7 +435,7 @@ type ``Complex Query Tests`` () =
                 // 10:30: 窗口 [09:30, 10:30) -> 10 + 20 = 30
                 // 12:00: 窗口 [11:00, 12:00) -> 30 (前面的都过期了)
                 (pl.col "val")
-                    .RollingSumBy("1h", pl.col "time", closed="right") // closed="left" means [ )
+                    .RollingSumBy("1h", pl.col "time", closed= ClosedWindow.Right) // closed="left" means [ )
                     .Alias "sum_1h"
             )
             |> pl.collect

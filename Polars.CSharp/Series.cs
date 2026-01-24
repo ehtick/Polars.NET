@@ -1061,6 +1061,13 @@ public partial class Series : IDisposable
     /// <param name="data"></param>
     public Series(string name, double[,] data)
         => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    /// <summary>
+    /// Create a Series from a 2D fixed size array of Decimal.
+    /// </summary>
+    /// <param name="name"></param>
+    /// <param name="data"></param>
+    public Series(string name, decimal[,] data)
+        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
 
     // ==========================================
     // Properties

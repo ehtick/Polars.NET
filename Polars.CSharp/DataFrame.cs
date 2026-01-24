@@ -1608,6 +1608,9 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             case double[,] v:
                 series = new Series(name, v);
                 return true;
+            case decimal[,] v:
+                series = new Series(name, v);
+                return true;
             // --- Default ---
             default:
                 return false; 

@@ -11,6 +11,7 @@ open System.Data
 open System.Threading.Tasks
 open System.Collections.Concurrent
 open System.Collections
+open System.Reflection
 /// --- Series ---
 /// <summary>
 /// An eager Series holding a single column of data.
@@ -532,60 +533,70 @@ type Series(handle: SeriesHandle) =
     // ==========================================
     // Static Constructors
     // ==========================================
+
     // -------------------------------------------------------------------------
-    // Unzip
+    // Unzip (Turbocharged)
     // -------------------------------------------------------------------------
 
-    /// For Option<'T> 
+    /// <summary>
+    /// Turbo Unzip for Option<'T>
+    /// </summary>
     static member inline private UnzipOption<'T 
-        when 'T : struct 
-        and 'T : (new : unit -> 'T) 
-        and 'T :> System.ValueType> 
+        when 'T : struct                    
+        and 'T : unmanaged
+        and 'T :> ValueType                  
+        and 'T : (new : unit -> 'T)>       
         (data: 'T option seq) =
         
-        // Convert
-        let nullables = 
+        let arr = 
             match data with
-            | :? ('T option array) as arr -> arr |> Array.map Option.toNullable
-            | _ -> data |> Seq.toArray |> Array.map Option.toNullable
+            | :? ('T option array) as arr -> arr
+            | _ -> Seq.toArray data
             
-        ArrayHelper.UnzipNullable(nullables, Unchecked.defaultof<'T>)
+        FSharpHelper.UnzipOption arr
 
-    /// 针对 ValueOption<'T> 的解包 (逻辑完全相同，只是映射函数不同)
+    /// <summary>
+    /// Turbo Unzip for ValueOption<'T>
+    /// </summary>
     static member inline private UnzipVOption<'T 
         when 'T : struct 
-        and 'T : (new : unit -> 'T) 
-        and 'T :> System.ValueType> 
+        and 'T : unmanaged
+        and 'T :> ValueType   
+        and 'T : (new : unit -> 'T)> 
         (data: 'T voption seq) =
         
-        // Convert
-        let nullables = 
+        let arr = 
             match data with
-            | :? ('T voption array) as arr -> arr |> Array.map ValueOption.toNullable
-            | _ -> data |> Seq.toArray |> Array.map ValueOption.toNullable
+            | :? ('T voption array) as arr -> arr
+            | _ -> Seq.toArray data
             
-        // Unzip
-        ArrayHelper.UnzipNullable(nullables, Unchecked.defaultof<'T>)
+        FSharpHelper.UnzipValueOption arr
 
     // -------------------------------------------------------------------------
-    // Generic Factory
+    // Generic Factory (Turbocharged)
     // -------------------------------------------------------------------------
 
-    /// Option Fctory
+    /// <summary>
+    /// Factory for Option<'T>
+    /// </summary>
     static member inline private CreateFromOption<'T 
         when 'T : struct 
-        and 'T : (new : unit -> 'T) 
-        and 'T :> System.ValueType>
+        and 'T : unmanaged
+        and 'T :> ValueType   
+        and 'T : (new : unit -> 'T)>
         (name: string, data: 'T option seq, constructor: string * 'T array * byte array -> SeriesHandle) =
         
         let struct (vals, validity) = Series.UnzipOption<'T> data
         new Series(constructor(name, vals, validity))
 
-    /// VOption Factory
+    /// <summary>
+    /// Factory for ValueOption<'T>
+    /// </summary>
     static member inline private CreateFromVOption<'T 
         when 'T : struct 
-        and 'T : (new : unit -> 'T) 
-        and 'T :> System.ValueType>
+        and 'T : unmanaged
+        and 'T :> ValueType   
+        and 'T : (new : unit -> 'T)>
         (name: string, data: 'T voption seq, constructor: string * 'T array * byte array -> SeriesHandle) =
         
         let struct (vals, validity) = Series.UnzipVOption<'T> data
@@ -676,11 +687,11 @@ type Series(handle: SeriesHandle) =
         Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
 
     // --- Float ---
-    static member create(name: string, data: float seq) = 
+    static member create(name: string, data: float32 seq) = 
         new Series(PolarsWrapper.SeriesNew(name, Seq.toArray data, null))
-    static member create(name: string, data: float option seq) = 
+    static member create(name: string, data: float32 option seq) = 
         Series.CreateFromOption(name, data, PolarsWrapper.SeriesNew)
-    static member create(name: string, data: float voption seq) = 
+    static member create(name: string, data: float32 voption seq) = 
         Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
 
     // --- Double ---
@@ -692,49 +703,47 @@ type Series(handle: SeriesHandle) =
         Series.CreateFromVOption(name, data, PolarsWrapper.SeriesNew)
 
     // -------------------------------------------------------------------------
-    // Boolean
+    // Boolean (Turbocharged)
     // -------------------------------------------------------------------------
 
-    // bool option 
+    // bool option -> Bitmaps
     static member inline private UnzipBool(data: bool option seq) =
-        // Route: seq -> array -> nullable[] -> SIMD Pack
-        let nullables = 
+        let arr = 
             match data with
-            | :? (bool option array) as arr -> arr |> Array.map Option.toNullable
-            | _ -> data |> Seq.toArray |> Array.map Option.toNullable
+            | :? (bool option array) as arr -> arr
+            | _ -> Seq.toArray data
             
-        let struct (vals, validity) = BoolPacker.PackNullable nullables
-        struct (vals, validity, nullables.Length)
+        // Direct C# Call (No intermediate Nullable conversion)
+        // Returns struct (values: byte[], validity: byte[])
+        let struct (vals, validity) = FSharpHelper.PackOptionBool arr
+        struct (vals, validity, arr.Length)
 
-    // bool voption 
+    // bool voption -> Bitmaps
     static member inline private UnzipBool(data: bool voption seq) =
-        let nullables = 
+        let arr = 
             match data with
-            | :? (bool voption array) as arr -> arr |> Array.map ValueOption.toNullable
-            | _ -> data |> Seq.toArray |> Array.map ValueOption.toNullable
+            | :? (bool voption array) as arr -> arr
+            | _ -> Seq.toArray data
             
-        let struct (vals, validity) = BoolPacker.PackNullable nullables
-        struct (vals, validity, nullables.Length)
+        // Direct C# Call
+        let struct (vals, validity) = FSharpHelper.PackValueOptionBool arr
+        struct (vals, validity, arr.Length)
 
     // -------------------------------------------------------------------------
     // Boolean Public API
     // -------------------------------------------------------------------------
 
-    // bool[] -> SIMD Pack -> Bitmap
+    // bool seq (Non-null)
     static member create(name: string, data: bool seq) =
         let arr = Seq.toArray data
-        // Compress Value
-        let valuesBitmask = BoolPacker.Pack arr
-        // Convert UIntPtr
+        // Reuse existing BoolPacker for pure bool[] (it's already fast)
+        let valuesBitmask = BoolPacker.Pack arr 
         let len = unativeint arr.Length
-        
-        // Call Wrapper (validity as null)
         new Series(PolarsWrapper.SeriesNew(name, valuesBitmask, null, len))
 
     // bool option (with Null)
     static member create(name: string, data: bool option seq) = 
         let struct (vals, validity, len) = Series.UnzipBool data
-        
         new Series(PolarsWrapper.SeriesNew(name, vals, validity, unativeint len))
 
     // bool voption (with Null)
@@ -743,155 +752,456 @@ type Series(handle: SeriesHandle) =
         new Series(PolarsWrapper.SeriesNew(name, vals, validity, unativeint len))
 
     // -------------------------------------------------------------------------
-    // String
+    // String (Turbocharged)
     // -------------------------------------------------------------------------
-
-    /// string option conversion (F# Option -> CLR Null)
+    
+    // string option -> string[] (with nulls)
     static member inline private UnzipString(data: string option seq) =
-        data |> Seq.toArray |> Array.map Option.toObj
+        let arr = 
+            match data with
+            | :? (string option array) as arr -> arr
+            | _ -> Seq.toArray data
+        
+        // Direct C# Call
+        FSharpHelper.UnwrapOptionString arr
 
-    /// string voption conversion (F# ValueOption -> CLR Null)
+    // string voption -> string[] (with nulls)
     static member inline private UnzipString(data: string voption seq) =
-        data |> Seq.toArray |> Array.map (function ValueSome v -> v | ValueNone -> null)
+        let arr = 
+            match data with
+            | :? (string voption array) as arr -> arr
+            | _ -> Seq.toArray data
+            
+        // Direct C# Call
+        FSharpHelper.UnwrapValueOptionString arr
 
     // -------------------------------------------------------------------------
     // String Public API
     // -------------------------------------------------------------------------
 
-    static member create(name: string, data: string seq) = 
-        new Series(PolarsWrapper.SeriesNewStringSimd(name, Seq.toArray data))
-
-    static member create(name: string, data: string option seq) = 
-        let arr = Series.UnzipString data
+    // 1. string seq (Normal Strings)
+    static member create(name: string, data: string seq) =
+        let arr = Seq.toArray data
+        // 直接调用底层 SIMD Wrapper
         new Series(PolarsWrapper.SeriesNewStringSimd(name, arr))
+
+    // 2. string option (Nullable Strings)
+    static member create(name: string, data: string option seq) = 
+        // Get string?[]
+        let arr = Series.UnzipString data
+        // Call SIMD Packing
+        new Series(PolarsWrapper.SeriesNewStringSimd(name, arr))
+
+    // 3. string voption (Nullable Strings Struct)
     static member create(name: string, data: string voption seq) = 
         let arr = Series.UnzipString data
         new Series(PolarsWrapper.SeriesNewStringSimd(name, arr))
 
-    // --- Decimal ---
-    /// <summary>
-    /// Create a Decimal Series.
-    /// scale: The number of decimal places (e.g., 2 for currency).
-    /// </summary>
-    static member create(name: string, data: decimal seq, scale: int) = 
-        new Series(PolarsWrapper.SeriesNewDecimal(name, Seq.toArray data, null, scale))
+    // -------------------------------------------------------------------------
+    // Decimal (Turbocharged)
+    // -------------------------------------------------------------------------
+    
+    // decimal seq -> Int128[] (Auto Scale)
+    static member inline private UnzipDecimal(data: decimal seq) =
+        let arr = Seq.toArray data
+        // Direct C# Call
+        let struct (vals, detectedScale) = DecimalPacker.Pack(arr)
+        struct (vals, null, detectedScale)
 
-    static member create(name: string, data: decimal option seq, scale: int) = 
-        let arr = Seq.toArray data // decimal option[]
-        let nullableArr = 
-            arr |> Array.map (function Some v -> Nullable v | None -> Nullable())
-            
-        new Series(PolarsWrapper.SeriesNewDecimal(name, nullableArr, scale))
+    // decimal option seq -> Int128[] + Validity (Auto Scale)
+    static member inline private UnzipDecimal(data: decimal option seq) =
+        let arr = 
+            match data with
+            | :? (decimal option array) as arr -> arr
+            | _ -> Seq.toArray data
+        // Direct C# Call
+        let struct (vals, validity, detectedScale) = DecimalPacker.Pack arr
+        struct (vals, validity, detectedScale)
+
+    // decimal voption seq -> Int128[] + Validity (Auto Scale)
+    static member inline private UnzipDecimal(data: decimal voption seq) =
+        let arr = 
+            match data with
+            | :? (decimal voption array) as arr -> arr
+            | _ -> Seq.toArray data
+        // Direct C# Call
+        let struct (vals, validity, detectedScale) = DecimalPacker.Pack arr
+        struct (vals, validity, detectedScale)
+
+    // -------------------------------------------------------------------------
+    // Decimal Public API
+    // -------------------------------------------------------------------------
+    
+    static member create(name: string, data: decimal seq, userScale: int) = 
+        let struct (vals, _, detectedScale) = Series.UnzipDecimal data
+        // userScale is not supported now
+        new Series(PolarsWrapper.SeriesNewDecimal(name, vals, null, detectedScale))
+
+    static member create(name: string, data: decimal option seq, userScale: int) = 
+        let struct (vals, validity, detectedScale) = Series.UnzipDecimal data
+        new Series(PolarsWrapper.SeriesNewDecimal(name, vals, validity, detectedScale))
+
+    static member create(name: string, data: decimal voption seq, userScale: int) = 
+        let struct (vals, validity, detectedScale) = Series.UnzipDecimal data
+        new Series(PolarsWrapper.SeriesNewDecimal(name, vals, validity, detectedScale))
     // ==========================================
     // Temporal Types Creation
     // ==========================================
+    // -------------------------------------------------------------------------
+    // DateTime (Turbocharged)
+    // -------------------------------------------------------------------------
+    
+    // DateTime seq -> Microseconds[] (Naive)
+    static member inline private UnzipDateTime(data: DateTime seq) =
+        let arr = Seq.toArray data
+        // Dense Array, reuse ArrayHelper
+        let vals = ArrayHelper.UnzipDateTimeToUs arr
+        struct (vals, null)
 
-    // --- DateOnly (Polars Date: i32 days) ---
+    // DateTime option seq -> Microseconds[] + Validity
+    static member inline private UnzipDateTime(data: DateTime option seq) =
+        let arr = 
+            match data with
+            | :? (DateTime option array) as arr -> arr
+            | _ -> Seq.toArray data
+        
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipOptionDateTimeToUs arr
+        struct (vals, validity)
+
+    // DateTime voption seq -> Microseconds[] + Validity
+    static member inline private UnzipDateTime(data: DateTime voption seq) =
+        let arr = 
+            match data with
+            | :? (DateTime voption array) as arr -> arr
+            | _ -> Seq.toArray data
+            
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipValueOptionDateTimeToUs arr
+        struct (vals, validity)
+
+    // -------------------------------------------------------------------------
+    // DateTime Public API
+    // -------------------------------------------------------------------------
+
+    // 1. DateTime seq
+    static member create(name: string, data: DateTime seq, ?timeZone: string) =
+        let struct (vals, _) = Series.UnzipDateTime data
+        // Option.toObj converts None -> null for C# interop
+        new Series(PolarsWrapper.SeriesNewDatetime(name, vals, null, Option.toObj timeZone))
+
+    // 2. DateTime option seq
+    static member create(name: string, data: DateTime option seq, ?timeZone: string) = 
+        let struct (vals, validity) = Series.UnzipDateTime data
+        new Series(PolarsWrapper.SeriesNewDatetime(name, vals, validity, Option.toObj timeZone))
+
+    // 3. DateTime voption seq
+    static member create(name: string, data: DateTime voption seq, ?timeZone: string) = 
+        let struct (vals, validity) = Series.UnzipDateTime data
+        new Series(PolarsWrapper.SeriesNewDatetime(name, vals, validity, Option.toObj timeZone))
+    // -------------------------------------------------------------------------
+    // DateTimeOffset (Turbocharged)
+    // -------------------------------------------------------------------------
+
+    // DateTimeOffset seq -> UTC Microseconds[] (Dense)
+    static member inline private UnzipDateTimeOffset(data: DateTimeOffset seq) =
+        let arr = Seq.toArray data
+        // Reuse ArrayHelper (Already optimized)
+        let vals = ArrayHelper.UnzipDateTimeOffsetToUs arr
+        struct (vals, null)
+
+    // DateTimeOffset option seq -> UTC Microseconds[] + Validity
+    static member inline private UnzipDateTimeOffset(data: DateTimeOffset option seq) =
+        let arr = 
+            match data with
+            | :? (DateTimeOffset option array) as arr -> arr
+            | _ -> Seq.toArray data
+            
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipOptionDateTimeOffsetToUs arr
+        struct (vals, validity)
+
+    // DateTimeOffset voption seq -> UTC Microseconds[] + Validity
+    static member inline private UnzipDateTimeOffset(data: DateTimeOffset voption seq) =
+        let arr = 
+            match data with
+            | :? (DateTimeOffset voption array) as arr -> arr
+            | _ -> Seq.toArray data
+            
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipValueOptionDateTimeOffsetToUs arr
+        struct (vals, validity)
+
+    // -------------------------------------------------------------------------
+    // DateTimeOffset Public API
+    // -------------------------------------------------------------------------
+
+    // 1. DateTimeOffset seq
+    static member create(name: string, data: DateTimeOffset seq, ?timeZone: string) =
+        let struct (vals, _) = Series.UnzipDateTimeOffset data
+        let tz = defaultArg timeZone "UTC" // Default to UTC for correctness
+        new Series(PolarsWrapper.SeriesNewDatetime(name, vals, null, tz))
+
+    // 2. DateTimeOffset option seq
+    static member create(name: string, data: DateTimeOffset option seq, ?timeZone: string) = 
+        let struct (vals, validity) = Series.UnzipDateTimeOffset data
+        let tz = defaultArg timeZone "UTC"
+        new Series(PolarsWrapper.SeriesNewDatetime(name, vals, validity, tz))
+
+    // 3. DateTimeOffset voption seq
+    static member create(name: string, data: DateTimeOffset voption seq, ?timeZone: string) = 
+        let struct (vals, validity) = Series.UnzipDateTimeOffset data
+        let tz = defaultArg timeZone "UTC"
+        new Series(PolarsWrapper.SeriesNewDatetime(name, vals, validity, tz))
+    // -------------------------------------------------------------------------
+    // DateOnly (Turbocharged)
+    // -------------------------------------------------------------------------
+
+    // DateOnly seq -> Int32[] (Days)
+    static member inline private UnzipDate(data: DateOnly seq) =
+        let arr = Seq.toArray data
+        // Dense Array -> Reuse C# ArrayHelper (AVX-512 optimized!)
+        let vals = ArrayHelper.UnzipDateOnlyToInt32 arr
+        struct (vals, null)
+
+    // DateOnly option seq -> Int32[] + Validity
+    static member inline private UnzipDate(data: DateOnly option seq) =
+        let arr = 
+            match data with
+            | :? (DateOnly option array) as arr -> arr
+            | _ -> Seq.toArray data
+        
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipOptionDateOnlyToInt32(arr)
+        struct (vals, validity)
+
+    // DateOnly voption seq -> Int32[] + Validity
+    static member inline private UnzipDate(data: DateOnly voption seq) =
+        let arr = 
+            match data with
+            | :? (DateOnly voption array) as arr -> arr
+            | _ -> Seq.toArray data
+            
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipValueOptionDateOnlyToInt32(arr)
+        struct (vals, validity)
+
+    // -------------------------------------------------------------------------
+    // DateOnly Public API
+    // -------------------------------------------------------------------------
+
+    // 1. DateOnly seq
     static member create(name: string, data: DateOnly seq) =
+        let struct (vals, _) = Series.UnzipDate data
+        new Series(PolarsWrapper.SeriesNewDate(name, vals, null))
+
+    // 2. DateOnly option seq
+    static member create(name: string, data: DateOnly option seq) = 
+        let struct (vals, validity) = Series.UnzipDate data
+        new Series(PolarsWrapper.SeriesNewDate(name, vals, validity))
+
+    // 3. DateOnly voption seq
+    static member create(name: string, data: DateOnly voption seq) = 
+        let struct (vals, validity) = Series.UnzipDate data
+        new Series(PolarsWrapper.SeriesNewDate(name, vals, validity))
+    // -------------------------------------------------------------------------
+    // TimeOnly (Turbocharged)
+    // -------------------------------------------------------------------------
+
+    // TimeOnly seq -> Nanoseconds (long[])
+    static member inline private UnzipTime(data: TimeOnly seq) =
         let arr = Seq.toArray data
-        let days = Array.zeroCreate<int> arr.Length
-        let epochOffset = 719162 // 0001-01-01 to 1970-01-01
+        // Dense Array -> Reuse ArrayHelper (AVX-512 optimized!)
+        let vals = ArrayHelper.UnzipTimeOnlyToNs arr
+        struct (vals, null)
+
+    // TimeOnly option seq -> Nanoseconds + Validity
+    static member inline private UnzipTime(data: TimeOnly option seq) =
+        let arr = 
+            match data with
+            | :? (TimeOnly option array) as arr -> arr
+            | _ -> Seq.toArray data
         
-        for i in 0 .. arr.Length - 1 do
-            days.[i] <- arr.[i].DayNumber - epochOffset
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipOptionTimeOnlyToNs arr
+        struct (vals, validity)
+
+    // TimeOnly voption seq -> Nanoseconds + Validity
+    static member inline private UnzipTime(data: TimeOnly voption seq) =
+        let arr = 
+            match data with
+            | :? (TimeOnly voption array) as arr -> arr
+            | _ -> Seq.toArray data
             
-        let s = Series.create(name, days)
-        s.Cast Date
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipValueOptionTimeOnlyToNs arr
+        struct (vals, validity)
 
-    static member create(name: string, data: DateOnly option seq) =
-        let arr = Seq.toArray data
-        let days = Array.zeroCreate<int> arr.Length
-        let valid = Array.zeroCreate<bool> arr.Length
-        let epochOffset = 719162
-        
-        for i in 0 .. arr.Length - 1 do
-            match arr.[i] with
-            | Some d -> 
-                days.[i] <- d.DayNumber - epochOffset
-                valid.[i] <- true
-            | None -> 
-                days.[i] <- 0
-                valid.[i] <- false
-                
-        let s = new Series(PolarsWrapper.SeriesNew(name, days, valid))
-        s.Cast DataType.Date
+    // -------------------------------------------------------------------------
+    // TimeOnly Public API
+    // -------------------------------------------------------------------------
 
-    // --- TimeOnly (Polars Time: i64 nanoseconds) ---
+    // 1. TimeOnly seq
     static member create(name: string, data: TimeOnly seq) =
+        let struct (vals, _) = Series.UnzipTime data
+        new Series(PolarsWrapper.SeriesNewTime(name, vals, null))
+
+    // 2. TimeOnly option seq
+    static member create(name: string, data: TimeOnly option seq) = 
+        let struct (vals, validity) = Series.UnzipTime data
+        new Series(PolarsWrapper.SeriesNewTime(name, vals, validity))
+
+    // 3. TimeOnly voption seq
+    static member create(name: string, data: TimeOnly voption seq) = 
+        let struct (vals, validity) = Series.UnzipTime data
+        new Series(PolarsWrapper.SeriesNewTime(name, vals, validity))
+
+    // -------------------------------------------------------------------------
+    // TimeSpan / Duration (Turbocharged)
+    // -------------------------------------------------------------------------
+
+    // TimeSpan seq -> Microseconds (long[])
+    static member inline private UnzipDuration(data: TimeSpan seq) =
         let arr = Seq.toArray data
-        let nanos = Array.zeroCreate<int64> arr.Length
+        // Dense Array -> Reuse ArrayHelper (Unroll 8 optimized)
+        let vals = ArrayHelper.UnzipTimeSpanToUs arr
+        struct (vals, null)
+
+    // TimeSpan option seq -> Microseconds + Validity
+    static member inline private UnzipDuration(data: TimeSpan option seq) =
+        let arr = 
+            match data with
+            | :? (TimeSpan option array) as arr -> arr
+            | _ -> Seq.toArray data
         
-        for i in 0 .. arr.Length - 1 do
-            // Ticks = 100ns -> * 100 = ns
-            nanos.[i] <- arr.[i].Ticks * 100L
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipOptionTimeSpanToUs(arr)
+        struct (vals, validity)
+
+    // TimeSpan voption seq -> Microseconds + Validity
+    static member inline private UnzipDuration(data: TimeSpan voption seq) =
+        let arr = 
+            match data with
+            | :? (TimeSpan voption array) as arr -> arr
+            | _ -> Seq.toArray data
             
-        let s = Series.create(name, nanos)
-        s.Cast DataType.Time
+        // 🔥 Direct C# Call (Zero-Alloc)
+        let struct (vals, validity) = FSharpHelper.UnzipValueOptionTimeSpanToUs(arr)
+        struct (vals, validity)
 
-    static member create(name: string, data: TimeOnly option seq) =
-        let arr = Seq.toArray data
-        let nanos = Array.zeroCreate<int64> arr.Length
-        let valid = Array.zeroCreate<bool> arr.Length
-        
-        for i in 0 .. arr.Length - 1 do
-            match arr.[i] with
-            | Some t -> 
-                nanos.[i] <- t.Ticks * 100L
-                valid.[i] <- true
-            | None -> 
-                nanos.[i] <- 0L
-                valid.[i] <- false
-                
-        let s = new Series(PolarsWrapper.SeriesNew(name, nanos, valid))
-        s.Cast DataType.Time
+    // -------------------------------------------------------------------------
+    // TimeSpan / Duration Public API
+    // -------------------------------------------------------------------------
 
-    // --- TimeSpan (Polars Duration: i64 microseconds) ---
+    // 1. TimeSpan seq
     static member create(name: string, data: TimeSpan seq) =
-        let arr = Seq.toArray data
-        let micros = Array.zeroCreate<int64> arr.Length
-        
-        for i in 0 .. arr.Length - 1 do
-            // Ticks = 100ns -> / 10 = us
-            micros.[i] <- arr.[i].Ticks / 10L
-            
-        let s = Series.create(name, micros)
-        s.Cast(Duration Microseconds)
+        let struct (vals, _) = Series.UnzipDuration data
+        new Series(PolarsWrapper.SeriesNewDuration(name, vals, null))
 
-    static member create(name: string, data: TimeSpan option seq) =
-        let arr = Seq.toArray data
-        let micros = Array.zeroCreate<int64> arr.Length
-        let valid = Array.zeroCreate<bool> arr.Length
-        
-        for i in 0 .. arr.Length - 1 do
-            match arr.[i] with
-            | Some t -> 
-                micros.[i] <- t.Ticks / 10L
-                valid.[i] <- true
-            | None -> 
-                micros.[i] <- 0L
-                valid.[i] <- false
-                
-        let s = new Series(PolarsWrapper.SeriesNew(name, micros, valid))
-        s.Cast(Duration Microseconds)
+    // 2. TimeSpan option seq
+    static member create(name: string, data: TimeSpan option seq) = 
+        let struct (vals, validity) = Series.UnzipDuration data
+        new Series(PolarsWrapper.SeriesNewDuration(name, vals, validity))
+
+    // 3. TimeSpan voption seq
+    static member create(name: string, data: TimeSpan voption seq) = 
+        let struct (vals, validity) = Series.UnzipDuration data
+        new Series(PolarsWrapper.SeriesNewDuration(name, vals, validity))
+    // -------------------------------------------------------------------------
+    // Fixed Size List / Array (Matrix)
+    // -------------------------------------------------------------------------
+
     /// <summary>
-    /// Smart Constructor:
-    /// <para>1. Handles primitive types (int, double...).</para>
-    /// <para>2. Handles Option types (int option...) by forwarding to ofOptionSeq.</para>
-    /// <para>3. Handles Decimal types by inferring scale.</para>
+    /// Create a FixedSizeList Series from a 2D Array (Matrix).
+    /// Shape: [Rows, Width] -> Array[Width]
+    /// Supported Types: Primitives, Decimal, Int128
     /// </summary>
+    static member ofArray2D<'T
+        when 'T : struct 
+        and 'T : unmanaged
+        and 'T :> ValueType   
+        and 'T : (new : unit -> 'T)> 
+        (name: string, data: 'T[,]) =
+            new Series(PolarsWrapper.SeriesNewFixedArray(name, data))
+    // ========================================================================
+    // Dynamic Dispatch for Option Sequence
+    // ========================================================================
     static member ofOptionSeq<'T>(name: string, data: seq<'T option>) : Series =
         let t = typeof<'T>
+        
+        // --- 1. Integers (Generic Unmanaged Path) ---
         if t = typeof<int> then Series.create(name, data |> Seq.cast<int option>)
         else if t = typeof<int64> then Series.create(name, data |> Seq.cast<int64 option>)
-        else if t = typeof<float> then Series.create(name, data |> Seq.cast<float option>)
-        else if t = typeof<double> then Series.create(name, data |> Seq.cast<double option>)
+        else if t = typeof<byte> then Series.create(name, data |> Seq.cast<byte option>)
+        else if t = typeof<sbyte> then Series.create(name, data |> Seq.cast<sbyte option>)
+        else if t = typeof<int16> then Series.create(name, data |> Seq.cast<int16 option>)
+        else if t = typeof<uint16> then Series.create(name, data |> Seq.cast<uint16 option>)
+        else if t = typeof<uint32> then Series.create(name, data |> Seq.cast<uint32 option>)
+        else if t = typeof<uint64> then Series.create(name, data |> Seq.cast<uint64 option>)
+        
+        // --- 2. Floating Point (Generic Unmanaged Path) ---
+        else if t = typeof<float> then Series.create(name, data |> Seq.cast<float option>)      // Double
+        else if t = typeof<float32> then Series.create(name, data |> Seq.cast<float32 option>)  // Single
+        
+        // --- 3. Boolean (Bitpacked Path) ---
         else if t = typeof<bool> then Series.create(name, data |> Seq.cast<bool option>)
+        
+        // --- 4. String (Pointer Unwrapped Path) ---
         else if t = typeof<string> then Series.create(name, data |> Seq.cast<string option>)
+        
+        // --- 5. Temporal Types (Turbocharged Paths) ---
         else if t = typeof<DateTime> then Series.create(name, data |> Seq.cast<DateTime option>)
         else if t = typeof<DateOnly> then Series.create(name, data |> Seq.cast<DateOnly option>)
         else if t = typeof<TimeOnly> then Series.create(name, data |> Seq.cast<TimeOnly option>)
         else if t = typeof<TimeSpan> then Series.create(name, data |> Seq.cast<TimeSpan option>)
+        
+        // Note: DateTimeOffset optional arguments work automatically
+        else if t = typeof<DateTimeOffset> then Series.create(name, data |> Seq.cast<DateTimeOffset option>) 
+
+        // --- 6. Decimal (Special Case for Scale) ---
+        // 0 as default scale
+        else if t = typeof<decimal> then Series.create(name, data |> Seq.cast<decimal option>, 0)
+
         else failwithf "Unsupported type for Series.ofOptionSeq: %A" t
+
+    // ========================================================================
+    // Dynamic Dispatch for ValueOption Sequence
+    // ========================================================================
+    static member ofVOptionSeq<'T>(name: string, data: seq<'T voption>) : Series =
+        let t = typeof<'T>
+
+        // --- 1. Integers ---
+        if t = typeof<int> then Series.create(name, data |> Seq.cast<int voption>)
+        else if t = typeof<int64> then Series.create(name, data |> Seq.cast<int64 voption>)
+        else if t = typeof<byte> then Series.create(name, data |> Seq.cast<byte voption>)
+        else if t = typeof<sbyte> then Series.create(name, data |> Seq.cast<sbyte voption>)
+        else if t = typeof<int16> then Series.create(name, data |> Seq.cast<int16 voption>)
+        else if t = typeof<uint16> then Series.create(name, data |> Seq.cast<uint16 voption>)
+        else if t = typeof<uint32> then Series.create(name, data |> Seq.cast<uint32 voption>)
+        else if t = typeof<uint64> then Series.create(name, data |> Seq.cast<uint64 voption>)
+
+        // --- 2. Floating Point ---
+        else if t = typeof<float> then Series.create(name, data |> Seq.cast<float voption>)
+        else if t = typeof<float32> then Series.create(name, data |> Seq.cast<float32 voption>)
+
+        // --- 3. Boolean ---
+        else if t = typeof<bool> then Series.create(name, data |> Seq.cast<bool voption>)
+
+        // --- 4. String ---
+        else if t = typeof<string> then Series.create(name, data |> Seq.cast<string voption>)
+
+        // --- 5. Temporal Types ---
+        else if t = typeof<DateTime> then Series.create(name, data |> Seq.cast<DateTime voption>)
+        else if t = typeof<DateOnly> then Series.create(name, data |> Seq.cast<DateOnly voption>)
+        else if t = typeof<TimeOnly> then Series.create(name, data |> Seq.cast<TimeOnly voption>)
+        else if t = typeof<TimeSpan> then Series.create(name, data |> Seq.cast<TimeSpan voption>)
+        
+        else if t = typeof<DateTimeOffset> then Series.create(name, data |> Seq.cast<DateTimeOffset voption>)
+
+        // --- 6. Decimal ---
+        else if t = typeof<decimal> then Series.create(name, data |> Seq.cast<decimal voption>, 0)
+
+        else failwithf "Unsupported type for Series.ofVOptionSeq: %A" t
 
     // --- Scalar Access ---
     
@@ -1180,7 +1490,7 @@ type Series(handle: SeriesHandle) =
     member this.GetValueOption<'T>(index: int64) : 'T option =
         this.GetValue<'T option> index
     // ==========================================
-    // Interop with DataFrame
+    // Interop 
     // ==========================================
     member this.ToFrame() : DataFrame =
         let h = PolarsWrapper.SeriesToFrame handle
@@ -1192,6 +1502,12 @@ type Series(handle: SeriesHandle) =
         new Series(newHandle)
     member this.ToArrow() : IArrowArray =
         PolarsWrapper.SeriesToArrow handle
+    member this.ToArray<'T>() =
+        let col = this.ToArrow()
+        ArrowReader.ReadColumn<'T> col
+    member this.Show() =
+        this.ToFrame().Show()
+
 
 and SeriesDtNameSpace(parent: Series) =
     
@@ -1636,7 +1952,7 @@ and DataFrame(handle: DataFrameHandle) =
     static member ofSeqStream<'T>(data: seq<'T>, ?batchSize: int) : DataFrame =
         let size = defaultArg batchSize 100_000
 
-        let schema = Polars.NET.Core.Arrow.ArrowConverter.GetSchemaFromType<'T>()
+        let schema = ArrowConverter.GetSchemaFromType<'T>()
         let batchStream = 
             data
             |> Seq.chunkBySize size
@@ -1658,16 +1974,154 @@ and DataFrame(handle: DataFrameHandle) =
         
         ArrowReader.ReadRecordBatch<'T> batch |> Seq.toList |> List.toSeq
 
+    // ==========================================
+    // High-Performance Record Converter
+    // ==========================================
     /// <summary>
-    /// Create a DataFrame from a sequence of F# Records or Objects.
-    /// Uses high-performance Apache Arrow interop.
-    /// Supports: F# Option, Nested Lists, DateTime, etc.
+    /// Check if a type is supported by the Fast Columnar Transposition path.
+    /// Primitives, Strings, Dates, and their Option/VOption variants, or Arrays with non-null primitive data types are supported.
+    /// Lists, Arrays with nullable or option type, and Nested Records must fallback to Arrow.
+    /// </summary>
+    static member private IsSupportedFastType (t: Type) =
+        // 1. Unwrap Option/VOption
+        let checkType = 
+            if t.IsGenericType && (t.GetGenericTypeDefinition() = typedefof<option<_>> || t.GetGenericTypeDefinition() = typedefof<voption<_>>) then
+                t.GetGenericArguments().[0]
+            else
+                t
+
+        // 2. Whitelist check
+        if checkType.IsPrimitive then true // int, double, byte, bool...
+        else if checkType = typeof<string> then true
+        else if checkType = typeof<decimal> then true
+        else if checkType = typeof<DateTime> then true
+        else if checkType = typeof<DateOnly> then true
+        else if checkType = typeof<TimeOnly> then true
+        else if checkType = typeof<TimeSpan> then true
+        else if checkType = typeof<DateTimeOffset> then true
+        else if checkType = typeof<Int128> then true
+        else if checkType = typeof<UInt128> then true
+        else
+            // Lists, Arrays, Complex Objects -> False (Fallback to Arrow)
+            false
+    /// <summary>
+    /// [Internal] Worker method to transpose a single column from Record[] to Series.
+    /// This is generic to avoid boxing during array population.
+    /// </summary>
+    static member private CreateSeriesFromColumn<'Rec, 'Field>(data: 'Rec[], name: string, prop: PropertyInfo) : Series =
+        // 1. Create Fast Getter (Delegate)
+        // Func<'Rec, 'Field> is much faster than PropertyInfo.GetValue() in a loop
+        let getterMethod = prop.GetGetMethod()
+        let getter = Delegate.CreateDelegate(typeof<Func<'Rec, 'Field>>, getterMethod) :?> Func<'Rec, 'Field>
+        
+        // 2. Transpose: Row-Oriented -> Column-Oriented
+        // Allocate strongly typed array (e.g., int[]) directly on Managed Heap
+        let len = data.Length
+        let colData = Array.zeroCreate<'Field> len
+        
+        // Hot Loop: Memory Copy
+        for i = 0 to len - 1 do
+            colData.[i] <- getter.Invoke(data.[i])
+            
+        // 3. Type Dispatch & Series Creation
+        // We now have a 'Field[] array. We need to find the right Series constructor.
+        let t = typeof<'Field>
+
+        if t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>> then
+            // --- Path A: Option Types (e.g., int option) ---
+            // Route to Series.ofOptionSeq<'Inner> which you optimized
+            let innerType = t.GetGenericArguments().[0]
+            typeof<Series>
+                .GetMethod("ofOptionSeq", BindingFlags.Public ||| BindingFlags.Static)
+                .MakeGenericMethod(innerType)
+                .Invoke(null, [| name; colData |]) :?> Series
+
+        else if t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<voption<_>> then
+            // --- Path B: ValueOption Types (e.g., int voption) ---
+            // Route to Series.ofVOptionSeq<'Inner> which you optimized
+            let innerType = t.GetGenericArguments().[0]
+            typeof<Series>
+                .GetMethod("ofVOptionSeq", BindingFlags.Public ||| BindingFlags.Static)
+                .MakeGenericMethod(innerType)
+                .Invoke(null, [| name; colData |]) :?> Series
+
+        else
+            // --- Path C: Standard Primitives (e.g., int, double, string) ---
+            // We dispatch manually to avoid overhead and hit the SIMD paths.
+            // Using 'box' here is cheap because we are boxing the *Array*, not elements.
+            
+            if t = typeof<int> then Series.create(name, colData |> unbox<int[]>)
+            else if t = typeof<int64> then Series.create(name, colData |> unbox<int64[]>)
+            else if t = typeof<string> then Series.create(name, colData |> unbox<string[]>)
+            else if t = typeof<bool> then Series.create(name, colData |> unbox<bool[]>)
+            else if t = typeof<float> then Series.create(name, colData |> unbox<double[]>) // F# float is double
+            else if t = typeof<float32> then Series.create(name, colData |> unbox<float32[]>)
+            // Unsigned
+            else if t = typeof<byte> then Series.create(name, colData |> unbox<byte[]>)
+            else if t = typeof<uint32> then Series.create(name, colData |> unbox<uint32[]>)
+            else if t = typeof<uint64> then Series.create(name, colData |> unbox<uint64[]>)
+            // Temporal
+            else if t = typeof<DateTime> then Series.create(name, colData |> unbox<DateTime[]>)
+            else if t = typeof<DateOnly> then Series.create(name, colData |> unbox<DateOnly[]>)
+            else if t = typeof<TimeOnly> then Series.create(name, colData |> unbox<TimeOnly[]>)
+            else if t = typeof<TimeSpan> then Series.create(name, colData |> unbox<TimeSpan[]>)
+            // 128-bit
+            else if t = typeof<Int128> then Series.create(name, colData |> unbox<Int128[]>)
+            else if t = typeof<UInt128> then Series.create(name, colData |> unbox<UInt128[]>)
+            // Decimal (Assume scale=0 or default for records, user can cast later if needed)
+            else if t = typeof<decimal> then Series.create(name, colData |> unbox<decimal[]>, 0)
+            
+            else 
+                failwithf "Unsupported primitive type in ofRecords: %A" t
+
+    /// <summary>
+    /// Create a DataFrame from a sequence of records.
+    /// <para>
+    /// Strategy:
+    /// 1. Inspects types. If all are simple primitives/strings/dates, uses Fast Columnar Transposition (Zero-Arrow).
+    /// 2. If any complex types (Lists, Arrays, Nested Records) are found, falls back to ArrowFfiBridge.
+    /// </para>
     /// </summary>
     static member ofRecords<'T>(data: seq<'T>) : DataFrame =
-        let batch = ArrowFfiBridge.BuildRecordBatch data
-        
-        let handle = ArrowFfiBridge.ImportDataFrame batch
-        new DataFrame(handle)
+        let recordType = typeof<'T>
+        let props = recordType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
+
+        // 1. Check Eligibility for Fast Path
+        // We only use Fast Path if ALL columns are supported.
+        let useFastPath = 
+            props 
+            |> Array.forall (fun p -> DataFrame.IsSupportedFastType p.PropertyType)
+
+        if useFastPath then
+            // ==================================================
+            // PATH A: High-Performance Columnar Transposition
+            // ==================================================
+            let records = Seq.toArray data
+            
+            // Helper Cache
+            let helperMethodDef = 
+                typeof<DataFrame>.GetMethod("CreateSeriesFromColumn", BindingFlags.NonPublic ||| BindingFlags.Static)
+
+            let seriesList = 
+                props
+                |> Array.map (fun prop ->
+                    let fieldType = prop.PropertyType
+                    let specificHelper = helperMethodDef.MakeGenericMethod(recordType, fieldType)
+                    try 
+                        specificHelper.Invoke(null, [| records; prop.Name; prop |]) :?> Series
+                    with ex ->
+                        failwithf "Failed to create series for column '%s': %s" prop.Name ex.InnerException.Message
+                )
+            DataFrame.create seriesList
+
+        else
+            // ==================================================
+            // PATH B: Arrow Fallback (The Old Way)
+            // Supports Lists, Structs, and complex nesting
+            // ==================================================
+            let batch = ArrowFfiBridge.BuildRecordBatch data
+            let handle = ArrowFfiBridge.ImportDataFrame batch
+            new DataFrame(handle)
     /// <summary> Create a DataFrame directly from an Apache Arrow RecordBatch. </summary>
     static member FromArrow (batch: Apache.Arrow.RecordBatch) : DataFrame =
         new DataFrame(PolarsWrapper.FromArrow batch)

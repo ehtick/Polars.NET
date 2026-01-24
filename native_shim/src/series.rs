@@ -324,7 +324,7 @@ pub unsafe extern "C" fn pl_series_new_duration(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_series_new_decimal(
     name: *const c_char,
-    ptr: *const i128,      // physical data: 128位整数
+    ptr: *const i128,      // physical data: Int128
     validity: *const u8,   // Bitmap
     len: usize,
     precision: usize,      
@@ -444,6 +444,63 @@ impl_fixed_list_ffi!(pl_series_new_array_u128, u128, ArrowDataType::UInt128);
 // Float
 impl_fixed_list_ffi!(pl_series_new_array_f32, f32, ArrowDataType::Float32);
 impl_fixed_list_ffi!(pl_series_new_array_f64, f64, ArrowDataType::Float64);
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_series_new_array_decimal(
+    name: *const c_char,
+    flat_ptr: *const i128,      
+    flat_len: usize,
+    validity: *const u8,
+    parent_len: usize,
+    width: usize,
+    scale: usize,               
+) -> *mut SeriesContext {
+    ffi_try!({
+        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+
+        // 1. Build Inner Child (PrimitiveArray<i128>)
+        let slice = unsafe { std::slice::from_raw_parts(flat_ptr, flat_len) };
+        let vec = slice.to_vec();
+
+        // Decimal128 Type: Precision=38 (Polars default), Scale=dynamic
+        let decimal_dtype = ArrowDataType::Decimal(38, scale);
+
+        let inner_array = PrimitiveArray::new(
+            decimal_dtype.clone(), // Pass the full Decimal DataType
+            vec.into(),
+            None // Inner validity (assuming dense flat array implies no inner nulls for now, or match outer logic)
+        );
+
+        // 2. Build Validity Bitmap (Parent List Validity)
+        let validity_bitmap = if validity.is_null() {
+            None
+        } else {
+            let bytes_len = (parent_len + 7) / 8;
+            let v_slice = unsafe { std::slice::from_raw_parts(validity, bytes_len) };
+            Some(Bitmap::try_new(v_slice.to_vec(), parent_len).unwrap())
+        };
+
+        // 3. Construct FixedSizeListArray
+        // Inner Field must also be Decimal
+        let inner_field = polars_arrow::datatypes::Field::new("item".into(), decimal_dtype, true);
+        
+        let list_dtype = ArrowDataType::FixedSizeList(
+            Box::new(inner_field),
+            width
+        );
+
+        let list_array = FixedSizeListArray::new(
+            list_dtype,
+            parent_len,
+            Box::new(inner_array),
+            validity_bitmap,
+        );
+
+        // 4. Wrap in Series
+        let s = Series::from_arrow(name_str.as_ref().into(), Box::new(list_array)).unwrap();
+        Ok(Box::into_raw(Box::new(SeriesContext { series: s })))
+    })
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_series_clone(ptr: *mut SeriesContext) -> *mut SeriesContext {

@@ -257,7 +257,6 @@ public static partial class PolarsWrapper
                     NativeBindings.pl_series_new_array_f32(name, (float*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
                 );
             }
-            // --- 较少用的类型 ---
             else if (typeof(T) == typeof(byte))
             {
                 return ErrorHelper.Check(
@@ -293,6 +292,32 @@ public static partial class PolarsWrapper
                 return ErrorHelper.Check(
                     NativeBindings.pl_series_new_array_u64(name, (ulong*)pData, flatLen, IntPtr.Zero, uHeight, uWidth)
                 );
+            }
+            else if (typeof(T) == typeof(decimal))
+            {
+                // T is decimal, so pData is actually decimal*
+                decimal* pDec = (decimal*)pData;
+
+                // Call Packer to convert decimal[] layout to Int128[] layout + Auto Scale
+                // Note: Ensure DecimalPacker has Pack(decimal* src, int len) overload
+                // If not, use the logic provided in previous turns.
+                var (int128Values, scale) = DecimalPacker.Pack(pDec, (int)flatLen);
+
+                // Pin the converted Int128 values
+                fixed (Int128* pVals = int128Values)
+                {
+                    return ErrorHelper.Check(
+                        NativeBindings.pl_series_new_array_decimal(
+                            name,
+                            pVals,
+                            (UIntPtr)flatLen,
+                            IntPtr.Zero, // Dense Array = No Validity Bitmap
+                            (UIntPtr)height,
+                            (UIntPtr)width,
+                            (UIntPtr)scale
+                        )
+                    );
+                }
             }
             else if (typeof(T) == typeof(Int128))
             {

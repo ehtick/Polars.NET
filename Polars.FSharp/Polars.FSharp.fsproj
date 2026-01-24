@@ -5,6 +5,7 @@
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Nullable>disable</Nullable>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
 
     <PackageId>Polars.FSharp</PackageId>
     <Version>0.1.0-beta2</Version>
@@ -38,6 +39,7 @@
   <ItemGroup>
     <PackageReference Include="Apache.Arrow" Version="22.1.0" />
     <PackageReference Include="Microsoft.DotNet.Interactive.Formatting" Version="1.0.0-beta.*" />
+    <PackageReference Include="FSharp.Core" Version="10.0.102" />
   </ItemGroup>
 
 </Project>
