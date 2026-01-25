@@ -1,10 +1,10 @@
+using Polars.NET.Core.Native;
+
 namespace Polars.NET.Core;
+
 public static partial class PolarsWrapper
 {
-    public static DataTypeHandle CloneHandle(DataTypeHandle handle)
-    {
-         return ErrorHelper.Check(NativeBindings.pl_datatype_clone(handle));
-    }
+    public static DataTypeHandle CloneHandle(DataTypeHandle handle) => ErrorHelper.Check(NativeBindings.pl_datatype_clone(handle));
     public static DataTypeHandle NewPrimitiveType(int code) => ErrorHelper.Check(NativeBindings.pl_datatype_new_primitive(code));
     public static DataTypeHandle NewDecimalType(int precision, int scale) => ErrorHelper.Check(NativeBindings.pl_datatype_new_decimal((UIntPtr)precision, (UIntPtr)scale));
     public static DataTypeHandle NewCategoricalType() => ErrorHelper.Check(NativeBindings.pl_datatype_new_categorical());

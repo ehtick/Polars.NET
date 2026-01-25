@@ -2,6 +2,7 @@
 using Apache.Arrow;
 using Apache.Arrow.C;
 using Apache.Arrow.Types;
+using Polars.NET.Core.Native;
 
 namespace Polars.NET.Core.Arrow
 {

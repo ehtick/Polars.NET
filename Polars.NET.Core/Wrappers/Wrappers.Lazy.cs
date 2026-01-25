@@ -1,3 +1,5 @@
+using Polars.NET.Core.Native;
+
 namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper

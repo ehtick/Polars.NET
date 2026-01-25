@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Apache.Arrow;
 using Apache.Arrow.C;
 using Polars.NET.Core.Helpers;
+using Polars.NET.Core.Native;
 
 namespace Polars.NET.Core;
 

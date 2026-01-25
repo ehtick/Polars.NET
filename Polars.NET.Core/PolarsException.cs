@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
+using Polars.NET.Core.Native;
 
 namespace Polars.NET.Core;
 
