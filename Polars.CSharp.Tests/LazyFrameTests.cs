@@ -371,17 +371,19 @@ HR,50";
     [Fact]
     public void Test_LazyFrame_Explode()
     {
-        using var s = new Series("chars", ["a,b", "c"]);
+        using var s = new Series("chars", ["a,b","c"]);
         using var df = DataFrame.FromSeries(s);
         
         // 转换为 Lazy 模式
         using var lf = df.Lazy();
 
+        using var selector = Selector.Cols("expanded");
+
         // 链式调用: Split -> Explode -> Collect
         // 这一步调用你的 public LazyFrame Explode(params Expr[] exprs)
         using var res = lf
             .Select(Col("chars").Str.Split(",").Alias("expanded"))
-            .Explode(Col("expanded"))
+            .Explode(selector)
             .Collect();
 
         // 验证
@@ -667,5 +669,94 @@ HR,50";
         // 验证值
         Assert.Equal(2, df["val"].GetValue<int>(0));
         Assert.Equal(3, df["val"].GetValue<int>(1));
+    }
+    [Fact]
+    public void Test_Drop_ByColumnNames()
+    {
+        // 1. Arrange: 准备一个包含多列的数据
+        var df = DataFrame.From(
+        [
+            new { Name = "Alice", Age = 25, City = "New York", Salary = 5000 },
+            new { Name = "Bob", Age = 30, City = "London", Salary = 6000 }
+        ]);
+
+        // 2. Act: 使用 Lazy 模式并删除 "City" 和 "Salary" 两列
+        var lf = df.Lazy();
+        var res = lf.Drop("City", "Salary")
+                    .Collect();
+
+        // 3. Assert: 验证结果
+        Assert.Equal(2, res.Width); // 剩下 Name 和 Age
+        Assert.Contains("Name", res.ColumnNames);
+        Assert.Contains("Age", res.ColumnNames);
+        
+        // 确保被删的列真的没了
+        Assert.DoesNotContain("City", res.ColumnNames);
+        Assert.DoesNotContain("Salary", res.ColumnNames);
+    }
+
+    [Fact]
+    public void Test_Drop_BySelector()
+    {
+        // 1. Arrange
+        var df = DataFrame.From(new[]
+        {
+            new { A = 1, B = 2.2, C = "hello" },
+            new { A = 3, B = 4.4, C = "world" }
+        });
+
+        // 2. Act: 使用 Selector API 删除
+        // 假设我们不想看 'B' 列
+        // Selector.Cols("B") 创建了一个指向 "B" 列的选择器
+        var lf = df.Lazy();
+        var res = lf.Drop(Selector.Cols("B"))
+                    .Collect();
+
+        // 3. Assert
+        Assert.Equal(2, res.Width);
+        Assert.Equal("A", res.ColumnNames[0]);
+        Assert.Equal("C", res.ColumnNames[1]);
+        
+        // 再次确认 B 确实被丢了
+        Assert.Throws<ArgumentException>(() => res["B"]);
+    }
+    [Fact]
+    public void Test_Lazy_Unique()
+    {
+        var df = DataFrame.From(new[]
+        {
+            new { A = 1, B = 1 },
+            new { A = 1, B = 2 },
+            new { A = 2, B = 3 },
+            new { A = 1, B = 1 } // Duplicate of first row
+        });
+
+        // 1. Test Selector (Subset=[A])
+        // Keep First -> 应该保留 A=1(row0), A=2(row2)
+        // 注意：row1 (A=1, B=2) 因为 A 重复，且 Keep=First，可能会被丢弃（取决于 subset）
+        
+        var lf = df.Lazy();
+        
+        // Case A: Subset on "A", Keep First
+        var res1 = lf.Unique(Selector.Cols("A"), UniqueKeepStrategy.First)
+                     .Collect();
+        
+        // A=1 出现了3次，保留第一个; A=2 出现1次
+        Assert.Equal(2, res1.Height); 
+        
+        // Case B: Subset on All (null selector), Keep None (Drop all duplicates)
+        // (1,1) 重复了，会被删掉。 (1,2) 和 (2,3) 是唯一的。
+        var res2 = lf.Unique(subset: null, keep: UniqueKeepStrategy.None)
+                     .Collect();
+                     
+        Assert.Equal(2, res2.Height);
+        Assert.Equal(2, (int)res2["B"][0]); 
+        
+        // 第 1 行应该是 (2, 3)
+        Assert.Equal(3, (int)res2["B"][1]);
+        
+        // Case C: String overload
+        var res3 = lf.Unique("A", "B").Collect();
+        Assert.Equal(3, res3.Height); // (1,1), (1,2), (2,3) are kept. The last (1,1) dropped.
     }
 }

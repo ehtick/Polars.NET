@@ -147,6 +147,8 @@ public static class ArrowConverter
         if (checkType == typeof(DateTimeOffset)) return BuildDateTimeOffset(data.Cast<DateTimeOffset?>());
         if (checkType == typeof(TimeSpan)) return BuildDuration(data.Cast<TimeSpan?>());
         if (checkType == typeof(decimal)) return BuildDecimal(data.Cast<decimal?>());
+        // if (checkType == typeof(Int128)) return BuildInt128(data.Cast<Int128?>());
+        // if (checkType == typeof(UInt128)) return BuildUInt128(data.Cast<UInt128?>());
         // Mixed type/Object
         // Treat as String
         if (checkType == typeof(object))
@@ -460,6 +462,20 @@ public static class ArrowConverter
         foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
         return b.Build();
     }
+
+    // private static ArrowExtensions.Int128Array BuildInt128(IEnumerable<Int128?> data)
+    // {
+    //     var b = new ArrowExtensions.Int128Array.Builder();
+    //     foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
+    //     return b.Build();
+    // }
+
+    // private static ArrowExtensions.UInt128Array BuildUInt128(IEnumerable<UInt128?> data)
+    // {
+    //     var b = new ArrowExtensions.UInt128Array.Builder();
+    //     foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
+    //     return b.Build();
+    // }
 
     private static DoubleArray BuildDouble(IEnumerable<double?> data)
     {

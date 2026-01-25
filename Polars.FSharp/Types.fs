@@ -1075,7 +1075,7 @@ type Series(handle: SeriesHandle) =
             | _ -> Seq.toArray data
         
         // 🔥 Direct C# Call (Zero-Alloc)
-        let struct (vals, validity) = FSharpHelper.UnzipOptionTimeSpanToUs(arr)
+        let struct (vals, validity) = FSharpHelper.UnzipOptionTimeSpanToUs arr
         struct (vals, validity)
 
     // TimeSpan voption seq -> Microseconds + Validity
@@ -1086,7 +1086,7 @@ type Series(handle: SeriesHandle) =
             | _ -> Seq.toArray data
             
         // 🔥 Direct C# Call (Zero-Alloc)
-        let struct (vals, validity) = FSharpHelper.UnzipValueOptionTimeSpanToUs(arr)
+        let struct (vals, validity) = FSharpHelper.UnzipValueOptionTimeSpanToUs arr
         struct (vals, validity)
 
     // -------------------------------------------------------------------------
@@ -1911,7 +1911,6 @@ and DataFrame(handle: DataFrameHandle) =
     /// [Eager] Create a DataFrame from an IDataReader (e.g. SqlDataReader).
     /// <para>
     /// Uses high-performance streaming ingestion via Apache Arrow.
-    /// This is significantly faster than standard DataTable loading.
     /// </para>
     /// </summary>
     /// <param name="reader">The open IDataReader instance.</param>
@@ -1983,62 +1982,57 @@ and DataFrame(handle: DataFrameHandle) =
     /// Lists, Arrays with nullable or option type, and Nested Records must fallback to Arrow.
     /// </summary>
     static member private IsSupportedFastType (t: Type) =
-        // 1. Unwrap Option/VOption
-        let checkType = 
-            if t.IsGenericType && (t.GetGenericTypeDefinition() = typedefof<option<_>> || t.GetGenericTypeDefinition() = typedefof<voption<_>>) then
+        // 1. Unwrap Option/VOption/Nullable
+        let coreType = 
+            if t.IsGenericType && (t.GetGenericTypeDefinition() = typedefof<option<_>> || t.GetGenericTypeDefinition() = typedefof<voption<_>> || t.GetGenericTypeDefinition() = typedefof<Nullable<_>>) then
                 t.GetGenericArguments().[0]
             else
                 t
 
-        // 2. Whitelist check
-        if checkType.IsPrimitive then true // int, double, byte, bool...
-        else if checkType = typeof<string> then true
-        else if checkType = typeof<decimal> then true
-        else if checkType = typeof<DateTime> then true
-        else if checkType = typeof<DateOnly> then true
-        else if checkType = typeof<TimeOnly> then true
-        else if checkType = typeof<TimeSpan> then true
-        else if checkType = typeof<DateTimeOffset> then true
-        else if checkType = typeof<Int128> then true
-        else if checkType = typeof<UInt128> then true
+        if t.IsArray then false 
         else
-            // Lists, Arrays, Complex Objects -> False (Fallback to Arrow)
-            false
+            if coreType.IsPrimitive then true
+            else if coreType = typeof<string> then true
+            else if coreType = typeof<decimal> then true
+            else if coreType = typeof<DateTime> then true
+            else if coreType = typeof<DateOnly> then true
+            else if coreType = typeof<TimeOnly> then true
+            else if coreType = typeof<TimeSpan> then true
+            else if coreType = typeof<DateTimeOffset> then true
+            else if coreType = typeof<Int128> then true
+            else if coreType = typeof<UInt128> then true
+            else false
     /// <summary>
     /// [Internal] Worker method to transpose a single column from Record[] to Series.
     /// This is generic to avoid boxing during array population.
     /// </summary>
     static member private CreateSeriesFromColumn<'Rec, 'Field>(data: 'Rec[], name: string, prop: PropertyInfo) : Series =
         // 1. Create Fast Getter (Delegate)
-        // Func<'Rec, 'Field> is much faster than PropertyInfo.GetValue() in a loop
+        // Func<'Rec, 'Field> is ~50x faster than PropertyInfo.GetValue()
         let getterMethod = prop.GetGetMethod()
         let getter = Delegate.CreateDelegate(typeof<Func<'Rec, 'Field>>, getterMethod) :?> Func<'Rec, 'Field>
         
-        // 2. Transpose: Row-Oriented -> Column-Oriented
-        // Allocate strongly typed array (e.g., int[]) directly on Managed Heap
+        // 2. Transpose: Row-Oriented -> Column-Oriented (Memory Copy)
         let len = data.Length
         let colData = Array.zeroCreate<'Field> len
         
-        // Hot Loop: Memory Copy
         for i = 0 to len - 1 do
             colData.[i] <- getter.Invoke(data.[i])
             
         // 3. Type Dispatch & Series Creation
-        // We now have a 'Field[] array. We need to find the right Series constructor.
         let t = typeof<'Field>
 
+        // --- Path A: F# Option Types (e.g., int option) ---
         if t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>> then
-            // --- Path A: Option Types (e.g., int option) ---
-            // Route to Series.ofOptionSeq<'Inner> which you optimized
             let innerType = t.GetGenericArguments().[0]
+            // Reflection is okay here; it happens only once per column (not per row)
             typeof<Series>
                 .GetMethod("ofOptionSeq", BindingFlags.Public ||| BindingFlags.Static)
                 .MakeGenericMethod(innerType)
                 .Invoke(null, [| name; colData |]) :?> Series
 
+        // --- Path B: F# ValueOption Types (e.g., int voption) ---
         else if t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<voption<_>> then
-            // --- Path B: ValueOption Types (e.g., int voption) ---
-            // Route to Series.ofVOptionSeq<'Inner> which you optimized
             let innerType = t.GetGenericArguments().[0]
             typeof<Series>
                 .GetMethod("ofVOptionSeq", BindingFlags.Public ||| BindingFlags.Static)
@@ -2046,33 +2040,42 @@ and DataFrame(handle: DataFrameHandle) =
                 .Invoke(null, [| name; colData |]) :?> Series
 
         else
-            // --- Path C: Standard Primitives (e.g., int, double, string) ---
-            // We dispatch manually to avoid overhead and hit the SIMD paths.
-            // Using 'box' here is cheap because we are boxing the *Array*, not elements.
+            // --- Path C: Standard Primitives (Dense Arrays) ---
+            // 'box' here is boxing the ARRAY (cheap), not the elements.
             
+            // Standard Primitives
             if t = typeof<int> then Series.create(name, colData |> unbox<int[]>)
             else if t = typeof<int64> then Series.create(name, colData |> unbox<int64[]>)
-            else if t = typeof<string> then Series.create(name, colData |> unbox<string[]>)
-            else if t = typeof<bool> then Series.create(name, colData |> unbox<bool[]>)
-            else if t = typeof<float> then Series.create(name, colData |> unbox<double[]>) // F# float is double
+            else if t = typeof<double> then Series.create(name, colData |> unbox<double[]>)
             else if t = typeof<float32> then Series.create(name, colData |> unbox<float32[]>)
-            // Unsigned
+            else if t = typeof<bool> then Series.create(name, colData |> unbox<bool[]>)
+            else if t = typeof<string> then Series.create(name, colData |> unbox<string[]>)
+            
+            // Unsigned & Small Integers
             else if t = typeof<byte> then Series.create(name, colData |> unbox<byte[]>)
+            else if t = typeof<sbyte> then Series.create(name, colData |> unbox<sbyte[]>)
+            else if t = typeof<int16> then Series.create(name, colData |> unbox<int16[]>)
+            else if t = typeof<uint16> then Series.create(name, colData |> unbox<uint16[]>)
             else if t = typeof<uint32> then Series.create(name, colData |> unbox<uint32[]>)
             else if t = typeof<uint64> then Series.create(name, colData |> unbox<uint64[]>)
-            // Temporal
+            
+            // Temporal (Turbocharged)
             else if t = typeof<DateTime> then Series.create(name, colData |> unbox<DateTime[]>)
             else if t = typeof<DateOnly> then Series.create(name, colData |> unbox<DateOnly[]>)
             else if t = typeof<TimeOnly> then Series.create(name, colData |> unbox<TimeOnly[]>)
             else if t = typeof<TimeSpan> then Series.create(name, colData |> unbox<TimeSpan[]>)
+            else if t = typeof<DateTimeOffset> then Series.create(name, colData |> unbox<DateTimeOffset[]>) // ★ Added
+
             // 128-bit
             else if t = typeof<Int128> then Series.create(name, colData |> unbox<Int128[]>)
             else if t = typeof<UInt128> then Series.create(name, colData |> unbox<UInt128[]>)
-            // Decimal (Assume scale=0 or default for records, user can cast later if needed)
+            
+            // Decimal
+            // Passing 0 as scale triggers the Auto-Scaling logic in DecimalPacker
             else if t = typeof<decimal> then Series.create(name, colData |> unbox<decimal[]>, 0)
             
             else 
-                failwithf "Unsupported primitive type in ofRecords: %A" t
+                failwithf "Unsupported primitive type in ofRecords: %A. Lists/Arrays fall back to Arrow path." t
 
     /// <summary>
     /// Create a DataFrame from a sequence of records.
@@ -2123,7 +2126,7 @@ and DataFrame(handle: DataFrameHandle) =
             let handle = ArrowFfiBridge.ImportDataFrame batch
             new DataFrame(handle)
     /// <summary> Create a DataFrame directly from an Apache Arrow RecordBatch. </summary>
-    static member FromArrow (batch: Apache.Arrow.RecordBatch) : DataFrame =
+    static member FromArrow (batch: RecordBatch) : DataFrame =
         new DataFrame(PolarsWrapper.FromArrow batch)
     /// <summary> Write DataFrame to CSV. </summary>
     member this.WriteCsv (path: string) = 
@@ -2382,6 +2385,14 @@ and DataFrame(handle: DataFrameHandle) =
         new DataFrame(PolarsWrapper.Unpivot(this.Handle, iArr, oArr, varN, valN))
     /// <summary> Alias for Unpivot. </summary>
     member this.Melt = this.Unpivot
+    /// <summary>
+    /// Slice the DataFrame along the rows.
+    /// </summary>
+    member this.Slice(offset: int64, length: uint64) = 
+        new DataFrame(PolarsWrapper.Slice(this.Handle,offset, length))
+    member this.Slice(offset: int64, length: int32) = 
+        if length < 0 then raise(ArgumentOutOfRangeException(sprintf "Length must be non-negative."))
+        else this.Slice(offset,length)
     // ==========================================
     // Printing / String Representation
     // ==========================================
@@ -2443,6 +2454,10 @@ and DataFrame(handle: DataFrameHandle) =
     member _.Height = PolarsWrapper.DataFrameHeight handle
     member _.Len = PolarsWrapper.DataFrameHeight handle
     member _.Width = PolarsWrapper.DataFrameWidth handle
+    /// <summary>
+    /// Returns the shape of the DataFrame as (Height, Width).
+    /// </summary>
+    member this.Shape = this.Len,this.Width
     member _.ColumnNames = PolarsWrapper.GetColumnNames handle
     member _.Columns = PolarsWrapper.GetColumnNames handle
     member this.Int(colName: string, rowIndex: int) : int64 option = 
@@ -2469,7 +2484,7 @@ and DataFrame(handle: DataFrameHandle) =
 
         match col with
         // Case A: Arrow.ListArray 
-        | :? Apache.Arrow.ListArray as listArr ->
+        | :? ListArray as listArr ->
             if listArr.IsNull rowIndex then None
             else
                 let start = listArr.ValueOffsets.[rowIndex]
@@ -2477,7 +2492,7 @@ and DataFrame(handle: DataFrameHandle) =
                 Some (extractStrings listArr.Values start end_)
 
         // Case B: Large List (64-bit offsets) 
-        | :? Apache.Arrow.LargeListArray as listArr ->
+        | :? LargeListArray as listArr ->
             if listArr.IsNull rowIndex then None
             else
                 let start = int listArr.ValueOffsets.[rowIndex]
@@ -3152,6 +3167,15 @@ and LazyFrame(handle: LazyFrameHandle) =
             strat, tol
         )
         new LazyFrame(h)
+    
+    /// <summary>
+    /// Slice the LazyFrame along the rows.
+    /// </summary>
+    member this.Slice(offset: int64, length: uint32) = 
+        new LazyFrame(PolarsWrapper.LazySlice(this.Handle,offset, length))
+    member this.Slice(offset: int64, length: int32) = 
+        if length < 0 then raise(ArgumentOutOfRangeException(sprintf "Length must be non-negative."))
+        else this.Slice(offset,length)
 
     /// <summary>
     /// JoinAsOf with TimeSpan tolerance.

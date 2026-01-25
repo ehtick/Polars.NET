@@ -155,6 +155,24 @@ public static partial class PolarsWrapper
         selector.TransferOwnership();
         return ErrorHelper.Check(h);
     }
+    public static LazyFrameHandle LazyFrameDrop(LazyFrameHandle lf, SelectorHandle selector)
+    {
+        var h = ErrorHelper.Check(NativeBindings.pl_lazyframe_drop(lf, selector));
+        lf.TransferOwnership();
+        selector.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static LazyFrameHandle LazyUniqueStable(
+        LazyFrameHandle lfHandle, 
+        SelectorHandle selector, 
+        PlUniqueKeepStrategy keep)
+    {
+        IntPtr selPtr = selector?.DangerousGetHandle() ?? IntPtr.Zero;
+        var h = NativeBindings.pl_lazyframe_unique_stable(lfHandle,selPtr,keep);
+        lfHandle.TransferOwnership();
+        selector?.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
     public static LazyFrameHandle LazyLimit(LazyFrameHandle lf, uint n)
     {
         var h = NativeBindings.pl_lazy_limit(lf, n);
@@ -218,29 +236,27 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-    public static LazyFrameHandle LazyExplode(LazyFrameHandle lf, ExprHandle[] exprs)
+    public static LazyFrameHandle LazyExplode(LazyFrameHandle lf, SelectorHandle selector)
     {
-        var raw = HandlesToPtrs(exprs);
-        var newLf = NativeBindings.pl_lazy_explode(lf, raw, (UIntPtr)raw.Length);
+        var newLf = NativeBindings.pl_lazy_explode(lf, selector);
         lf.TransferOwnership(); 
+        selector.TransferOwnership();
         return ErrorHelper.Check(newLf);
     }
-    public static LazyFrameHandle LazyUnpivot(LazyFrameHandle lf, string[] index, string[] on, string? variableName, string? valueName)
+    public static LazyFrameHandle LazyUnpivot(LazyFrameHandle lf, SelectorHandle index, SelectorHandle on, string? variableName, string? valueName)
     {
-        return UseUtf8StringArray(index, iPtrs =>
-            UseUtf8StringArray(on, oPtrs =>
-            {
-                var h = NativeBindings.pl_lazy_unpivot(
-                    lf,
-                    iPtrs, (UIntPtr)iPtrs.Length,
-                    oPtrs, (UIntPtr)oPtrs.Length,
-                    variableName,
-                    valueName
-                );
-                lf.TransferOwnership();
-                return ErrorHelper.Check(h);
-            })
+
+        var h = NativeBindings.pl_lazy_unpivot(
+            lf,
+            index,
+            on,
+            variableName,
+            valueName
         );
+        lf.TransferOwnership();
+        index.TransferOwnership();
+        on.TransferOwnership();
+        return ErrorHelper.Check(h);
     }
     public static LazyFrameHandle LazyConcat(LazyFrameHandle[] handles,PlConcatType how, bool rechunk = false, bool parallel = true)
     {

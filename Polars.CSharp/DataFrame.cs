@@ -674,7 +674,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// Note: The list columns being exploded must have the same length for each row.
     /// </para>
     /// </summary>
-    /// <param name="exprs">Expressions selecting the columns to explode.</param>
+    /// <param name="columns">Expressions selecting the columns to explode.</param>
     /// <returns>A new DataFrame where list elements are expanded into rows.</returns>
     /// <example>
     /// <code>
@@ -686,7 +686,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// });
     /// 
     /// // Explode "tags" and "scores" columns simultaneously
-    /// var exploded = df.Explode(Col("tags"), Col("scores"));
+    /// var exploded = df.Explode(["tags","scores"]);
     /// 
     /// exploded.Show();
     /// /* Output:
@@ -703,10 +703,20 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    public DataFrame Explode(params Expr[] exprs)
+    public DataFrame Explode(params string[] columns)
     {
-        var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
-        return new DataFrame(PolarsWrapper.Explode(Handle, handles));
+        using var sel = Selector.Cols(columns);
+        return Explode(sel);
+    }
+    /// <summary>
+    /// Explode list/array columns into multiple rows using selector.
+    /// </summary>
+    /// <param name="selector"></param>
+    /// <returns></returns>
+    public DataFrame Explode(Selector selector)
+    {
+        var sh = selector.CloneHandle();
+        return new DataFrame(PolarsWrapper.Explode(Handle, sh));
     }
     /// <summary>
     /// Decompose a struct column into multiple columns.
@@ -803,6 +813,30 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     /// <param name="subset">Column names to consider. If null/empty, checks all columns.</param>
     public DataFrame DropNulls(params string[]? subset) => new(PolarsWrapper.DropNulls(Handle, subset));
+    /// <summary>
+    /// Get unique rows of this DataFrame maintaining the original order.
+    /// </summary>
+    /// <param name="subset">Columns to consider. If null, use all columns.</param>
+    /// <param name="keep">Strategy to keep duplicates.</param>
+    /// <returns>New DataFrame with unique rows.</returns>
+    public DataFrame Unique(string[]? subset = null, UniqueKeepStrategy keep = UniqueKeepStrategy.First)
+    {
+        var h = PolarsWrapper.DataFrameUniqueStable(Handle, subset, keep.ToNative(), null);
+        return new DataFrame(h);
+    }
+
+    /// <summary>
+    /// Get unique rows with slicing support.
+    /// </summary>
+    public DataFrame Unique(
+        string[]? subset, 
+        UniqueKeepStrategy keep, 
+        long offset, 
+        ulong len)
+    {
+        var h = PolarsWrapper.DataFrameUniqueStable(Handle, subset, keep.ToNative(), (offset, len));
+        return new DataFrame(h);
+    }
     /// <summary>
     /// Slice the DataFrame along the rows.
     /// </summary>
@@ -1318,9 +1352,28 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </code>
     /// </example>
     public DataFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
-        => new(PolarsWrapper.Unpivot(Handle, index, on, variableName, valueName));
+    {
+        using var sIndex = Selector.Cols(index);
+        using var sOn = Selector.Cols(on);
+
+        return Unpivot(sIndex, sOn, variableName, valueName);
+    }
     /// <summary>
-    /// Alias for <see cref="Unpivot"/>. Melts the DataFrame from wide to long format.
+    /// Unpivot (Melt) the DataFrame from wide to long format.
+    /// </summary>
+    /// <param name="index"></param>
+    /// <param name="on"></param>
+    /// <param name="variableName"></param>
+    /// <param name="valueName"></param>
+    /// <returns></returns>
+    public DataFrame Unpivot(Selector index, Selector on, string variableName = "variable", string valueName = "value")
+    {
+        var indexClone = index.CloneHandle();
+        var onClone = on.CloneHandle();
+        return new DataFrame(PolarsWrapper.Unpivot(Handle, indexClone, onClone, variableName, valueName));
+    }
+    /// <summary>
+    /// Alias for <see cref="Unpivot(string[], string[], string, string)"/>. Melts the DataFrame from wide to long format.
     /// </summary>
     /// <seealso cref="Unpivot(string[], string[], string, string)"/>
     public DataFrame Melt(string[] index, string[] on, string variableName = "variable", string valueName = "value") 

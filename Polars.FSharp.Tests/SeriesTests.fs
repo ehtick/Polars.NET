@@ -760,6 +760,7 @@ type ``Series Tests`` () =
         
         let s = Series.ofArray2D("i128_matrix", data)
         s.Show()
+        Assert.Throws<NotSupportedException>(fun () -> s.ToArray() |> ignore)
 
     [<Fact>]
     member _.``Test Decimal Matrix Overflow in FSharp``() =

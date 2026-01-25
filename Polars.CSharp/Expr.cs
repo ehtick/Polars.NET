@@ -1895,7 +1895,7 @@ public class Expr : IDisposable
     /// <para>
     /// <b>Warning:</b> When used in <see cref="DataFrame.Select(Expr[])"/> with other columns, 
     /// it may cause a length mismatch error if the other columns are not broadcasted. 
-    /// Use <see cref="DataFrame.Explode"/> for safely exploding columns while repeating others.
+    /// Use <see cref="DataFrame.Explode(string[])"/> for safely exploding columns while repeating others.
     /// </para>
     /// </summary>
     /// <example>

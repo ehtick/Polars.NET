@@ -6,7 +6,7 @@ namespace Polars.NET.Core.Arrow;
 /// Extension methods for handling Apache Arrow Arrays.
 /// Provides formatting and safe value extraction.
 /// </summary>
-public static class ArrowExtensions
+public static partial class ArrowExtensions
 {
     // ==========================================
     // 1. FormatValue
@@ -38,6 +38,10 @@ public static class ArrowExtensions
             Decimal128Array arr => arr.GetValue(index).ToString()!,
             Decimal256Array arr => arr.GetValue(index).ToString()!,
             DictionaryArray dictArr => $"\"{dictArr.GetStringValue(index)}\"",
+
+            // Int128Array arr  => arr.GetValue(index).ToString()!,
+            // UInt128Array arr  => arr.GetValue(index).ToString()!,
+
             // Strings
             StringArray sa      => $"\"{sa.GetString(index)}\"",
             LargeStringArray lsa => $"\"{lsa.GetString(index)}\"",
@@ -101,6 +105,19 @@ public static class ArrowExtensions
             _ => null
         };
     }
+    // public static Int128? GetInt128Value(this IArrowArray array, int index)
+    // {
+    //     if (array.IsNull(index)) return null;
+    //     return array switch
+    //     {
+    //         // Signed Integes
+    //         Int128Array  i128  => i128.GetValue(index),   // Polars Month/Day/Weekday is Int8
+    //         // Unsigned Integers
+    //         UInt128Array  u128  => u128.GetValue(index),
+
+    //         _ => null
+    //     };
+    // }
     /// <summary>
     /// Deal with Double Values
     /// </summary>

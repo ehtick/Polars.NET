@@ -83,6 +83,18 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_dataframe_drop_nulls(DataFrameHandle df, IntPtr[] subset, UIntPtr len);
 
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_df_unique_stable(
+        DataFrameHandle df,
+        [In, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] 
+        string[]? subset,
+        UIntPtr subset_len,
+        PlUniqueKeepStrategy keep,
+        long slice_offset,
+        UIntPtr slice_len,
+        byte slice_valid
+    );
+
     [LibraryImport(LibName)]
     public static unsafe partial DataFrameHandle pl_dataframe_sample_n(DataFrameHandle df, UIntPtr n, [MarshalAs(UnmanagedType.U1)] bool replacement, [MarshalAs(UnmanagedType.I1)] bool shuffle, ulong* seed);
 
@@ -126,12 +138,30 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool maintainOrder
     );
     [LibraryImport(LibName)] 
-    public static partial DataFrameHandle pl_explode(DataFrameHandle df, IntPtr[] exprs, UIntPtr len);
+    public static partial DataFrameHandle pl_explode(DataFrameHandle df, SelectorHandle selector);
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_concat(
         IntPtr[] dfs, 
         UIntPtr len,
         PlConcatType how
+    );
+    // --- Reshaping (Eager) ---
+    [LibraryImport(LibName)] 
+    public static partial DataFrameHandle pl_pivot(
+        DataFrameHandle df,
+        IntPtr[] values, UIntPtr valuesLen,
+        IntPtr[] index, UIntPtr indexLen,
+        IntPtr[] columns, UIntPtr columnsLen,
+        PlPivotAgg aggFn
+    );
+
+    [LibraryImport(LibName)] 
+    public static partial DataFrameHandle pl_unpivot(
+        DataFrameHandle df,
+        SelectorHandle index, 
+        SelectorHandle on, 
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? varName,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? valName
     );
 
     [LibraryImport(LibName)]

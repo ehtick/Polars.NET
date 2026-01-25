@@ -1,5 +1,6 @@
 use std::ffi::{CStr, c_char};
 
+use polars::frame::UniqueKeepStrategy;
 use polars_arrow::ffi::ArrowArray;
 use polars_arrow::ffi::{export_array_to_c,export_field_to_c};
 use polars::prelude::{ArrowSchema, Expr, JoinType};
@@ -92,5 +93,18 @@ pub(crate) fn map_jointype(code: i32) -> JoinType {
         4 => JoinType::Semi,
         5 => JoinType::Anti,
         _ => JoinType::Inner, // Default
+    }
+}
+
+// helper function: u8 -> UniqueKeepStrategy
+// 0: First, 1: Last, 2: Any, 3: None
+#[inline]
+pub(crate) fn parse_keep_strategy(val: u8) -> UniqueKeepStrategy {
+    match val {
+        0 => UniqueKeepStrategy::First,
+        1 => UniqueKeepStrategy::Last,
+        2 => UniqueKeepStrategy::Any,
+        3 => UniqueKeepStrategy::None,
+        _ => UniqueKeepStrategy::First, // Default fallback
     }
 }

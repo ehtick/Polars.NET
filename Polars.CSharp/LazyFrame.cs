@@ -719,7 +719,6 @@ public class LazyFrame : IDisposable
         var h = PolarsWrapper.LazyFrameUnnest(lfClone, sClone,separator);
         return new LazyFrame(h);
     }
-
     /// <summary>
     /// Unnest specific struct columns by name.
     /// (Syntactic sugar for Unnest(Selector.Cols(...)))
@@ -730,33 +729,114 @@ public class LazyFrame : IDisposable
         return Unnest(sel,null);
     }
     /// <summary>
-    /// Explode list-like columns into multiple rows.
+    /// Drop selected columns by selector.
     /// </summary>
-    /// <param name="exprs"></param>
+    /// <param name="selector"></param>
     /// <returns></returns>
-    public LazyFrame Explode(params Expr[] exprs)
+    public LazyFrame Drop(Selector selector)
     {
         var lfClone = CloneHandle();
-        var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
+        var sClone = selector.CloneHandle();
+        var h = PolarsWrapper.LazyFrameDrop(lfClone, sClone);
+        return new LazyFrame(h);
+    }
+    /// <summary>
+    /// Drop selected columns by column names.
+    /// </summary>
+    /// <param name="columns"></param>
+    /// <returns></returns>
+    public LazyFrame Drop(params string[] columns)
+    {
+        using var sel = Selector.Cols(columns);
+        return Drop(sel);
+    }
+    /// <summary>
+    /// Keep unique rows (stable) based on a subset of columns defined by a Selector.
+    /// </summary>
+    /// <param name="subset">Selector defining the subset of columns. If null, uses all columns.</param>
+    /// <param name="keep">Strategy to keep duplicates (First, Last, Any, None).</param>
+    public LazyFrame Unique(Selector? subset = null, UniqueKeepStrategy keep = UniqueKeepStrategy.First)
+    {
+        _ = subset?.CloneHandle(); // Clone handle or pass reference depending on ownership model
 
-        return new LazyFrame(PolarsWrapper.LazyExplode(lfClone, handles));
+        var h = PolarsWrapper.LazyUniqueStable(CloneHandle(), subset?.Handle!, keep.ToNative());
+        return new LazyFrame(h);
+    }
+    /// <summary>
+    /// Keep unique rows (stable) based on specific column names.
+    /// </summary>
+    public LazyFrame Unique(UniqueKeepStrategy keep, params string[] columns)
+    {
+        using var sel = Selector.Cols(columns);
+        return Unique(sel, keep);
+    }
+    /// <summary>
+    /// Keep unique First rows (stable) based on a subset of columns defined column names.
+    /// </summary>
+    /// <param name="columns"></param>
+    /// <returns></returns>
+    public LazyFrame Unique(params string[] columns)
+    {
+        return Unique(UniqueKeepStrategy.First, columns);
+    }
+    /// <summary>
+    /// Explode list-like columns into multiple rows.
+    /// </summary>
+    /// <param name="selector"></param>
+    /// <returns></returns>
+    public LazyFrame Explode(Selector selector)
+    {
+        var lfClone = CloneHandle();
+        var sClone = selector.CloneHandle();
+        var h = PolarsWrapper.LazyExplode(lfClone, sClone);
+        return new LazyFrame(h);
+    }
+    /// <summary>
+    /// Explode list-like columns into multiple rows.
+    /// </summary>
+    /// <param name="columns"></param>
+    /// <returns></returns>
+    public LazyFrame Explode(params string[] columns)
+    {
+        using var sel = Selector.Cols(columns);
+        return Explode(sel);
     }
 
     // ==========================================
     // Reshaping
     // ==========================================
     /// <summary>
-    /// Unpivot (Melt) the DataFrame from wide to long format.
+    /// Unpivot (Melt) the LazyFrame from wide to long format.
     /// </summary>
     /// <param name="index"></param>
     /// <param name="on"></param>
     /// <param name="variableName"></param>
     /// <param name="valueName"></param>
     /// <returns></returns>
-    public LazyFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
+    public LazyFrame Unpivot(Selector index, Selector on, string variableName = "variable", string valueName = "value")
     {
         var lfClone = CloneHandle();
-        return new LazyFrame(PolarsWrapper.LazyUnpivot(lfClone, index, on, variableName, valueName));
+        var indexClone = index.CloneHandle();
+        var onClone = on.CloneHandle();
+        return new LazyFrame(PolarsWrapper.LazyUnpivot(lfClone, indexClone, onClone, variableName, valueName));
+    }
+    /// <summary>
+    /// Unpivot using column names (String Array overload).
+    /// Wraps strings into Selectors automatically.
+    /// </summary>
+    public LazyFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
+    {
+        using var sIndex = Selector.Cols(index);
+        using var sOn = Selector.Cols(on);
+
+        return Unpivot(sIndex, sOn, variableName, valueName);
+    }
+    /// <summary>
+    /// Unpivot using single column names (Convenience overload).
+    /// </summary>
+    public LazyFrame Unpivot(string index, string on, string variableName = "variable", string valueName = "value")
+    {
+        return Unpivot([index], [on], variableName, valueName);
     }
     /// <summary>
     /// Melt the DataFrame from wide to long format.
@@ -766,7 +846,7 @@ public class LazyFrame : IDisposable
     /// <param name="variableName"></param>
     /// <param name="valueName"></param>
     /// <returns></returns>
-    public LazyFrame Melt(string[] index, string[] on, string variableName = "variable", string valueName = "value") 
+    public LazyFrame Melt(Selector index, Selector on, string variableName = "variable", string valueName = "value") 
         => Unpivot(index, on, variableName, valueName);
     /// <summary>
     /// Lazily concatenate multiple LazyFrames.

@@ -3,7 +3,7 @@ use std::ffi::{CStr, c_char};
 use polars::prelude::*;
 use crate::types::*;
 use polars::lazy::dsl::UnpivotArgsDSL;
-use crate::utils::{consume_exprs_array, map_jointype, ptr_to_str};
+use crate::utils::{consume_exprs_array, map_jointype, parse_keep_strategy, ptr_to_str};
 
 // ==========================================
 // Macro Definition
@@ -338,31 +338,13 @@ pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_explode(
     lf_ptr: *mut LazyFrameContext,
-    exprs_ptr: *const *mut ExprContext,
-    len: usize
+    selector_ptr: *mut SelectorContext,
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        let exprs = unsafe { consume_exprs_array(exprs_ptr, len) };
+        let sel_ctx = unsafe { Box::from_raw(selector_ptr) };
 
-        if exprs.is_empty() {
-            return Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf_ctx.inner })));
-        }
-
-        let mut iter = exprs.into_iter();
-        
-        let first_expr = iter.next().unwrap();
-        let mut final_selector = first_expr.into_selector()
-            .ok_or_else(|| PolarsError::ComputeError("Expr cannot be converted to Selector".into()))?;
-
-        for e in iter {
-            let s = e.into_selector()
-                .ok_or_else(|| PolarsError::ComputeError("Expr cannot be converted to Selector".into()))?;
-            
-            final_selector = final_selector | s; // Union
-        }
-
-        let new_lf = lf_ctx.inner.explode(final_selector);
+        let new_lf = lf_ctx.inner.explode(sel_ctx.inner);
         
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
     })
@@ -422,36 +404,19 @@ pub extern "C" fn pl_lazy_collect_streaming(lf_ptr: *mut LazyFrameContext) -> *m
 // ==========================================
 // Unpivot
 // ==========================================
+
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_unpivot(
     lf_ptr: *mut LazyFrameContext,
-    id_vars_ptr: *const *const c_char, id_len: usize,
-    val_vars_ptr: *const *const c_char, val_len: usize,
+    index_ptr: *mut SelectorContext,
+    on_ptr: *mut SelectorContext,
     variable_name_ptr: *const c_char,
     value_name_ptr: *const c_char
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        
-        let to_pl_strs = |ptr, len| unsafe {
-            let mut v = Vec::with_capacity(len);
-            for &p in std::slice::from_raw_parts(ptr, len) {
-                let s = ptr_to_str(p).unwrap();
-                v.push(PlSmallStr::from_str(s));
-            }
-            v
-        };
-
-        let index_names = to_pl_strs(id_vars_ptr, id_len);
-        let on_names = to_pl_strs(val_vars_ptr, val_len);
-
-        let index_selector = cols(index_names.clone()); 
-
-        let on_selector = if on_names.is_empty() {
-            all().exclude_cols(index_names) 
-        } else {
-            cols(on_names)
-        };
+        let index_ctx = unsafe { Box::from_raw(index_ptr) };
+        let on_ctx = unsafe { Box::from_raw(on_ptr) };
 
         let variable_name = if variable_name_ptr.is_null() { 
             None 
@@ -466,8 +431,8 @@ pub extern "C" fn pl_lazy_unpivot(
         };
 
         let args = UnpivotArgsDSL {
-            index: index_selector, 
-            on: on_selector,       
+            index: index_ctx.inner, 
+            on: on_ctx.inner,       
             variable_name,
             value_name,
         };
@@ -628,6 +593,43 @@ pub extern "C" fn pl_lazy_join_asof(
 // ==========================================
 // Ops
 // ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_drop(lf_ptr: *mut LazyFrameContext, sel_ptr: *mut SelectorContext,) -> *mut LazyFrameContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(lf_ptr) };
+        let sel_ctx = unsafe {  Box::from_raw(sel_ptr) }; 
+        
+        let new_lf = ctx.inner.drop(sel_ctx.inner);
+        
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_unique_stable(
+    lf_ptr: *mut LazyFrameContext,
+    selector: *mut SelectorContext, 
+    keep_strategy: u8,
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        let lf = unsafe { Box::from_raw(lf_ptr).inner };
+
+        let subset = if selector.is_null() {
+            None
+        } else {
+            let sel_ctx = unsafe { Box::from_raw(selector) };
+            Some(sel_ctx.inner) 
+        };
+    
+        let keep = parse_keep_strategy(keep_strategy);
+
+        let new_lf = lf.unique_stable(subset, keep);
+
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
+    })
+}
+
+
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_schema(lf_ptr: *mut LazyFrameContext) -> *mut c_char {
     ffi_try!({

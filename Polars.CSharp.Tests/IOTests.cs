@@ -393,7 +393,7 @@ namespace Polars.CSharp.Tests
             
             // 5. 进阶：Explode (炸开) 测试
             // 如果能炸开，说明 Polars 真的认出了这是 List
-            var exploded = df.Explode(Col("Tags"));
+            var exploded = df.Explode("Tags");
             // 1(10), 1(20), 2(30), 3(null), 4(null) -> 至少应该变多
             Assert.True(exploded.Height >= 3);
         }

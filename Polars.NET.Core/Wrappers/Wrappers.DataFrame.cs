@@ -71,6 +71,36 @@ public static partial class PolarsWrapper
         => ErrorHelper.Check(NativeBindings.pl_dataframe_slice(df,offset,(UIntPtr)length));
     public static DataFrameHandle Drop(DataFrameHandle df, string name)
         => ErrorHelper.Check(NativeBindings.pl_dataframe_drop(df, name));
+    public static DataFrameHandle DataFrameUniqueStable(
+        DataFrameHandle dfHandle, 
+        string[]? subset, 
+        PlUniqueKeepStrategy keep,
+        (long offset, ulong len)? slice)
+    {
+        // Slice handling
+        byte sliceValid = 0;
+        long offset = 0;
+        ulong len = 0;
+
+        if (slice.HasValue)
+        {
+            sliceValid = 1;
+            offset = slice.Value.offset;
+            len = slice.Value.len;
+        }
+
+        UIntPtr subLen = subset == null ? UIntPtr.Zero : (UIntPtr)subset.Length;
+
+        return NativeBindings.pl_df_unique_stable(
+            dfHandle,
+            subset,
+            subLen,
+            keep, 
+            offset,
+            (UIntPtr)len,
+            sliceValid
+        );
+    }
 
     public static DataFrameHandle Rename(DataFrameHandle df, string oldName, string newName)
         => ErrorHelper.Check(NativeBindings.pl_dataframe_rename(df, oldName, newName));
@@ -152,11 +182,12 @@ public static partial class PolarsWrapper
             }
         }
     }
-    public static DataFrameHandle Explode(DataFrameHandle df, ExprHandle[] exprs)
+    public static DataFrameHandle Explode(DataFrameHandle df, SelectorHandle selector)
     {
-        var raw = HandlesToPtrs(exprs);
-        return ErrorHelper.Check(NativeBindings.pl_explode(df, raw, (UIntPtr)raw.Length));
-    }
+       var h = NativeBindings.pl_explode(df,selector);
+       selector.TransferOwnership();
+       return ErrorHelper.Check(h);
+    } 
     public static DataFrameHandle Unnest(DataFrameHandle df, string[] columns,string? separator)
         => ErrorHelper.Check(NativeBindings.pl_dataframe_unnest(df, columns, (UIntPtr)columns.Length,separator));
     // GroupBy
@@ -190,20 +221,13 @@ public static partial class PolarsWrapper
     }
 
     // Unpivot (Eager)
-    public static DataFrameHandle Unpivot(DataFrameHandle df, string[] index, string[] on, string? variableName, string? valueName)
+    public static DataFrameHandle Unpivot(DataFrameHandle df, SelectorHandle index, SelectorHandle on, string? variableName, string? valueName)
     {
-        return UseUtf8StringArray(index, iPtrs =>
-            UseUtf8StringArray(on, oPtrs =>
-            {
-                return ErrorHelper.Check(NativeBindings.pl_unpivot(
-                    df,
-                    iPtrs, (UIntPtr)iPtrs.Length,
-                    oPtrs, (UIntPtr)oPtrs.Length,
-                    variableName,
-                    valueName
-                ));
-            })
-        );
+
+        var h = NativeBindings.pl_unpivot(df,index,on,variableName,valueName);
+        index.TransferOwnership();
+        on.TransferOwnership();
+        return ErrorHelper.Check(h);
     }
     public static DataFrameHandle Concat(DataFrameHandle[] handles, PlConcatType how)
     {

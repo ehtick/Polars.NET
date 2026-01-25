@@ -139,6 +139,8 @@ namespace Polars.NET.Core.Arrow
             if (type == typeof(uint))   return idx => (uint?)array.GetInt64Value(idx);
             if (type == typeof(ulong))  return idx => (ulong?)array.GetInt64Value(idx);
             if (type == typeof(ushort)) return idx => (ushort?)array.GetInt64Value(idx);
+            // if (type == typeof(Int128)) return idx => array.GetInt128Value(idx);
+            // if (type == typeof(UInt128)) return idx => (UInt128?)array.GetInt128Value(idx);
 
             // Floats
             if (type == typeof(double)) return idx => array.GetDoubleValue(idx);

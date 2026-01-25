@@ -150,3 +150,11 @@ public enum PlQuantileMethod : byte
     Midpoint = 3,
     Linear = 4 // Default
 }
+
+public enum PlUniqueKeepStrategy : byte
+{
+    First = 0,
+    Last = 1,
+    Any = 2,
+    None = 3
+}

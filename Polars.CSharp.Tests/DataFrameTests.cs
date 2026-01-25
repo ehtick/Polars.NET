@@ -669,7 +669,7 @@ B,5";
 
         // 3. 执行 Explode
         // 这一步调用了你的 public DataFrame Explode(params Expr[] exprs)
-        using var exploded = dfWithList.Explode(Col("list_vals"));
+        using var exploded = dfWithList.Explode("list_vals");
 
         // 4. 验证结果
         // 总行数应该是 2 + 1 = 3
@@ -865,5 +865,38 @@ B,5";
         using var slOverflow = df.Slice(4, 100);
         Assert.Equal(1, slOverflow.Height); // 只剩最后一行 "Fig"
         Assert.Equal("Fig", slOverflow["Fruit"].GetValue<string>(0));
+    }
+    [Fact]
+    public void Test_Unique_Stable()
+    {
+        var df = DataFrame.From(new[]
+        {
+            new { A = 1, B = "x" },
+            new { A = 2, B = "y" },
+            new { A = 1, B = "x" }, // Duplicate
+            new { A = 3, B = "z" }
+        });
+
+        // 1. Default (All cols, Keep First)
+        var res1 = df.Unique();
+        Assert.Equal(3, res1.Height);
+        Assert.Equal(1, res1["A"][0]); // Order preserved
+        Assert.Equal(2, res1["A"][1]);
+        Assert.Equal(3, res1["A"][2]);
+
+        // 2. Subset (Check only A)
+        var df2 = DataFrame.From(new[]
+        {
+            new { A = 1, B = "x" },
+            new { A = 1, B = "y" } // Duplicate on A
+        });
+        
+        var res2 = df2.Unique(new[] { "A" }, UniqueKeepStrategy.Last);
+        Assert.Equal(1, res2.Height);
+        Assert.Equal("y", res2["B"][0]); // Should keep the last one ("y")
+
+        // 3. Keep None (Remove all duplicates)
+        var res3 = df.Unique(null, UniqueKeepStrategy.None);
+        Assert.Equal(2, res3.Height); // A=2 and A=3 are unique. A=1 appears twice so both removed.
     }
 }

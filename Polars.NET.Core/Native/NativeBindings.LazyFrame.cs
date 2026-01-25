@@ -98,13 +98,13 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial LazyFrameHandle pl_lazy_limit(LazyFrameHandle lf, uint n);
     [LibraryImport(LibName)] public static partial LazyFrameHandle pl_lazy_with_columns(LazyFrameHandle lf, IntPtr[] exprs, UIntPtr len);
     [LibraryImport(LibName)] 
-    public static partial LazyFrameHandle pl_lazy_explode(LazyFrameHandle lf, IntPtr[] exprs, UIntPtr len);
+    public static partial LazyFrameHandle pl_lazy_explode(LazyFrameHandle lf, SelectorHandle selector);
     // --- Reshaping (Lazy) ---
     [LibraryImport(LibName)] 
     public static partial LazyFrameHandle pl_lazy_unpivot(
         LazyFrameHandle lf,
-        IntPtr[] idVars, UIntPtr idLen,
-        IntPtr[] valVars, UIntPtr valLen,
+        SelectorHandle index,
+        SelectorHandle on,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? varName,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? valName
     );
@@ -121,6 +121,17 @@ unsafe internal partial class NativeBindings
         LazyFrameHandle lf, 
         SelectorHandle selector,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? separator
+    );
+    [LibraryImport(LibName)]
+    public static partial LazyFrameHandle pl_lazyframe_drop(
+        LazyFrameHandle lf, 
+        SelectorHandle selector
+    );
+    [LibraryImport(LibName)]
+    public static partial LazyFrameHandle pl_lazyframe_unique_stable(
+        LazyFrameHandle lf, 
+        IntPtr selector,
+        PlUniqueKeepStrategy keep
     );
     // --- Streaming & Sink ---
     [LibraryImport(LibName)] 

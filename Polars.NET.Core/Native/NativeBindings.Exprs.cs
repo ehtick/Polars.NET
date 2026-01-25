@@ -401,24 +401,7 @@ unsafe internal partial class NativeBindings
     // Naming
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_prefix(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string prefix);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_suffix(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string suffix);
-    // --- Reshaping (Eager) ---
-    [LibraryImport(LibName)] 
-    public static partial DataFrameHandle pl_pivot(
-        DataFrameHandle df,
-        IntPtr[] values, UIntPtr valuesLen,
-        IntPtr[] index, UIntPtr indexLen,
-        IntPtr[] columns, UIntPtr columnsLen,
-        PlPivotAgg aggFn
-    );
 
-    [LibraryImport(LibName)] 
-    public static partial DataFrameHandle pl_unpivot(
-        DataFrameHandle df,
-        IntPtr[] idVars, UIntPtr idLen,
-        IntPtr[] valVars, UIntPtr valLen,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? varName,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? valName
-    );
 
     // Expr Len
     [LibraryImport(LibName)] 

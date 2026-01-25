@@ -84,7 +84,7 @@ public class SeriesTests
         using var df = DataFrame.FromSeries(s);
 
         // 5. 数据验证
-        using var exploded = df.Explode(Polars.Col("arrow_list_manual"));
+        using var exploded = df.Explode("arrow_list_manual");
         // [1, 2] -> 2 rows
         // null   -> 1 rows
         // [3]    -> 1 row
@@ -117,7 +117,7 @@ public class SeriesTests
             Assert.Equal(DataTypeKind.List, s.DataType.Kind);
             
             // Explode 检查
-            using var exploded = df.Explode(Polars.Col("my_list"));
+            using var exploded = df.Explode("my_list");
 
             Assert.Equal(6, exploded.Height); 
         }
@@ -273,7 +273,7 @@ public class SeriesTests
         Assert.Equal(1, s.NullCount);
 
         // 验证数据：Explode
-        using var exploded = df.Explode(Polars.Col("nested_list"));
+        using var exploded = df.Explode("nested_list");
         exploded.Show();
         // 1, 2, null, 3, 4, 5 -> 5 rows
         Assert.Equal(6, exploded.Height);
@@ -296,7 +296,7 @@ public class SeriesTests
         
         // 验证内部数据
         using var df = DataFrame.FromSeries(s);
-        using var exp = df.Explode(Polars.Col("strs"));
+        using var exp = df.Explode("strs");
         Assert.Equal("a", exp.GetValue<string>(0, "strs"));
     }
     [Fact]

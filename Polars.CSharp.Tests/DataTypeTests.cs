@@ -1,5 +1,7 @@
 using Apache.Arrow.Types;
 using Microsoft.VisualBasic;
+using Org.BouncyCastle.Tls.Crypto.Impl;
+using Polars.NET.Core.Arrow;
 using static Polars.CSharp.Polars;
 namespace Polars.CSharp.Tests;
 
@@ -693,6 +695,9 @@ public class DataTypeTests
         Assert.Equal(bigVal, s.GetValue<Int128?>(0));
         Assert.Equal(-bigVal, s.GetValue<Int128?>(1));
         Assert.Null(s.GetValue<Int128?>(2));
+
+        Assert.Throws<NotSupportedException>(s.ToArrow);
+        // Assert.Equal(bigVal,sArrow.GetInt128Value(0));
     }
 
     [Fact]

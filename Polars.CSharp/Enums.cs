@@ -184,6 +184,14 @@ public enum RollingRankMethod : byte
     Random = 4
 }
 
+public enum UniqueKeepStrategy : byte
+{
+    First = 0,
+    Last = 1,
+    Any = 2,
+    None = 3
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlTimeUnit ToNative(this TimeUnit unit) => unit switch
@@ -297,6 +305,14 @@ internal static class EnumExtensions
         RollingRankMethod.Dense => CoreEnums.PlRollingRankMethod.Dense,
         RollingRankMethod.Random => CoreEnums.PlRollingRankMethod.Random,
         _ => throw new ArgumentOutOfRangeException(nameof(method), method, null)
+    };
+    internal static CoreEnums.PlUniqueKeepStrategy ToNative(this UniqueKeepStrategy strategy) => strategy switch
+    {
+        UniqueKeepStrategy.First => CoreEnums.PlUniqueKeepStrategy.First,
+        UniqueKeepStrategy.Last => CoreEnums.PlUniqueKeepStrategy.Last,
+        UniqueKeepStrategy.Any => CoreEnums.PlUniqueKeepStrategy.Any,
+        UniqueKeepStrategy.None => CoreEnums.PlUniqueKeepStrategy.None,
+        _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
     };
 }
 

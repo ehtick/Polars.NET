@@ -550,8 +550,8 @@ public static partial class PolarsWrapper
         {
             if (!ownershipTransferred)
             {
-                CArrowArray.Free(&cArray);
-                CArrowSchema.Free(&cSchema);
+                // CArrowArray.Free(&cArray);
+                // CArrowSchema.Free(&cSchema);
             }
         }
     }
