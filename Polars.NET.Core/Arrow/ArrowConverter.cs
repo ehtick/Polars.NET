@@ -76,11 +76,7 @@ public static class ArrowConverter
         foreach (var member in members)
         {
             var colName = member.Name;
-            var colValue = GetMemberValue(member, columns);
-
-            if (colValue == null) 
-                throw new ArgumentNullException($"Column '{colName}' cannot be null.");
-
+            var colValue = GetMemberValue(member, columns) ?? throw new ArgumentNullException($"Column '{colName}' cannot be null.");
             var arrowArray = BuildSingleColumn(colValue) 
                 ?? throw new ArgumentException($"Column '{colName}' is not a valid collection.");
 

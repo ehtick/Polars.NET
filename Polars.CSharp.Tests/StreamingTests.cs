@@ -322,13 +322,9 @@ public class StreamingTests
         Console.WriteLine("--------------------------------------------------");
 
         // ====================================================
-        // 内存断言 (Streaming 验证)
+        // 内存断言 
         // ====================================================
-        // 如果是真正的流式处理，处理 1 亿行数据，峰值内存不应该超过几 GB。
-        // 如果内存飙升到 10GB+，说明内存泄漏或者 Polars 退化成了 Eager 模式。
-        
-        // 假设每个 Batch 50万行，Arrow 格式紧凑，C# + Rust 开销应该控制在 1GB 以内 (甚至 500MB)
-        // 这里给一个宽松的阈值 2GB，如果超过说明绝对有问题。
+        // 这里给一个宽松的阈值 3GB，如果超过说明绝对有问题。
         Assert.True(peakPhysicalMemory < 3L * 1024 * 1024 * 1024, 
             $"Memory Leak Detected! Peak memory usage ({peakPhysicalMemory/1024/1024} MB) exceeded 2GB limit.");
     }

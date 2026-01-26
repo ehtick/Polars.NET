@@ -170,7 +170,7 @@ type ``Complex Query Tests`` () =
             res 
             |> pl.select [ pl.col "my_name"; pl.col "my_tag_list" ]
             // [修改] 加上列表括号 []
-            |> pl.explode [ pl.col "my_tag_list" ] 
+            |> pl.explode ["my_tag_list"]  
         
         Assert.Equal(3L, exploded.Rows)
         Assert.Equal("coding", exploded.String("my_tag_list", 0).Value)

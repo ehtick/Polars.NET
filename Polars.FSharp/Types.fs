@@ -2341,16 +2341,28 @@ and DataFrame(handle: DataFrameHandle) =
         let rows = defaultArg n 5
         let h = PolarsWrapper.Tail(this.Handle, uint rows) 
         new DataFrame(h)
-    /// <summary> Explode list columns to rows. </summary>
-    member this.Explode (exprs: Expr list) : DataFrame =
-        let handles = exprs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
-        let h = PolarsWrapper.Explode(this.Handle, handles)
+
+
+    /// <summary> 
+    /// Explode list columns to rows using a Selector.
+    /// </summary>
+    member this.Explode(selector: Selector) : DataFrame =
+        let sh = selector.CloneHandle()
+        let h = PolarsWrapper.Explode(this.Handle, sh)
         new DataFrame(h)
 
-    /// <summary> Explode list columns to rows. Supports Selectors (e.g. all list columns). </summary>
-    member this.Explode(columns: seq<#IColumnExpr>) =
-        let exprs = columns |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
-        this.Explode exprs
+    /// <summary> 
+    /// Explode list columns to rows using column names.
+    /// </summary>
+    member this.Explode(columns: seq<string>) =
+        let names = Seq.toArray columns
+        let h = PolarsWrapper.SelectorCols names
+        let sel = new Selector(h)
+        this.Explode sel
+
+    /// <summary>Explode a single column by name. </summary>
+    member this.Explode(column: string) =
+        this.Explode [column]
     /// <summary> Decompose a struct column into multiple columns. </summary>
     member this.UnnestColumn(column: string, ?separator: string) : DataFrame =
         let cols = [| column |]
@@ -2376,15 +2388,48 @@ and DataFrame(handle: DataFrameHandle) =
         let vArr = List.toArray values
         new DataFrame(PolarsWrapper.Pivot(this.Handle, iArr, cArr, vArr, aggFn.ToNative()))
 
-    /// <summary> Unpivot (Melt) the DataFrame from wide to long format. </summary>
-    member this.Unpivot (index: string list) (on: string list) (variableName: string option) (valueName: string option) : DataFrame =
-        let iArr = List.toArray index
-        let oArr = List.toArray on
-        let varN = Option.toObj variableName 
-        let valN = Option.toObj valueName 
-        new DataFrame(PolarsWrapper.Unpivot(this.Handle, iArr, oArr, varN, valN))
+    /// <summary> 
+    /// Unpivot (Melt) the DataFrame from wide to long format using Selectors.
+    /// This is the primary implementation backed by native binding.
+    /// </summary>
+    /// <param name="index">Selector for ID variables (columns to keep)</param>
+    /// <param name="on">Selector for Value variables (columns to melt)</param>
+    /// <param name="variableName">Name for the variable column (default: "variable")</param>
+    /// <param name="valueName">Name for the value column (default: "value")</param>
+    member this.Unpivot (index: Selector,on: Selector,variableName: string option,valueName: string option) : DataFrame =
+        let hIndex = index.CloneHandle()
+        let hOn = on.CloneHandle()
+        let varN = Option.toObj variableName
+        let valN = Option.toObj valueName
+        
+        new DataFrame(PolarsWrapper.Unpivot(this.Handle, hIndex, hOn, varN, valN))
+
+    /// <summary> 
+    /// Unpivot (Melt) overload for simple string lists.
+    /// Auto-converts string lists to Column Selectors.
+    /// </summary>
+    member this.Unpivot (index: seq<string>,on: seq<string>,variableName: string option,valueName: string option) =
+        // 1. Index Selector
+        let idxArr = Seq.toArray index
+        let sIndex = new Selector(PolarsWrapper.SelectorCols idxArr)
+
+        // 2. On (Value) Selector
+        let onArr = Seq.toArray on
+        let sOn = new Selector(PolarsWrapper.SelectorCols onArr)
+
+        // 3. 路由到主逻辑
+        this.Unpivot(sIndex,sOn,variableName,valueName)
+    member this.Unpivot (index: string list,on: string list) =
+        this.Unpivot(index,on,None,None)
     /// <summary> Alias for Unpivot. </summary>
-    member this.Melt = this.Unpivot
+    member this.Melt(index: Selector, on: Selector, variableName, valueName) = 
+        this.Unpivot(index, on, variableName, valueName)
+
+    member this.Melt(index: seq<string>, on: seq<string>, variableName, valueName) = 
+        this.Unpivot(index, on, variableName, valueName)
+
+    member this.Melt(index: string list, on: string list) =
+        this.Unpivot(index, on)
     /// <summary>
     /// Slice the DataFrame along the rows.
     /// </summary>
@@ -3123,20 +3168,64 @@ and LazyFrame(handle: LazyFrameHandle) =
             let aExprs = aggs |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
             this.GroupBy(kExprs, aExprs)
     /// <summary>
-    /// Unpivot (Melt) the LazyFrame from wide to long format.
+    /// Unpivot (Melt) the LazyFrame using Selectors.
+    /// Primary overload backed by native binding.
     /// </summary>
-    /// <param name="index">Column(s) to use as identifier variables.</param>
-    /// <param name="on">Column(s) to unpivot.</param>
-    /// <param name="variableName">Name for the variable column (defaults to "variable" if None).</param>
-    /// <param name="valueName">Name for the value column (defaults to "value" if None).</param>
-    member this.Unpivot (index: string list) (on: string list) (variableName: string option) (valueName: string option) : LazyFrame =
+    member this.Unpivot(index: Selector, on: Selector, variableName: string option, valueName: string option) : LazyFrame =
         let lfClone = this.CloneHandle()
-        let iArr = List.toArray index
-        let oArr = List.toArray on
+        
+        let hIndex = index.CloneHandle()
+        let hOn = on.CloneHandle()
         let varN = Option.toObj variableName
-        let valN = Option.toObj valueName 
-        new LazyFrame(PolarsWrapper.LazyUnpivot(lfClone, iArr, oArr, varN, valN))
-    member this.Melt = this.Unpivot
+        let valN = Option.toObj valueName
+        
+        new LazyFrame(PolarsWrapper.LazyUnpivot(lfClone, hIndex, hOn, varN, valN))
+
+    /// <summary>
+    /// Unpivot (Melt) overload for simple string lists.
+    /// Auto-converts to Selectors.
+    /// </summary>
+    member this.Unpivot(index: seq<string>, on: seq<string>, variableName: string option, valueName: string option) =
+        // 1. Convert Index strings to Selector
+        let idxArr = Seq.toArray index
+        let sIndex = new Selector(PolarsWrapper.SelectorCols idxArr)
+
+        // 2. Convert On strings to Selector
+        let onArr = Seq.toArray on
+        let sOn = new Selector(PolarsWrapper.SelectorCols onArr)
+
+        // 3. Route to main logic
+        this.Unpivot(sIndex, sOn, variableName, valueName)
+
+    member this.Unpivot(index: string list, on: string list) =
+        this.Unpivot(index, on, None, None)
+
+    // ==========================================
+    // Aliases (Melt)
+    // ==========================================
+    
+    member this.Melt(index: Selector, on: Selector, variableName, valueName) = 
+        this.Unpivot(index, on, variableName, valueName)
+
+    member this.Melt(index: seq<string>, on: seq<string>, variableName, valueName) = 
+        this.Unpivot(index, on, variableName, valueName)
+
+    member this.Melt(index: string list, on: string list) =
+        this.Unpivot(index, on)
+    member this.Explode(selector: Selector) : LazyFrame =
+        let lfClone = this.CloneHandle()
+        let sh = selector.CloneHandle()
+        new LazyFrame(PolarsWrapper.LazyExplode(lfClone, sh))
+
+    member this.Explode(columns: seq<string>) =
+        let names = Seq.toArray columns
+        let h = PolarsWrapper.SelectorCols names
+        let sel = new Selector(h)
+        this.Explode sel
+
+    member this.Explode(column: string) = 
+        this.Explode [column]
+
     /// <summary>
     /// JoinAsOf with string tolerance (e.g., "2d", "1h").
     /// </summary>

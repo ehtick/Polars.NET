@@ -140,8 +140,8 @@ module pl =
     let tail (n: int) (df: DataFrame) : DataFrame =
         df.Tail n
     /// <summary> Explode list-like columns into multiple rows. </summary>
-    let explode (exprs: Expr list) (df: DataFrame) : DataFrame =
-        df.Explode exprs
+    let explode (columns: seq<string>) (df: DataFrame) : DataFrame =
+        df.Explode columns
     /// <summary> Decompose a struct column into multiple columns. </summary>
     let unnestColumn(column: string) (df:DataFrame) : DataFrame =
         df.UnnestColumn column
@@ -155,9 +155,18 @@ module pl =
     let pivot (index: string list) (columns: string list) (values: string list) (aggFn: PivotAgg) (df: DataFrame) : DataFrame =
         df.Pivot index columns values aggFn
 
-    /// <summary> Unpivot (Melt) the DataFrame from wide to long format. </summary>
-    let unpivot (index: string list) (on: string list) (variableName: string option) (valueName: string option) (df: DataFrame) : DataFrame =
-        df.Unpivot index on variableName valueName
+    /// <summary>
+    /// Unpivot (Melt) the DataFrame.
+    /// Supports pipelining: df |> Frame.unpivot ...
+    /// </summary>
+    let unpivot (index: seq<string>) (on: seq<string>) (variableName: string option) (valueName: string option) (df: DataFrame) =
+        df.Unpivot(index, on, variableName, valueName)
+    /// <summary>
+    /// Unpivot (Melt) the DataFrame by selector.
+    /// Supports pipelining: df |> Frame.unpivot ...
+    /// </summary>
+    let unpivotSel (index: Selector) (on: Selector) (variableName: string option) (valueName: string option) (df: DataFrame) =
+        df.Unpivot(index, on, variableName, valueName)
     /// Alias for unpivot
     let melt = unpivot    
     /// Aggregation Helpers
@@ -259,9 +268,18 @@ module pl =
     /// <summary> Group by keys and apply aggregations. </summary>
     let groupByLazy (keys: Expr list) (aggs: Expr list) (lf: LazyFrame) : LazyFrame =
         lf.GroupBy(keys, aggs)
-    /// <summary> Unpivot (Melt) the LazyFrame from wide to long format. </summary>
-    let unpivotLazy (index: string list) (on: string list) (variableName: string option) (valueName: string option) (lf: LazyFrame) : LazyFrame =
-        lf.Unpivot index on variableName valueName
+    /// <summary>
+    /// Unpivot (Melt) the LazyFrame.
+    /// Usage: lf |> LazyFrame.unpivot ["ID"] ["Val"] None None
+    /// </summary>
+    let unpivotLazy (index: seq<string>) (on: seq<string>) (variableName: string option) (valueName: string option) (lf: LazyFrame) : LazyFrame =
+        lf.Unpivot(index, on, variableName, valueName)
+    /// <summary>
+    /// Unpivot (Melt) the LazyFrame by selector.
+    /// Usage: lf |> LazyFrame.unpivot ["ID"] ["Val"] None None
+    /// </summary>
+    let unpivotLazySel (index: Selector) (on: Selector) (variableName: string option) (valueName: string option) (lf: LazyFrame) : LazyFrame =
+        lf.Unpivot(index, on, variableName, valueName)
     /// Alias for unpivotLazy
     let meltLazy = unpivotLazy
     /// <summary> Perform a join between two LazyFrames. </summary>
