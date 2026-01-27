@@ -195,7 +195,7 @@ public partial class Series : IDisposable
         if (underlying == typeof(TimeSpan))
             return (T?)(object?)PolarsWrapper.SeriesGetDuration(Handle, index);
         // if (underlying == typeof(DateTime))
-        //     return (T?)(object?)PolarsWrapper.SeriesGetDatetime(Handle, index);
+            // return (T?)(object?)PolarsWrapper.SeriesGetDatetime(Handle, index);
 
         // ==============================================================
         // 🐢 Universal Path - using Arrow Infrastructure
@@ -871,7 +871,7 @@ public partial class Series : IDisposable
 
         Handle = PolarsWrapper.SeriesNewDatetime(name, values, validity, timeZone);
     }
-        /// <summary>
+    /// <summary>
     /// Create a DateTime Series (High Performance).
     /// </summary>
     /// <param name="name"></param>
@@ -2261,11 +2261,11 @@ public class SeriesListOps
     /// <summary>
     /// Check if the list contains the given item.
     /// </summary>
-    public Series Contains(int item) => Apply(e => e.List.Contains(item));
+    public Series Contains(int item, bool nullsEqual = false) => Apply(e => e.List.Contains(item, nullsEqual));
     /// <summary>
     /// Check if the list contains the given item.
     /// </summary>
-    public Series Contains(string item) => Apply(e => e.List.Contains(item));
+    public Series Contains(string item, bool nullsEqual= false) => Apply(e => e.List.Contains(item, nullsEqual));
     /// <summary>
     /// Concat this list series with another list series.
     /// Result is a new Series with the lists concatenated.

@@ -556,13 +556,8 @@ B,5";
                 Col("val_list").List.Contains(3).Alias("has_3")
             )
             .Sort("group");
-
         // A (1,2) -> Sum=3, Max=2, Has3=false
         // B (3,4,5) -> Sum=12, Max=5, Has3=true
-        
-        // 验证 Name Suffix
-        Assert.NotNull(res["val_list_sum"]); // Suffix 生效
-        Assert.NotNull(res["val_list_max"]);
 
         // 验证 A
         Assert.Equal(3, res.GetValue<int>(0,"val_list_sum"));

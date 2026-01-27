@@ -1138,6 +1138,8 @@ type Series(handle: SeriesHandle) =
         else if t = typeof<uint16> then Series.create(name, data |> Seq.cast<uint16 option>)
         else if t = typeof<uint32> then Series.create(name, data |> Seq.cast<uint32 option>)
         else if t = typeof<uint64> then Series.create(name, data |> Seq.cast<uint64 option>)
+        else if t = typeof<Int128> then Series.create(name, data |> Seq.cast<Int128 option>)
+        else if t = typeof<UInt128> then Series.create(name, data |> Seq.cast<UInt128 option>)
         
         // --- 2. Floating Point (Generic Unmanaged Path) ---
         else if t = typeof<float> then Series.create(name, data |> Seq.cast<float option>)      // Double
@@ -1179,7 +1181,8 @@ type Series(handle: SeriesHandle) =
         else if t = typeof<uint16> then Series.create(name, data |> Seq.cast<uint16 voption>)
         else if t = typeof<uint32> then Series.create(name, data |> Seq.cast<uint32 voption>)
         else if t = typeof<uint64> then Series.create(name, data |> Seq.cast<uint64 voption>)
-
+        else if t = typeof<Int128> then Series.create(name, data |> Seq.cast<Int128 voption>)
+        else if t = typeof<UInt128> then Series.create(name, data |> Seq.cast<UInt128 voption>)
         // --- 2. Floating Point ---
         else if t = typeof<float> then Series.create(name, data |> Seq.cast<float voption>)
         else if t = typeof<float32> then Series.create(name, data |> Seq.cast<float32 voption>)

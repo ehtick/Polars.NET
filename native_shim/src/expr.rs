@@ -1,8 +1,9 @@
 use polars::prelude::*;
 use std::{ffi::CStr, os::raw::c_char};
-use crate::types::{ExprContext,DataTypeContext};
+use crate::types::{ExprContext,DataTypeContext, SeriesContext};
 use std::ops::{Add, Sub, Mul, Div, Rem};
 use crate::utils::{consume_exprs_array, ptr_to_str};
+use polars_arrow::array::PrimitiveArray;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_free(ptr: *mut ExprContext) {
@@ -261,7 +262,13 @@ gen_lit_ctor!(pl_expr_lit_i64, i64);
 gen_lit_ctor!(pl_expr_lit_bool, bool);
 gen_lit_ctor!(pl_expr_lit_f32, f32);
 gen_lit_ctor!(pl_expr_lit_f64, f64);
-
+gen_lit_ctor!(pl_expr_lit_i8, i8);
+gen_lit_ctor!(pl_expr_lit_u8, u8);
+gen_lit_ctor!(pl_expr_lit_i16, i16);
+gen_lit_ctor!(pl_expr_lit_u16, u16);
+gen_lit_ctor!(pl_expr_lit_u32, u32);
+gen_lit_ctor!(pl_expr_lit_u64, u64);
+gen_lit_ctor!(pl_expr_lit_i128, i128);
 // --- Group 2: String col and lit ---
 gen_str_ctor!(pl_expr_col, col);
 gen_str_ctor!(pl_expr_lit_str, lit);
@@ -410,6 +417,22 @@ pub extern "C" fn pl_expr_lit_null() -> *mut Expr {
     ffi_try!({
     let e = lit(Null {});
     Ok(Box::into_raw(Box::new(e)))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_is_in(
+    expr_ptr: *mut ExprContext, 
+    other_ptr: *mut ExprContext,
+    nulls_equal : bool
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let other = unsafe { Box::from_raw(other_ptr) };
+
+        let new_expr = ctx.inner.is_in(other.inner,nulls_equal);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
 
@@ -1006,6 +1029,87 @@ pub extern "C" fn pl_expr_lit_datetime(
         Ok(Box::into_raw(Box::new(ExprContext { inner: dt_expr })))
     })
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_date(
+    days: i32
+) -> *mut ExprContext {
+    ffi_try!({
+        let lit_expr = lit(days);
+        let dt_expr = lit_expr.cast(DataType::Date);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: dt_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_time(
+    nanoseconds: i64
+) -> *mut ExprContext {
+    ffi_try!({
+        let lit_expr = lit(nanoseconds);
+        let dt_expr = lit_expr.cast(DataType::Time);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: dt_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_duration(
+    microseconds: i64
+) -> *mut ExprContext {
+    ffi_try!({
+        let lit_expr = lit(microseconds);
+        
+        let dur_expr = lit_expr.cast(DataType::Duration(TimeUnit::Microseconds));
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: dur_expr })))
+    })
+}
+
+// lit Decimal
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_decimal(
+    low: u64,  // C# split low part
+    high: i64, // C# split high part
+    scale: u32,
+) -> *mut ExprContext {
+    ffi_try!({
+        // Rebuild i128 (Unscaled Value)
+        let v = ((high as i128) << 64) | (low as i128);
+
+        let data_type = ArrowDataType::Decimal(38, scale as usize);
+
+        let arrow_array = PrimitiveArray::new(
+            data_type,
+            vec![v].into(), 
+            None
+        );
+
+        let series = Series::from_arrow(
+            "literal".into(), 
+            Box::new(arrow_array)
+        ).unwrap();
+
+        let expr = lit(series);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_series(
+    series_ptr: *mut SeriesContext
+) -> *mut ExprContext {
+    ffi_try!({
+        let s_ctx = unsafe { Box::from_raw(series_ptr) };
+        let s = s_ctx.series;
+
+        let expr = lit(s);
+
+        Ok(Box::into_raw(Box::new(ExprContext { inner: expr })))
+    })
+}
 // ==========================================
 // List Ops
 // ==========================================
@@ -1049,16 +1153,18 @@ pub extern "C" fn pl_expr_list_sort(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_list_contains(
     expr_ptr: *mut ExprContext,
-    item_ptr: *mut ExprContext
+    item_ptr: *mut ExprContext,
+    nulls_equal: bool
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let item = unsafe { Box::from_raw(item_ptr) };
 
-        let new_expr = item.inner.is_in(ctx.inner, true);
+        let new_expr = ctx.inner.list().contains(item.inner, nulls_equal);
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_cols(

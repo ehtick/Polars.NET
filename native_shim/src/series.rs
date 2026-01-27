@@ -482,7 +482,7 @@ pub unsafe extern "C" fn pl_series_new_array_decimal(
 
         // 3. Construct FixedSizeListArray
         // Inner Field must also be Decimal
-        let inner_field = polars_arrow::datatypes::Field::new("item".into(), decimal_dtype, true);
+        let inner_field = polars_arrow::datatypes::Field::new("item".into(), decimal_dtype, false);
         
         let list_dtype = ArrowDataType::FixedSizeList(
             Box::new(inner_field),

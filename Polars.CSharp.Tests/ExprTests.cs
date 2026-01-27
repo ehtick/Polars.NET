@@ -1731,4 +1731,126 @@ TooShort,1990-05-20,1.60";
         Assert.Equal(1.5, (double)res["q_linear"][1]);
         Assert.Equal(1.0, (double)res["q_lower"][1]);
     }
+    [Fact]
+    public void Test_Temporal_Literals()
+    {
+        // 准备数据：1行 dummy 数据用于 Select
+        using var df = DataFrame.FromColumns(new { id = new[] { 1 } });
+
+        // 1. DateOnly (2024-01-01)
+        var d = new DateOnly(2024, 1, 1);
+        
+        // 2. TimeOnly (12:30:00)
+        var t = new TimeOnly(12, 30, 0);
+        
+        // 3. TimeSpan (1 hour)
+        var dur = TimeSpan.FromHours(1);
+
+        // 4. DateTimeOffset (2024-01-01 12:00 +08:00) -> UTC 04:00
+        var dto = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.FromHours(8));
+
+        using var res = df.Select(
+            Lit(d).Alias("date"),
+            Lit(t).Alias("time"),
+            Lit(dur).Alias("duration"),
+            Lit(dto).Alias("dto")
+        );
+
+        // 验证结果
+        Assert.Equal(1, res.Height);
+        // 重点验证 DateTimeOffset 的归一化
+        // 2024-01-01 12:00+8 -> 2024-01-01 04:00 UTC
+        // 取出来如果是 DateTime (Naive)，应该是 04:00
+        var val = res.GetValue<DateTime>(0, "dto"); // 假设你取出来是 DateTime
+        Assert.Equal(new DateTime(2024, 1, 1, 4, 0, 0), val);
+    }
+    [Fact]
+    public void Test_Decimal_Lit()
+    {
+        using var df = DataFrame.FromColumns(new { id = new[] { 1 } });
+
+        // 1. 常规小数
+        decimal d1 = 12.34m;     // Unscaled: 1234, Scale: 2
+        
+        // 2. 负数 + 多位小数
+        decimal d2 = -99.8765m;  // Unscaled: -998765, Scale: 4
+        
+        // 3. 整数型 Decimal
+        decimal d3 = 100m;       // Unscaled: 100, Scale: 0 (通常)
+
+        var res = df.Select(
+            Lit(d1).Alias("d1"),
+            Lit(d2).Alias("d2"),
+            Lit(d3).Alias("d3")
+        );
+
+        Assert.Equal(1, res.Height);
+        Assert.Equal(12.34m, res.GetValue<decimal>(0, "d1"));
+        Assert.Equal(-99.8765m, res.GetValue<decimal>(0, "d2"));
+        Assert.Equal(100m, res.GetValue<decimal>(0, "d3"));
+        
+        Assert.Equal(DataType.Decimal(38,2),res[0].DataType);
+        Assert.Equal(DataType.Decimal(38,4),res[1].DataType);
+    }
+    [Fact]
+    public void Test_Expr_Lit_List()
+    {
+        using var df = DataFrame.FromColumns(new { id = new[] { 1, 2, 3, 4, 5 } });
+
+        // 1. 整数列表 (int[])
+        var listInt = new[] { 1, 3, 5 };
+        var res1 = df.Select(
+            Lit(listInt).Implode().List.Contains(Col("id")).Alias("is_in_int")
+        );
+        Assert.True(res1.GetValue<bool>(0, "is_in_int")); // 1 in [1,3,5] -> True
+        Assert.False(res1.GetValue<bool>(1, "is_in_int")); // 2 in [1,3,5] -> False
+        
+        // 2. 字符串列表 (string[])
+        // 构造一个 List 列字面量
+        string[] listStr =["A", "B"];
+        var res2 = df.Select(
+            Lit(listStr).Alias("lit_str_list")
+        );
+
+        Assert.Equal("A",res2[0][0]);
+        Assert.Equal("B",res2[0][1]);
+    }
+    [Fact]
+    public void Test_Expr_IsIn()
+    {
+        // 1. 准备数据
+        using var df = DataFrame.FromColumns(new
+        {
+            id = new[] { 1, 2, 3, 4, 5 },
+            name = new[] { "Alice", "Bob", "Charlie", "David", "Eve" }
+        });
+
+        // 2. 定义查找集合 (白名单)
+        var validIds = new[] { 1, 3, 5 };       // ID 白名单
+        var validNames = new[] { "Bob", "Eve" }; // 名字白名单
+
+        // 3. 执行 IsIn
+        // 注意：Lit(validIds) 生成的是一个 Series (集合)，这正是 IsIn 需要的右值
+        var res = df.Select(
+            Col("id").IsIn(Lit(validIds).Implode()).Alias("id_in_whitelist"),
+            Col("name").IsIn(Lit(validNames).Implode()).Alias("name_in_whitelist")
+        );
+
+        // 4. 验证结果
+        Assert.Equal(5, res.Height);
+
+        // --- 验证 ID (1, 3, 5 应该为 True) ---
+        // Row 0: id=1 (In [1,3,5]) -> True
+        Assert.True(res.GetValue<bool>(0, "id_in_whitelist"));
+        // Row 1: id=2 (Not In [1,3,5]) -> False
+        Assert.False(res.GetValue<bool>(1, "id_in_whitelist"));
+        // Row 2: id=3 (In [1,3,5]) -> True
+        Assert.True(res.GetValue<bool>(2, "id_in_whitelist"));
+
+        // --- 验证 Name (Bob, Eve 应该为 True) ---
+        // Row 0: Alice -> False
+        Assert.False(res.GetValue<bool>(0, "name_in_whitelist"));
+        // Row 1: Bob -> True
+        Assert.True(res.GetValue<bool>(1, "name_in_whitelist"));
+    }
 }

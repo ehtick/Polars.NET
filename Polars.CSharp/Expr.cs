@@ -1,5 +1,6 @@
 #pragma warning disable CS1591
 using Apache.Arrow;
+using Microsoft.FSharp.Core;
 using Polars.NET.Core;
 using Polars.NET.Core.Helpers;
 
@@ -26,9 +27,14 @@ public class Expr : IDisposable
         {
             // --- Integer ---
             int i => new Expr(PolarsWrapper.Lit(i)),
+            uint ui => new Expr(PolarsWrapper.Lit(ui)),
             long l => new Expr(PolarsWrapper.Lit(l)),
+            ulong ul => new Expr(PolarsWrapper.Lit(ul)),
             short sh => new Expr(PolarsWrapper.Lit(sh)),
+            ushort ush => new Expr(PolarsWrapper.Lit(ush)),
             byte by => new Expr(PolarsWrapper.Lit(by)),
+            sbyte sb => new Expr(PolarsWrapper.Lit(sb)),
+            Int128 i128 => new Expr(PolarsWrapper.Lit(i128)),
 
             // --- Float ---
             double d => new Expr(PolarsWrapper.Lit(d)),
@@ -40,6 +46,13 @@ public class Expr : IDisposable
 
             // --- Time ---
             DateTime dt => new Expr(PolarsWrapper.Lit(dt)),
+            DateTimeOffset dtos => new Expr(PolarsWrapper.Lit(dtos)),
+            DateOnly date => new Expr(PolarsWrapper.Lit(date)),
+            TimeOnly time => new Expr(PolarsWrapper.Lit(time)),
+            TimeSpan ts => new Expr(PolarsWrapper.Lit(ts)),
+
+            // --- Decimal ---
+            decimal dec => Polars.Lit(dec),
 
             // --- Null ---
             null => new Expr(PolarsWrapper.LitNull()),
@@ -1058,6 +1071,11 @@ public class Expr : IDisposable
     /// </summary>
     public Expr IsBetween(Expr lower, Expr upper)
         => new(PolarsWrapper.IsBetween(CloneHandle(), lower.CloneHandle(), upper.CloneHandle()));
+    /// <summary>
+    /// Check if the value is in given collection.
+    /// </summary>
+    public Expr IsIn(Expr other, bool nullsEqual = false)
+     => new(PolarsWrapper.IsIn(CloneHandle(),other.CloneHandle(),nullsEqual));
 
     // ==========================================
     // Casting
@@ -2791,25 +2809,28 @@ public class ListOps
     /// Check if the list contains a specific item.
     /// </summary>
     /// <param name="item"></param>
+    /// <param name="nullsEqual"></param>
     /// <returns></returns>
-    public Expr Contains(Expr item)
+    public Expr Contains(Expr item, bool nullsEqual=false)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
         var i = PolarsWrapper.CloneExpr(item.Handle);
-        return new Expr(PolarsWrapper.ListContains(h, i));
+        return new Expr(PolarsWrapper.ListContains(h, i,nullsEqual));
     }
     /// <summary>
     /// Check if the list contains a specific integer or string item.
     /// </summary>
     /// <param name="item"></param>
+    /// <param name="nullsEqual"></param>
     /// <returns></returns>
-    public Expr Contains(int item) => Contains(Polars.Lit(item));
+    public Expr Contains(int item, bool nullsEqual=false) => Contains(Polars.Lit(item), nullsEqual);
     /// <summary>
     /// Check if the list contains a specific string item.
     /// </summary>
     /// <param name="item"></param>
+    /// <param name="nullsEqual"></param>
     /// <returns></returns>
-    public Expr Contains(string item) => Contains(Polars.Lit(item));
+    public Expr Contains(string item, bool nullsEqual=false) => Contains(Polars.Lit(item), nullsEqual);
     /// <summary>
     /// Concat this list expression with other list expressions.
     /// </summary>

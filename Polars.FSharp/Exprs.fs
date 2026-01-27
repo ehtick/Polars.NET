@@ -200,7 +200,7 @@ and Expr(handle: ExprHandle) =
     member this.ArcSinh() = new Expr(PolarsWrapper.ArcSinh(this.CloneHandle()))
     member this.ArcCosh() = new Expr(PolarsWrapper.ArcCosh(this.CloneHandle()))
     member this.ArcTanh() = new Expr(PolarsWrapper.ArcTanh(this.CloneHandle()))
-    // Stats
+    // ------ Stats ------
     /// <summary>
     /// Count the number of valid (non-null) values.
     /// </summary>

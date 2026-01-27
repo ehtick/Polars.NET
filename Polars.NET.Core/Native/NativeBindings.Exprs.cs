@@ -15,7 +15,6 @@ public unsafe delegate int UdfCallback(
     byte* msgBuf
 );
 
-
 unsafe internal partial class NativeBindings
 {
     [LibraryImport(LibName)] public static partial void pl_expr_free(IntPtr ptr);
@@ -25,22 +24,32 @@ unsafe internal partial class NativeBindings
     public static partial ExprHandle pl_expr_col(string name);
     [LibraryImport(LibName)] 
     public static partial ExprHandle pl_expr_cols(IntPtr[] names, UIntPtr len);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_i8(sbyte val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_u8(byte val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_i16(short val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_u16(ushort val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_i32(int val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_u32(uint val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_bool([MarshalAs(UnmanagedType.I1)] bool val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_i64(long val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_u64(ulong val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_i128(Int128 val);
     [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_lit_i32(int val);
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_lit_bool([MarshalAs(UnmanagedType.I1)] bool val);
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_lit_i64(long val);
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_lit_f32(float val);
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_lit_null();
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_lit_str([MarshalAs(UnmanagedType.LPUTF8Str)] string val);
-    [LibraryImport(LibName)] 
-    public static partial ExprHandle pl_expr_lit_f64(double val);
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_mul(ExprHandle left, ExprHandle right);
+    public static partial ExprHandle pl_expr_lit_decimal(
+        ulong low, 
+        long high, 
+        uint scale
+    );
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_f32(float val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_null();
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_str([MarshalAs(UnmanagedType.LPUTF8Str)] string val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_f64(double val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_datetime(long micros);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_date(int days);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_time(long nanoseconds);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_duration(long microseconds);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_series(SeriesHandle seriesHandle);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_mul(ExprHandle left, ExprHandle right);
     // Comparsion
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_eq(ExprHandle left, ExprHandle right);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_neq(ExprHandle l, ExprHandle r);
@@ -179,9 +188,8 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_floor(ExprHandle expr);
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_is_between(ExprHandle expr, ExprHandle lower, ExprHandle upper);
-
-    [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_lit_datetime(long micros);
+    [LibraryImport(LibName)] 
+    public static partial ExprHandle pl_expr_is_in(ExprHandle expr, ExprHandle other, [MarshalAs(UnmanagedType.U1)] bool nulls_equal);
 
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_alias(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
@@ -328,7 +336,7 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool nulls_last,
         [MarshalAs(UnmanagedType.U1)] bool maintain_order
     );
-    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_contains(ExprHandle expr, ExprHandle item);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_contains(ExprHandle expr, ExprHandle item, [MarshalAs(UnmanagedType.U1)] bool nulls_equal);
     [LibraryImport(LibName)] public static partial ExprHandle pl_concat_list(IntPtr[] exprs,UIntPtr exprLen);
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_list_reverse(ExprHandle expr);

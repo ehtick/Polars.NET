@@ -14,18 +14,14 @@ public static class Polars
     /// <param name="name"></param>
     /// <returns></returns>
     public static Expr Col(string name)
-    {
-        return new Expr(PolarsWrapper.Col(name));
-    }
+        => new(PolarsWrapper.Col(name));
     /// <summary>
     /// Column Exprs (name: string)
     /// </summary>
     /// <param name="names"></param>
     /// <returns></returns>
     public static Expr Col(params string[] names)
-    {
-        return new Expr(PolarsWrapper.Cols(names));
-    }
+        => new(PolarsWrapper.Cols(names));
     /// <summary>
     /// Return the lines count of current context.
     /// </summary>
@@ -40,13 +36,121 @@ public static class Polars
         }
         return new Expr(PolarsWrapper.Lit(value));
     }
+    public static Expr Lit(sbyte value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(byte value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(short value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(ushort value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(int value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(uint value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(long value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(ulong value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(Int128 value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(double value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(DateTime value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(DateTimeOffset value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(DateOnly value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(TimeOnly value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(TimeSpan value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(bool value) => new(PolarsWrapper.Lit(value));
-    public static Expr Lit(long value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(float value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(decimal value) => new(PolarsWrapper.Lit(value));
     public static Expr LitNull() => new(PolarsWrapper.LitNull());
+    /// <summary>
+    /// Convert Series into Literal Expr。
+    /// <para>Series will be invalid after this conversion.</para>
+    /// </summary>
+    public static Expr Lit(Series series)
+        => new(PolarsWrapper.Lit(series.Handle));
+    /// <summary>
+    /// Create a list literal from an array using High-Performance Series constructors.
+    /// </summary>
+    public static Expr Lit<T>(T[] values)
+    {
+        Series s = values switch
+        {
+            // --- Signed int ---
+            sbyte[] v   => new Series("", v),
+            short[] v   => new Series("", v),
+            int[] v     => new Series("", v),
+            long[] v    => new Series("", v),
+            Int128[] v  => new Series("", v),
+
+            // --- Unsigned int ---
+            byte[] v    => new Series("", v),
+            ushort[] v  => new Series("", v),
+            uint[] v    => new Series("", v),
+            ulong[] v   => new Series("", v),
+            UInt128[] v => new Series("", v),
+
+            // --- Float and decimal ---
+            float[] v   => new Series("", v),
+            double[] v  => new Series("", v),
+            decimal[] v => new Series("", v), 
+
+            // --- Bool and String ---
+            bool[] v    => new Series("", v), 
+            string[] v  => new Series("", v), 
+
+            // --- Temporal ---
+            DateOnly[] v       => new Series("", v),
+            TimeOnly[] v       => new Series("", v),
+            TimeSpan[] v       => new Series("", v),
+            DateTime[] v       => new Series("", v),
+            DateTimeOffset[] v => new Series("", v),
+
+            _ => throw new NotSupportedException($"Type '{typeof(T)}[]' is not supported in Expr.Lit.")
+        };
+
+        return Lit(s);
+    }
+
+    /// <summary>
+    /// Create a list literal from a Nullable array.
+    /// </summary>
+    public static Expr Lit<T>(T?[] values) where T : struct
+    {
+        Series s = values switch
+        {
+            // --- Signed ---
+            sbyte?[] v   => new Series("", v),
+            short?[] v   => new Series("", v),
+            int?[] v     => new Series("", v),
+            long?[] v    => new Series("", v),
+            Int128?[] v  => new Series("", v),
+
+            // --- Unsigned ---
+            byte?[] v    => new Series("", v),
+            ushort?[] v  => new Series("", v),
+            uint?[] v    => new Series("", v),
+            ulong?[] v   => new Series("", v),
+            UInt128?[] v => new Series("", v),
+
+            // --- Float ---
+            float?[] v   => new Series("", v),
+            double?[] v  => new Series("", v),
+            decimal?[] v => new Series("", v),
+
+            // --- Bool ---
+            bool?[] v    => new Series("", v),
+
+            // --- Time ---
+            DateOnly?[] v       => new Series("", v),
+            TimeOnly?[] v       => new Series("", v),
+            TimeSpan?[] v       => new Series("", v),
+            DateTime?[] v       => new Series("", v),
+            DateTimeOffset?[] v => new Series("", v),
+
+            _ => throw new NotSupportedException($"Type '{typeof(T?)}[]' is not supported in Expr.Lit.")
+        };
+
+        return Lit(s);
+    }
+    
+    public static Expr Lit<T>(IEnumerable<T> values)
+    {
+        if (values is T[] arr) return Lit(arr);
+        return Lit(values.ToArray());
+    }
     
     // ---------------------------------------------------------
     // Selectors Entry Points

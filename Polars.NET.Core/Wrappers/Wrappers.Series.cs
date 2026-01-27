@@ -371,9 +371,7 @@ public static partial class PolarsWrapper
         }
     }
     public static SeriesHandle CloneSeries(SeriesHandle handle)
-    {
-        return ErrorHelper.Check(NativeBindings.pl_series_clone(handle));
-    }
+        => ErrorHelper.Check(NativeBindings.pl_series_clone(handle));
     // --- Properties ---
     public static string GetSeriesDtypeString(SeriesHandle h)
     {
