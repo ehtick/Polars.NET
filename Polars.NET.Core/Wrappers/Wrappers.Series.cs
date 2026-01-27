@@ -324,45 +324,45 @@ public static partial class PolarsWrapper
             {
                 Int128* pRaw = (Int128*)pData;
 
-                // Check whether mem layout need Swap
-                if (ArrayHelper.Int128NeedsSwap)
-                {
-                    // Need Swap：Alloc new array -> Swap Copy -> transfer new ptr
-                    Int128[] swapped = Int128Packer.PackDense(pRaw, (int)flatLen);
-                    fixed (Int128* pSwapped = swapped)
-                    {
-                        return ErrorHelper.Check(
-                            NativeBindings.pl_series_new_array_i128(name, pSwapped, flatLen, IntPtr.Zero, uHeight, uWidth)
-                        );
-                    }
-                }
-                else
-                {
-                    // Zero-Copy
-                    return ErrorHelper.Check(
-                        NativeBindings.pl_series_new_array_i128(name, pRaw, flatLen, IntPtr.Zero, uHeight, uWidth)
+                // // Check whether mem layout need Swap
+                // if (ArrayHelper.Int128NeedsSwap)
+                // {
+                //     // Need Swap：Alloc new array -> Swap Copy -> transfer new ptr
+                //     Int128[] swapped = Int128Packer.PackDense(pRaw, (int)flatLen);
+                //     fixed (Int128* pSwapped = swapped)
+                //     {
+                //         return ErrorHelper.Check(
+                //             NativeBindings.pl_series_new_array_i128(name, pSwapped, flatLen, IntPtr.Zero, uHeight, uWidth)
+                //         );
+                //     }
+                // }
+                // else
+                // {
+                //     // Zero-Copy
+                return ErrorHelper.Check(
+                    NativeBindings.pl_series_new_array_i128(name, pRaw, flatLen, IntPtr.Zero, uHeight, uWidth)
                     );
-                }
+                // }
             }
             else if (typeof(T) == typeof(UInt128))
             {
-                 UInt128* pRaw = (UInt128*)pData;
-                 if (ArrayHelper.Int128NeedsSwap)
-                 {
-                    UInt128[] swapped = Int128Packer.PackDense(pRaw, (int)flatLen);
-                    fixed (UInt128* pSwapped = swapped)
-                    {
-                        return ErrorHelper.Check(
-                            NativeBindings.pl_series_new_array_u128(name, pSwapped, flatLen, IntPtr.Zero, uHeight, uWidth)
-                        );
-                    }
-                 }
-                 else
-                 {
+                UInt128* pRaw = (UInt128*)pData;
+                //  if (ArrayHelper.Int128NeedsSwap)
+                //  {
+                //     UInt128[] swapped = Int128Packer.PackDense(pRaw, (int)flatLen);
+                //     fixed (UInt128* pSwapped = swapped)
+                //     {
+                //         return ErrorHelper.Check(
+                //             NativeBindings.pl_series_new_array_u128(name, pSwapped, flatLen, IntPtr.Zero, uHeight, uWidth)
+                //         );
+                //     }
+                //  }
+                //  else
+                //  {
                     return ErrorHelper.Check(
                         NativeBindings.pl_series_new_array_u128(name, pRaw, flatLen, IntPtr.Zero, uHeight, uWidth)
                     );
-                 }
+                //  }
             }
             else
             {

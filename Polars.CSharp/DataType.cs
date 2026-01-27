@@ -97,7 +97,7 @@ public class DataType : IDisposable, IEquatable<DataType>
     }
 
     // =========================================================================
-    // Value Equality Implementation (修复测试报错的关键)
+    // Value Equality Implementation
     // =========================================================================
 
     public override bool Equals(object? obj)

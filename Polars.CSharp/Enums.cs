@@ -194,6 +194,34 @@ public enum UniqueKeepStrategy : byte
 
 internal static class EnumExtensions
 {
+    public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
+    {
+        DataTypeKind.SameAsInput => CoreEnums.PlDataType.SameAsInput,
+        DataTypeKind.Int8 => CoreEnums.PlDataType.Int8,
+        DataTypeKind.UInt8 => CoreEnums.PlDataType.UInt8,
+        DataTypeKind.Int16 => CoreEnums.PlDataType.Int16,
+        DataTypeKind.UInt16 => CoreEnums.PlDataType.UInt16,
+        DataTypeKind.Int32=> CoreEnums.PlDataType.Int32,
+        DataTypeKind.UInt64 => CoreEnums.PlDataType.UInt64,
+        DataTypeKind.Int128 => CoreEnums.PlDataType.Int128,
+        DataTypeKind.UInt128 => CoreEnums.PlDataType.UInt128,
+        DataTypeKind.Float32 => CoreEnums.PlDataType.Float32,
+        DataTypeKind.Float64 => CoreEnums.PlDataType.Float64,
+        DataTypeKind.Datetime => CoreEnums.PlDataType.Datetime,
+        DataTypeKind.Date => CoreEnums.PlDataType.Date,
+        DataTypeKind.Time => CoreEnums.PlDataType.Time,
+        DataTypeKind.Duration => CoreEnums.PlDataType.Duration,
+        DataTypeKind.List=> CoreEnums.PlDataType.List,
+        DataTypeKind.Array => CoreEnums.PlDataType.Array,
+        DataTypeKind.Struct => CoreEnums.PlDataType.Struct,
+        DataTypeKind.Binary => CoreEnums.PlDataType.Binary,
+        DataTypeKind.Decimal => CoreEnums.PlDataType.Decimal,
+        DataTypeKind.Boolean => CoreEnums.PlDataType.Boolean,
+        DataTypeKind.Categorical => CoreEnums.PlDataType.Categorical,
+        DataTypeKind.Null => CoreEnums.PlDataType.Null,
+        DataTypeKind.String => CoreEnums.PlDataType.String, 
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+    };
     public static CoreEnums.PlTimeUnit ToNative(this TimeUnit unit) => unit switch
     {
         TimeUnit.Nanoseconds => CoreEnums.PlTimeUnit.Nanoseconds,

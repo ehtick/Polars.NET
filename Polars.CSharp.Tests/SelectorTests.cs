@@ -1,10 +1,13 @@
+using static Polars.CSharp.Polars;
+
 namespace Polars.CSharp.Tests;
+
 public class SelectorTests
 {
     [Fact]
     public void Test_Selector_All_Exclude()
     {
-        // 1. 准备数据 (4列)
+        // Prepare Data
         var df = DataFrame.FromColumns(new 
         {
             Id = new[] { 1, 2 },
@@ -13,21 +16,21 @@ public class SelectorTests
             Secret = new[] { "pass1", "pass2" }
         });
 
-        // 2. 使用 Selector: All().Exclude(...)
-        // 场景：保留所有业务数据，剔除 ID 和 敏感信息
-        // 这里发生了隐式转换: Selector -> Expr
+        // Use Selector: All().Exclude(...)
+        // Scene：Keep data but exclude ID and Secret
+        // Here implictly: Selector -> Expr
         var result = df.Select(
-            Polars.All().Exclude("Id", "Secret")
+            Selectors.All().Exclude("Id", "Secret")
         );
 
-        // 3. 验证结果
+        // Assert Results
         Assert.Equal(2, result.Width);
         
-        // 应该只剩下 Name 和 Age
+        // Only Name and Age column left
         Assert.Equal("Name", result.Column(0).Name);
         Assert.Equal("Age", result.Column(1).Name);
         
-        // 确保排除的列不存在 (抛异常)
+        // Id and Secret are not there
         Assert.Throws<ArgumentException>(() => result["Id"]);
         Assert.Throws<ArgumentException>(() => result["Secret"]);
     }
@@ -47,7 +50,7 @@ public class SelectorTests
 
         // select (All - "Id") * 2
         var result = df.Select(
-            (Polars.All().Exclude("Id") * 2).Name.Suffix("_Scaled") 
+            (Selectors.All().Exclude("Id") * 2).Name.Suffix("_Scaled") 
             // 注意：Polars 里的 Selector 运算通常会保持原名，
             // 或者变成 struct，这里简单测试 broadcast 乘法
         );
@@ -84,13 +87,13 @@ public class SelectorTests
         
         var result = df.Select(
             // A. StartsWith + Math
-            (Polars.Selectors.StartsWith("Price") * 100).Name.Suffix("_Cents"),
+            (Selectors.StartsWith("Price") * 100).Name.Suffix("_Cents"),
 
             // B. EndsWith
-            Polars.Selectors.EndsWith("2024"),
+            Selectors.EndsWith("2024"),
 
             // C. Type Selector (Datetime)
-            Polars.Datetime()
+            Selectors.Datetime()
         );
 
         // 3. 验证结果
@@ -122,7 +125,7 @@ public class SelectorTests
 
         // 逻辑: (所有数字) - (Num1)
         // 应该只剩 Num2
-        var sel = Polars.Numeric() - Polars.Selectors.Matches("^Num1$");
+        var sel = Selectors.Numeric() - Selectors.Matches("^Num1$");
         
         var result = df.Select(sel);
 

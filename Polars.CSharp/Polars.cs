@@ -53,47 +53,49 @@ public static class Polars
     // ---------------------------------------------------------
 
     /// <summary>
-    /// Select all columns.
-    /// </summary>
-    public static Selector All() 
-        => new(PolarsWrapper.SelectorAll());
-
-    /// <summary>
-    /// Select all numeric columns (Int, Float, etc.).
-    /// </summary>
-    public static Selector Numeric() 
-        => new(PolarsWrapper.SelectorNumeric());
-
-    /// <summary>
-    /// Select all string/utf8 columns.
-    /// </summary>
-    public static Selector String() 
-        => new(PolarsWrapper.SelectorByDtype(PlDataType.String));
-
-    /// <summary>
-    /// Select all date columns.
-    /// </summary>
-    public static Selector Date() 
-        => new(PolarsWrapper.SelectorByDtype(PlDataType.Date));
-
-    /// <summary>
-    /// Select all datetime columns (any precision/timezone).
-    /// </summary>
-    public static Selector Datetime() 
-        => new(PolarsWrapper.SelectorByDtype(PlDataType.Datetime));
-
-    /// <summary>
-    /// Select columns by specific PlDataType.
-    /// </summary>
-    public static Selector DType(PlDataType type) 
-        => new(PolarsWrapper.SelectorByDtype(type));
-
-    /// <summary>
     /// String matching selectors namespace.
     /// Usage: Polars.Selectors.StartsWith("A")
     /// </summary>
     public static class Selectors
     {
+        /// <summary>
+        /// Select all columns.
+        /// </summary>
+        public static Selector All() 
+            => new(PolarsWrapper.SelectorAll());
+
+        /// <summary>
+        /// Select all numeric columns (Int, Float, etc.).
+        /// </summary>
+        public static Selector Numeric() 
+            => new(PolarsWrapper.SelectorNumeric());
+
+        /// <summary>
+        /// Select all string/utf8 columns.
+        /// </summary>
+        public static Selector String() 
+            => new(PolarsWrapper.SelectorByDtype(PlDataType.String));
+
+        /// <summary>
+        /// Select all date columns.
+        /// </summary>
+        public static Selector Date() 
+            => new(PolarsWrapper.SelectorByDtype(PlDataType.Date));
+
+        /// <summary>
+        /// Select all datetime columns (any precision/timezone).
+        /// </summary>
+        public static Selector Datetime() 
+            => new(PolarsWrapper.SelectorByDtype(PlDataType.Datetime));
+
+        /// <summary>
+        /// Select columns by specific DataType.
+        /// </summary>
+        public static Selector DType(DataType type) 
+        {
+            var typeKind = type.Kind;
+            return new(PolarsWrapper.SelectorByDtype(typeKind.ToNative()));
+        }
         /// <summary>
         /// Select column whose name starts with given prefix.
         /// </summary>

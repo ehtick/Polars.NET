@@ -2417,7 +2417,6 @@ and DataFrame(handle: DataFrameHandle) =
         let onArr = Seq.toArray on
         let sOn = new Selector(PolarsWrapper.SelectorCols onArr)
 
-        // 3. 路由到主逻辑
         this.Unpivot(sIndex,sOn,variableName,valueName)
     member this.Unpivot (index: string list,on: string list) =
         this.Unpivot(index,on,None,None)

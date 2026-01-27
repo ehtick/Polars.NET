@@ -651,7 +651,7 @@ B,5";
         // 1. 构造数据: 模拟逗号分隔的字符串
         // Row 0: "1,2" (炸开后应变2行)
         // Row 1: "3"   (炸开后保持1行)
-        using var s = new Series("nums", ["1,2", "3"]);
+        using var s = new Series("nums", ["1,2","3"]);
         using var df = DataFrame.FromSeries(s);
 
         // 2. 预处理: 用 Split 生成 List 列
@@ -666,24 +666,23 @@ B,5";
             Col("nums"),
             Col("nums").Str.Split(",").Alias("list_vals")
         );
-
-        // 3. 执行 Explode
-        // 这一步调用了你的 public DataFrame Explode(params Expr[] exprs)
-        using var exploded = dfWithList.Explode("list_vals");
+        using var dtype = DataType.List(DataType.String);
+        // Explode for all Int32 list 
+        using var exploded = dfWithList.Explode(Selectors.DType(dtype));
 
         // 4. 验证结果
         // 总行数应该是 2 + 1 = 3
         Assert.Equal(3, exploded.Height);
 
         // 验证 list_vals 列的内容是否已展平为 String
-        Assert.Equal("1", exploded.GetValue<string>(0, "list_vals"));
-        Assert.Equal("2", exploded.GetValue<string>(1, "list_vals"));
-        Assert.Equal("3", exploded.GetValue<string>(2, "list_vals"));
+        Assert.Equal("1", exploded["list_vals"][0]);
+        Assert.Equal("2", exploded[1][1]);
+        Assert.Equal("3", exploded.GetValue<string>("list_vals",2));
 
         // 验证其它列 (nums) 是否被正确复制 (Duplicated)
         Assert.Equal("1,2", exploded.GetValue<string>(0, "nums"));
-        Assert.Equal("1,2", exploded.GetValue<string>(1, "nums"));
-        Assert.Equal("3",   exploded.GetValue<string>(2, "nums"));
+        Assert.Equal("1,2", exploded["nums",1]);
+        Assert.Equal("3",   exploded[2,0]);
     }
     [Fact]
     public void Test_Column_ByIndex_And_Iteration()

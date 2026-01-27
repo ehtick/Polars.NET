@@ -7,7 +7,6 @@ using System.Collections.Concurrent;
 using System.Collections;
 using System.Text;
 using Apache.Arrow.Types;
-using System.Reflection.Metadata;
 using System.Reflection;
 using Polars.NET.Core.Helpers;
 
@@ -114,29 +113,21 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="path"></param>
     /// <returns></returns>
     public static DataFrame ReadParquet(string path)
-    {
-        //
-        return new DataFrame(PolarsWrapper.ReadParquet(path));
-    }
+        => new (PolarsWrapper.ReadParquet(path));
     /// <summary>
     /// Read JSON File
     /// </summary>
     /// <param name="path"></param>
     /// <returns></returns>
     public static DataFrame ReadJson(string path)
-    {
-        //
-        return new DataFrame(PolarsWrapper.ReadJson(path));
-    }
+        => new(PolarsWrapper.ReadJson(path));
     /// <summary>
     /// Read IPC File
     /// </summary>
     /// <param name="path"></param>
     /// <returns></returns>
     public static DataFrame ReadIpc(string path)
-    {
-        return new DataFrame(PolarsWrapper.ReadIpc(path));
-    }
+        => new(PolarsWrapper.ReadIpc(path));
 
     /// <summary>
     /// Create DataFrame from Apache Arrow RecordBatch.
@@ -151,9 +142,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     /// <returns></returns>
     public RecordBatch ToArrow()
-    {
-        return ArrowFfiBridge.ExportDataFrame(Handle);
-    }
+        => ArrowFfiBridge.ExportDataFrame(Handle);
     /// <summary>
     /// Asynchronously reads a CSV file into a DataFrame.
     /// </summary>
@@ -2072,7 +2061,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public Series this[int index] => Column(index);
     /// <summary>
-    /// Syntax Suger
+    /// Syntax Sugar
     /// </summary>
     /// <param name="rowIndex"></param>
     /// <param name="columnIndex"></param>

@@ -12,7 +12,7 @@ public static partial class ArrayHelper
     // Int128 Special Flags
     internal static readonly bool IsInt128TypeA; // [Value(16), Bool(1), Pad(15)]
     internal static readonly bool IsInt128TypeB; // [Bool(1), Pad(15), Value(16)] <--- Linux .NET Default
-    internal static readonly bool Int128NeedsSwap; // True if [Hi, Lo] mismatch
+    // internal static readonly bool Int128NeedsSwap; // True if [Hi, Lo] mismatch
     /// <summary>
     /// Check Int32 Memory Layout
     /// </summary>
@@ -132,42 +132,21 @@ public static partial class ArrayHelper
         }
         catch { /* Ignore */ }
 
-        // 3. Detect Int128 Internal Layout (High/Low Swap Check)
-        try
-        {
-            // 构造一个只在低 64 位有值的数
-            Int128 val = 1; 
+    //     // 3. Detect Int128 Internal Layout (High/Low Swap Check)
+    //     try
+    //     {
+    //         // 构造一个只在低 64 位有值的数
+    //         Int128 val = 1; 
             
-            unsafe
-            {
-                byte* p = (byte*)&val;
-                // 如果是 Little Endian (主流)，低地址 p[0] 应该是 1
-                // 如果 C# 内部把 High 64 bit 放在前面，p[0] 就是 0
+    //         unsafe
+    //         {
+    //             byte* p = (byte*)&val;
+    //             bool isLittleEndian = (*p == 1);
                 
-                // 我们假设 Rust 那边是标准的 Little Endian (Lo, Hi)
-                // 如果 C# 这里探测出来 p[0] == 0，说明 C# 是 (Hi, Lo)，需要 Swap
-                // 或者反之。
+    //             Int128NeedsSwap = !isLittleEndian; 
                 
-                // 简单粗暴的判断：我们认为 低地址存低位 是标准 (Target)
-                // 如果当前环境不是这样，就需要 Swap
-                bool isLittleEndian = (*p == 1);
-                
-                // 这里我们做一个假设：Rust 端期望的是 Little Endian
-                // 如果 C# 本地不是 Little Endian，或者 C# 的 Int128 布局特殊
-                // 实际场景下，通常 x64 都是 LE。
-                // 如果之前的 Matrix 测试挂了，说明这里肯定有一方不一致。
-                // 我们默认：如果测试挂了，就手动把这个写死为 true 来验证。
-                
-                // 但为了通用，我们暂时认为：如果低位不在低地址，就 Swap
-                Int128NeedsSwap = !isLittleEndian; 
-                
-                // ★ 调试专用：如果你的机器肯定是 Little Endian 但还是挂了
-                // 那可能是 Int128 的两个 ulong 字段顺序反了。
-                // 这种情况下，我们需要强制 Swap。
-                // 为了配合你之前的 Corruption 结论，我们这里强制开启 Swap 逻辑看看
-                // Int128NeedsSwap = true; // <--- 如果自动探测失效，取消注释这行
-            }
-        }
-        catch { }
+    //         }
+    //     }
+    //     catch { }
     }
 }
