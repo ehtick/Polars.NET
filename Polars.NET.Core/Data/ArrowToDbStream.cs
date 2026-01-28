@@ -54,7 +54,7 @@ namespace Polars.NET.Core.Data
                 RebuildAccessors(); 
                 
                 _currentRowIndex = -1;
-                if (_currentBatch.Length == 0) return LoadNextBatch(); // 跳过空 Batch
+                if (_currentBatch.Length == 0) return LoadNextBatch(); 
                 return true;
             }
             return false;
@@ -135,7 +135,7 @@ namespace Polars.NET.Core.Data
             }
 
             // =========================================================
-            // 3. JSON 序列化 (针对对象、数组、结构体)
+            // 3. JSON serialize
             // =========================================================
             if (val is not string && 
                 !(val is IConvertible) && 

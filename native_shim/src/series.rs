@@ -503,6 +503,39 @@ pub unsafe extern "C" fn pl_series_new_array_decimal(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn pl_series_new_struct(
+    name: *const c_char,
+    fields_ptrs: *const *mut SeriesContext, 
+    len: usize,                             
+) -> *mut SeriesContext {
+    ffi_try!({
+        let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
+        
+        // Get Series Ptr
+        let ptrs = unsafe { std::slice::from_raw_parts(fields_ptrs, len) };
+        
+        // Collect Series
+        let fields: Vec<Series> = ptrs
+            .iter()
+            .map(|&ptr| unsafe { &*ptr }.series.clone())
+            .collect();
+
+        // Calc Struct Height
+        let struct_height = fields.first().map(|s| s.len()).unwrap_or(0);
+
+        // Call StructChunked::from_series
+        let ca = StructChunked::from_series(
+            name_str.as_ref().into(), // &str -> PlSmallStr
+            struct_height, 
+            fields.iter()
+        )?;
+
+        let s = ca.into_series();
+        Ok(Box::into_raw(Box::new(SeriesContext { series: s })))
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn pl_series_clone(ptr: *mut SeriesContext) -> *mut SeriesContext {
     ffi_try!({
         let ctx = unsafe { &*ptr };

@@ -370,6 +370,19 @@ public static partial class PolarsWrapper
             }
         }
     }
+    public static SeriesHandle SeriesNewStruct(string name, SeriesHandle[] handles)
+    {
+        // Borrow Semantics
+        using var handlesLock = new SafeHandleLock<SeriesHandle>(handles);
+        
+        var newSeriesPtr = NativeBindings.pl_series_new_struct(
+            name, 
+            handlesLock.Pointers, 
+            (nuint)handlesLock.Pointers.Length
+        );
+
+        return ErrorHelper.Check(newSeriesPtr);
+    }
     public static SeriesHandle CloneSeries(SeriesHandle handle)
         => ErrorHelper.Check(NativeBindings.pl_series_clone(handle));
     // --- Properties ---

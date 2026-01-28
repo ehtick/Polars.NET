@@ -1853,4 +1853,266 @@ TooShort,1990-05-20,1.60";
         // Row 1: Bob -> True
         Assert.True(res.GetValue<bool>(1, "name_in_whitelist"));
     }
+    [Fact]
+    public void Test_Lit_Primitives_And_Nullables()
+    {
+        // 准备一个空 DF 用于执行 Select
+        // 注意：Lit(array) 生成的是 Series。
+        // 为了方便测试，我们让 DF 的高度与数组一致，或者使用 pl.Select (如果实现了静态入口)
+        // 这里简单起见，创建一个高度匹配的 DF
+        using var df = DataFrame.FromColumns(new { _ = new[] { 0, 0, 0 } }); // Height=3
+
+        var ints = new[] { 1, 2, 3 };
+        var nullDoubles = new double?[] { 1.1, null, 3.3 };
+        var bools = new[] { true, false, true };
+
+        var res = df.Select(
+            Lit(ints).Alias("i"),           // 命中 int[] 分支
+            Lit(nullDoubles).Alias("f"),    // 命中 double?[] 分支
+            Lit(bools).Alias("b")           // 命中 bool[] 分支
+        );
+
+        // 验证结果
+        Assert.Equal(3, res.Height);
+        
+        // Int Check
+        Assert.Equal(1, res.GetValue<int>(0, "i"));
+        
+        // Nullable Double Check
+        Assert.Equal(1.1, res.GetValue<double?>(0, "f"));
+        Assert.Null(res.GetValue<double?>(1, "f")); // 验证 null 传递成功
+        
+        // Bool Check
+        Assert.False(res.GetValue<bool>(1, "b"));
+    }
+
+    [Fact]
+    public void Test_Lit_Struct_Implicit()
+    {
+        // 验证 Lit() 能否自动 fallback 到 StructPacker
+        
+        using var df = DataFrame.FromColumns(new { id = new[] { 1, 2 } });
+
+        var users = new[]
+        {
+            new { Name = "Alice", Age = 30 },
+            new { Name = "Bob",   Age = 25 }
+        };
+
+        // 魔法时刻：C# 匿名对象 -> Series<Struct>
+        var res = df.Select(
+            Lit(users).Alias("user_info")
+        );
+
+        /*
+         Expected:
+         shape: (2, 1)
+         ┌───────────────┐
+         │ user_info     │
+         │ ---           │
+         │ struct[2]     │
+         ╞═══════════════╡
+         │ {"Alice",30}  │
+         │ {"Bob",25}    │
+         └───────────────┘
+        */
+        
+        Assert.Equal(2, res.Height);
+        // 简单的 Schema 验证
+        var dtype = res.Schema["user_info"];
+
+        Assert.Equal(res.Schema["user_info"],DataType.Struct(["Name","Age"],[DataType.String,DataType.Int32]));
+    }
+    [Fact]
+    public void Test_Complex_Struct_Filter()
+    {
+        // =================================================================
+        // 这是我们这几天讨论的集大成者：
+        // 用 C# 对象列表作为白名单，过滤 DataFrame 中的多列组合。
+        // =================================================================
+
+        // 1. 数据：销售记录 (Region, Dept)
+        using var df = DataFrame.FromColumns(new
+        {
+            id = new[] { 1, 2, 3, 4 },
+            region = new[] { "US", "US", "EU", "EU" },
+            dept   = new[] { "Sales", "IT", "Sales", "IT" }
+        });
+
+        // 2. 白名单：只保留 (US, Sales) 和 (EU, IT)
+        var validCombinations = new[] 
+        {
+            new { region = "US", dept = "Sales" }, // 匹配 Row 1
+            new { region = "EU", dept = "IT" }     // 匹配 Row 4
+        };
+
+        // 3. 构建查询
+        // AsStruct: 将两列打包成 Struct
+        // Lit(validCombinations): 将 C# 数组转为 Series<Struct>
+        // .Implode(): 将 Series<Struct> 打包成 scalar List<Struct> (一行)
+        // .IsIn(): 检查左边的 struct 是否在右边的列表中
+        var res = df.Select(
+            Col("id"),
+            AsStruct(Col("region"), Col("dept"))
+                .IsIn(Lit(validCombinations).Implode()) 
+                .Alias("is_valid")
+        ).Filter(Col("is_valid")); // 只保留 valid 的行
+
+        // 4. 验证结果
+        // 应该只剩下 id=1 和 id=4
+        
+        Assert.Equal(2, res.Height);
+        Assert.Equal(1, res.GetValue<int>(0, "id"));
+        Assert.Equal(4, res.GetValue<int>(1, "id"));
+    }
+   [Fact]
+    public void Test_The_Grand_Loop_Read_Write()
+    {
+        // 1. 准备：深层嵌套数据 (Struct -> List -> Struct)
+        using var df = DataFrame.FromColumns(new { _ = new[] { 0 } });
+
+        var logs = new[]
+        {
+            new 
+            { 
+                Machine = "Server-A",
+                Events = new[] 
+                {
+                    new { Code = 200, Msg = "OK" },
+                    new { Code = 500, Msg = "Error" }
+                }
+            },
+            new 
+            { 
+                Machine = "Server-B",
+                Events = new[] 
+                {
+                    new { Code = 404, Msg = "Not Found" }
+                }
+            }
+        };
+
+        // 2. 写入 (Write): 利用 ArrowConverter 瞬间入库
+        var dfComplex = df.Select(
+            Lit(logs).Alias("log_entry")
+        );
+    
+        // 3. 计算 (Compute): 利用 Expr.Struct.Field 在引擎内部做手术
+        // 目标：提取每台机器的“第一个事件的消息 (Msg)”
+        // 路径：log_entry (Struct) -> Events (List) -> Get(0) (Struct) -> Msg (String)
+        var res = dfComplex.Select(
+            Col("log_entry").Struct.Field("Machine").Alias("host"),
+            
+            Col("log_entry")
+                .Struct.Field("Events")
+                .List.Get(0) // 取列表第一个元素
+                .Struct.Field("Msg") // 取 Struct 里的 Msg 字段
+                .Alias("first_msg")
+        );
+
+        // 4. 读取 (Read): 利用 ArrowReader 验证数据回流到 C#
+        // 此时数据已经经历了一圈：C# -> Arrow -> Rust/Polars -> Arrow -> C#
+        
+        Assert.Equal(2, res.Height);
+
+        // Row 0: Server-A, First Event is OK
+        Assert.Equal("Server-A", res.GetValue<string>(0, "host"));
+        Assert.Equal("OK",       res.GetValue<string>(0, "first_msg"));
+
+        // Row 1: Server-B, First Event is Not Found
+        Assert.Equal("Server-B", res.GetValue<string>(1, "host"));
+        Assert.Equal("Not Found", res.GetValue<string>(1, "first_msg"));
+    }
+
+    [Fact]
+    public void Test_Level2_Struct_With_List()
+    {
+        // 场景：带标签的用户，Struct 里面套 List
+        // 这是纯手写 Packer 最头疼的地方（因为要算 Offset），但 Arrow 应该能秒杀
+        using var df = DataFrame.FromColumns(new { _ = new[] { 0 } });
+
+        var users = new[]
+        {
+            new 
+            { 
+                Name = "Alice", 
+                Tags = new[] { 1, 2, 3 } // <--- List<int>
+            },
+            new 
+            { 
+                Name = "Bob", 
+                Tags = new int[] { }     // <--- Empty List
+            }
+        };
+
+        var res = df.Select(
+            Lit(users).Alias("user_tags")
+        );
+
+        /*
+         shape: (2, 1)
+         ┌─────────────────────┐
+         │ user_tags           │
+         │ ---                 │
+         │ struct[2]           │
+         ╞═════════════════════╡
+         │ {"Alice",[1, 2, 3]} │
+         │ {"Bob",[]}          │
+         └─────────────────────┘
+        */
+
+        Assert.Equal(2, res.Height);
+        
+        // 验证第一行 Tags 长度为 3
+        // 验证第二行 Tags 长度为 0
+    }
+
+    [Fact]
+    public void Test_Level3_The_Ultimate_Nest()
+    {
+        // 场景：复杂的 JSON 风格数据
+        // Struct 
+        //  -> List 
+        //      -> Struct (对象数组)
+        using var df = DataFrame.FromColumns(new { _ = new[] { 0 } });
+
+        var complexData = new[]
+        {
+            new 
+            { 
+                Id = 1,
+                History = new[] // <--- List of Structs
+                {
+                    new { Date = "2023-01-01", Action = "Login" },
+                    new { Date = "2023-01-02", Action = "Logout" }
+                }
+            },
+            new 
+            { 
+                Id = 2,
+                History = new[] 
+                {
+                    new { Date = "2023-01-05", Action = "Purchase" }
+                }
+            }
+        };
+
+        // 这一步如果不报错，说明 SeriesFactory -> ArrowConverter -> FFI 整个链路完全通畅
+        var res = df.Select(
+            Lit(complexData).Alias("audit_log")
+        );
+
+        res.Show();
+
+        // 既然这都能成，我们顺便测试一下 Expr 的深层访问能力 (如果有的话)
+        // 比如：展开 History 列表
+        // col("audit_log").struct.field("History").explode()
+        
+        var exploded = res.Select(
+            Col("audit_log").Struct.Field("History").Explode().Alias("flat_log")
+        );
+        
+        // 应该变成 3 行 (2 + 1)
+        Assert.Equal(3, exploded.Height);
+    }
 }

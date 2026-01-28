@@ -1,6 +1,6 @@
-using System.Data;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Apache.Arrow;
 using Apache.Arrow.Types;
 using Microsoft.FSharp.Core;
@@ -13,6 +13,7 @@ public static class ArrowConverter
     private static readonly MethodInfo _buildMethodDef = typeof(ArrowConverter)
         .GetMethod("Build", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("ArrowConverter.Build<T> method not found.");
+
     // Cache F# Option Handler
     private static readonly MethodInfo _buildFSharpValOptMethod = typeof(ArrowConverter)
         .GetMethod(nameof(BuildFSharpOptionStruct), BindingFlags.NonPublic | BindingFlags.Static)
@@ -21,10 +22,12 @@ public static class ArrowConverter
     private static readonly MethodInfo _buildFSharpRefOptMethod = typeof(ArrowConverter)
         .GetMethod(nameof(BuildFSharpOptionClass), BindingFlags.NonPublic | BindingFlags.Static)
         ?? throw new InvalidOperationException("BuildFSharpOptionClass method not found.");
+
     private static class SchemaCache<T>
     {
         public static readonly Schema Default = GetSchemaFromType<T>();
     }
+
     /// <summary>
     /// Build Empty RecordBatch with Schema Only
     /// </summary>
@@ -36,6 +39,7 @@ public static class ArrowConverter
         
         return new RecordBatch(schema, emptyStruct.Fields, 0);
     }
+
     /// <summary>
     /// Convert any IEnumerable/Array into Arrow Array
     /// </summary>
@@ -62,109 +66,80 @@ public static class ArrowConverter
             throw ex.InnerException ?? ex; 
         }
     }
-    /// <summary>
-    /// Read object typeinfo by reflection and transform to Arrow Arrays。
-    /// </summary>
-    public static List<(string Name, IArrowArray Array)> BuildColumnsFromObject(object columns)
-    {
-        ArgumentNullException.ThrowIfNull(columns);
-        var members = ArrowTypeResolver.GetReadableMembers(columns.GetType());
-        if (members.Length == 0) throw new ArgumentException("No properties found.");
 
-        var result = new List<(string, IArrowArray)>(members.Length);
-
-        foreach (var member in members)
-        {
-            var colName = member.Name;
-            var colValue = GetMemberValue(member, columns) ?? throw new ArgumentNullException($"Column '{colName}' cannot be null.");
-            var arrowArray = BuildSingleColumn(colValue) 
-                ?? throw new ArgumentException($"Column '{colName}' is not a valid collection.");
-
-            result.Add((colName, arrowArray));
-        }
-        return result;
-    }
-    private static object? GetMemberValue(MemberInfo member, object target)
-    {
-        return member switch
-        {
-            PropertyInfo p => p.GetValue(target),
-            FieldInfo f => f.GetValue(target),
-            _ => null
-        };
-    }
     /// <summary>
     /// General Entry：Decide which type of Arrary based on the type of T
     /// </summary>
     public static IArrowArray Build<T>(IEnumerable<T> data)
     {
         var type = typeof(T);
-        // 0. Unwrap F# Option type
+
+        // =====================================================================
+        // 1. Array Interception (Must comes First!)
+        // =====================================================================
+        if (type.IsArray)
+        {
+            var elemType = type.GetElementType()!;
+            var method = typeof(ArrowConverter)
+                .GetMethod(nameof(BuildListArray), BindingFlags.Public | BindingFlags.Static)!
+                .MakeGenericMethod(elemType);
+            return (IArrowArray)method.Invoke(null, new object[] { data })!;
+        }
+
+        // =====================================================================
+        // 2. List Interception
+        // =====================================================================
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
+        {
+            var elemType = type.GetGenericArguments()[0];
+            var method = typeof(ArrowConverter)
+                    .GetMethod(nameof(BuildListArray), BindingFlags.Public | BindingFlags.Static)!
+                    .MakeGenericMethod(elemType);
+                return (IArrowArray)method.Invoke(null, new object[] { data })!;
+        }
+
+        // 3. Unwrap F# Option type
         if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(FSharpOption<>))
         {
             var innerType = type.GetGenericArguments()[0];
 
-            // [Modified] Split dispatch logic
             if (innerType.IsValueType)
             {
-                // Call BuildFSharpOptionStruct<InnerType>
                 return (IArrowArray)_buildFSharpValOptMethod
                     .MakeGenericMethod(innerType)
                     .Invoke(null, [data])!;
             }
             else
             {
-                // Call BuildFSharpOptionClass<InnerType>
                 return (IArrowArray)_buildFSharpRefOptMethod
                     .MakeGenericMethod(innerType)
                     .Invoke(null, [data])!;
             }
         }
+
         var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
         Type checkType = underlyingType ?? type;
 
-        // Primitives & String
-        if (checkType == typeof(Half)) return BuildFloat16(data.Cast<Half?>());
-        if (checkType == typeof(float)) return BuildFloat32(data.Cast<float?>());
+        // 4. Primitives & String
+        if (checkType == typeof(int)) return BuildInt32(data.Cast<int?>());
+        if (checkType == typeof(uint)) return BuildUInt32(data.Cast<uint?>());
+        if (checkType == typeof(string)) return BuildString(data.Cast<string?>());
         if (checkType == typeof(double)) return BuildDouble(data.Cast<double?>());
-        if (checkType == typeof(sbyte)) return BuildInt8(data.Cast<sbyte?>());
+        if (checkType == typeof(bool)) return BuildBoolean(data.Cast<bool?>());
         if (checkType == typeof(byte)) return BuildUInt8(data.Cast<byte?>());
+        if (checkType == typeof(sbyte)) return BuildInt8(data.Cast<sbyte?>());
+        if (checkType == typeof(long)) return BuildInt64(data.Cast<long?>());
+        if (checkType == typeof(ulong)) return BuildUInt64(data.Cast<ulong?>());
         if (checkType == typeof(short)) return BuildInt16(data.Cast<short?>());
         if (checkType == typeof(ushort)) return BuildUInt16(data.Cast<ushort?>());
-        if (checkType == typeof(int)) return BuildInt32(data.Cast<int?>());
-        if (checkType == typeof(long)) return BuildInt64(data.Cast<long?>());
-        if (checkType == typeof(uint)) return BuildUInt32(data.Cast<uint?>());
-        if (checkType == typeof(ulong)) return BuildUInt64(data.Cast<ulong?>());
-        if (checkType == typeof(bool)) return BuildBoolean(data.Cast<bool?>());
-        if (checkType == typeof(string)) return BuildString(data.Cast<string?>());
+        if (checkType == typeof(float)) return BuildFloat32(data.Cast<float?>());
+        if (checkType == typeof(decimal)) return BuildDecimal(data.Cast<decimal?>());
         if (checkType == typeof(DateOnly)) return BuildDate32(data.Cast<DateOnly?>());
         if (checkType == typeof(TimeOnly)) return BuildTime64(data.Cast<TimeOnly?>());
         if (checkType == typeof(DateTime)) return BuildTimestamp(data.Cast<DateTime?>());
         if (checkType == typeof(DateTimeOffset)) return BuildDateTimeOffset(data.Cast<DateTimeOffset?>());
         if (checkType == typeof(TimeSpan)) return BuildDuration(data.Cast<TimeSpan?>());
-        if (checkType == typeof(decimal)) return BuildDecimal(data.Cast<decimal?>());
-        // if (checkType == typeof(Int128)) return BuildInt128(data.Cast<Int128?>());
-        // if (checkType == typeof(UInt128)) return BuildUInt128(data.Cast<UInt128?>());
-        // Mixed type/Object
-        // Treat as String
-        if (checkType == typeof(object))
-        {
-            var stringBuilder = new StringViewArray.Builder();
-            foreach (var item in data)
-            {
-                if (item == null)
-                {
-                    stringBuilder.AppendNull();
-                }
-                else
-                {
-                    stringBuilder.Append(item.ToString());
-                }
-            }
-            return stringBuilder.Build();
-        }
-        // List<U>
-        // Check whether IEnumerable<U> is available and not string type
+        // if (checkType == typeof(Half)) return BuildFloat16(data.Cast<Half?>());
         var elementType = ArrowTypeResolver.GetEnumerableElementType(type);
         if (elementType != null)
         {
@@ -174,22 +149,66 @@ public static class ArrowConverter
 
             return (IArrowArray)method.Invoke(null, new[]{data})!;
         }
-        // Struct
-        if (type.IsClass)
+        // 5. Struct / Class / Object
+        if (type.IsClass || type.IsValueType)
         {
-            return StructBuilderHelper.BuildStructArray(data);
+            // [SMART RECOVERY] Handle Object[] that actually contains Structs
+            if (checkType == typeof(object))
+            {
+                var dataList = data as IList<T> ?? data.ToList();
+                var firstItem = dataList.FirstOrDefault(x => x != null);
+
+                if (firstItem != null)
+                {
+                    Type runtimeType = firstItem.GetType();
+                    // If runtime type is complex (Anonymous/Class) and NOT string
+                    if (runtimeType.IsClass && runtimeType != typeof(string))
+                    {
+                        try
+                        {
+                            // Try to recover via StructBuilder
+                            var method = typeof(StructBuilderHelper)
+                                .GetMethod(nameof(StructBuilderHelper.BuildStructArray), BindingFlags.Public | BindingFlags.Static)!
+                                .MakeGenericMethod(runtimeType);
+
+                            // We need to Cast<RuntimeType>
+                            var castMethod = typeof(Enumerable).GetMethod(nameof(Enumerable.Cast), BindingFlags.Public | BindingFlags.Static)!
+                                .MakeGenericMethod(runtimeType);
+                            var castData = castMethod.Invoke(null, new object[] { dataList });
+
+                            return (IArrowArray)method.Invoke(null, new object[] { castData! })!;
+                        }
+                        catch 
+                        { 
+                            // Fallback to String if recovery fails
+                        }
+                    }
+                }
+
+                // Default Object fallback: ToString
+                var stringBuilder = new StringViewArray.Builder();
+                foreach (var item in data)
+                {
+                    if (item == null) stringBuilder.AppendNull();
+                    else stringBuilder.Append(item.ToString());
+                }
+                return stringBuilder.Build();
+            }
+
+            // Normal Struct Path
+            try 
+            {
+                return StructBuilderHelper.BuildStructArray(data);
+            }
+            catch (Exception ex)
+            {
+                throw new NotSupportedException($"Type {type.FullName} (Underlying: {checkType.FullName}) is not supported yet.", ex);
+            }
         }
 
-        if (IsKeyValuePair(type))
-        {
-            return StructBuilderHelper.BuildStructArray(data);
-        }
+        // 6. Fallback via Resolver (Recursive catch-all)
+
         throw new NotSupportedException($"Type {type.FullName} (Underlying: {checkType.FullName}) is not supported yet.");
-    }
-
-    private static bool IsKeyValuePair(Type t)
-    {
-        return t.IsGenericType && t.GetGenericTypeDefinition() == typeof(KeyValuePair<,>);
     }
 
     // =================================================================
@@ -203,9 +222,6 @@ public static class ArrowConverter
     private static IArrowArray BuildFSharpOptionStruct<T>(IEnumerable<FSharpOption<T>> data) 
         where T : struct
     {
-        // Since T is struct, T? is technically Nullable<T>
-        // FSharpOption<T> is a class, so 'opt' can be null (None)
-        
         var nullableSeq = data.Select(opt => 
             opt == null ? (T?)null : opt.Value
         );
@@ -219,9 +235,6 @@ public static class ArrowConverter
     private static IArrowArray BuildFSharpOptionClass<T>(IEnumerable<FSharpOption<T>> data) 
         where T : class
     {
-        // T is class, so we just return T (which can be null)
-        // FSharpOption<T> is a class
-        
         var refSeq = data.Select(opt => opt?.Value);
         return Build(refSeq!);
     }
@@ -231,6 +244,8 @@ public static class ArrowConverter
     /// </summary>
     public static LargeListArray BuildListArray<U>(IEnumerable<IEnumerable<U>?> data)
     {
+        // Recursion Logic: Flatten -> Build<U>
+        // This handles List<Struct>, List<List<int>>, etc.
         var flattenedData = new List<U>();
         
         var offsetsBuilder = new Int64Array.Builder();
@@ -265,6 +280,7 @@ public static class ArrowConverter
             }
         }
 
+        // Recursive Call!
         IArrowArray valuesArray = Build(flattenedData);
 
         var offsetsArray = offsetsBuilder.Build();
@@ -282,103 +298,6 @@ public static class ArrowConverter
         );
     }
 
-    /// <summary>
-    /// Build FixedSizeListArray
-    /// </summary>
-    public static FixedSizeListArray BuildFixedSizeListArray<U>(IEnumerable<IEnumerable<U>?> data, int listSize)
-    {
-        var flattenedData = new List<U>();
-        var validityBuilder = new BooleanArray.Builder();
-        int nullCount = 0;
-        int rowCount = 0;
-
-        foreach (var subList in data)
-        {
-            rowCount++;
-            if (subList == null)
-            {
-                validityBuilder.Append(false);
-                nullCount++;
-                for(int i=0; i<listSize; i++) flattenedData.Add(default!);
-            }
-            else
-            {
-                int count = 0;
-                foreach (var item in subList)
-                {
-                    flattenedData.Add(item);
-                    count++;
-                }
-
-                if (count != listSize)
-                    throw new ArgumentException($"Element at index {rowCount-1} has length {count}, expected {listSize}.");
-
-                validityBuilder.Append(true);
-            }
-        }
-
-        IArrowArray valuesArray = Build(flattenedData);
-        var validityArray = validityBuilder.Build();
-
-        var listType = new FixedSizeListType(valuesArray.Data.DataType, listSize);
-
-        return new FixedSizeListArray(
-            listType,
-            rowCount,
-            valuesArray,
-            validityArray.ValueBuffer,
-            nullCount
-        );
-    }
-
-    // --- Primitive Type Builders ---
-    /// <summary>
-    /// Helper：Check whether U is value type or ref type
-    /// </summary>
-    private static IArrowArray HandleFSharpOption<U>(IEnumerable<object> data, Func<object, object?> unwrapper)
-    {
-        if (typeof(U).IsValueType)
-        {
-            var method = typeof(ArrowConverter)
-                .GetMethod(nameof(BuildStructOption), BindingFlags.NonPublic | BindingFlags.Static)!
-                .MakeGenericMethod(typeof(U));
-            return (IArrowArray)method.Invoke(null, new object[]{data, unwrapper})!;
-        }
-        else
-        {
-            return BuildClassOption<U>(data, unwrapper);
-        }
-    }
-
-    /// <summary>
-    /// Deal with Value Type Option
-    /// </summary>
-    private static IArrowArray BuildStructOption<T>(IEnumerable<object> data, Func<object, object?> unwrapper) 
-        where T : struct
-    {
-        // Convert IEnumerable<FSharpOption<T>> To IEnumerable<T?>
-        var nullableData = data.Select(item => 
-        {
-            var val = unwrapper(item);
-            return val == null ? (T?)null : (T)val;
-        });
-        
-        return Build(nullableData);
-    }
-
-    /// <summary>
-    /// Deal with Ref Type Option
-    /// </summary>
-    private static IArrowArray BuildClassOption<T>(IEnumerable<object> data, Func<object, object?> unwrapper)
-    {
-        var classData = data.Select(item => 
-        {
-            var val = unwrapper(item);
-            return (T)val!; 
-        });
-
-        return Build(classData);
-    }
     private static HalfFloatArray BuildFloat16(IEnumerable<Half?> data)
     {
         var b = new HalfFloatArray.Builder();
@@ -458,21 +377,6 @@ public static class ArrowConverter
         foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
         return b.Build();
     }
-
-    // private static ArrowExtensions.Int128Array BuildInt128(IEnumerable<Int128?> data)
-    // {
-    //     var b = new ArrowExtensions.Int128Array.Builder();
-    //     foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
-    //     return b.Build();
-    // }
-
-    // private static ArrowExtensions.UInt128Array BuildUInt128(IEnumerable<UInt128?> data)
-    // {
-    //     var b = new ArrowExtensions.UInt128Array.Builder();
-    //     foreach (var v in data) if (v.HasValue) b.Append(v.Value); else b.AppendNull();
-    //     return b.Build();
-    // }
-
     private static DoubleArray BuildDouble(IEnumerable<double?> data)
     {
         var b = new DoubleArray.Builder();
@@ -580,26 +484,77 @@ public static class ArrowConverter
     public static Schema GetSchemaFromType<T>()
     {
         var type = typeof(T);
-        var members = ArrowTypeResolver.GetReadableMembers(type);
+        var members = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
         var fields = new List<Field>();
 
         foreach (var member in members)
         {
-            var memberType = ArrowTypeResolver.GetMemberType(member);
-            var field = ArrowTypeResolver.ResolveField(member.Name, memberType);
+            var memberType = member.PropertyType;
+            var dummyInstance = CreateDummyInstance(memberType);
+            
+            var wrapper = System.Array.CreateInstance(memberType, 1);
+            if (dummyInstance != null) wrapper.SetValue(dummyInstance, 0);
+            
+            var dummyArr = BuildSingleColumn(wrapper);
+            if (dummyArr == null) continue;
+            
+            var field = new Field(member.Name, dummyArr.Data.DataType, true);
             fields.Add(field);
         }
-
         return new Schema(fields, null);
     }
 
-    /// <summary>
+    private static object? CreateDummyInstance(Type t)
+    {
+        if (t == typeof(string)) return string.Empty;
+        if (t.IsArray) return System.Array.CreateInstance(t.GetElementType()!, 0);
+        
+        // C# List
+        if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(List<>))
+        {
+             return Activator.CreateInstance(t);
+        }
+
+        // F# List (Handling missing constructor)
+        if (t.FullName != null && (t.FullName.StartsWith("Microsoft.FSharp.Collections.FSharpList") || t.Name == "FSharpList`1"))
+        {
+            var emptyProp = t.GetProperty("Empty", BindingFlags.Public | BindingFlags.Static);
+            return emptyProp?.GetValue(null);
+        }
+
+        // F# Option
+        if (t.FullName != null && t.FullName.StartsWith("Microsoft.FSharp.Core.FSharpOption")) return null;
+
+        if (t.IsValueType) return Activator.CreateInstance(t);
+        
+        try 
+        {
+            return Activator.CreateInstance(t);
+        }
+        catch 
+        {
+            try 
+            {
+                return RuntimeHelpers.GetUninitializedObject(t);
+            }
+            catch 
+            {
+                return null; 
+            }
+        }
+    }
+    private static object? GetDefault(Type t) => t.IsValueType ? Activator.CreateInstance(t) : null;
+
+  /// <summary>
     /// Slice IEnumerable<RecordBatch> to chuncks and convert it to ArrowBatchs
     /// </summary>
     public static IEnumerable<RecordBatch> ToArrowBatches<T>(IEnumerable<T> data, int batchSize)
     {
-        // GetSchema from cache
-        var schema = SchemaCache<T>.Default;
+        var dummyStruct = StructBuilderHelper.BuildStructArray(Enumerable.Empty<T>());
+
+        var structType = (StructType)dummyStruct.Data.DataType;
+        var schema = new Schema(structType.Fields, null);
+        
         bool hasYielded = false;
 
         foreach (var chunk in data.Chunk(batchSize))
@@ -611,9 +566,7 @@ public static class ArrowConverter
         }
         if (!hasYielded)
         {
-            var emptyStruct = StructBuilderHelper.BuildStructArray(Enumerable.Empty<T>());
-            
-            yield return new RecordBatch(schema, emptyStruct.Fields, 0);
+            yield return new RecordBatch(schema, dummyStruct.Fields, 0);
         }
     }
 
@@ -628,41 +581,38 @@ public static class ArrowConverter
             int length = dataList.Count;
             var type = typeof(T);
 
-            // Get Properties for type
-            var members = ArrowTypeResolver.GetReadableMembers(type);
+            // Direct Reflection to ensure exact names and internal props
+            var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            
             var fields = new List<Field>();
             var childrenArrays = new List<IArrowArray>();
 
-            foreach (var member in members)
+            foreach (var prop in properties)
             {
-                var memberType = ArrowTypeResolver.GetMemberType(member);
+                var memberType = prop.PropertyType;
+                var getter = CompileGetter<T>(prop);
                 
-                var getter = CompileGetter<T>(member);
+                // Recursively build column
                 var childArray = ProjectAndBuild(dataList, memberType, getter);
 
-                var fieldDef = ArrowTypeResolver.ResolveField(member.Name, memberType);
-                var finalField = new Field(fieldDef.Name, childArray.Data.DataType, fieldDef.IsNullable);
+                // [FIX] Use prop.Name directly (Case Sensitive)
+                var finalField = new Field(prop.Name, childArray.Data.DataType, true);
 
                 fields.Add(finalField);
                 childrenArrays.Add(childArray);
             }
 
-            // Build Validity Bitmap for Struct itself
-            var validityBuilder = new BooleanArray.Builder();
+            // Build Validity Bitmap
+            var validityBuilder = new ArrowBuffer.BitmapBuilder();
             int nullCount = 0;
             foreach (var item in dataList)
             {
-                if (item == null)
-                {
-                    validityBuilder.Append(false);
-                    nullCount++;
-                }
-                else
-                {
-                    validityBuilder.Append(true);
-                }
+                if (item == null) { validityBuilder.Append(false); nullCount++; }
+                else { validityBuilder.Append(true); }
             }
-            var validityBuffer = validityBuilder.Build().ValueBuffer;
+            
+            // [FIX] Removed .ValueBuffer
+            var validityBuffer = validityBuilder.Build();
 
             var structType = new StructType(fields);
             
@@ -679,70 +629,46 @@ public static class ArrowConverter
         // Helper：Reflection Bridge
         // =================================================================
         
-        /// <summary>
-        /// Convert IList<TParent> To IEnumerable<TProp>, then call ArrowConverter.Build
-        /// </summary>
         private static IArrowArray ProjectAndBuild<TParent>(IList<TParent> data, Type propType, Func<TParent, object?> getter)
         {
-            // Check for F# Option via Generic Definition
-            bool isFSharpOption = propType.IsGenericType && propType.GetGenericTypeDefinition() == typeof(FSharpOption<>);
+            Type cleanType = Nullable.GetUnderlyingType(propType) ?? propType;
+            Type targetType = cleanType.IsValueType ? typeof(Nullable<>).MakeGenericType(cleanType) : cleanType;
 
-            if (isFSharpOption)
-            {
-                // TProp is FSharpOption<Inner>
-                // We call BuildColumn<TParent, FSharpOption<Inner>>
-                // ArrowConverter.Build<FSharpOption<Inner>> will handle the unwrapping automatically.
-                var method = typeof(StructBuilderHelper)
-                    .GetMethod(nameof(BuildColumn), BindingFlags.NonPublic | BindingFlags.Static)!
-                    .MakeGenericMethod(typeof(TParent), propType);
-                return (IArrowArray)method.Invoke(null, [data, getter])!;
-            }
-            else
-            {
-                Type cleanType = Nullable.GetUnderlyingType(propType) ?? propType;
-                Type targetType = cleanType.IsValueType ? typeof(Nullable<>).MakeGenericType(cleanType) : cleanType;
+            // F# Option Special Handling
+            if (propType.FullName != null && propType.FullName.StartsWith("Microsoft.FSharp.Core.FSharpOption"))
+                targetType = propType;
 
-                var method = typeof(StructBuilderHelper)
-                    .GetMethod(nameof(BuildColumn), BindingFlags.NonPublic | BindingFlags.Static)!
-                    .MakeGenericMethod(typeof(TParent), targetType);
-                return (IArrowArray)method.Invoke(null, [data, getter])!;
-            }
+            var method = typeof(StructBuilderHelper)
+                .GetMethod(nameof(BuildColumn), BindingFlags.NonPublic | BindingFlags.Static)!
+                .MakeGenericMethod(typeof(TParent), targetType);
+                
+            return (IArrowArray)method.Invoke(null, [data, getter])!;
         }
 
-        /// <summary>
-        /// Data projection and build method
-        /// </summary>
         private static IArrowArray BuildColumn<TParent, TProp>(IList<TParent> data, Func<TParent, object?> getter)
         {
-            var columnData = data.Select(item =>
+            var columnData = new List<TProp>(data.Count);
+            foreach(var item in data)
             {
-                if (item == null) return default;
+                if (item == null) { columnData.Add(default!); continue; }
                 var rawVal = getter(item);
-                if (rawVal == null) return default;
-                return (TProp)rawVal;
-            });
+                if (rawVal == null) columnData.Add(default!);
+                else columnData.Add((TProp)rawVal);
+            }
 
-            // ArrowConverter.Build<T> now natively handles FSharpOption<U>
+            // Call main Build with strong type TProp
             return Build(columnData);
         }
 
         // =================================================================
         // Compile Expression Tree for Getter
         // =================================================================
-        private static Func<T, object?> CompileGetter<T>(MemberInfo member)
+        private static Func<T, object?> CompileGetter<T>(PropertyInfo prop)
         {
             var instanceParam = Expression.Parameter(typeof(T), "item");
-            
-            Expression memberAccess = member switch
-            {
-                PropertyInfo p => Expression.Property(instanceParam, p),
-                FieldInfo f => Expression.Field(instanceParam, f),
-                _ => throw new InvalidOperationException()
-            };
-
+            var memberAccess = Expression.Property(instanceParam, prop);
             var convertToObject = Expression.Convert(memberAccess, typeof(object));
             return Expression.Lambda<Func<T, object?>>(convertToObject, instanceParam).Compile();
         }
     }
 }
-

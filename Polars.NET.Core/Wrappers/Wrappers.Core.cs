@@ -4,7 +4,7 @@ namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
 {
-    // Helper : Transform Handles
+    // Helper : Transform Handles,used in move ptr to Rust
     internal static IntPtr[] HandlesToPtrs(PolarsHandle[] handles)
     {
         if (handles == null || handles.Length == 0) return Array.Empty<IntPtr>();
@@ -83,6 +83,7 @@ public static partial class PolarsWrapper
     /// <summary>
     /// Lock a set of SafeHandles and get its raw pointer.
     /// Use ref struct for zero GC and stack only.
+    /// Used in Rust borrowing ptr from C#.
     /// </summary>
     /// <typeparam name="T"> SafeHandle Type</typeparam>
     internal readonly ref struct SafeHandleLock<T> where T : SafeHandle

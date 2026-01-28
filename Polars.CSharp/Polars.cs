@@ -1,6 +1,6 @@
 #pragma warning disable CS1591
 using Polars.NET.Core;
-
+using Polars.NET.Core.Helpers;
 namespace Polars.CSharp;
 
 /// <summary>
@@ -61,89 +61,105 @@ public static class Polars
     /// </summary>
     public static Expr Lit(Series series)
         => new(PolarsWrapper.Lit(series.Handle));
+    // -------------------------------------------------------------------------
+    // Struct Literals
+    // -------------------------------------------------------------------------
+
     /// <summary>
-    /// Create a list literal from an array using High-Performance Series constructors.
+    /// Create a Struct Expression from a single anonymous object or class instance.
+    /// <para>Example: <c>LitStruct(new { A = 1, B = "hi" })</c></para>
     /// </summary>
+    public static Expr LitStruct<T>(T value) where T : class
+        => LitStruct([value]);
+
+    /// <summary>
+    /// Create a Struct Expression from an array of objects.
+    /// <para>The properties of the objects become the fields of the struct.</para>
+    /// </summary>
+    public static Expr LitStruct<T>(T[] values)
+    {
+        SeriesHandle sHandle = StructPacker.Pack("literal", values);
+        ExprHandle eHandle = PolarsWrapper.Lit(sHandle);
+        return new Expr(eHandle);
+    }
+    // =========================================================================
+    // The "Magic" Lit
+    // =========================================================================
+
     public static Expr Lit<T>(T[] values)
     {
-        Series s = values switch
+        // Primitives
+        Series? s = values switch
         {
             // --- Signed int ---
             sbyte[] v   => new Series("", v),
+            sbyte?[] v  => new Series("", v), 
             short[] v   => new Series("", v),
+            short?[] v  => new Series("", v),
             int[] v     => new Series("", v),
+            int?[] v    => new Series("", v),
             long[] v    => new Series("", v),
+            long?[] v   => new Series("", v),
             Int128[] v  => new Series("", v),
+            Int128?[] v => new Series("", v),
 
             // --- Unsigned int ---
             byte[] v    => new Series("", v),
+            byte?[] v   => new Series("", v),
             ushort[] v  => new Series("", v),
+            ushort?[] v => new Series("", v),
             uint[] v    => new Series("", v),
+            uint?[] v   => new Series("", v),
             ulong[] v   => new Series("", v),
-            UInt128[] v => new Series("", v),
+            ulong?[] v  => new Series("", v),
+            UInt128[] v  => new Series("", v),
+            UInt128?[] v => new Series("", v),
 
             // --- Float and decimal ---
             float[] v   => new Series("", v),
+            float?[] v  => new Series("", v),
             double[] v  => new Series("", v),
-            decimal[] v => new Series("", v), 
+            double?[] v => new Series("", v),
+            decimal[] v => new Series("", v),
+            decimal?[] v => new Series("", v),
 
             // --- Bool and String ---
-            bool[] v    => new Series("", v), 
-            string[] v  => new Series("", v), 
+            bool[] v    => new Series("", v),
+            bool?[] v   => new Series("", v),
+            string[] v  => new Series("", v), // string is reference type, usually covers nulls too
 
             // --- Temporal ---
             DateOnly[] v       => new Series("", v),
+            DateOnly?[] v      => new Series("", v),
             TimeOnly[] v       => new Series("", v),
+            TimeOnly?[] v      => new Series("", v),
             TimeSpan[] v       => new Series("", v),
+            TimeSpan?[] v      => new Series("", v),
             DateTime[] v       => new Series("", v),
+            DateTime?[] v      => new Series("", v),
             DateTimeOffset[] v => new Series("", v),
-
-            _ => throw new NotSupportedException($"Type '{typeof(T)}[]' is not supported in Expr.Lit.")
-        };
-
-        return Lit(s);
-    }
-
-    /// <summary>
-    /// Create a list literal from a Nullable array.
-    /// </summary>
-    public static Expr Lit<T>(T?[] values) where T : struct
-    {
-        Series s = values switch
-        {
-            // --- Signed ---
-            sbyte?[] v   => new Series("", v),
-            short?[] v   => new Series("", v),
-            int?[] v     => new Series("", v),
-            long?[] v    => new Series("", v),
-            Int128?[] v  => new Series("", v),
-
-            // --- Unsigned ---
-            byte?[] v    => new Series("", v),
-            ushort?[] v  => new Series("", v),
-            uint?[] v    => new Series("", v),
-            ulong?[] v   => new Series("", v),
-            UInt128?[] v => new Series("", v),
-
-            // --- Float ---
-            float?[] v   => new Series("", v),
-            double?[] v  => new Series("", v),
-            decimal?[] v => new Series("", v),
-
-            // --- Bool ---
-            bool?[] v    => new Series("", v),
-
-            // --- Time ---
-            DateOnly?[] v       => new Series("", v),
-            TimeOnly?[] v       => new Series("", v),
-            TimeSpan?[] v       => new Series("", v),
-            DateTime?[] v       => new Series("", v),
             DateTimeOffset?[] v => new Series("", v),
 
-            _ => throw new NotSupportedException($"Type '{typeof(T?)}[]' is not supported in Expr.Lit.")
+            // --- Fallback ---
+            _ => null
         };
 
-        return Lit(s);
+        if (s != null)
+        {
+            using (s) 
+            {
+                return Lit(s);
+            }
+        }
+
+        try
+        {
+            return LitStruct(values);
+        }
+        catch (Exception ex)
+        {
+            throw new NotSupportedException($"Type '{typeof(T)}[]' is not supported in Expr.Lit, and Struct packing failed.", ex);
+        }
     }
     
     public static Expr Lit<T>(IEnumerable<T> values)

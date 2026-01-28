@@ -293,6 +293,12 @@ unsafe internal partial class NativeBindings
         UIntPtr scale       // Rust: usize (Extra param for Decimal)
     );
     #endregion
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_struct(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name, 
+        IntPtr[] fields, 
+        nuint len
+    );
     [LibraryImport(LibName)] 
     public static partial SeriesHandle pl_series_clone(SeriesHandle s);
     // --- Series Properties ---
