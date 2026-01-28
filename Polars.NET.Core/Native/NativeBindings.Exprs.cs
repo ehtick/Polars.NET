@@ -33,7 +33,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_bool([MarshalAs(UnmanagedType.I1)] bool val);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_i64(long val);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_u64(ulong val);
-    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_i128(Int128 val);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_i128(ulong low,long high);
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_lit_decimal(
         ulong low, 

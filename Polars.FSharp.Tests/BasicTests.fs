@@ -970,3 +970,205 @@ type ``Basic Functionality Tests`` () =
         Assert.Contains("Score", columns)
         Assert.Contains("IsActive", columns)
         Assert.Contains("JoinDate", columns)
+
+type LitTests() =
+
+    // 创建一个只有一行的 Dummy DataFrame 用于上下文执行 Expr
+    let df = DataFrame.create [ Series.create("dummy", [1]) ]
+
+    [<Fact>]
+    member _.``Lit: All Primitive Types (Explicit Overload Check)``() =
+        
+        // ==========================================
+        // 1. Signed Integers
+        // ==========================================
+        
+        // int8 (sbyte) -> suffix 'y'
+        let v_i8 = 123y
+        let res_i8 = df.Select(pl.lit v_i8).Column(0).GetValue<sbyte>(0)
+        Assert.Equal(v_i8, res_i8)
+
+        // int16 (short) -> suffix 's'
+        let v_i16 = 12345s
+        let res_i16 = df.Select(pl.lit v_i16).Column(0).GetValue<int16>(0)
+        Assert.Equal(v_i16, res_i16)
+
+        // int32 (int)
+        let v_i32 = 123456789
+        let res_i32 = df.Select(pl.lit v_i32).Column(0).GetValue<int>(0)
+        Assert.Equal(v_i32, res_i32)
+
+        // int64 (long) -> suffix 'L'
+        let v_i64 = 1234567890123456789L
+        let res_i64 = df.Select(pl.lit v_i64).Column(0).GetValue<int64>(0)
+        Assert.Equal(v_i64, res_i64)
+
+        // Int128 (.NET 7+)
+        let v_i128 = Int128.Parse "1000000000000000000000000000000" // 足够大以超过 int64
+        let res_i128 = df.Select(pl.lit v_i128).Column(0).GetValue<Int128>(0)
+        Assert.Equal(v_i128, res_i128)
+
+        // ==========================================
+        // 2. Unsigned Integers
+        // ==========================================
+
+        // uint8 (byte) -> suffix 'uy'
+        let v_u8 = 200uy
+        let res_u8 = df.Select(pl.lit v_u8).Column(0).GetValue<byte>(0)
+        Assert.Equal(v_u8, res_u8)
+
+        // uint16 (ushort) -> suffix 'us'
+        let v_u16 = 40000us
+        let res_u16 = df.Select(pl.lit v_u16).Column(0).GetValue<uint16>(0)
+        Assert.Equal(v_u16, res_u16)
+
+        // uint32 (uint) -> suffix 'u'
+        let v_u32 = 3000000000u
+        let res_u32 = df.Select(pl.lit v_u32).Column(0).GetValue<uint>(0)
+        Assert.Equal(v_u32, res_u32)
+
+        // uint64 (ulong) -> suffix 'UL'
+        let v_u64 = 10000000000000000000UL
+        let res_u64 = df.Select(pl.lit v_u64).Column(0).GetValue<uint64>(0)
+        Assert.Equal(v_u64, res_u64)
+
+        // ==========================================
+        // 3. Floating Point & Decimal
+        // ==========================================
+
+        // float32 (single) -> suffix 'f'
+        let v_f32 = 123.456f
+        let res_f32 = df.Select(pl.lit v_f32).Column(0).GetValue<float32>(0)
+        Assert.Equal(v_f32, res_f32)
+
+        // float64 (double)
+        let v_f64 = 123.456789123
+        let res_f64 = df.Select(pl.lit v_f64).Column(0).GetValue<double>(0)
+        Assert.Equal(v_f64, res_f64)
+
+        // decimal -> suffix 'm'
+        let v_dec = 123.456789m
+        let res_dec = df.Select(pl.lit v_dec).Column(0).GetValue<decimal>(0)
+        Assert.Equal(v_dec, res_dec)
+
+        // ==========================================
+        // 4. String & Boolean
+        // ==========================================
+
+        // string
+        let v_str = "Polars.NET 🚀"
+        let res_str = df.Select(pl.lit v_str).Column(0).GetValue<string>(0)
+        Assert.Equal(v_str, res_str)
+
+        // bool
+        let v_bool = true
+        let res_bool = df.Select(pl.lit v_bool).Column(0).GetValue<bool>(0)
+        Assert.True res_bool
+
+        // ==========================================
+        // 5. Temporal Types
+        // ==========================================
+
+        // DateTime
+        let v_dt = DateTime(2023, 10, 1, 12, 30, 45)
+        let res_dt = df.Select(pl.lit v_dt).Column(0).GetValue<DateTime>(0)
+        Assert.Equal(v_dt, res_dt)
+
+        // DateOnly
+        let v_date = DateOnly(2023, 10, 1)
+        let res_date = df.Select(pl.lit v_date).Column(0).GetValue<DateOnly>(0)
+        Assert.Equal(v_date, res_date)
+
+        // TimeOnly
+        let v_time = TimeOnly(12, 30, 45)
+        // 注意：TimeOnly 在 Polars 中通常对应纳秒精度，可能存在微小浮点误差，
+        // 但 Lit 生成是精确的，GetValue 只要也是精确的就行。
+        let res_time = df.Select(pl.lit v_time).Column(0).GetValue<TimeOnly>(0)
+        Assert.Equal(v_time, res_time)
+
+        // TimeSpan
+        let v_span = TimeSpan.FromHours(25.5)
+        let res_span = df.Select(pl.lit v_span).Column(0).GetValue<TimeSpan>(0)
+        Assert.Equal(v_span, res_span)
+
+        // DateTimeOffset (带时区)
+        let v_dto = DateTimeOffset(2023, 10, 1, 12, 0, 0, TimeSpan.FromHours(8.0))
+        let res_dto = df.Select(pl.lit v_dto).Column(0).GetValue<DateTimeOffset>(0)
+        // Polars 存储时区信息，取出来比较时应相等
+        Assert.Equal(v_dto, res_dto)
+    [<Fact>]
+    member _.``Lit: Collections (Lists & Arrays)``() =
+        // 准备一个只有 1 行的 DataFrame，方便观察 Lit 展开的效果
+        // 如果 pl.lit([1; 2; 3]) 生效，select 的结果应该是 3 行
+        let df = DataFrame.create [ Series.create("dummy", [0]) ]
+
+        // ==========================================
+        // 1. F# Lists (int list, string list...)
+        // ==========================================
+        
+        // Integer List
+        let listInt = [1; 2; 3]
+        let dfInt = df.Select(pl.lit listInt)
+        
+        Assert.Equal(3L, dfInt.Height) // 长度应扩展为 3
+        Assert.Equal(1, dfInt.Column(0).GetValue<int>(0))
+        Assert.Equal(2, dfInt.Column(0).GetValue<int>(1))
+        Assert.Equal(3, dfInt.Column(0).GetValue<int>(2))
+
+        // String List
+        let listStr = ["A"; "B"; "C"]
+        let dfStr = df.Select(pl.lit listStr)
+        
+        Assert.Equal(3L, dfStr.Height)
+        Assert.Equal("A", dfStr.Column(0).GetValue<string>(0))
+        Assert.Equal("B", dfStr.Column(0).GetValue<string>(1))
+
+        // ==========================================
+        // 2. F# Arrays (int[], float[]...)
+        // ==========================================
+
+        // Double Array
+        let arrF64 = [| 1.1; 2.2; 3.3; 4.4 |]
+        let dfF64 = df.Select(pl.lit arrF64)
+
+        Assert.Equal(4L, dfF64.Height)
+        Assert.Equal(1.1, dfF64.Column(0).GetValue<double>(0))
+
+        // Bool Array
+        let arrBool = [| true; false |]
+        let dfBool = df.Select(pl.lit arrBool)
+        
+        Assert.Equal(2L, dfBool.Height)
+        Assert.True(dfBool.Column(0).GetValue<bool>(0))
+        Assert.False(dfBool.Column(0).GetValue<bool>(1))
+
+        // ==========================================
+        // 3. Nullable Collections (Option List)
+        // ==========================================
+
+        // Int Option List (with None)
+        let listOpt = [Some 10; None; Some 30]
+        let dfOpt = df.Select(pl.lit listOpt)
+
+        Assert.Equal(3L, dfOpt.Height)
+        Assert.Equal(10, dfOpt.Column(0).GetValue<int>(0))
+        Assert.True(dfOpt.Column(0).IsNullAt(1)) // Index 1 is Null
+        Assert.Equal(30, dfOpt.Column(0).GetValue<int>(2))
+
+        // String Option List
+        let listStrOpt = [Some "Valid"; None]
+        let dfStrOpt = df.Select(pl.lit listStrOpt)
+        
+        Assert.Equal(2L, dfStrOpt.Height)
+        Assert.Equal("Valid", dfStrOpt.Column(0).GetValue<string>(0))
+        Assert.True(dfStrOpt.Column(0).IsNullAt(1))
+
+    [<Fact>]
+    member _.``Lit: Empty Collections``() =
+        let df = DataFrame.create [ Series.create("dummy", [0]) ]
+        
+        // Empty List -> Empty Series -> Empty Column
+        let emptyList: int list = []
+        let dfEmpty = df.Select(pl.lit emptyList)
+        
+        Assert.Equal(0L, dfEmpty.Height) // 结果应该是空表

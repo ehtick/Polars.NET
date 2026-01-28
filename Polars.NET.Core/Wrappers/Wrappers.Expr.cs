@@ -69,7 +69,16 @@ public static partial class PolarsWrapper
     public static ExprHandle Lit(uint val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_u32(val));
     public static ExprHandle Lit(long val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_i64(val));
     public static ExprHandle Lit(ulong val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_u64(val));
-    public static ExprHandle Lit(Int128 val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_i128(val));
+    public static ExprHandle Lit(Int128 value)
+    {
+        // Lower 64 bits：
+        ulong lowPart = (ulong)value;
+
+        // Upper 64 bits
+        long highPart = (long)(value >> 64);
+        return ErrorHelper.Check(NativeBindings.pl_expr_lit_i128(lowPart, highPart));
+    }
+
     public static ExprHandle Lit(string val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_str(val));
     public static ExprHandle Lit(double val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_f64(val));
     public static ExprHandle Lit(float val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_f32(val));

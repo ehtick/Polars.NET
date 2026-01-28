@@ -222,6 +222,12 @@ and Expr(handle: ExprHandle) =
     /// <summary> Check if the value is between lower and upper bounds (inclusive). </summary>
     member this.IsBetween(lower: Expr, upper: Expr) =
         new Expr(PolarsWrapper.IsBetween(this.CloneHandle(), lower.CloneHandle(), upper.CloneHandle()))
+    /// <summary>
+    /// Check if the value is in given collection.
+    /// </summary>
+    member this.IsIn(other: Expr,?nullsEqual: bool) : Expr = 
+        let nE = defaultArg nullsEqual false
+        new Expr(PolarsWrapper.IsIn(this.CloneHandle(), other.CloneHandle(),nE))
     member this.FillNull(fillValue: Expr) = 
         new Expr(PolarsWrapper.FillNull(this.CloneHandle(), fillValue.CloneHandle()))
     member this.FillNan(fillValue:Expr) =
@@ -743,14 +749,17 @@ and ListOps(handle: ExprHandle) =
     member this.Concat(other: #IColumnExpr) =
         this.Concat [other]
     // Contains
-    member _.Contains(item: Expr) : Expr = 
-        new Expr(PolarsWrapper.ListContains(handle, item.CloneHandle()))
-    member _.Contains(item: int) = 
+    member _.Contains(item: Expr,?nullsEqual: bool) : Expr = 
+        let nE = defaultArg nullsEqual false
+        new Expr(PolarsWrapper.ListContains(handle, item.CloneHandle(),nE))
+    member _.Contains(item: int,?nullsEqual: bool) = 
         let itemHandle = PolarsWrapper.Lit item
-        new Expr(PolarsWrapper.ListContains(PolarsWrapper.CloneExpr handle, itemHandle))
-    member _.Contains(item: string) = 
+        let nE = defaultArg nullsEqual false
+        new Expr(PolarsWrapper.ListContains(PolarsWrapper.CloneExpr handle, itemHandle,nE))
+    member _.Contains(item: string,?nullsEqual:bool) =
+        let nE = defaultArg nullsEqual false 
         let itemHandle = PolarsWrapper.Lit item
-        new Expr(PolarsWrapper.ListContains(PolarsWrapper.CloneExpr handle, itemHandle))
+        new Expr(PolarsWrapper.ListContains(PolarsWrapper.CloneExpr handle, itemHandle, nE))
 
 and ArrayOps(handle: ExprHandle) = 
     // --- Aggregations ---

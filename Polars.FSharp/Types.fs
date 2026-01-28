@@ -1365,11 +1365,6 @@ type Series(handle: SeriesHandle) =
                 if t = typeof<int option> then box (Some v) |> unbox<'T>
                 else box v |> unbox<'T>
 
-            // else if t = typeof<int64> || t = typeof<int64 option> || t = typeof<Nullable<int64>> then
-            //     let v = PolarsWrapper.SeriesGetInt(handle, index).Value
-            //     if t = typeof<int64 option> then box (Some v) |> unbox<'T>
-            //     else box v |> unbox<'T>
-
             else if t = typeof<int64> || t = typeof<int64 option> || t = typeof<Nullable<int64>> then
                 let v = PolarsWrapper.SeriesGetInt(handle, index).Value
                 if t = typeof<int64 option> then box (Some v) |> unbox<'T>
@@ -2254,6 +2249,7 @@ and DataFrame(handle: DataFrameHandle) =
         let handles = exprs |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let h = PolarsWrapper.Select(this.Handle, handles)
         new DataFrame(h)
+
     /// <summary> Select columns using generic column expressions (Expr or Selectors). </summary>
     member this.Select(columns: seq<#IColumnExpr>) =
             let exprs = 
@@ -2262,6 +2258,13 @@ and DataFrame(handle: DataFrameHandle) =
                 |> Seq.toList
             
             this.Select exprs
+    /// <summary> 
+    /// Select a single column using an expression.
+    /// Usage: df.Select(pl.col("A"))
+    /// </summary>
+    member this.Select(expr: Expr) =
+        this.Select [expr]
+
     /// <summary> Filter rows based on a boolean expression (predicate). </summary>
     member this.Filter (expr: Expr) : DataFrame = 
         let h = PolarsWrapper.Filter(this.Handle,expr.CloneHandle())

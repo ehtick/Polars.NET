@@ -268,7 +268,7 @@ gen_lit_ctor!(pl_expr_lit_i16, i16);
 gen_lit_ctor!(pl_expr_lit_u16, u16);
 gen_lit_ctor!(pl_expr_lit_u32, u32);
 gen_lit_ctor!(pl_expr_lit_u64, u64);
-gen_lit_ctor!(pl_expr_lit_i128, i128);
+
 // --- Group 2: String col and lit ---
 gen_str_ctor!(pl_expr_col, col);
 gen_str_ctor!(pl_expr_lit_str, lit);
@@ -1067,7 +1067,7 @@ pub extern "C" fn pl_expr_lit_duration(
     })
 }
 
-// lit Decimal
+// lit Decimal and Int128
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_lit_decimal(
     low: u64,  // C# split low part
@@ -1079,6 +1079,34 @@ pub extern "C" fn pl_expr_lit_decimal(
         let v = ((high as i128) << 64) | (low as i128);
 
         let data_type = ArrowDataType::Decimal(38, scale as usize);
+
+        let arrow_array = PrimitiveArray::new(
+            data_type,
+            vec![v].into(), 
+            None
+        );
+
+        let series = Series::from_arrow(
+            "literal".into(), 
+            Box::new(arrow_array)
+        ).unwrap();
+
+        let expr = lit(series);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_i128(
+    low: u64,  // C# split low part
+    high: i64 // C# split high part
+) -> *mut ExprContext {
+    ffi_try!({
+        // Rebuild i128 (Unscaled Value)
+        let v = ((high as i128) << 64) | (low as i128);
+
+        let data_type = ArrowDataType::Int128;
 
         let arrow_array = PrimitiveArray::new(
             data_type,
