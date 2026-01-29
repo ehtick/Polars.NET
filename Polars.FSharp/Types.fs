@@ -1381,74 +1381,19 @@ and DataFrame(handle: DataFrameHandle) =
     /// </summary>
     static member private CreateSeriesFromColumn<'Rec, 'Field>(data: 'Rec[], name: string, prop: PropertyInfo) : Series =
         // 1. Create Fast Getter (Delegate)
-        // Func<'Rec, 'Field> is ~50x faster than PropertyInfo.GetValue()
         let getterMethod = prop.GetGetMethod()
         let getter = Delegate.CreateDelegate(typeof<Func<'Rec, 'Field>>, getterMethod) :?> Func<'Rec, 'Field>
         
-        // 2. Transpose: Row-Oriented -> Column-Oriented (Memory Copy)
+        // 2. Transpose: Row-Oriented -> Column-Oriented
+        //    (Allocation happens here: O(N))
         let len = data.Length
         let colData = Array.zeroCreate<'Field> len
         
         for i = 0 to len - 1 do
             colData.[i] <- getter.Invoke(data.[i])
             
-        // 3. Type Dispatch & Series Creation
-        let t = typeof<'Field>
-
-        // --- Path A: F# Option Types (e.g., int option) ---
-        if t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>> then
-            let innerType = t.GetGenericArguments().[0]
-            // Reflection is okay here; it happens only once per column (not per row)
-            typeof<Series>
-                .GetMethod("ofOptionSeq", BindingFlags.Public ||| BindingFlags.Static)
-                .MakeGenericMethod(innerType)
-                .Invoke(null, [| name; colData |]) :?> Series
-
-        // --- Path B: F# ValueOption Types (e.g., int voption) ---
-        else if t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<voption<_>> then
-            let innerType = t.GetGenericArguments().[0]
-            typeof<Series>
-                .GetMethod("ofVOptionSeq", BindingFlags.Public ||| BindingFlags.Static)
-                .MakeGenericMethod(innerType)
-                .Invoke(null, [| name; colData |]) :?> Series
-
-        else
-            // --- Path C: Standard Primitives (Dense Arrays) ---
-            // 'box' here is boxing the ARRAY (cheap), not the elements.
-            
-            // Standard Primitives
-            if t = typeof<int> then Series.create(name, colData |> unbox<int[]>)
-            else if t = typeof<int64> then Series.create(name, colData |> unbox<int64[]>)
-            else if t = typeof<double> then Series.create(name, colData |> unbox<double[]>)
-            else if t = typeof<float32> then Series.create(name, colData |> unbox<float32[]>)
-            else if t = typeof<bool> then Series.create(name, colData |> unbox<bool[]>)
-            else if t = typeof<string> then Series.create(name, colData |> unbox<string[]>)
-            
-            // Unsigned & Small Integers
-            else if t = typeof<byte> then Series.create(name, colData |> unbox<byte[]>)
-            else if t = typeof<sbyte> then Series.create(name, colData |> unbox<sbyte[]>)
-            else if t = typeof<int16> then Series.create(name, colData |> unbox<int16[]>)
-            else if t = typeof<uint16> then Series.create(name, colData |> unbox<uint16[]>)
-            else if t = typeof<uint32> then Series.create(name, colData |> unbox<uint32[]>)
-            else if t = typeof<uint64> then Series.create(name, colData |> unbox<uint64[]>)
-            
-            // Temporal (Turbocharged)
-            else if t = typeof<DateTime> then Series.create(name, colData |> unbox<DateTime[]>)
-            else if t = typeof<DateOnly> then Series.create(name, colData |> unbox<DateOnly[]>)
-            else if t = typeof<TimeOnly> then Series.create(name, colData |> unbox<TimeOnly[]>)
-            else if t = typeof<TimeSpan> then Series.create(name, colData |> unbox<TimeSpan[]>)
-            else if t = typeof<DateTimeOffset> then Series.create(name, colData |> unbox<DateTimeOffset[]>) // ★ Added
-
-            // 128-bit
-            else if t = typeof<Int128> then Series.create(name, colData |> unbox<Int128[]>)
-            else if t = typeof<UInt128> then Series.create(name, colData |> unbox<UInt128[]>)
-            
-            // Decimal
-            // Passing 0 as scale triggers the Auto-Scaling logic in DecimalPacker
-            else if t = typeof<decimal> then Series.create(name, colData |> unbox<decimal[]>)
-            
-            else 
-                failwithf "Unsupported primitive type in ofRecords: %A. Lists/Arrays fall back to Arrow path." t
+        // 3. Delegate to C# SeriesFactory (The Magic Step!)
+        Series.create(name, colData)
 
     /// <summary>
     /// Create a DataFrame from a sequence of records.

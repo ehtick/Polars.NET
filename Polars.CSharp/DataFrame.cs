@@ -1521,143 +1521,143 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     // Object Mapping (From Records)
     // ==========================================
-    private static bool TryCreateSeriesFast(string name, object values, out Series? series)
-    {
-        series = null;
-        if (values == null) return false;
+    // private static bool TryCreateSeriesFast(string name, object values, out Series? series)
+    // {
+    //     series = null;
+    //     if (values == null) return false;
 
-        switch (values)
-        {
-            // --- Signed Integers ---
-            case sbyte[] v:    series = new Series(name, v); return true;
-            case sbyte?[] v:   series = new Series(name, v); return true;
-            case short[] v:    series = new Series(name, v); return true;
-            case short?[] v:   series = new Series(name, v); return true;
-            case int[] v:      series = new Series(name, v); return true;
-            case int?[] v:     series = new Series(name, v); return true;
-            case long[] v:     series = new Series(name, v); return true;
-            case long?[] v:    series = new Series(name, v); return true;
-            case Int128[] v:   series = new Series(name, v); return true;
-            case Int128?[] v:  series = new Series(name, v); return true;
+    //     switch (values)
+    //     {
+    //         // --- Signed Integers ---
+    //         case sbyte[] v:    series = new Series(name, v); return true;
+    //         case sbyte?[] v:   series = new Series(name, v); return true;
+    //         case short[] v:    series = new Series(name, v); return true;
+    //         case short?[] v:   series = new Series(name, v); return true;
+    //         case int[] v:      series = new Series(name, v); return true;
+    //         case int?[] v:     series = new Series(name, v); return true;
+    //         case long[] v:     series = new Series(name, v); return true;
+    //         case long?[] v:    series = new Series(name, v); return true;
+    //         case Int128[] v:   series = new Series(name, v); return true;
+    //         case Int128?[] v:  series = new Series(name, v); return true;
 
-            // --- Unsigned Integers (Zero-Copy Cast inside Series) ---
-            case byte[] v:     series = new Series(name, v); return true;
-            case byte?[] v:    series = new Series(name, v); return true;
-            case ushort[] v:   series = new Series(name, v); return true;
-            case ushort?[] v:  series = new Series(name, v); return true;
-            case uint[] v:     series = new Series(name, v); return true;
-            case uint?[] v:    series = new Series(name, v); return true;
-            case ulong[] v:    series = new Series(name, v); return true;
-            case ulong?[] v:   series = new Series(name, v); return true;
-            case UInt128[] v:  series = new Series(name, v); return true;
-            case UInt128?[] v: series = new Series(name, v); return true;
+    //         // --- Unsigned Integers (Zero-Copy Cast inside Series) ---
+    //         case byte[] v:     series = new Series(name, v); return true;
+    //         case byte?[] v:    series = new Series(name, v); return true;
+    //         case ushort[] v:   series = new Series(name, v); return true;
+    //         case ushort?[] v:  series = new Series(name, v); return true;
+    //         case uint[] v:     series = new Series(name, v); return true;
+    //         case uint?[] v:    series = new Series(name, v); return true;
+    //         case ulong[] v:    series = new Series(name, v); return true;
+    //         case ulong?[] v:   series = new Series(name, v); return true;
+    //         case UInt128[] v:  series = new Series(name, v); return true;
+    //         case UInt128?[] v: series = new Series(name, v); return true;
 
-            // --- Floating Point ---
-            case float[] v:    series = new Series(name, v); return true;
-            case float?[] v:   series = new Series(name, v); return true;
-            case double[] v:   series = new Series(name, v); return true;
-            case double?[] v:  series = new Series(name, v); return true;
+    //         // --- Floating Point ---
+    //         case float[] v:    series = new Series(name, v); return true;
+    //         case float?[] v:   series = new Series(name, v); return true;
+    //         case double[] v:   series = new Series(name, v); return true;
+    //         case double?[] v:  series = new Series(name, v); return true;
             
-            // --- Boolean (Bit Packing) ---
-            case bool[] v:     series = new Series(name, v); return true;
-            case bool?[] v:    series = new Series(name, v); return true;
+    //         // --- Boolean (Bit Packing) ---
+    //         case bool[] v:     series = new Series(name, v); return true;
+    //         case bool?[] v:    series = new Series(name, v); return true;
 
-            // --- String ---
-            case string?[] v:   series = new Series(name, v); return true;
+    //         // --- String ---
+    //         case string?[] v:   series = new Series(name, v); return true;
 
-            // --- DateTime ---
-            case DateTime[] v:
-                series = new Series(name, v);
-                return true;
-            case DateTime?[] v:
-                series = new Series(name, v);
-                return true;
+    //         // --- DateTime ---
+    //         case DateTime[] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case DateTime?[] v:
+    //             series = new Series(name, v);
+    //             return true;
 
-            // --- DateTimeOffset ---
-            case DateTimeOffset[] v:
-                series = new Series(name, v);
-                return true;
-            case DateTimeOffset?[] v:
-                series = new Series(name, v);
-                return true;
+    //         // --- DateTimeOffset ---
+    //         case DateTimeOffset[] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case DateTimeOffset?[] v:
+    //             series = new Series(name, v);
+    //             return true;
 
-            // --- DateOnly ---
-            case DateOnly[] v:
-                series = new Series(name, v);
-                return true;
-            case DateOnly?[] v:
-                series = new Series(name, v);
-                return true;
+    //         // --- DateOnly ---
+    //         case DateOnly[] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case DateOnly?[] v:
+    //             series = new Series(name, v);
+    //             return true;
 
-            // --- TimeOnly ---
-            case TimeOnly[] v:
-                series = new Series(name, v);
-                return true;
-            case TimeOnly?[] v:
-                series = new Series(name, v);
-                return true;
+    //         // --- TimeOnly ---
+    //         case TimeOnly[] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case TimeOnly?[] v:
+    //             series = new Series(name, v);
+    //             return true;
             
-            // --- TimeSpan ---
-            case TimeSpan[] v:
-                series = new Series(name, v);
-                return true;
-            case TimeSpan?[] v:
-                series = new Series(name, v);
-                return true;
+    //         // --- TimeSpan ---
+    //         case TimeSpan[] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case TimeSpan?[] v:
+    //             series = new Series(name, v);
+    //             return true;
 
-            // --- Decimal ---
-            case decimal[] v:
-                series = new Series(name, v);
-                return true;
-            case decimal?[] v:
-                series = new Series(name, v);
-                return true;
+    //         // --- Decimal ---
+    //         case decimal[] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case decimal?[] v:
+    //             series = new Series(name, v);
+    //             return true;
 
-            // --- Fixed Size List with non-null primitive inner type(Array) ---
-            case sbyte[,] v:
-                series = new Series(name, v);
-                return true;
-            case byte[,] v:
-                series = new Series(name, v);
-                return true;
-            case short[,] v:
-                series = new Series(name, v);
-                return true;
-            case ushort[,] v:
-                series = new Series(name, v);
-                return true;
-            case int[,] v:
-                series = new Series(name, v);
-                return true;
-            case uint[,] v:
-                series = new Series(name, v);
-                return true;
-            case long[,] v:
-                series = new Series(name, v);
-                return true;
-            case ulong[,] v:
-                series = new Series(name, v);
-                return true;
-            case Int128[,] v:
-                series = new Series(name, v);
-                return true;
-            case UInt128[,] v:
-                series = new Series(name, v);
-                return true;
-            case float[,] v:
-                series = new Series(name, v);
-                return true;
-            case double[,] v:
-                series = new Series(name, v);
-                return true;
-            case decimal[,] v:
-                series = new Series(name, v);
-                return true;
-            // --- Default ---
-            default:
-                return false; 
-        }
-    }
+    //         // --- Fixed Size List with non-null primitive inner type(Array) ---
+    //         case sbyte[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case byte[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case short[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case ushort[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case int[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case uint[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case long[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case ulong[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case Int128[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case UInt128[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case float[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case double[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         case decimal[,] v:
+    //             series = new Series(name, v);
+    //             return true;
+    //         // --- Default ---
+    //         default:
+    //             return false; 
+    //     }
+    // }
     /// <summary>
     /// Create a DataFrame from a collection of strongly-typed objects (POCOs).
     /// <para>
@@ -1700,45 +1700,34 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    public static DataFrame From<T>(IEnumerable<T> data)
+   public static DataFrame From<T>(IEnumerable<T> data)
     {
         if (data == null) return new DataFrame();
-
         Type type = typeof(T);
 
         // =========================================================
-        // Primitive Types: int, double, string...
+        // 1. Primitive Types (Single Column)
         // =========================================================
         if (IsSimpleType(type))
         {
-            T[] array = data as T[] ?? data.ToArray();
-            
-            if (TryCreateSeriesFast("value", array, out var s))
-            {
-                return new DataFrame(s!);
-            }
-            
-            // Fallback to Arrow
-            var arrowArray = ArrowConverter.BuildSingleColumn(array);
-            if (arrowArray != null)
-            {
-                using var sArrow = Series.FromArrow("value", arrowArray);
-                return new DataFrame(sArrow);
-            }
-            
-            throw new NotSupportedException($"Type {type.Name} is not supported for single-column DataFrame.");
+            var s = Series.From("value", data);
+            return new DataFrame(s);
         }
 
         // =========================================================
-        // Complex Type: Pivot (Row -> Column)
+        // 2. Complex Type: Pivot (Row -> Column)
         // =========================================================
+        return FromPocoManual(data, type);
+    }
+    
+    private static DataFrame FromPocoManual<T>(IEnumerable<T> data, Type type)
+    {
         var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
         if (props.Length == 0) return new DataFrame();
 
         int capacity = data is ICollection<T> c ? c.Count : 16;
-
-        // Column Buffers
         var buffers = new IColumnBuffer[props.Length];
+
         for (int i = 0; i < props.Length; i++)
         {
             buffers[i] = ColumnBufferFactory.Create(props[i].PropertyType, capacity);
@@ -1748,19 +1737,14 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         {
             for (int i = 0; i < props.Length; i++)
             {
-                var val = props[i].GetValue(item);
-                buffers[i].Add(val!);
+                buffers[i].Add(props[i].GetValue(item));
             }
         }
 
-        // =========================================================
-        // Build Series then combine to DataFrame
-        // =========================================================
         var seriesList = new Series[props.Length];
         for (int i = 0; i < props.Length; i++)
         {
-            string name = props[i].Name;
-            seriesList[i] = buffers[i].ToSeries(name);
+            seriesList[i] = buffers[i].ToSeries(props[i].Name);
         }
 
         return new DataFrame(seriesList);
@@ -1809,8 +1793,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// [AOT Safe] Create DataFrame from explicitly named columns.
     /// No reflection used. Best performance.
     /// </summary>
-    /// <exception cref="ArgumentNullException"></exception>
-    /// <exception cref="NotSupportedException"></exception>
     public static DataFrame FromColumns(params (string Name, object Data)[] columns)
     {
         if (columns == null || columns.Length == 0)
@@ -1822,27 +1804,23 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         {
             if (val == null)
                 throw new ArgumentNullException($"Column '{name}' data cannot be null.");
-
-            // SIMD Highway
-            if (TryCreateSeriesFast(name, val, out var fastSeries))
+            
+            try 
             {
-                seriesList.Add(fastSeries!);
+                
+                if (val is System.Array arr)
+                {
+                    var handle = SeriesFactory.Create(name, arr);
+                    seriesList.Add(new Series(handle));
+                }
+                else 
+                {
+                    seriesList.Add(Series.From(name, (dynamic)val));
+                }
             }
-            else
+            catch (Exception ex)
             {
-                // Fallback to Arrow
-                var arrowArray = ArrowConverter.BuildSingleColumn(val);
-
-                if (arrowArray != null)
-                {
-                    seriesList.Add(Series.FromArrow(name, arrowArray));
-                }
-                else
-                {
-                    throw new NotSupportedException(
-                        $"Column '{name}' has unsupported data type: {val.GetType().Name}. " +
-                        "Only primitives (int, double, bool...), strings, DateTimes, and IEnumerables supported by Arrow are allowed.");
-                }
+                 throw new NotSupportedException($"Column '{name}' has unsupported data type: {val.GetType().Name}.", ex);
             }
         }
 
@@ -1877,20 +1855,8 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         }
 
         public Series ToSeries(string name)
-        {
-            TCol?[] arr = _data.ToArray(); 
-            
-            // SIMD Highway (Int32[], Double[]...)
-            if (TryCreateSeriesFast(name, arr, out var s))
-                return s!;
-            
-            // Fallback to Arrow (List<int>, Decimal...)
-            var arrowArr = ArrowConverter.BuildSingleColumn(arr);
-            if (arrowArr != null) 
-                return Series.FromArrow(name, arrowArr);
-            
-            throw new NotSupportedException($"Column '{name}' of type {typeof(TCol)} is not supported.");
-        }
+            => Series.From(name, _data.ToArray());
+        
     }
 
     private static class ColumnBufferFactory

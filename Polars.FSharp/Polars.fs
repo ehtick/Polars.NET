@@ -26,7 +26,7 @@ type LitMechanism = LitMechanism with
     static member ($) (LitMechanism, v: TimeSpan) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: decimal) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: bool) = new Expr(PolarsWrapper.Lit v)
-    // --- List (最常用) ---
+    // --- List ---
     static member ($) (LitMechanism, v: int list)      = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: int64 list)    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: float list)    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle)) // double
@@ -36,7 +36,7 @@ type LitMechanism = LitMechanism with
     static member ($) (LitMechanism, v: DateTime list) = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: DateOnly list) = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
 
-    // --- Array (高性能) ---
+    // --- Array (High Performance) ---
     static member ($) (LitMechanism, v: int[])      = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: int64[])    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: float[])    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
