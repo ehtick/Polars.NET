@@ -137,10 +137,10 @@ type ``Series Tests`` () =
         let data = [1.23m; 4.56m; 7.89m] 
         
         // 使用新加的 create 方法
-        use s = Series.create("money", data, 2)
+        use s = Series.create("money", data)
         
         // 验证
-        let arrow = s.ToArrow() :?> Apache.Arrow.Decimal128Array
+        let arrow = s.ToArrow() :?> Decimal128Array
         
         // 这次 4.56m 进去，出来的必定是 4.56m
         // 因为我们在 C# 端做了 * 100 操作：4.56m * 100m = 456m -> (Int128)456
@@ -149,7 +149,7 @@ type ``Series Tests`` () =
     [<Fact>]
     member _.``Scalar Access: Series & DataFrame`` () =
         // Series 验证
-        use s = Series.create("d", [1.23m; 4.56m], 2)
+        use s = Series.create("d", [1.23m; 4.56m])
         Assert.Equal(Some 1.23m, s.Decimal 0)
         Assert.Equal(Some 4.56m, s.Decimal 1)
         

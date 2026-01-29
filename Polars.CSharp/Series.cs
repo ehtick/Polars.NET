@@ -1,3 +1,4 @@
+#pragma warning disable CS1591
 using Polars.NET.Core;
 using Apache.Arrow;
 using Polars.NET.Core.Arrow;
@@ -147,11 +148,13 @@ public partial class Series : IDisposable
 
         // 1. Numeric
         if (underlying == typeof(int)) 
-            return (T?)(object?)(int?)PolarsWrapper.SeriesGetInt(Handle, index); // Long -> Int (Narrowing)
-            
+            return (T?)(object?)(int?)PolarsWrapper.SeriesGetInt(Handle, index); 
+        if (underlying == typeof(uint)) 
+            return (T?)(object?)(uint?)PolarsWrapper.SeriesGetInt(Handle, index); 
         if (underlying == typeof(long)) 
             return (T?)(object?)PolarsWrapper.SeriesGetInt(Handle, index);
-
+        if (underlying == typeof(ulong)) 
+            return (T?)(object?)(ulong?)PolarsWrapper.SeriesGetInt(Handle, index); 
         if (underlying == typeof(Int128)) 
             return (T?)(object?)PolarsWrapper.SeriesGetInt128(Handle, index);
 
@@ -597,477 +600,69 @@ public partial class Series : IDisposable
     // Constructors
     // ==========================================
 
-    // ------------------------------------------
-    // 🚀 1. Fast Path (Primitives)
-    // ------------------------------------------
-    /// <summary>
-    /// Create a Series from an array of sbyte(i8)
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, sbyte[] data, byte[]? validity = null) 
-            => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from an array of nullable sbyte(i8)
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, sbyte?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data); 
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of byte(u8)
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, byte[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from an array of unsigned byte(u8)
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, byte?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of shorts(i16)
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, short[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from an array of shorts(i16)
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, short?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of unsigned shorts(u16)
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, ushort[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from an array of unsigned short(i16)
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, ushort?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of integers.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, int[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from a nullable int array using Span optimization.
-    /// <para>Example: <c>new Series("a", [1, null, 2])</c></para>
-    /// </summary>
-    public Series(string name, int?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of unsigned integers.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, uint[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from a nullable unsigned int array using Span optimization.
-    /// <para>Example: <c>new Series("a", [1u, null, 2u])</c></para>
-    /// </summary>
-    public Series(string name, uint?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of longs.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, long[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from a nullable long array using Span optimization.
-    /// <para>Example: <c>new Series("ts", [10000L, null, 20000L])</c></para>
-    /// </summary>
-    public Series(string name, long?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of unsigned longs.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, ulong[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from a nullable unsigned long array using Span optimization.
-    /// <para>Example: <c>new Series("ts", [10000UL, null, 20000UL])</c></para>
-    /// </summary>
-    public Series(string name, ulong?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of Int128.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, Int128[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from a nullable Int128 array using Span optimization.
-    /// <para>Example: <c>new Series("big_int", [10000, null, 20000])</c></para>
-    /// </summary>
-    public Series(string name, Int128?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of Unsigned Int128.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, UInt128[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from a nullable UInt128 array using Span optimization.
-    /// <para>Example: <c>new Series("big_uint", [10000UL, null, 20000UL])</c></para>
-    /// </summary>
-    public Series(string name, UInt128?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of floats.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, float[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from a nullable float array using Span optimization.
-    /// <para>Example: <c>new Series("b", [1.5, null, 2.0])</c></para>
-    /// </summary>
-    public Series(string name, float?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data, float.NaN); 
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of doubles.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="validity"></param>
-    public Series(string name, double[] data, byte[]? validity = null) 
-        => Handle = PolarsWrapper.SeriesNew(name, data, validity);
-    /// <summary>
-    /// Create a Series from a nullable double array using Span optimization.
-    /// <para>Example: <c>new Series("b", [1.5, null, 2.0])</c></para>
-    /// </summary>
-    public Series(string name, double?[] data)
-    {
-        var (vals, mask) = ArrayHelper.UnzipNullable(data, double.NaN);
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask);
-    }
-    /// <summary>
-    /// Create a Series from an array of booleans.
-    /// <para>This performs efficient bit-packing (8x memory reduction) before passing to the engine.</para>
-    /// </summary>
-    /// <param name="name">Series name</param>
-    /// <param name="data">Boolean data</param>
-    public Series(string name, bool[] data) 
-    {
-        var valuesBitmask = BoolPacker.Pack(data);
+   // 1. Signed Integers
+    public Series(string name, sbyte[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, sbyte?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, short[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, short?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, int[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, int?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, long[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, long?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, Int128[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, Int128?[] data) => Handle = SeriesFactory.Create(name, data);
 
-        Handle = PolarsWrapper.SeriesNew(name, valuesBitmask, null, (UIntPtr)data.Length);
-    }
+    // 2. Unsigned Integers
+    public Series(string name, byte[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, byte?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, ushort[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, ushort?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, uint[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, uint?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, ulong[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, ulong?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, UInt128[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, UInt128?[] data) => Handle = SeriesFactory.Create(name, data);
 
-    /// <summary>
-    /// Create a Series from a nullable bool array using SIMD optimization.
-    /// <para>Example: <c>new Series("c", [true, false, null])</c></para>
-    /// </summary>
-    public Series(string name, bool?[] data)
-    {
-        var (vals, mask) = BoolPacker.PackNullable(data);
+    // 3. Floating Point
+    public Series(string name, float[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, float?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, double[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, double?[] data) => Handle = SeriesFactory.Create(name, data);
 
-        Handle = PolarsWrapper.SeriesNew(name, vals, mask, (UIntPtr)data.Length);
-    }
-    /// <summary>
-    /// Create a Series from an array of strings.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, string?[] data)
-    {
-        Handle = PolarsWrapper.SeriesNewStringSimd(name, data);
-    }
-    /// <summary>
-    /// Create a DateTime Series (High Performance).
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="timeZone">
-    /// Optional time zone string (e.g. "Asia/Shanghai", "UTC"). 
-    /// If null, creates a "Naive" datetime (no time zone).
-    /// </param>
-    public Series(string name, DateTime[] data, string? timeZone = null)
-    {
-        long[] values = ArrayHelper.UnzipDateTimeToUs(data);
+    // 4. Bool, String, Decimal
+    public Series(string name, bool[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, bool?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, string?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, decimal[] data ) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, decimal?[] data) => Handle = SeriesFactory.Create(name, data);
 
-        Handle = PolarsWrapper.SeriesNewDatetime(name, values, null, timeZone);
-    }
-    /// <summary>
-    /// Create a nullable DateTime Series (High Performance).
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="timeZone">
-    /// Optional time zone string (e.g. "Asia/Shanghai", "UTC"). 
-    /// If null, creates a "Naive" datetime (no time zone).
-    /// </param>
-    public Series(string name, DateTime?[] data, string? timeZone = null)
-    {
-        // DateTime -> Microseconds (long)
-        var (values, validity) = ArrayHelper.UnzipDateTimeToUs(data);
+    // 5. Temporal
+    public Series(string name, DateTime[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, DateTime?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, DateTimeOffset[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, DateTimeOffset?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, DateOnly[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, DateOnly?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, TimeOnly[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, TimeOnly?[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, TimeSpan[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, TimeSpan?[] data) => Handle = SeriesFactory.Create(name, data);
 
-        Handle = PolarsWrapper.SeriesNewDatetime(name, values, validity, timeZone);
-    }
-    /// <summary>
-    /// Create a DateTime Series (High Performance).
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="timeZone">
-    /// Optional time zone string (e.g. "Asia/Shanghai", "UTC"). 
-    /// If null, creates a "Naive" datetime (no time zone).
-    /// </param>
-    public Series(string name, DateTimeOffset[] data, string? timeZone = null)
-    {
-        long[] values = ArrayHelper.UnzipDateTimeOffsetToUs(data);
-
-        Handle = PolarsWrapper.SeriesNewDatetime(name, values, null, timeZone);
-    }
-    /// <summary>
-    /// Create a nullable DateTime Series (High Performance).
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    /// <param name="timeZone">
-    /// Optional time zone string (e.g. "Asia/Shanghai", "UTC"). 
-    /// If null, creates a "Naive" datetime (no time zone).
-    /// </param>
-    public Series(string name, DateTimeOffset?[] data, string? timeZone = null)
-    {
-        // DateTime -> Microseconds (long)
-        var (values, validity) = ArrayHelper.UnzipDateTimeOffsetToUs(data);
-
-        Handle = PolarsWrapper.SeriesNewDatetime(name, values, validity, timeZone);
-    }
-    /// <summary>
-    /// Create a Series from an array of DateOnly values.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, DateOnly[] data)
-    {
-        var values = ArrayHelper.UnzipDateOnlyToInt32(data);
-        Handle = PolarsWrapper.SeriesNewDate(name, values, null);
-    }
-    /// <summary>
-    /// Create a Series from an array of Nullable DateOnly values.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, DateOnly?[] data)
-    {
-        var (values, validity) = ArrayHelper.UnzipDateOnlyToInt32(data);
-        Handle = PolarsWrapper.SeriesNewDate(name, values, validity);
-    }
-    /// <summary>
-    /// Create a Series from an array of TimeOnly values (Nanoseconds).
-    /// </summary>
-    public Series(string name, TimeOnly[] data)
-    {
-        var values = ArrayHelper.UnzipTimeOnlyToNs(data);
-        Handle = PolarsWrapper.SeriesNewTime(name, values, null);
-    }
-    /// <summary>
-    /// Create a Series from an array of Nullable TimeOnly values.
-    /// </summary>
-    public Series(string name, TimeOnly?[] data)
-    {
-        // 极致 Scalar Unroll (Mul + Validity)
-        var (values, validity) = ArrayHelper.UnzipTimeOnlyToNs(data);
-        Handle = PolarsWrapper.SeriesNewTime(name, values, validity);
-    }
-    /// <summary>
-    /// Create a Series from an array of TimeSpan values (Microseconds).
-    /// </summary>
-    public Series(string name, TimeSpan[] data)
-    {
-        var values = ArrayHelper.UnzipTimeSpanToUs(data);
-        Handle = PolarsWrapper.SeriesNewDuration(name, values, null);
-    }
-
-    /// <summary>
-    /// Create a Series from an array of Nullable TimeSpan values.
-    /// </summary>
-    public Series(string name, TimeSpan?[] data)
-    {
-        var (values, validity) = ArrayHelper.UnzipTimeSpanToUs(data);
-        Handle = PolarsWrapper.SeriesNewDuration(name, values, validity);
-    }
-    /// <summary>
-    /// Create a Series from an array of  decimals.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, decimal[] data)
-    {
-        var (values, scale) = DecimalPacker.Pack(data);
-        Handle = PolarsWrapper.SeriesNewDecimal(name, values, null, scale);
-    }
-    /// <summary>
-    /// Create a Series from an array of nullable decimals.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, decimal?[] data)
-    {
-        var (values, validity, scale) = DecimalPacker.Pack(data);
-        
-        Handle = PolarsWrapper.SeriesNewDecimal(name, values, validity, scale);
-    }
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of Int8.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, sbyte[,] data)
-       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of UInt8.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, byte[,] data)
-       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of Int16.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, short[,] data)
-       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of UInt16.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, ushort[,] data)
-       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of Int32.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, int[,] data)
-       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of UInt32.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, uint[,] data)
-       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of Int64.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, long[,] data)
-       => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of UInt64.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, ulong[,] data)
-        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of Int128.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, Int128[,] data)
-        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of UInt128.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, UInt128[,] data)
-        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of Float.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, float[,] data)
-        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of Double.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, double[,] data)
-        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
-    /// <summary>
-    /// Create a Series from a 2D fixed size array of Decimal.
-    /// </summary>
-    /// <param name="name"></param>
-    /// <param name="data"></param>
-    public Series(string name, decimal[,] data)
-        => Handle = PolarsWrapper.SeriesNewFixedArray(name, data);
+    // 6. Fixed Size Arrays (2D)
+    public Series(string name, sbyte[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, byte[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, short[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, ushort[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, int[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, uint[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, long[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, ulong[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, float[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, double[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, decimal[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, Int128[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, UInt128[,] data) => Handle = SeriesFactory.Create(name, data);
 
     // ==========================================
     // Properties
@@ -1897,14 +1492,14 @@ public partial class Series : IDisposable
     // ==========================================
     /// <summary>
     /// Create a Series from a list of objects, primitives, or nested lists.
-    /// Uses Polars.NET.Core to handle Arrow conversion and FFI transfer.
+    /// Uses SeriesFactory to automatically select the fastest path (SIMD for Arrays, Reflection for Lists).
     /// </summary>
     public static Series From<T>(string name, IEnumerable<T> data) 
     {
-        using var arrowArray = ArrowConverter.Build(data);
+        var handle = SeriesFactory.CreateGenericType(name, data);
 
-        var handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
-
+        // var arrowArray = ArrowConverter.Build(data);
+        // var handle = ArrowFfiBridge.ImportSeries(name, arrowArray);
         return new Series(handle);
     }
     /// <summary>

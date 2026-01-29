@@ -253,7 +253,7 @@ type ``Basic Functionality Tests`` () =
         // 2. 传给 Polars (C# -> Rust)
         // 这一步应该能成功，因为内存是 C# 分配的，Exporter 能够处理
         let df = DataFrame.FromArrow batch
-        df |> pl.show |> ignore
+        // df |> pl.show |> ignore
         // 3. 验证
         Assert.Equal(3L, df.Rows)
         Assert.Equal(100L, df.Int("num", 0).Value)

@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Apache.Arrow;
 using Apache.Arrow.Arrays;
 using Apache.Arrow.Types;
@@ -398,10 +399,67 @@ namespace Polars.NET.Core.Arrow
         /// </summary>
         public static Func<int, object?> GetSeriesAccessor<T>(IArrowArray array)
             => CreateAccessor(array, typeof(T));
-        public static T[] ReadColumn<T>(IArrowArray array)
+        /// <summary>
+        /// Read single Array index i item
+        /// </summary>
+        public static T? ReadItem<T>(IArrowArray array, int index)
         {
             var accessor = CreateAccessor(array, typeof(T));
+            var val = accessor(index);
+            return val == null ? default : (T)val;
+        }
+        // =============================================================
+        // High Performance Span / Array Access
+        // =============================================================
+
+        /// <summary>
+        /// 尝试直接获取底层数值内存作为 Span (Zero-Copy)。
+        /// Notice：Only return true if there is no nulls in array.
+        /// </summary>
+        public static bool TryGetSpan<T>(IArrowArray array, out ReadOnlySpan<T> span) 
+            where T : struct
+        {
+            span = default;
+            
+            // 0. Null Check
+            if (array.NullCount != 0) return false;
+
+            // 1. Integers
+            if (typeof(T) == typeof(int) && array is Int32Array i32) { span = MemoryMarshal.Cast<int, T>(i32.Values); return true; }
+            if (typeof(T) == typeof(long) && array is Int64Array i64) { span = MemoryMarshal.Cast<long, T>(i64.Values); return true; }
+            if (typeof(T) == typeof(short) && array is Int16Array i16) { span = MemoryMarshal.Cast<short, T>(i16.Values); return true; }
+            if (typeof(T) == typeof(sbyte) && array is Int8Array i8) { span = MemoryMarshal.Cast<sbyte, T>(i8.Values); return true; }
+            if (typeof(T) == typeof(byte) && array is UInt8Array u8) { span = MemoryMarshal.Cast<byte, T>(u8.Values); return true; }
+            if (typeof(T) == typeof(ushort) && array is UInt16Array u16) { span = MemoryMarshal.Cast<ushort, T>(u16.Values); return true; }
+            if (typeof(T) == typeof(uint) && array is UInt32Array u32) { span = MemoryMarshal.Cast<uint, T>(u32.Values); return true; }
+            if (typeof(T) == typeof(ulong) && array is UInt64Array u64) { span = MemoryMarshal.Cast<ulong, T>(u64.Values); return true; }
+
+            // 2. Floats
+            if (typeof(T) == typeof(double) && array is DoubleArray dbl) { span = MemoryMarshal.Cast<double, T>(dbl.Values); return true; }
+            if (typeof(T) == typeof(float) && array is FloatArray flt) { span = MemoryMarshal.Cast<float, T>(flt.Values); return true; }
+
+            // 3. Date/Time (Internal Int32/Int64)
+            if (typeof(T) == typeof(int) && array is Date32Array d32) { span = MemoryMarshal.Cast<int, T>(d32.Values); return true; }
+            if (typeof(T) == typeof(long) && array is Date64Array d64) { span = MemoryMarshal.Cast<long, T>(d64.Values); return true; }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Read Arrow Array by memcpy(non-null primitive types) or accessor.
+        /// </summary>
+        public static T[] ReadColumn<T>(IArrowArray array)
+        {
+            // Memcpy
+            var fastArray = PrimitiveArrayReader<T>.Read(array);
+            if (fastArray != null)
+            {
+                return fastArray;
+            }
+
+            // Accessor
             int len = array.Length;
+            var accessor = CreateAccessor(array, typeof(T));
             var result = new T[len];
             
             for (int i = 0; i < len; i++)
@@ -411,14 +469,43 @@ namespace Polars.NET.Core.Arrow
             }
             return result;
         }
-        /// <summary>
-        /// Read single Array index i item
-        /// </summary>
-        public static T? ReadItem<T>(IArrowArray array, int index)
+
+        // =============================================================
+        // Internal Infrastructure (消除泛型约束差异的桥梁)
+        // =============================================================
+
+        // 这是一个内部辅助方法，它的签名符合 TryGetSpan 的要求 (T : struct)
+        // 我们通过反射创建一个指向它的委托，存起来给 ReadColumn 用
+        private static T[]? ReadStructInternal<T>(IArrowArray array) where T : struct
         {
-            var accessor = CreateAccessor(array, typeof(T));
-            var val = accessor(index);
-            return val == null ? default : (T)val;
+            if (TryGetSpan<T>(array, out var span))
+            {
+                return span.ToArray(); // 极速 Memcpy
+            }
+            return null;
+        }
+
+        // 静态缓存类：为每个 T 生成一个专门的读取器
+        private static class PrimitiveArrayReader<T>
+        {
+            public static readonly Func<IArrowArray, T[]?> Read;
+
+            static PrimitiveArrayReader()
+            {
+                if (typeof(T).IsValueType && Nullable.GetUnderlyingType(typeof(T)) == null)
+                {
+                    var method = typeof(ArrowReader)
+                        .GetMethod(nameof(ReadStructInternal), BindingFlags.NonPublic | BindingFlags.Static)!
+                        .MakeGenericMethod(typeof(T));
+                    
+                    Read = (Func<IArrowArray, T[]?>)Delegate.CreateDelegate(typeof(Func<IArrowArray, T[]?>), method);
+                }
+                else
+                {
+                    // for string, Object, Nullable<int> 
+                    Read = _ => null;
+                }
+            }
         }
     }
 }

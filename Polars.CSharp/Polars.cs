@@ -88,78 +88,9 @@ public static class Polars
 
     public static Expr Lit<T>(T[] values)
     {
-        // Primitives
-        Series? s = values switch
-        {
-            // --- Signed int ---
-            sbyte[] v   => new Series("", v),
-            sbyte?[] v  => new Series("", v), 
-            short[] v   => new Series("", v),
-            short?[] v  => new Series("", v),
-            int[] v     => new Series("", v),
-            int?[] v    => new Series("", v),
-            long[] v    => new Series("", v),
-            long?[] v   => new Series("", v),
-            Int128[] v  => new Series("", v),
-            Int128?[] v => new Series("", v),
-
-            // --- Unsigned int ---
-            byte[] v    => new Series("", v),
-            byte?[] v   => new Series("", v),
-            ushort[] v  => new Series("", v),
-            ushort?[] v => new Series("", v),
-            uint[] v    => new Series("", v),
-            uint?[] v   => new Series("", v),
-            ulong[] v   => new Series("", v),
-            ulong?[] v  => new Series("", v),
-            UInt128[] v  => new Series("", v),
-            UInt128?[] v => new Series("", v),
-
-            // --- Float and decimal ---
-            float[] v   => new Series("", v),
-            float?[] v  => new Series("", v),
-            double[] v  => new Series("", v),
-            double?[] v => new Series("", v),
-            decimal[] v => new Series("", v),
-            decimal?[] v => new Series("", v),
-
-            // --- Bool and String ---
-            bool[] v    => new Series("", v),
-            bool?[] v   => new Series("", v),
-            string[] v  => new Series("", v), // string is reference type, usually covers nulls too
-
-            // --- Temporal ---
-            DateOnly[] v       => new Series("", v),
-            DateOnly?[] v      => new Series("", v),
-            TimeOnly[] v       => new Series("", v),
-            TimeOnly?[] v      => new Series("", v),
-            TimeSpan[] v       => new Series("", v),
-            TimeSpan?[] v      => new Series("", v),
-            DateTime[] v       => new Series("", v),
-            DateTime?[] v      => new Series("", v),
-            DateTimeOffset[] v => new Series("", v),
-            DateTimeOffset?[] v => new Series("", v),
-
-            // --- Fallback ---
-            _ => null
-        };
-
-        if (s != null)
-        {
-            using (s) 
-            {
-                return Lit(s);
-            }
-        }
-
-        try
-        {
-            return LitStruct(values);
-        }
-        catch (Exception ex)
-        {
-            throw new NotSupportedException($"Type '{typeof(T)}[]' is not supported in Expr.Lit, and Struct packing failed.", ex);
-        }
+        using var s = Series.From("", values);
+        
+        return Lit(s);
     }
     
     public static Expr Lit<T>(IEnumerable<T> values)

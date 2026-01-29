@@ -68,7 +68,7 @@ unsafe internal partial class NativeBindings
     public static partial SeriesHandle pl_series_new_u16(string name, ushort[] ptr, byte[]? validity, UIntPtr len);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_i32(string name, int[] ptr, byte[]? validity, UIntPtr len);
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8,EntryPoint = "pl_series_new_u32")]
     public static partial SeriesHandle pl_series_new_u32(string name, uint[] ptr, byte[]? validity, UIntPtr len);
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]

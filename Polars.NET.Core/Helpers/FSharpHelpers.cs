@@ -840,4 +840,56 @@ public static unsafe class FSharpHelper
         }
         return (values, validity);
     }
+    // ========================================================================
+    // Decimal Support (Option/VOption -> decimal?[])
+    // ========================================================================
+
+    /// <summary>
+    /// Unwrap FSharpOption<decimal>[] -> decimal?[] (Fast Path)
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static decimal?[] UnwrapOptionDecimal(FSharpOption<decimal>[] data)
+    {
+        int len = data.Length;
+        var result = new decimal?[len];
+
+        ref FSharpOption<decimal> srcRef = ref MemoryMarshal.GetArrayDataReference(data);
+        ref decimal? dstRef = ref MemoryMarshal.GetArrayDataReference(result);
+
+        for (int i = 0; i < len; i++)
+        {
+            FSharpOption<decimal> item = Unsafe.Add(ref srcRef, i);
+
+            Unsafe.Add(ref dstRef, i) = item?.Value;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Unwrap FSharpValueOption<decimal>[] -> decimal?[] (Fast Path)
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    public static decimal?[] UnwrapValueOptionDecimal(FSharpValueOption<decimal>[] data)
+    {
+        int len = data.Length;
+        var result = new decimal?[len];
+
+        ref FSharpValueOption<decimal> srcRef = ref MemoryMarshal.GetArrayDataReference(data);
+        ref decimal? dstRef = ref MemoryMarshal.GetArrayDataReference(result);
+
+        for (int i = 0; i < len; i++)
+        {
+            ref FSharpValueOption<decimal> item = ref Unsafe.Add(ref srcRef, i);
+
+            if (item.Tag == FSharpValueOption<decimal>.Tags.ValueSome)
+            {
+                Unsafe.Add(ref dstRef, i) = item.Value;
+            }
+            else
+            {
+                Unsafe.Add(ref dstRef, i) = null;
+            }
+        }
+        return result;
+    }
 }
