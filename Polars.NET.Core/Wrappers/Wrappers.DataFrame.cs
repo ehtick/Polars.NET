@@ -234,18 +234,24 @@ public static partial class PolarsWrapper
         ));
     }
     // Pivot (Eager)
-    public static DataFrameHandle Pivot(DataFrameHandle df, string[] index, string[] columns, string[] values, PlPivotAgg aggFn)
+    public static DataFrameHandle Pivot(DataFrameHandle df, string[] index, string[] columns, string[] values,ExprHandle? aggExpr, PlPivotAgg aggFn,bool sortColumns,
+        string? separator)
     {
-        return UseUtf8StringArray(index, iPtrs =>
-            UseUtf8StringArray(columns, cPtrs =>
-                UseUtf8StringArray(values, vPtrs =>
+        IntPtr aggExprPtr = aggExpr?.TransferOwnership() ?? IntPtr.Zero;
+
+        return UseUtf8StringArray(values, vPtrs =>
+            UseUtf8StringArray(index, iPtrs =>
+                UseUtf8StringArray(columns, cPtrs =>
                 {
                     return ErrorHelper.Check(NativeBindings.pl_pivot(
                         df,
-                        vPtrs, (UIntPtr)vPtrs.Length,
-                        iPtrs, (UIntPtr)iPtrs.Length,
-                        cPtrs, (UIntPtr)cPtrs.Length,
-                        aggFn
+                        vPtrs, (UIntPtr)vPtrs.Length, // values
+                        iPtrs, (UIntPtr)iPtrs.Length, // index
+                        cPtrs, (UIntPtr)cPtrs.Length, // columns
+                        aggFn,                   
+                        aggExprPtr,                  
+                        sortColumns,
+                        separator
                     ));
                 })
             )

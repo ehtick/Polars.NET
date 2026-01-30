@@ -370,65 +370,87 @@ HR,50";
     // Reshaping Tests (Pivot & Unpivot)
     // ==========================================
     [Fact]
-    public void Test_Pivot_Unpivot()
+    [Trait("Category", "Debug")] 
+    public void Test_Pivot_Unpivot_With_CustomExpr()
     {
-        // 构造“长表”数据：记录了不同城市在不同日期的温度
-        // date, city, temp
-        var content = @"date,city,temp
-2024-01-01,NY,5
-2024-01-01,LA,20
-2024-01-02,NY,2
-2024-01-02,LA,18";
-        
-        using var csv = new DisposableFile(content,".csv");
-        using var df = DataFrame.ReadCsv(csv.Path);
+        // 1. 准备数据：内存构建 (长表)
+        // 场景：记录了不同城市在不同日期的温度 (摄氏度)
+        using var df = DataFrame.FromColumns(new
+        {
+            date = new[] { "2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02" },
+            city = new[] { "NY", "LA", "NY", "LA" },
+            temp = new[] { 5.0, 20.0, 2.0, 18.0 } // 使用 double 方便后续计算
+        });
 
-        // --- Step 1: Pivot (长 -> 宽) ---
-        // 目标：每一行是 date，列变成 city (NY, LA)，值是 temp
+        // --- Step 1: Standard Pivot (Enum 方式) ---
+        // 目标：长 -> 宽, 聚合用 First
+        // 新参数测试：sortColumns = true (确保 "LA" 排在 "NY" 前面)
         using var pivoted = df.Pivot(
             index: ["date"],
             columns: ["city"],
             values: ["temp"],
-            agg: PivotAgg.First // 因为 (date, city) 唯一，First 即可
+            aggregateFunction: PivotAgg.First,
+            sortColumns: true 
         );
 
-        // 验证 Pivot 结果
-        // 列应该是: date, NY, LA (顺序可能变，取决于 Polars 内部哈希，通常是排序的或按出现顺序)
-        Assert.Equal(2, pivoted.Height); // 只有两天 (01-01, 01-02)
-        Assert.Equal(3, pivoted.Width);  // date, NY, LA
+        // 验证结构
+        Assert.Equal(2, pivoted.Height);
+        Assert.Equal(3, pivoted.Width); // date, LA, NY (Sorted)
+
+        // 验证列名排序 (LA < NY)
+        var cols = pivoted.ColumnNames;
+        Assert.Equal("LA", cols[1]);
+        Assert.Equal("NY", cols[2]);
+
+        // 验证值 (2024-01-01)
+        // Sort 后 date 应该是升序
+        Assert.Equal(20.0, pivoted.GetValue<double>(0, "LA")); // LA 20度
+        Assert.Equal(5.0, pivoted.GetValue<double>(0, "NY"));  // NY 5度
+
+        // --- Step 2: Custom Expr Pivot (修正版) ---
         
-        // 简单打印一下结构，防止列名顺序不确定导致测试挂掉
-        // pivoted.Show(); 
+        // 方案A：最佳实践 - 先计算，后透视
+        // 我们先计算华氏度，生成新列 "temp_f"(
+        using var dfWithF = df.WithColumns((Col("temp") * 1.8 + 32).Alias("temp_f"));
+        
+        // 然后使用 Expr 重载进行透视
+        // 这里为了测试 Expr 通道是否打通，我们传入 Col("").Sum() 或者简单的聚合
+        // 注意：因为 Polars Pivot 限制，我们不能写 Col("temp_f")。
+        // 在我们的 Rust Shim 实现里，我们用 col("") 代表当前 value。
+        // 所以，要在 Pivot 里自定义聚合，我们得用 Col("") 代表 "temp_f"。
+        
+        using var pivotedFahrenheit = dfWithF.Pivot(
+            index: ["date"],
+            columns: ["city"],
+            values: ["temp_f"],
+            // 使用 Col("") 代表当前上下文的值(values列)
+            // 并且必须是聚合函数 (First, Sum, etc)，不能只是运算
+            aggregateExpr: Col("").First(), 
+            sortColumns: true
+        );
 
-        // 验证 2024-01-01 的 NY 气温 (假设第一行是 01-01)
-        // 注意：Arrow 列名区分大小写
-        Assert.Equal(5L, pivoted[0, "NY"]); 
-        Assert.Equal(20L, pivoted[0, "LA"]);
+        // 验证计算结果
+        // NY: 5 * 1.8 + 32 = 41
+        // LA: 20 * 1.8 + 32 = 68
+        Assert.Equal(68.0, pivotedFahrenheit.GetValue<double>(0, "LA"));
+        Assert.Equal(41.0, pivotedFahrenheit.GetValue<double>(0, "NY"));
 
-        // --- Step 2: Unpivot/Melt (宽 -> 长) ---
-        // 把刚才的宽表还原。
-        // Index 保持 "date" 不变
-        // 把 "NY" 和 "LA" 这两列融化成 "city" (variable) 和 "temp" (value)
+        // --- Step 3: Unpivot/Melt (宽 -> 长) ---
+        // 把 Step 1 的结果还原
         using var unpivoted = pivoted.Unpivot(
             index: ["date"],
-            on: ["NY", "LA"],
-            variableName: "city",
+            on: ["LA", "NY"],
+            variableName: "city_restored",
             valueName: "temp_restored"
-        ).Sort("date"); // 排序以便断言
+        ).Sort(["date", "city_restored"]); // 排序以确保断言稳定
 
-        // 验证 Unpivot 结果
-        // 高度应该回到 4 行
+        // 验证还原结果
         Assert.Equal(4, unpivoted.Height);
-        Assert.Equal(3, unpivoted.Width); // date, city, temp_restored
         
-        // 验证列名是否存在
-        Assert.NotNull(unpivoted.Column("city"));
-        Assert.NotNull(unpivoted.Column("temp_restored"));
-
-        // 验证值是否还在
-        // 比如第一行应该是 2024-01-01, NY, 5 (或者 LA, 20，取决于排序稳定性，我们这里不深究具体排序，只验证数据存在性)
-        // 简单验证第一行的数据类型正确
-        Assert.NotNull(unpivoted.Column("city")[0]);
+        // 验证第一行: 2024-01-01, LA, 20.0
+        Assert.Equal("2024-01-01", unpivoted.GetValue<string>(0, "date"));
+        Assert.Equal("LA", unpivoted.GetValue<string>(0, "city_restored"));
+        Assert.Equal(20.0, unpivoted.GetValue<double>(0, "temp_restored"));
     }
     // ==========================================
     // Display Tests (Head & Show)

@@ -5,14 +5,14 @@ namespace Polars.CSharp;
 /// <summary>
 /// Enums of JoinTypes
 /// </summary>
-public enum JoinType
+public enum JoinType: byte
 {
     Inner,Left, Outer,Cross,Semi,Anti,IEJoin
 }
 /// <summary>
 /// Specifies the aggregation function for pivot operations.
 /// </summary>
-public enum PivotAgg
+public enum PivotAgg : byte
 {
     First,Sum,Min,Max, Mean,Median,Count,Len,Last
 }

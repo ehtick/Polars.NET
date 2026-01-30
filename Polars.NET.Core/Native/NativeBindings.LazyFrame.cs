@@ -126,7 +126,7 @@ unsafe internal partial class NativeBindings
     public static partial LazyFrameHandle pl_lazy_explode(LazyFrameHandle lf, SelectorHandle selector);
     // --- Reshaping (Lazy) ---
     [LibraryImport(LibName)] 
-    public static partial LazyFrameHandle pl_lazy_unpivot(
+    public static partial LazyFrameHandle pl_lazyframe_unpivot(
         LazyFrameHandle lf,
         SelectorHandle index,
         SelectorHandle on,

@@ -1475,7 +1475,9 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="index">Column names to use as the index (the rows).</param>
     /// <param name="columns">Column names to use for the new column headers.</param>
     /// <param name="values">Column names to use for the values in the cells.</param>
-    /// <param name="agg">Aggregation function to use if multiple values exist for an index/column pair. Default is First.</param>
+    /// <param name="aggregateFunction">Aggregation function to use if multiple values exist for an index/column pair. Default is First.</param>
+    /// <param name="sortColumns">Sort the transposed columns by name. Default is by order of discovery.</param>
+    /// <param name="separator">Used as separator/delimiter in generated column names in case of multiple values columns.</param>
     /// <returns>A wide-format DataFrame.</returns>
     /// <example>
     /// <code>
@@ -1507,12 +1509,51 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg agg = PivotAgg.First)
-        => new(PolarsWrapper.Pivot(Handle, index, columns, values, agg.ToNative()));
+    public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg aggregateFunction = PivotAgg.First,bool sortColumns =false,string? separator=null)
+        => new(PolarsWrapper.Pivot(Handle, index, columns, values,null, aggregateFunction.ToNative(),sortColumns,separator));
+    /// <summary>
+    /// Pivot a DataFrame with a custom aggregation expression.
+    /// </summary>
+    /// <param name="index">Column names to use as index.</param>
+    /// <param name="columns">Column names to use as columns.</param>
+    /// <param name="values">Column names to use as values.</param>
+    /// <param name="aggregateExpr">
+    /// A custom expression to aggregate the values (e.g., <c>pl.Col("val").Sum() * 100</c>).
+    /// </param>
+    /// <param name="sortColumns">
+    /// Sort the transposed columns.
+    /// </param>
+    /// <param name="separator">
+    /// Separator used to combine column names when multiple value columns are selected.
+    /// </param>
+    /// <returns>Pivoted DataFrame.</returns>
+    public DataFrame Pivot(
+        string[] index,
+        string[] columns,
+        string[] values,
+        Expr aggregateExpr,
+        bool sortColumns = false,
+        string? separator = null)
+    {
+        var exprHandle = PolarsWrapper.CloneExpr(aggregateExpr.Handle);
+
+        var h = PolarsWrapper.Pivot(
+            Handle,
+            index,
+            columns,
+            values,
+            exprHandle,
+            (PlPivotAgg)0, // Dummy value, ignored by Rust when Expr is present
+            sortColumns,
+            separator
+        );
+
+        return new DataFrame(h);
+    }
     /// <summary>
     /// Unpivot (Melt) the DataFrame from wide to long format.
     /// <para>
-    /// This is the reverse of <see cref="Pivot"/>. It collapses multiple columns into key-value pairs.
+    /// This is the reverse of <see cref="Pivot(string[], string[], string[], PivotAgg, bool, string?)"/>. It collapses multiple columns into key-value pairs.
     /// </para>
     /// </summary>
     /// <param name="index">Column names to keep as identifiers (id_vars).</param>

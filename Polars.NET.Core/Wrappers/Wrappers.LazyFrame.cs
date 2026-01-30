@@ -246,7 +246,7 @@ public static partial class PolarsWrapper
     public static LazyFrameHandle LazyUnpivot(LazyFrameHandle lf, SelectorHandle index, SelectorHandle on, string? variableName, string? valueName)
     {
 
-        var h = NativeBindings.pl_lazy_unpivot(
+        var h = NativeBindings.pl_lazyframe_unpivot(
             lf,
             index,
             on,

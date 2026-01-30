@@ -406,7 +406,7 @@ pub extern "C" fn pl_lazy_collect_streaming(lf_ptr: *mut LazyFrameContext) -> *m
 // ==========================================
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_unpivot(
+pub extern "C" fn pl_lazyframe_unpivot(
     lf_ptr: *mut LazyFrameContext,
     index_ptr: *mut SelectorContext,
     on_ptr: *mut SelectorContext,

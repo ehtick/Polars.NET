@@ -1844,11 +1844,59 @@ and DataFrame(handle: DataFrameHandle) =
     /// <param name="columns">Column defining the new column names.</param>
     /// <param name="values">Column(s) defining the values.</param>
     /// <param name="aggFn">Aggregation function for duplicates.</param>
-    member this.Pivot (index: string list) (columns: string list) (values: string list) (aggFn: PivotAgg) : DataFrame =
+    member this.Pivot (index: string list, 
+                       columns: string list, 
+                       values: string list, 
+                       aggFn: PivotAgg, 
+                       ?sortColumns: bool, // 建议改名 sortColumns 跟 C# 保持一致
+                       ?separator: string) : DataFrame =
+        
         let iArr = List.toArray index
         let cArr = List.toArray columns
         let vArr = List.toArray values
-        new DataFrame(PolarsWrapper.Pivot(this.Handle, iArr, cArr, vArr, aggFn.ToNative()))
+        let sort = defaultArg sortColumns false
+        let sep = defaultArg separator null
+
+        let h = PolarsWrapper.Pivot(
+            this.Handle, 
+            iArr, 
+            cArr, 
+            vArr, 
+            null,               // aggExpr = null
+            aggFn.ToNative(), 
+            sort, 
+            sep
+        )
+        new DataFrame(h)
+
+    // 2. Expr Version
+    member this.Pivot (index: string list, 
+                       columns: string list, 
+                       values: string list, 
+                       aggExpr: Expr,      
+                       ?sortColumns: bool,
+                       ?separator: string) : DataFrame =
+        
+        let iArr = List.toArray index
+        let cArr = List.toArray columns
+        let vArr = List.toArray values
+        let sort = defaultArg sortColumns false
+        let sep = defaultArg separator null
+        let exprH = aggExpr.CloneHandle()
+
+        // 调用 Wrapper
+        // aggFn 传 0uy (Dummy value)
+        let h = PolarsWrapper.Pivot(
+            this.Handle, 
+            iArr, 
+            cArr, 
+            vArr, 
+            exprH,              // aggExpr handle
+            PivotAgg.First.ToNative(),                // aggFn (ignored)
+            sort, 
+            sep
+        )
+        new DataFrame(h)
 
     /// <summary> 
     /// Unpivot (Melt) the DataFrame from wide to long format using Selectors.

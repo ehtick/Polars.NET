@@ -247,34 +247,71 @@ type ``Complex Query Tests`` () =
         Assert.Equal("Charlie", res.String("name", 2).Value)
         Assert.Equal(0.0, res.Float("diff_from_avg", 2).Value)
     [<Fact>]
-    member _.``Reshaping and IO: Pivot, Unpivot`` () =
-        // 1. 准备宽表数据 (Sales Data)
+    member _.``Reshaping and IO: Pivot, Unpivot (In-Memory & Custom Expr)`` () =
+        // 1. 准备宽表数据 (Sales Data) - 纯内存构建，告别 CSV IO
         // Year, Q1, Q2
-        use csv = new TempCsv "year,Q1,Q2\n2023,100,200\n2024,300,400"
-        let df = DataFrame.ReadCsv csv.Path
+        let df = 
+            DataFrame.create [
+                Series.create("year", [2023; 2024])
+                Series.create("Q1",   [100;  300])
+                Series.create("Q2",   [200;  400])
+            ]
 
-        // --- Test 1: Eager Unpivot (Wide -> Long) ---
+        // --- Test 1: Unpivot (Wide -> Long) ---
         // 结果: year, quarter, revenue
+        // 使用成员方法 .Unpivot (C# 风格) 或者管道风格皆可，这里演示成员方法以配合可选参数
         let longDf = 
-            df 
-            |> pl.unpivot ["year"] ["Q1"; "Q2"] (Some "quarter") (Some "revenue")
-            |> pl.sort(pl.col "year", false)
+            df.Unpivot(
+                index = ["year"], 
+                on = ["Q1"; "Q2"], 
+                variableName = Some "quarter", 
+                valueName = Some "revenue"
+            ).Sort [pl.col "year";pl.col "quarter"] // 排序保证断言顺序
 
-        Assert.Equal(4L, longDf.Rows)
-        Assert.Equal("Q1", longDf.String("quarter", 0).Value)
-        Assert.Equal(100L, longDf.Int("revenue", 0).Value)
+        Assert.Equal(4L, longDf.Height)
+        
+        // 验证第一行: 2023, Q1, 100
+        Assert.Equal(2023, longDf.Cell<int>(0, "year"))
+        Assert.Equal("Q1", longDf.Cell<string>(0, "quarter"))
+        Assert.Equal(100, longDf.Cell<int>(0, "revenue"))
 
-        // --- Test 2: Eager Pivot (Long -> Wide) ---
+        // --- Test 2: Standard Pivot (Enum Aggregation) ---
         // 还原回: year, Q1, Q2
-        let wideDf = 
-            longDf
-            |> pl.pivot ["year"] ["quarter"] ["revenue"] PivotAgg.Sum
-            |> pl.sort(pl.col "year", false)
+        let wideDfEnum = 
+            longDf.Pivot(
+                index = ["year"], 
+                columns = ["quarter"], 
+                values = ["revenue"], 
+                aggFn = PivotAgg.Sum,
+                sortColumns = true 
+            ).Sort(pl.col "year", false)
 
-        Assert.Equal(2L, wideDf.Rows)
-        Assert.Equal(3L, wideDf.Width) // year, Q1, Q2
-        Assert.Equal(100L, wideDf.Int("Q1", 0).Value)
-        Assert.Equal(400L, wideDf.Int("Q2", 1).Value)
+        Assert.Equal(2L, wideDfEnum.Height)
+        Assert.Equal(3L, wideDfEnum.Width) // year, Q1, Q2
+        Assert.Equal(100, wideDfEnum.Cell<int>(0, "Q1")) // 2023 Q1
+        Assert.Equal(400, wideDfEnum.Cell<int>(1, "Q2")) // 2024 Q2
+
+        // --- Test 3: Pivot with Custom Expr (自定义表达式) ---
+        // 场景：在透视的同时，将收入翻倍 (Revenue * 2)
+        // 注意：根据 Polars Pivot 机制，聚合时的上下文是匿名 Value 列，需使用 pl.col("")
+        let wideDfExpr = 
+            longDf.Pivot(
+                index = ["year"], 
+                columns = ["quarter"], 
+                values = ["revenue"], 
+                // [关键] 使用 Expr 重载
+                // pl.col("").sum() 代表对当前分组后的 revenue 值求和
+                // * pl.lit(2) 代表结果翻倍
+                aggExpr = pl.col("").Sum() * pl.lit 2, 
+                sortColumns = true
+            ).Sort(pl.col "year", false)
+
+        // 验证结果
+        // 2023 Q1 原值为 100 -> 翻倍后应为 200
+        Assert.Equal(200, wideDfExpr.Cell<int>(0, "Q1"))
+        
+        // 2024 Q2 原值为 400 -> 翻倍后应为 800
+        Assert.Equal(800, wideDfExpr.Cell<int>(1, "Q2"))
 
     [<Fact>]
     member _.``Lazy Reshaping: Concat All Types`` () =

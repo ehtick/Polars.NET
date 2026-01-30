@@ -42,7 +42,7 @@ public enum PlJoinType : byte
     IEJoin = 6
 }
 
-public enum PlPivotAgg
+public enum PlPivotAgg: byte
 {
     First = 0,
     Sum = 1,

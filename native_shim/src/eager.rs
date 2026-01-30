@@ -375,7 +375,6 @@ pub extern "C" fn pl_df_unique_stable(
     };
 
     // 4. Call Polars
-    // 注意：subset 需要转换为 Option<&[String]>
     let res = df.unique_stable(
         subset_vec.as_deref(),
         keep, 
@@ -584,7 +583,10 @@ pub extern "C" fn pl_pivot(
     values_ptr: *const *const c_char, values_len: usize,
     index_ptr: *const *const c_char, index_len: usize,
     columns_ptr: *const *const c_char, columns_len: usize,
-    agg_code: i32
+    agg_code: u8,
+    agg_expr_ptr: *mut ExprContext,
+    sort_columns: bool,
+    separator_ptr: *const c_char
 ) -> *mut DataFrameContext {
     ffi_try!({
         let ctx = unsafe { &*df_ptr };
@@ -592,7 +594,7 @@ pub extern "C" fn pl_pivot(
         let to_strs = |ptr, len| unsafe {
             let mut v = Vec::with_capacity(len);
             for &p in std::slice::from_raw_parts(ptr, len) {
-                v.push(ptr_to_str(p).unwrap()); // 返回 &str
+                v.push(ptr_to_str(p).unwrap());
             }
             v
         };
@@ -600,18 +602,30 @@ pub extern "C" fn pl_pivot(
         let values = to_strs(values_ptr, values_len);
         let index = to_strs(index_ptr, index_len);
         let columns = to_strs(columns_ptr, columns_len);
+
+        // parse separator (Option<&str>)
+        let separator = if separator_ptr.is_null() {
+            None
+        } else {
+            ptr_to_str(separator_ptr).ok()
+        };
         
-        let el = col(""); 
-        let agg_expr = match agg_code {
-            1 => el.sum(),    // Sum
-            2 => el.min(),    // Min
-            3 => el.max(),    // Max
-            4 => el.mean(),   // Mean
-            5 => el.median(), // Median
-            6 => len(),       // Count
-            7 => len(),       // Len
-            8 => el.last(),   // Last
-            0 | _ => el.first(), // First (Default)
+        let agg_expr = if !agg_expr_ptr.is_null() {
+            let e_ctx = unsafe { Box::from_raw(agg_expr_ptr) };
+            e_ctx.inner
+        } else {
+            let el = col(""); 
+            match agg_code {
+                1 => el.sum(),
+                2 => el.min(),
+                3 => el.max(),
+                4 => el.mean(),
+                5 => el.median(),
+                6 => len(),
+                7 => len(),
+                8 => el.last(),
+                0 | _ => el.first(),
+            }
         };
 
         let res_df = pivot_stable(
@@ -619,9 +633,9 @@ pub extern "C" fn pl_pivot(
             columns,          // I0
             Some(index),  // Option<I1>
             Some(values),   // Option<I2>
-            false,          // sort_columns
+            sort_columns,          // sort_columns
             Some(agg_expr), // Option<Expr>
-            None            // separator
+            separator            // separator
         )?;
 
         Ok(Box::into_raw(Box::new(DataFrameContext { df: res_df })))

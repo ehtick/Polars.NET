@@ -189,7 +189,7 @@ module pl =
 
     /// <summary> Pivot the DataFrame from long to wide format. </summary>
     let pivot (index: string list) (columns: string list) (values: string list) (aggFn: PivotAgg) (df: DataFrame) : DataFrame =
-        df.Pivot index columns values aggFn
+        df.Pivot(index,columns,values,aggFn)
 
     /// <summary>
     /// Unpivot (Melt) the DataFrame.

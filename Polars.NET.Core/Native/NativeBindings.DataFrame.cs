@@ -153,15 +153,17 @@ unsafe internal partial class NativeBindings
         PlConcatType how
     );
     // --- Reshaping (Eager) ---
-    [LibraryImport(LibName)] 
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial DataFrameHandle pl_pivot(
         DataFrameHandle df,
         IntPtr[] values, UIntPtr valuesLen,
         IntPtr[] index, UIntPtr indexLen,
         IntPtr[] columns, UIntPtr columnsLen,
-        PlPivotAgg aggFn
+        PlPivotAgg aggCode,
+        IntPtr aggExpr,
+        [MarshalAs(UnmanagedType.U1)] bool sortColumns,
+        string? separator // Option<&str>
     );
-
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_unpivot(
         DataFrameHandle df,
