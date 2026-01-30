@@ -143,11 +143,43 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(NativeBindings.pl_select(df, rawExprs, (UIntPtr)rawExprs.Length));
     }
 
-    public static DataFrameHandle Join(DataFrameHandle left, DataFrameHandle right, ExprHandle[] leftOn, ExprHandle[] rightOn, PlJoinType how)
+    public static DataFrameHandle Join(
+        DataFrameHandle left, 
+        DataFrameHandle right, 
+        ExprHandle[] leftOn, 
+        ExprHandle[] rightOn, 
+        PlJoinType how,
+        string? suffix,
+        PlJoinValidation validation,
+        PlJoinCoalesce coalesce,
+        PlJoinMaintainOrder maintainOrder,
+        bool nullsEqual,
+        long? sliceOffset,
+        ulong sliceLen)
     {
         var lPtrs = HandlesToPtrs(leftOn);
         var rPtrs = HandlesToPtrs(rightOn);
-        return ErrorHelper.Check(NativeBindings.pl_join(left, right, lPtrs, (UIntPtr)lPtrs.Length, rPtrs, (UIntPtr)rPtrs.Length, how));
+
+        unsafe 
+        {
+            long offsetVal = sliceOffset.GetValueOrDefault();
+            IntPtr offsetPtr = sliceOffset.HasValue ? (IntPtr)(&offsetVal) : IntPtr.Zero;
+
+            return ErrorHelper.Check(NativeBindings.pl_join(
+                left, 
+                right, 
+                lPtrs, (UIntPtr)lPtrs.Length, 
+                rPtrs, (UIntPtr)rPtrs.Length, 
+                how,
+                suffix,         
+                validation,
+                coalesce,
+                maintainOrder,
+                nullsEqual,
+                offsetPtr,      
+                (UIntPtr)sliceLen
+            ));
+        }
     }
     public static DataFrameHandle DataFrameSort(
         DataFrameHandle df, 
@@ -242,6 +274,31 @@ public static partial class PolarsWrapper
 
         return ErrorHelper.Check(h);
     }
+    // ==========================================
+    // Stack Ops
+    // ==========================================
+
+    public static DataFrameHandle HStack(DataFrameHandle df, SeriesHandle[] columns)
+    {
+        if (columns == null || columns.Length == 0)
+        {
+            // If no columns are provided, effectively return a clone of the original
+            return CloneDataFrame(df);
+        }
+
+        using var locker = new SafeHandleLock<SeriesHandle>(columns);
+        
+        return ErrorHelper.Check(NativeBindings.pl_hstack(
+            df, 
+            locker.Pointers, 
+            (UIntPtr)columns.Length
+        ));
+    }
+
+    public static DataFrameHandle VStack(DataFrameHandle df, DataFrameHandle other)
+        => ErrorHelper.Check(NativeBindings.pl_vstack(df, other));
+
+
     public static SeriesHandle DataFrameGetColumn(DataFrameHandle h, string name)
     {
         var sh = NativeBindings.pl_dataframe_get_column(h, name);

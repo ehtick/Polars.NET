@@ -7,7 +7,7 @@ namespace Polars.CSharp;
 /// </summary>
 public enum JoinType
 {
-    Inner,Left, Outer,Cross,Semi,Anti
+    Inner,Left, Outer,Cross,Semi,Anti,IEJoin
 }
 /// <summary>
 /// Specifies the aggregation function for pivot operations.
@@ -192,6 +192,40 @@ public enum UniqueKeepStrategy : byte
     None = 3
 }
 
+public enum JoinValidation: byte
+{
+    // Default
+    ManyToMany = 0,
+    ManyToOne = 1,
+    OneToMany = 2,
+    OneToOne = 3
+}
+
+public enum JoinCoalesce: byte
+{
+    // Default
+    JoinSpecific = 0,
+    CoalesceColumns = 1,
+    KeepColumns = 2,
+}
+
+public enum JoinMaintainOrder: byte
+{
+    // Default
+    None = 0,
+    Left = 1,
+    Right =2,
+    LeftRight =3,
+    RightLeft =4
+}
+
+public enum AsofStrategy: byte
+{
+    Backward = 0,
+    Forward = 1,
+    Nearest = 2
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -243,6 +277,7 @@ internal static class EnumExtensions
         JoinType.Cross => CoreEnums.PlJoinType.Cross,
         JoinType.Semi => CoreEnums.PlJoinType.Semi,
         JoinType.Anti => CoreEnums.PlJoinType.Anti,
+        JoinType.IEJoin => CoreEnums.PlJoinType.IEJoin,
         _ => CoreEnums.PlJoinType.Inner
     };
 
@@ -340,6 +375,37 @@ internal static class EnumExtensions
         UniqueKeepStrategy.Last => CoreEnums.PlUniqueKeepStrategy.Last,
         UniqueKeepStrategy.Any => CoreEnums.PlUniqueKeepStrategy.Any,
         UniqueKeepStrategy.None => CoreEnums.PlUniqueKeepStrategy.None,
+        _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
+    };
+    internal static CoreEnums.PlJoinValidation ToNative(this JoinValidation validation) => validation switch
+    {
+        JoinValidation.ManyToMany => CoreEnums.PlJoinValidation.ManyToMany,
+        JoinValidation.ManyToOne => CoreEnums.PlJoinValidation.ManyToOne,
+        JoinValidation.OneToMany => CoreEnums.PlJoinValidation.OneToMany,
+        JoinValidation.OneToOne => CoreEnums.PlJoinValidation.OneToOne,
+        _ => throw new ArgumentOutOfRangeException(nameof(validation), validation, null)
+    };
+    internal static CoreEnums.PlJoinCoalesce ToNative(this JoinCoalesce coalesce) => coalesce switch
+    {
+        JoinCoalesce.JoinSpecific => CoreEnums.PlJoinCoalesce.JoinSpecific,
+        JoinCoalesce.CoalesceColumns => CoreEnums.PlJoinCoalesce.CoalesceColumns,
+        JoinCoalesce.KeepColumns => CoreEnums.PlJoinCoalesce.KeepColumns,
+        _ => throw new ArgumentOutOfRangeException(nameof(coalesce), coalesce, null)
+    };
+    internal static CoreEnums.PlJoinMaintainOrder ToNative(this JoinMaintainOrder maintainOrder) => maintainOrder switch
+    {
+        JoinMaintainOrder.None => CoreEnums.PlJoinMaintainOrder.None,
+        JoinMaintainOrder.Left => CoreEnums.PlJoinMaintainOrder.Left,
+        JoinMaintainOrder.Right => CoreEnums.PlJoinMaintainOrder.Right,
+        JoinMaintainOrder.LeftRight => CoreEnums.PlJoinMaintainOrder.LeftRight,
+        JoinMaintainOrder.RightLeft => CoreEnums.PlJoinMaintainOrder.RightLeft,
+        _ => throw new ArgumentOutOfRangeException(nameof(maintainOrder), maintainOrder, null)
+    };
+    internal static CoreEnums.PlAsofStrategy ToNative(this AsofStrategy strategy) => strategy switch
+    {
+        AsofStrategy.Backward => CoreEnums.PlAsofStrategy.Backward,
+        AsofStrategy.Forward => CoreEnums.PlAsofStrategy.Forward,
+        AsofStrategy.Nearest => CoreEnums.PlAsofStrategy.Nearest,
         _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
     };
 }

@@ -118,13 +118,20 @@ unsafe internal partial class NativeBindings
         IntPtr[] aggExprs, UIntPtr aggLen
     );
     // Join
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial DataFrameHandle pl_join(
         DataFrameHandle left,
         DataFrameHandle right,
         IntPtr[] leftOn, UIntPtr leftLen,
         IntPtr[] rightOn, UIntPtr rightLen,
-        PlJoinType how
+        PlJoinType how,
+        string? suffix,
+        PlJoinValidation validation,
+        PlJoinCoalesce coalesce,
+        PlJoinMaintainOrder maintainOrder,
+        [MarshalAs(UnmanagedType.U1)] bool nullsEqual,
+        IntPtr sliceOffset,
+        UIntPtr sliceLen
     );
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_dataframe_sort(
@@ -171,5 +178,18 @@ unsafe internal partial class NativeBindings
         ArrowStreamInterop.SinkCallback callback,
         ArrowStreamInterop.CleanupCallback cleanup,
         IntPtr userData
+    );
+    // Stack Ops
+    [LibraryImport(LibName)]
+    public static partial DataFrameHandle pl_hstack(
+        DataFrameHandle df, 
+        IntPtr[] cols, 
+        UIntPtr len
+    );
+
+    [LibraryImport(LibName)]
+    public static partial DataFrameHandle pl_vstack(
+        DataFrameHandle df, 
+        DataFrameHandle other
     );
 }

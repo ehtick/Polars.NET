@@ -9,7 +9,7 @@ use crate::types::*;
 use polars::lazy::dsl::UnpivotArgsDSL;
 use polars::functions::{concat_df_horizontal,concat_df_diagonal};
 use polars::prelude::{Field as PolarsField};
-use crate::utils::{consume_exprs_array, map_jointype, parse_keep_strategy, ptr_to_str};
+use crate::utils::{consume_exprs_array, map_jointype, map_validation, map_coalesce, map_maintain_order,parse_keep_strategy, ptr_to_str};
 
 // ==========================================
 // 0. Memory Safety
@@ -137,7 +137,14 @@ pub extern "C" fn pl_join(
     right_ptr: *mut DataFrameContext,
     left_on_ptr: *const *mut ExprContext, left_on_len: usize,
     right_on_ptr: *const *mut ExprContext, right_on_len: usize,
-    how_code: i32
+    how_code: u8,
+    suffix_ptr: *const c_char,
+    validation_code: u8,
+    coalesce_code: u8,
+    maintain_order_code: u8,
+    nulls_equal: bool,
+    slice_offset_ptr: *const i64, // Nullable pointer for Slice Offset
+    slice_len: usize              // Slice Length
 ) -> *mut DataFrameContext {
     ffi_try!({
         let left_ctx = unsafe { &*left_ptr };
@@ -148,7 +155,37 @@ pub extern "C" fn pl_join(
         let left_on = unsafe { consume_exprs_array(left_on_ptr, left_on_len) };
         let right_on = unsafe { consume_exprs_array(right_on_ptr, right_on_len) };
 
-        let args = JoinArgs::new(how);
+        // 1. Map Suffix
+        let suffix = if suffix_ptr.is_null() {
+            None
+        } else {
+            let s_str = ptr_to_str(suffix_ptr)
+                .map_err(|e| PolarsError::ComputeError(format!("Invalid suffix string: {}", e).into()))?;
+            Some(PlSmallStr::from_str(s_str))
+        };
+
+        // 2. Map Enums
+        let validation = map_validation(validation_code);
+        let coalesce = map_coalesce(coalesce_code);
+        let maintain_order = map_maintain_order(maintain_order_code);
+
+        // 3. Map Slice (Option<(i64, usize)>)
+        let slice = if slice_offset_ptr.is_null() {
+            None
+        } else {
+            Some((unsafe { *slice_offset_ptr }, slice_len))
+        };
+
+        // 4. Construct JoinArgs
+        let args = JoinArgs {
+            how,
+            validation,
+            suffix,
+            slice,
+            nulls_equal,
+            coalesce,
+            maintain_order,
+        };
         
         let res_df = left_ctx.df.clone().lazy()
             .join(right_ctx.df.clone().lazy(), left_on, right_on, args)
@@ -629,7 +666,7 @@ pub extern "C" fn pl_unpivot(
 pub extern "C" fn pl_concat(
     dfs_ptr: *const *mut DataFrameContext,
     len: usize,
-    how: i32 // 0=Vertical, 1=Horizontal, 2=Diagonal
+    how: u8 // 0=Vertical, 1=Horizontal, 2=Diagonal
 ) -> *mut DataFrameContext {
     ffi_try!({
         if len == 0 {
@@ -657,6 +694,57 @@ pub extern "C" fn pl_concat(
         Ok(Box::into_raw(Box::new(DataFrameContext { df: out_df })))
     })
 }
+
+// ==========================================
+// Vstack & Hstack
+// ==========================================
+
+/// Horizontal stack: Appends columns to the DataFrame.
+/// Returns a new DataFrame.
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_hstack(
+    df_ptr: *mut DataFrameContext,
+    cols_ptr: *const *mut SeriesContext,
+    len: usize,
+) -> *mut DataFrameContext {
+    ffi_try!({
+        let ctx = unsafe { &*df_ptr };
+        
+        let slice = unsafe { std::slice::from_raw_parts(cols_ptr, len) };
+        let mut columns = Vec::with_capacity(len);
+
+        for &p in slice {
+            if !p.is_null() {
+                let s_ctx = unsafe { &*p };
+                // Clone the series to ensure we don't steal ownership from the caller
+                columns.push(s_ctx.series.clone().into());
+            }
+        }
+
+        let res_df = ctx.df.hstack(&columns)?;
+        
+        Ok(Box::into_raw(Box::new(DataFrameContext { df: res_df })))
+    })
+}
+
+/// Vertical stack: Appends rows from another DataFrame to this one.
+/// Returns a new DataFrame (polars::vstack clones internally).
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_vstack(
+    df_ptr: *mut DataFrameContext,
+    other_ptr: *mut DataFrameContext,
+) -> *mut DataFrameContext {
+    ffi_try!({
+        let ctx = unsafe { &*df_ptr };
+        let other_ctx = unsafe { &*other_ptr };
+
+        // vstack in polars-core returns a PolarsResult<DataFrame> (it clones self internally)
+        let res_df = ctx.df.vstack(&other_ctx.df)?;
+
+        Ok(Box::into_raw(Box::new(DataFrameContext { df: res_df })))
+    })
+}
+
 // ==========================================
 // Unnest
 // ==========================================

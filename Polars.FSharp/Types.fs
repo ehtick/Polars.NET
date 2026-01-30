@@ -1488,7 +1488,7 @@ and DataFrame(handle: DataFrameHandle) =
     member this.WriteTo(writerAction: Action<IDataReader>, ?bufferSize: int, ?typeOverrides: IDictionary<string, Type>) : unit =
         let capacity = defaultArg bufferSize 5
         
-        use buffer = new BlockingCollection<Apache.Arrow.RecordBatch>(capacity)
+        use buffer = new BlockingCollection<RecordBatch>(capacity)
 
         let consumerTask = Task.Run(fun () ->
             let stream = buffer.GetConsumingEnumerable()
@@ -1648,11 +1648,148 @@ and DataFrame(handle: DataFrameHandle) =
         let aExprs = aggs |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
         this.GroupBy (kExprs, aExprs)
     /// <summary> Join with another DataFrame. </summary>
-    member this.Join (other: DataFrame,leftOn: Expr list,rightOn: Expr list,how: JoinType) : DataFrame =
+    member this.Join (other: DataFrame,
+                      leftOn: Expr list,
+                      rightOn: Expr list,
+                      how: JoinType,
+                      // --- New Optional Parameters ---
+                      ?suffix: string,
+                      ?validation: JoinValidation,
+                      ?coalesce: JoinCoalesce,
+                      ?maintainOrder: JoinMaintainOrder,
+                      ?nullsEqual: bool,
+                      ?sliceOffset: int64,
+                      ?sliceLen: uint64) : DataFrame =
+        
         let lHandles = leftOn |> List.map (fun e -> e.CloneHandle()) |> List.toArray
         let rHandles = rightOn |> List.map (fun e -> e.CloneHandle()) |> List.toArray
-        let h = PolarsWrapper.Join(this.Handle, other.Handle, lHandles, rHandles, how.ToNative())
+        
+        // Handle Defaults
+        let suff = defaultArg suffix null // Pass null to let Rust use default ("_right")
+        let valid = defaultArg validation JoinValidation.ManyToMany
+        let coal = defaultArg coalesce JoinCoalesce.JoinSpecific
+        let mo = defaultArg maintainOrder JoinMaintainOrder.NotMaintainOrder
+        let ne = defaultArg nullsEqual false
+        
+        // Slice logic
+        let so = Option.toNullable sliceOffset
+        let sl = defaultArg sliceLen 0UL
+
+        let h = PolarsWrapper.Join(
+            this.Handle, 
+            other.Handle, 
+            lHandles, 
+            rHandles, 
+            how.ToNative(),
+            suff,
+            valid.ToNative(),
+            coal.ToNative(),
+            mo.ToNative(),
+            ne,
+            so,
+            sl
+        )
         new DataFrame(h)
+    member internal this.JoinAsOfInternal(other: DataFrame, 
+                         leftOn: Expr, 
+                         rightOn: Expr, 
+                         // --- Optional Parameters ---
+                         ?byLeft: Expr list, 
+                         ?byRight: Expr list, 
+                         ?strategy: AsofStrategy, 
+                         ?tolerance: string,      // String
+                         ?toleranceInt: int64,    // Int
+                         ?toleranceFloat: float,  // Float
+                         ?allowEq: bool,
+                         ?checkSorted: bool,
+                         ?suffix: string,
+                         ?validation: JoinValidation,
+                         ?coalesce: JoinCoalesce,
+                         ?maintainOrder: JoinMaintainOrder,
+                         ?nullsEqual: bool,
+                         ?sliceOffset: int64,
+                         ?sliceLen: uint64) : DataFrame =
+        
+        // 1. Convert to Lazy
+        let lfSelf = this.Lazy()
+        let lfOther = other.Lazy()
+
+        // 2. Delegate to LazyFrame.JoinAsOfInternal
+        // F# allows passing optional arguments directly via ?arg=val
+        let resLf = lfSelf.JoinAsOfInternal(
+            lfOther, leftOn, rightOn,
+            ?byLeft = byLeft, 
+            ?byRight = byRight, 
+            ?strategy = strategy, 
+            ?tolerance = tolerance, 
+            ?toleranceInt = toleranceInt, 
+            ?toleranceFloat = toleranceFloat, 
+            ?allowEq = allowEq, 
+            ?checkSorted = checkSorted, 
+            ?suffix = suffix, 
+            ?validation = validation, 
+            ?coalesce = coalesce, 
+            ?maintainOrder = maintainOrder, 
+            ?nullsEqual = nullsEqual, 
+            ?sliceOffset = sliceOffset, 
+            ?sliceLen = sliceLen
+        )
+
+        // 3. Collect back to DataFrame
+        resLf.Collect()
+
+    // ==========================================
+    // Public Overloads (Facade)
+    // ==========================================
+
+    // 1. String Tolerance
+    /// <summary>
+    /// Join with tolerance as string (e.g. "2h", "10s").
+    /// </summary>
+    member this.JoinAsOf(other: DataFrame, leftOn: Expr, rightOn: Expr, tolerance: string, 
+                         ?strategy: AsofStrategy, ?byLeft: Expr list, ?byRight: Expr list) =
+        this.JoinAsOfInternal(
+            other, leftOn, rightOn, 
+            tolerance = tolerance, 
+            ?strategy = strategy, ?byLeft = byLeft, ?byRight = byRight
+        )
+
+    // 2. TimeSpan Tolerance
+    /// <summary>
+    /// Join with tolerance as TimeSpan.
+    /// </summary>
+    member this.JoinAsOf(other: DataFrame, leftOn: Expr, rightOn: Expr, tolerance: System.TimeSpan, 
+                         ?strategy: AsofStrategy, ?byLeft: Expr list, ?byRight: Expr list) =
+        let tolStr = DurationFormatter.ToPolarsString(tolerance)
+        this.JoinAsOfInternal(
+            other, leftOn, rightOn, 
+            tolerance = tolStr, 
+            ?strategy = strategy, ?byLeft = byLeft, ?byRight = byRight
+        )
+
+    // 3. Int64 Tolerance
+    /// <summary>
+    /// Join with tolerance as integer (e.g. timestamp or simple counter).
+    /// </summary>
+    member this.JoinAsOf(other: DataFrame, leftOn: Expr, rightOn: Expr, tolerance: int64, 
+                         ?strategy: AsofStrategy, ?byLeft: Expr list, ?byRight: Expr list) =
+        this.JoinAsOfInternal(
+            other, leftOn, rightOn, 
+            toleranceInt = tolerance, 
+            ?strategy = strategy, ?byLeft = byLeft, ?byRight = byRight
+        )
+
+    // 4. Float Tolerance
+    /// <summary>
+    /// Join with tolerance as float.
+    /// </summary>
+    member this.JoinAsOf(other: DataFrame, leftOn: Expr, rightOn: Expr, tolerance: float, 
+                         ?strategy: AsofStrategy, ?byLeft: Expr list, ?byRight: Expr list) =
+        this.JoinAsOfInternal(
+            other, leftOn, rightOn, 
+            toleranceFloat = tolerance, 
+            ?strategy = strategy, ?byLeft = byLeft, ?byRight = byRight
+        )
     /// <summary> Concatenate multiple DataFrames. </summary>
     static member Concat (dfs: DataFrame list) (how: ConcatType): DataFrame =
         let handles = dfs |> List.map (fun df -> df.CloneHandle()) |> List.toArray
@@ -1667,7 +1804,6 @@ and DataFrame(handle: DataFrameHandle) =
         let rows = defaultArg n 5
         let h = PolarsWrapper.Tail(this.Handle, uint rows) 
         new DataFrame(h)
-
 
     /// <summary> 
     /// Explode list columns to rows using a Selector.
@@ -1763,6 +1899,25 @@ and DataFrame(handle: DataFrameHandle) =
     member this.Slice(offset: int64, length: int32) = 
         if length < 0 then raise(ArgumentOutOfRangeException(sprintf "Length must be non-negative."))
         else this.Slice(offset,length)
+    /// <summary>
+    /// Horizontally stack columns to the DataFrame.
+    /// Returns a new DataFrame with the new columns appended.
+    /// </summary>
+    member this.HStack(columns: Series list) : DataFrame =
+        let handles = 
+            columns 
+            |> List.map (fun s -> s.Handle) 
+            |> List.toArray
+        
+        new DataFrame(PolarsWrapper.HStack(this.Handle, handles))
+
+    /// <summary>
+    /// Vertically stack another DataFrame to this one.
+    /// Checks that the schema matches.
+    /// </summary>
+    member this.VStack(other: DataFrame) : DataFrame =
+        new DataFrame(PolarsWrapper.VStack(this.Handle, other.Handle))
+
     // ==========================================
     // Printing / String Representation
     // ==========================================
@@ -2273,15 +2428,49 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <summary>
     /// Join with another LazyFrame.
     /// </summary>
-    member this.Join(other: LazyFrame, leftOn: Expr seq, rightOn: Expr seq, how: JoinType) : LazyFrame =
+    member this.Join(other: LazyFrame, 
+                     leftOn: Expr seq, 
+                     rightOn: Expr seq, 
+                     how: JoinType,
+                     // --- New Optional Parameters ---
+                     ?suffix: string,
+                     ?validation: JoinValidation,
+                     ?coalesce: JoinCoalesce,
+                     ?maintainOrder: JoinMaintainOrder,
+                     ?nullsEqual: bool,
+                     ?sliceOffset: int64,
+                     ?sliceLen: uint64) : LazyFrame =
+
         let lOnArr = leftOn |> Seq.map (fun e -> e.CloneHandle()) |> Seq.toArray
-        
         let rOnArr = rightOn |> Seq.map (fun e -> e.CloneHandle()) |> Seq.toArray
         
         let lHandle = this.CloneHandle()
         let rHandle = other.CloneHandle()
 
-        let newHandle = PolarsWrapper.Join(lHandle, rHandle, lOnArr, rOnArr, how.ToNative())
+        // Handle Defaults
+        let suff = defaultArg suffix null
+        let valid = defaultArg validation JoinValidation.ManyToMany
+        let coal = defaultArg coalesce JoinCoalesce.JoinSpecific
+        let mo = defaultArg maintainOrder JoinMaintainOrder.NotMaintainOrder
+        let ne = defaultArg nullsEqual false
+        
+        let so = Option.toNullable sliceOffset
+        let sl = defaultArg sliceLen 0UL
+
+        let newHandle = PolarsWrapper.Join(
+            lHandle, 
+            rHandle, 
+            lOnArr, 
+            rOnArr, 
+            how.ToNative(),
+            suff,
+            valid.ToNative(),
+            coal.ToNative(),
+            mo.ToNative(),
+            ne,
+            so,
+            sl
+        )
         
         new LazyFrame(newHandle)
     
@@ -2554,34 +2743,128 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <summary>
     /// JoinAsOf with string tolerance (e.g., "2d", "1h").
     /// </summary>
-    member this.JoinAsOf(other: LazyFrame, 
+    member internal this.JoinAsOfInternal(other: LazyFrame, 
                          leftOn: Expr, 
                          rightOn: Expr, 
-                         byLeft: Expr list, 
-                         byRight: Expr list, 
-                         strategy: string option, 
-                         tolerance: string option) : LazyFrame =
+                         // --- Optional Parameters ---
+                         ?byLeft: Expr list, 
+                         ?byRight: Expr list, 
+                         ?strategy: AsofStrategy, 
+                         ?tolerance: string,      // String (e.g. "2h")
+                         ?toleranceInt: int64,    // Int (e.g. timestamp)
+                         ?toleranceFloat: float,  // Float
+                         ?allowEq: bool,
+                         ?checkSorted: bool,
+                         ?suffix: string,
+                         ?validation: JoinValidation,
+                         ?coalesce: JoinCoalesce,
+                         ?maintainOrder: JoinMaintainOrder,
+                         ?nullsEqual: bool,
+                         ?sliceOffset: int64,
+                         ?sliceLen: uint64) : LazyFrame =
         
+        // 1. Clone Handles (Mandatory)
         let lClone = this.CloneHandle()
         let rClone = other.CloneHandle()
-        
         let lOn = leftOn.CloneHandle()
         let rOn = rightOn.CloneHandle()
         
-        let lByArr = byLeft |> List.map (fun e -> e.CloneHandle()) |> List.toArray
-        let rByArr = byRight |> List.map (fun e -> e.CloneHandle()) |> List.toArray
+        // 2. Handle 'By' keys (Optional List -> Handle Array)
+        let toHandleArr (exprs: Expr list option) =
+            match exprs with
+            | Some es -> es |> List.map (fun e -> e.CloneHandle()) |> List.toArray
+            | None -> [||]
 
-        let strat = defaultArg strategy "backward"
-        let tol = Option.toObj tolerance 
+        let lByArr = toHandleArr byLeft
+        let rByArr = toHandleArr byRight
 
+        // 3. Handle Enums & Defaults
+        let strat = defaultArg strategy AsofStrategy.Backward
+        let valid = defaultArg validation JoinValidation.ManyToMany
+        let coal = defaultArg coalesce JoinCoalesce.JoinSpecific
+        let mo = defaultArg maintainOrder JoinMaintainOrder.NotMaintainOrder
+        
+        // 4. Handle Bools & Strings
+        let ae = defaultArg allowEq true
+        let cs = defaultArg checkSorted true
+        let ne = defaultArg nullsEqual false
+        let suff = defaultArg suffix null // Rust default is "_right"
+        
+        // 5. Handle Nullables (Tolerances & Slice)
+        // Option.toObj converts string option -> string (null if None)
+        let tolStr = Option.toObj tolerance 
+        // Option.toNullable converts int option -> Nullable<int>
+        let tolInt = Option.toNullable toleranceInt
+        let tolFloat = Option.toNullable toleranceFloat
+        let sOff = Option.toNullable sliceOffset
+        let sLen = defaultArg sliceLen 0UL
+
+        // 6. Call Wrapper
         let h = PolarsWrapper.JoinAsOf(
             lClone, rClone, 
-            lOn, rOn, 
+            [| lOn |], [| rOn |], // Wrapper expects arrays
             lByArr, rByArr,
-            strat, tol
+            strat.ToNative(),     // Enum -> PlAsofStrategy
+            tolStr,
+            tolInt,
+            tolFloat,
+            ae,
+            cs,
+            suff,
+            valid.ToNative(),
+            coal.ToNative(),
+            mo.ToNative(),
+            ne,
+            sOff,
+            sLen
         )
+        
         new LazyFrame(h)
-    
+
+    /// <summary>
+    /// Join with tolerance as string (e.g. "2h", "10s").
+    /// </summary>
+    member this.JoinAsOf(other: LazyFrame, leftOn: Expr, rightOn: Expr, tolerance: string, 
+                         ?strategy: AsofStrategy, ?byLeft: Expr list, ?byRight: Expr list) =
+        this.JoinAsOfInternal(
+            other, leftOn, rightOn, 
+            tolerance = tolerance, // String
+            ?strategy = strategy, ?byLeft = byLeft, ?byRight = byRight
+        )
+
+    /// <summary>
+    /// Join with tolerance as TimeSpan.
+    /// </summary>
+    member this.JoinAsOf(other: LazyFrame, leftOn: Expr, rightOn: Expr, tolerance: System.TimeSpan, 
+                         ?strategy: AsofStrategy, ?byLeft: Expr list, ?byRight: Expr list) =
+        let tolStr = DurationFormatter.ToPolarsString(tolerance)
+        this.JoinAsOfInternal(
+            other, leftOn, rightOn, 
+            tolerance = tolStr, // Converted String
+            ?strategy = strategy, ?byLeft = byLeft, ?byRight = byRight
+        )
+
+    /// <summary>
+    /// Join with tolerance as integer (e.g. timestamp or simple counter).
+    /// </summary>
+    member this.JoinAsOf(other: LazyFrame, leftOn: Expr, rightOn: Expr, tolerance: int64, 
+                         ?strategy: AsofStrategy, ?byLeft: Expr list, ?byRight: Expr list) =
+        this.JoinAsOfInternal(
+            other, leftOn, rightOn, 
+            toleranceInt = tolerance, // Int64
+            ?strategy = strategy, ?byLeft = byLeft, ?byRight = byRight
+        )
+
+    /// <summary>
+    /// Join with tolerance as float.
+    /// </summary>
+    member this.JoinAsOf(other: LazyFrame, leftOn: Expr, rightOn: Expr, tolerance: float, 
+                         ?strategy: AsofStrategy, ?byLeft: Expr list, ?byRight: Expr list) =
+        this.JoinAsOfInternal(
+            other, leftOn, rightOn, 
+            toleranceFloat = tolerance, // Float
+            ?strategy = strategy, ?byLeft = byLeft, ?byRight = byRight
+        )
     /// <summary>
     /// Slice the LazyFrame along the rows.
     /// </summary>
@@ -2591,22 +2874,6 @@ and LazyFrame(handle: LazyFrameHandle) =
         if length < 0 then raise(ArgumentOutOfRangeException(sprintf "Length must be non-negative."))
         else this.Slice(offset,length)
 
-    /// <summary>
-    /// JoinAsOf with TimeSpan tolerance.
-    /// </summary>
-    member this.JoinAsOf(other: LazyFrame, 
-                         leftOn: Expr, 
-                         rightOn: Expr, 
-                         byLeft: Expr list, 
-                         byRight: Expr list, 
-                         strategy: string option, 
-                         tolerance: TimeSpan option) : LazyFrame =
-        
-        let tolStr = 
-            tolerance 
-            |> Option.map DurationFormatter.ToPolarsString
-
-        this.JoinAsOf(other, leftOn, rightOn, byLeft, byRight, strategy, tolStr)
     static member Concat  (lfs: LazyFrame list) (how: ConcatType) : LazyFrame =
         let handles = lfs |> List.map (fun lf -> lf.CloneHandle()) |> List.toArray
         new LazyFrame(PolarsWrapper.LazyConcat(handles, how.ToNative(), false, true))

@@ -74,21 +74,46 @@ unsafe internal partial class NativeBindings
         IntPtr[] keys, UIntPtr keysLen, 
         IntPtr[] aggs, UIntPtr aggsLen
     );
-    [LibraryImport(LibName)]
-    public static partial LazyFrameHandle pl_lazy_join(
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_lazyframe_join(
         LazyFrameHandle left, 
         LazyFrameHandle right,
         IntPtr[] leftOn, UIntPtr leftLen,
         IntPtr[] rightOn, UIntPtr rightLen,
-        PlJoinType how
+        PlJoinType how,
+        string? suffix,
+        PlJoinValidation validation,
+        PlJoinCoalesce coalesce,
+        PlJoinMaintainOrder maintainOrder,
+        [MarshalAs(UnmanagedType.U1)] bool nullsEqual,
+        IntPtr sliceOffset,
+        UIntPtr sliceLen
     );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial LazyFrameHandle pl_lazy_join_asof(
-        LazyFrameHandle left, LazyFrameHandle right,
-        ExprHandle leftOn, ExprHandle rightOn,
+    public static partial LazyFrameHandle pl_lazyframe_join_asof(
+        LazyFrameHandle left,
+        LazyFrameHandle right,
+        IntPtr[] leftOn, UIntPtr leftLen,
+        IntPtr[] rightOn, UIntPtr rightLen,
+        // AsOf Keys
         IntPtr[] leftBy, UIntPtr leftByLen,
         IntPtr[] rightBy, UIntPtr rightByLen,
-        string strategy, string? tolerance
+        PlAsofStrategy strategy, // u8
+        // Tolerances
+        string? toleranceStr,
+        IntPtr toleranceInt,   // *const i64
+        IntPtr toleranceFloat, // *const f64
+        // AsOf Flags
+        [MarshalAs(UnmanagedType.U1)] bool allowEq,
+        [MarshalAs(UnmanagedType.U1)] bool checkSorted,
+        // JoinArgs Common
+        string? suffix,
+        PlJoinValidation validation,
+        PlJoinCoalesce coalesce,
+        PlJoinMaintainOrder maintainOrder,
+        [MarshalAs(UnmanagedType.U1)] bool nullsEqual,
+        IntPtr sliceOffset, // *const i64
+        UIntPtr sliceLen
     );
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_lazy_collect(LazyFrameHandle lf);

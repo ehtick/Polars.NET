@@ -446,31 +446,63 @@ type ``Complex Query Tests`` () =
         Assert.Equal(30L, res.Int("sum_1h", 2).Value)
     [<Fact>]
     member _.``Lazy Join (Standard Join)`` () =
-        // 左表: 用户 (id, name)
-        use usersCsv = new TempCsv "id,name\n1,Alice\n2,Bob"
-        // 右表: 订单 (uid, amount)
-        use ordersCsv = new TempCsv "uid,amount\n1,100\n1,200\n3,50"
+        // 1. 准备数据 (内存构建 -> Lazy)
+        // 左表: 用户 (id, name, common)
+        // "common" 列用于测试 Suffix 后缀冲突处理
+        let users = 
+            DataFrame.create [
+                Series.create("id", [1; 2])
+                Series.create("name", ["Alice"; "Bob"])
+                Series.create("common", ["U1"; "U2"]) 
+            ]
+        let lfUsers = users.Lazy()
 
-        let lfUsers = LazyFrame.ScanCsv usersCsv.Path
-        let lfOrders = LazyFrame.ScanCsv ordersCsv.Path
+        // 右表: 订单 (uid, amount, common)
+        let orders = 
+            DataFrame.create [
+                Series.create("uid", [1; 1; 3])
+                Series.create("amount", [100; 200; 50])
+                Series.create("common", ["O1"; "O2"; "O3"]) 
+            ]
+        let lfOrders = orders.Lazy()
 
+        // 2. 执行 Join (Left Join)
+        // 注意：这里直接调用 .Join 类方法，以便使用可选参数
+        // 预期行为：
+        // - Alice (1) 匹配到两单 (100, 200)
+        // - Bob (2) 无匹配 (null)
+        // - 列名冲突自动处理 (common -> common_right_test)
         let res = 
-            lfUsers
-            |> pl.joinLazy lfOrders [pl.col "id"] [pl.col "uid"] JoinType.Left
+            lfUsers.Join(
+                other = lfOrders, 
+                leftOn = [pl.col "id"], 
+                rightOn = [pl.col "uid"], 
+                how = JoinType.Left,
+                // --- 新功能测试 ---
+                suffix = "_right_test",            // 自定义后缀
+                validation = JoinValidation.ManyToMany // 显式指定验证模式
+            )
             |> pl.collect
-            |> pl.sort(pl.col "id", false)
 
-        // 验证
-        // Alice (id=1) 有两单
-        Assert.Equal("Alice", res.String("name", 0).Value)
-        Assert.Equal(100L, res.Int("amount", 0).Value)
+        let resSorted = res.Sort([pl.col "id"; pl.col "amount"], [false; false], [false;false]) // 排序保证断言顺序
+
+        // 3. 验证
+        // Row 0: Alice - 100
+        Assert.Equal("Alice", resSorted.Cell<string>(0, "name"))
+        Assert.Equal(100, resSorted.Cell<int>(0, "amount"))
+        Assert.Equal("U1", resSorted.Cell<string>(0, "common"))             // 左表原样
+        Assert.Equal("O1", resSorted.Cell<string>(0, "common_right_test"))  // 右表加后缀
+
+        // Row 1: Alice - 200
+        Assert.Equal("Alice", resSorted.Cell<string>(1, "name"))
+        Assert.Equal(200, resSorted.Cell<int>(1, "amount"))
+
+        // Row 2: Bob - null
+        Assert.Equal("Bob", resSorted.Cell<string>(2, "name"))
         
-        Assert.Equal("Alice", res.String("name", 1).Value)
-        Assert.Equal(200L, res.Int("amount", 1).Value)
-
-        // Bob (id=2) 没单 -> null
-        Assert.Equal("Bob", res.String("name", 2).Value)
-        Assert.True(res.Int("amount", 2).IsNone) // 验证 Left Join 的空值处理
+        // 验证空值 (Amount 应该是 null)
+        let amountNull = resSorted.Column("amount").IsNullAt(2)
+        Assert.True(amountNull, "Bob should have null amount")
     [<Fact>]
     member _.``Join AsOf: Trades matching Quotes (with GroupBy and Tolerance)`` () =
         // 1. 交易数据 (Trades)
@@ -500,15 +532,18 @@ type ``Complex Query Tests`` () =
         // 3. 执行 AsOf Join
         // 逻辑：找到交易发生时刻(time)之前(backward)最近的一次报价
         // 必须匹配 ticker (by=["ticker"])
-        // 容差: 2个时间单位 (tolerance="2")
+        // 容差: 2个时间单位 (tolerance=2L)
         let res = 
-            lfTrades
-            |> pl.joinAsOf lfQuotes 
-                (pl.col "time") (pl.col "time") // On Time
-                [pl.col "ticker"] [pl.col "ticker"] // By Ticker
-                (Some "backward") // Strategy
-                (Some "2")        // Tolerance: 只匹配最近2ms内的数据
-            |> pl.sortLazy (pl.col "ticker") false // 排序方便断言
+            lfTrades.JoinAsOf(
+                lfQuotes,
+                pl.col "time",
+                pl.col "time", 
+                2L,                      
+                strategy = Backward,       
+                byLeft = [pl.col "ticker"], 
+                byRight = [pl.col "ticker"]
+            )
+            |> pl.sortLazy (pl.col "ticker") false
             |> pl.sortLazy (pl.col "time") false
             |> pl.collect
 

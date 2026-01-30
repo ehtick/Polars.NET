@@ -222,67 +222,74 @@ HR,50";
     // Join Tests
     // ==========================================
     [Fact]
-    public void Test_DataFrame_Join_MultiColumn()
+    public void Test_DataFrame_Join_MultiColumn_WithParams()
     {
-        // 场景：学生在不同年份有不同的成绩
-        // Alice 在 2023 和 2024 都有成绩
-        // Bob 只有 2023 的成绩
-        var scoresContent = @"student,year,score
-Alice,2023,85
-Alice,2024,90
-Bob,2023,70";
-        using var scoresCsv = new DisposableFile(scoresContent, ".csv");
-        using var scoresDf = DataFrame.ReadCsv(scoresCsv.Path);
+        // 1. 准备数据：使用 FromColumns 在内存中直接构建
+        // 场景：学生成绩表 (Left)
+        // 包含一个 'note' 列，用于制造列名冲突，测试 suffix
+        using var scoresDf = DataFrame.FromColumns(new 
+        {
+            student = new[] { "Alice", "Alice", "Bob" },
+            year    = new[] { 2023,    2024,    2023 },
+            score   = new[] { 85,      90,      70 },
+            note    = new[] { "Score1", "Score2", "Score3" } 
+        });
 
-        // 场景：班级分配表
-        // Alice: 2023是Math班, 2024是Physics班
-        // Bob:   2024是History班 (注意：Bob 2023没有班级记录)
-        var classContent = @"student,year,class
-Alice,2023,Math
-Alice,2024,Physics
-Bob,2024,History";
-        using var classCsv = new DisposableFile(classContent, ".csv");
-        using var classDf = DataFrame.ReadCsv(classCsv.Path);
+        // 场景：班级分配表 (Right)
+        // 同样包含 'note' 列
+        using var classDf = DataFrame.FromColumns(new 
+        {
+            student = new[] { "Alice", "Alice", "Bob" },
+            year    = new[] { 2023,    2024,    2024 },
+            className = new[] { "Math", "Physics", "History" }, // 避免用 C# 关键字 class
+            note    = new[] { "Class1", "Class2", "Class3" }
+        });
 
-        // 执行多列 Join (Inner Join)
-        // 逻辑：必须 student 和 year 都相同才算匹配
-        // 预期结果：
-        // 1. Alice + 2023 -> 匹配
-        // 2. Alice + 2024 -> 匹配
-        // 3. Bob + 2023   -> 左表有Bob 2023，但右表只有 Bob 2024 -> 丢弃 (因为是 Inner Join)
+        // 2. 执行 Join 测试新参数
+        // 逻辑：Inner Join on (student, year)
+        // 预期匹配：
+        // - (Alice, 2023) -> Math
+        // - (Alice, 2024) -> Physics
+        // (Bob, 2023) 左有右无 -> 丢弃
+        // (Bob, 2024) 左无右有 -> 丢弃
         using var joinedDf = scoresDf.Join(
             classDf,
-            leftOn: ["student", "year"],   // 左表双键
-            rightOn: ["student", "year"],  // 右表双键
-            how: JoinType.Inner
+            leftOn: ["student", "year"],
+            rightOn: ["student", "year"],
+            how: JoinType.Inner,
+            
+            // --- 新参数实战 ---
+            suffix: "_conflict_test",          // 自定义后缀
+            validation: JoinValidation.OneToOne, // 验证键的唯一性 (当前数据满足 1:1)
+            coalesce: JoinCoalesce.JoinSpecific  // 默认行为：合并 Key 列
         );
 
-        // 验证高度：应该只有 2 行 (Alice 2023, Alice 2024)
-        Assert.Equal(2, joinedDf.Height); 
+        // 3. 验证基础维度
+        Assert.Equal(2, joinedDf.Height);
         
-        // 验证宽度：student, year, score, class (year 在 Join 后通常会去重或保留一份，具体看 Polars 行为，通常保留左表的)
-        // Polars Join 后列名如果冲突会自动处理，或者保留 Key。
-        // 这里的列应该是: student, year, score, class
-        Assert.Equal(4, joinedDf.Width);
+        // 4. 验证列名处理 (Suffix 是否生效)
+        // 原有列: student, year, score, note
+        // 新增列: className, note_conflict_test (右表的 note 加后缀)
+        var cols = joinedDf.Columns;
+        Assert.Contains("note", cols);
+        Assert.Contains("note_conflict_test", cols); // 验证后缀
 
+        // 5. 验证数据正确性 (先排序确保稳定)
+        using var sorted = joinedDf.Sort("year");
+
+        // Row 0: Alice 2023
+        Assert.Equal(2023, sorted.GetValue<int>(0, "year"));
+        Assert.Equal("Math", sorted.GetValue<string>(0, "className"));
         
-        // 排序以确保验证顺序 (按 year 排序)
-        // 但这里我们简单通过 Filter 验证或者假定顺序（CSV读取顺序通常保留）
-        
-        // 验证第一行 (Alice 2023)
-        Assert.Equal("Alice", joinedDf.GetValue<string>(0, "student"));
-        Assert.Equal(2023, joinedDf.GetValue<int>(0, "year"));
-        Assert.Equal("Math", joinedDf.GetValue<string>(0, "class"));
+        // 验证冲突列的内容
+        Assert.Equal("Score1", sorted.GetValue<string>(0, "note"));              // 左表数据
+        Assert.Equal("Class1", sorted.GetValue<string>(0, "note_conflict_test")); // 右表数据
 
-        // 验证第二行 (Alice 2024)
-        Assert.Equal("Alice", joinedDf.GetValue<string>(1, "student"));
-        Assert.Equal(2024, joinedDf.GetValue<int>(1, "year"));
-        Assert.Equal("Physics", joinedDf.GetValue<string>(1, "class"));
-
-        // 验证 Bob 确实被删除了 (因为他在右表没有 2023 的记录)
-        // 我们可以简单地检查 DataFrame 里没有 Bob
-        using var bobCheck = joinedDf.Filter(Col("student") == Lit("Bob"));
-        Assert.Equal(0, bobCheck.Height);
+        // Row 1: Alice 2024
+        Assert.Equal(2024, sorted.GetValue<int>(1, "year"));
+        Assert.Equal("Physics", sorted.GetValue<string>(1, "className"));
+        Assert.Equal("Score2", sorted.GetValue<string>(1, "note"));
+        Assert.Equal("Class2", sorted.GetValue<string>(1, "note_conflict_test"));
     }
     // ==========================================
     // Concat Tests (Vertical, Horizontal, Diagonal)
@@ -817,7 +824,8 @@ B,5";
             dfRight,
             leftOn: Col("ts"),
             rightOn: Col("ts"),
-            strategy: "backward"
+            tolerance: null,
+            strategy: AsofStrategy.Backward
         );
 
         // 验证
@@ -892,5 +900,47 @@ B,5";
         // 3. Keep None (Remove all duplicates)
         var res3 = df.Unique(null, UniqueKeepStrategy.None);
         Assert.Equal(2, res3.Height); // A=2 and A=3 are unique. A=1 appears twice so both removed.
+    }
+    [Fact]
+    public void Test_HStack_VStack()
+    {
+        // --- 1. Test HStack ---
+        // 初始 DF: [a]
+        using var df1 = DataFrame.FromColumns(new { a = new[] { 1, 2, 3 } });
+        
+        // 新列: [b]
+        using var sNew = new Series("b", [10, 20, 30]);
+
+        // 执行 HStack -> [a, b]
+        using var hStacked = df1.HStack(sNew);
+
+        Assert.Equal(3, hStacked.Height);
+        Assert.Equal(2, hStacked.Width);
+        Assert.Equal("a", hStacked.Columns[0]);
+        Assert.Equal("b", hStacked.Columns[1]);
+        Assert.Equal(10, hStacked["b"][0]);
+
+        // --- 2. Test VStack ---
+        // DF2: [a, b] (schema 必须一致)
+        using var df2 = DataFrame.FromColumns(new 
+        { 
+            a = new[] { 4, 5 }, 
+            b = new[] { 40, 50 } 
+        });
+
+        // 执行 VStack: hStacked (3 rows) + df2 (2 rows) -> 5 rows
+        using var vStacked = hStacked.VStack(df2);
+
+        Assert.Equal(5, vStacked.Height);
+        Assert.Equal(2, vStacked.Width);
+        
+        // 验证数据衔接
+        // Row 0 (from df1)
+        Assert.Equal(1, vStacked["a"][0]);
+        Assert.Equal(10, vStacked["b"][0]);
+        
+        // Row 3 (from df2, index 0) -> 总索引 3
+        Assert.Equal(4, vStacked["a"][3]);
+        Assert.Equal(40, vStacked["b"][3]);
     }
 }

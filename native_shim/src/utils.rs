@@ -3,7 +3,7 @@ use std::ffi::{CStr, c_char};
 use polars::frame::UniqueKeepStrategy;
 use polars_arrow::ffi::ArrowArray;
 use polars_arrow::ffi::{export_array_to_c,export_field_to_c};
-use polars::prelude::{ArrowSchema, Expr, JoinType};
+use polars::prelude::{ArrowSchema, AsofStrategy, Expr, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin};
 use polars_arrow::datatypes::Field;
 
 use crate::types::ExprContext;
@@ -84,7 +84,7 @@ pub(crate) unsafe fn consume_exprs_array(
         .collect()
 }
 
-pub(crate) fn map_jointype(code: i32) -> JoinType {
+pub(crate) fn map_jointype(code: u8) -> JoinType {
     match code {
         0 => JoinType::Inner,
         1 => JoinType::Left,
@@ -92,7 +92,48 @@ pub(crate) fn map_jointype(code: i32) -> JoinType {
         3 => JoinType::Cross,
         4 => JoinType::Semi,
         5 => JoinType::Anti,
+        6 => JoinType::IEJoin,
+        7 => JoinType::Cross,
         _ => JoinType::Inner, // Default
+    }
+}
+
+pub fn map_validation(code: u8) -> JoinValidation {
+    match code {
+        0 => JoinValidation::ManyToMany,
+        1 => JoinValidation::ManyToOne,
+        2 => JoinValidation::OneToMany,
+        3 => JoinValidation::OneToOne,
+        _ => JoinValidation::ManyToMany, // Default
+    }
+}
+
+pub fn map_coalesce(code: u8) -> JoinCoalesce {
+    match code {
+        0 => JoinCoalesce::JoinSpecific,
+        1 => JoinCoalesce::CoalesceColumns,
+        2 => JoinCoalesce::KeepColumns,
+        _ => JoinCoalesce::JoinSpecific, // Default
+    }
+}
+
+pub fn map_maintain_order(code: u8) -> MaintainOrderJoin {
+    match code {
+        0 => MaintainOrderJoin::None,
+        1 => MaintainOrderJoin::Left,
+        2 => MaintainOrderJoin::Right,
+        3 => MaintainOrderJoin::LeftRight,
+        4 => MaintainOrderJoin::RightLeft,
+        _ => MaintainOrderJoin::None, // Default
+    }
+}
+
+pub(crate) fn map_asof_strategy(code: u8) -> AsofStrategy {
+    match code {
+        0 => AsofStrategy::Backward,
+        1 => AsofStrategy::Forward,
+        2 => AsofStrategy::Nearest,
+        _ => AsofStrategy::Backward,
     }
 }
 

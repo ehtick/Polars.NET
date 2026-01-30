@@ -113,70 +113,72 @@ David,40,80000";
         Assert.Equal(20, df.GetValue<int?>(1, "B"));
         Assert.Equal(300, df.GetValue<int?>(1, "C"));
     }
-        [Fact]
-    public void Test_LazyFrame_Join_MultiColumn()
+    [Fact]
+    public void Test_LazyFrame_Join_MultiColumn_WithParams()
     {
-        // 场景：学生在不同年份有不同的成绩
-        // Alice 在 2023 和 2024 都有成绩
-        // Bob 只有 2023 的成绩
-        var scoresContent = @"student,year,score
-Alice,2023,85
-Alice,2024,90
-Bob,2023,70";
-        using var scoresCsv = new DisposableFile(scoresContent,".csv");
-        using var scoresLf = LazyFrame.ScanCsv(scoresCsv.Path);
+        // 1. 准备数据 (内存构建 -> Lazy)
+        // 左表：Alice (2023, 2024), Bob (2023)
+        // note 列用于测试 suffix
+        using var scoresDf = DataFrame.FromColumns(new 
+        {
+            student = new[] { "Alice", "Alice", "Bob" },
+            year    = new[] { 2023,    2024,    2023 },
+            score   = new[] { 85,      90,      70 },
+            note    = new[] { "L1",    "L2",    "L3" }
+        });
+        using var scoresLf = scoresDf.Lazy();
 
-        // 场景：班级分配表
-        // Alice: 2023是Math班, 2024是Physics班
-        // Bob:   2024是History班 (注意：Bob 2023没有班级记录)
-        var classContent = @"student,year,class
-Alice,2023,Math
-Alice,2024,Physics
-Bob,2024,History";
-        using var classCsv = new DisposableFile(classContent,".csv");
-        using var classLf = LazyFrame.ScanCsv(classCsv.Path);
+        // 右表：Alice (2023, 2024), Bob (2024)
+        // note 列产生冲突
+        using var classDf = DataFrame.FromColumns(new 
+        {
+            student = new[] { "Alice", "Alice", "Bob" },
+            year    = new[] { 2023,    2024,    2024 },
+            className = new[] { "Math", "Physics", "History" },
+            note    = new[] { "R1",    "R2",    "R3" }
+        });
+        using var classLf = classDf.Lazy();
 
-        // 执行多列 Join (Inner Join)
-        // 逻辑：必须 student 和 year 都相同才算匹配
-        // 预期结果：
-        // 1. Alice + 2023 -> 匹配
-        // 2. Alice + 2024 -> 匹配
-        // 3. Bob + 2023   -> 左表有Bob 2023，但右表只有 Bob 2024 -> 丢弃 (因为是 Inner Join)
+        // 2. 执行 Lazy Join (Inner)
+        // 预期匹配：Alice 2023, Alice 2024
         using var joinedLf = scoresLf.Join(
             classLf,
-            leftOn: [Col("student"), Col("year")],   // 左表双键
-            rightOn: [Col("student"), Col("year")],  // 右表双键
-            how: JoinType.Inner
+            leftOn: [Col("student"), Col("year")],
+            rightOn: [Col("student"), Col("year")],
+            how: JoinType.Inner,
+            
+            // --- 新参数测试 ---
+            suffix: "_lazy_conflict",            // 测试后缀
+            validation: JoinValidation.OneToOne, // 测试 Lazy 模式下的验证 (Lazy 执行时会检查)
+            coalesce: JoinCoalesce.JoinSpecific
         );
+
+        // 3. Collect 执行
         using var joinedDf = joinedLf.Collect();
-        // 验证高度：应该只有 2 行 (Alice 2023, Alice 2024)
-        Assert.Equal(2, joinedDf.Height); 
-        
-        // 验证宽度：student, year, score, class (year 在 Join 后通常会去重或保留一份，具体看 Polars 行为，通常保留左表的)
-        // Polars Join 后列名如果冲突会自动处理，或者保留 Key。
-        // 这里的列应该是: student, year, score, class
-        Assert.Equal(4, joinedDf.Width);
 
-        
-        // 排序以确保验证顺序 (按 year 排序)
-        // 但这里我们简单通过 Filter 验证或者假定顺序（CSV读取顺序通常保留）
-        
-        // 验证第一行 (Alice 2023)
-        Assert.Equal("Alice", joinedDf.Column("student").GetValue<string>(0));
-        Assert.Equal(2023, joinedDf.Column("year").GetValue<long>(0));
-        Assert.Equal("Math", joinedDf.Column("class").GetValue<string>(0));
+        // 4. 验证
+        Assert.Equal(2, joinedDf.Height);
+        Assert.Equal(6, joinedDf.Width); // student, year, score, note, className, note_lazy_conflict
 
-        // 验证第二行 (Alice 2024)
-        Assert.Equal("Alice", joinedDf.Column("student").GetValue<string>(1));
-        Assert.Equal(2024, joinedDf.Column("year").GetValue<long>(1));
-        Assert.Equal("Physics", joinedDf.Column("class").GetValue<string>(1));
+        // 验证 Suffix 生效
+        var cols = joinedDf.ColumnNames;
+        Assert.Contains("note", cols);
+        Assert.Contains("note_lazy_conflict", cols);
 
-        // 验证 Bob 确实被删除了 (因为他在右表没有 2023 的记录)
-        // 我们可以简单地检查 DataFrame 里没有 Bob
+        // 验证数据准确性 (简单取第一行，Alice 2023)
+        // 注意：Join 后的顺序不一定保证，除非 Sort，但在简单场景下通常稳定
+        using var sorted = joinedDf.Sort("year");
+        
+        Assert.Equal(2023, sorted.GetValue<int>(0, "year"));
+        Assert.Equal("Math", sorted.GetValue<string>(0, "className"));
+        Assert.Equal("L1", sorted.GetValue<string>(0, "note"));
+        Assert.Equal("R1", sorted.GetValue<string>(0, "note_lazy_conflict"));
+
+        // 验证 Bob (2023) 被过滤 (Inner Join)
         using var bobCheck = joinedDf.Filter(Col("student") == Lit("Bob"));
         Assert.Equal(0, bobCheck.Height);
     }
-        [Fact]
+    [Fact]
     public void Test_LazyFrame_GroupBy_Agg()
     {
          // 准备数据: Department, Salary
@@ -258,7 +260,7 @@ HR,50";
         // 场景: 股票交易匹配报价，但增加了 "2分钟" 的有效窗口
         // 如果报价太旧（超过2分钟），则认为数据失效，不予匹配
         
-        // 使用 ISO 格式日期，配合 tryParseDates: true，让 Polars 自动识别为 Datetime
+        // 使用 ISO 格式日期，配合 tryParseDates: true
         var tradesContent = @"time,sym,qty
 2024-01-01 10:00:00,AAPL,10
 2024-01-01 10:02:00,AAPL,20
@@ -272,7 +274,6 @@ HR,50";
         using var quotesCsv = new DisposableFile(quotesContent, ".csv");
 
         // [关键] tryParseDates: true
-        // 确保 'time' 列被解析为 Datetime 类型，而不是 String
         using var lfTrades = LazyFrame.ScanCsv(tradesCsv.Path, tryParseDates: true);
         using var lfQuotes = LazyFrame.ScanCsv(quotesCsv.Path, tryParseDates: true);
 
@@ -283,11 +284,11 @@ HR,50";
             rightOn: Col("time"),
             
             // [核心升级] 使用 TimeSpan 强类型容差！
-            // 逻辑：只匹配最近 2 分钟内的报价
-            // 我们刚才实现的 DurationFormatter 会自动将其转为 "2m"
             tolerance: TimeSpan.FromMinutes(2), 
             
-            strategy: "backward",
+            // [核心升级] 使用枚举，拒绝魔法字符串！
+            strategy: AsofStrategy.Backward,
+            
             leftBy: [Col("sym")],
             rightBy: [Col("sym")]
         );
@@ -297,18 +298,13 @@ HR,50";
         // 验证结果
         Assert.Equal(3, df.Height);
 
-        // Row 0: Trade 10:00 -> Quote 09:59 (Diff: 1m)
-        // 1m <= 2m -> 匹配成功
+        // Row 0: Trade 10:00 -> Quote 09:59 (Diff: 1m <= 2m) -> Match
         Assert.Equal(150, df.Column("bid").GetValue<long?>(0));
 
-        // Row 1: Trade 10:02 -> Quote 10:01 (Diff: 1m)
-        // 1m <= 2m -> 匹配成功
+        // Row 1: Trade 10:02 -> Quote 10:01 (Diff: 1m <= 2m) -> Match
         Assert.Equal(151, df.Column("bid").GetValue<long?>(1));
 
-        // Row 2: Trade 10:05 -> Quote 10:01 (Diff: 4m)
-        // backward 找到的最近记录是 10:01
-        // 但是 4m > 2m (Tolerance)
-        // -> 匹配失败，bid 应该为 null
+        // Row 2: Trade 10:05 -> Quote 10:01 (Diff: 4m > 2m) -> No Match
         Assert.Null(df.Column("bid").GetValue<long?>(2));
     }
     [Fact]

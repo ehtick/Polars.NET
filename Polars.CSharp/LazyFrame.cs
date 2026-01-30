@@ -1,3 +1,5 @@
+#pragma warning disable CS1573
+
 using System.Collections.Concurrent;
 using System.Data;
 using Apache.Arrow;
@@ -882,7 +884,7 @@ public class LazyFrame : IDisposable
     /// Note: Both frames must be LazyFrames.
     /// </para>
     /// </summary>
-    /// <seealso cref="DataFrame.Join(DataFrame, Expr[], Expr[], JoinType)"/>
+    /// <seealso cref="DataFrame.Join(DataFrame, Expr[], Expr[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,bool,long?,ulong)"/>
     /// <example>
     /// <code>
     /// var lf1 = df1.Lazy();
@@ -906,7 +908,17 @@ public class LazyFrame : IDisposable
     /// */
     /// </code>
     /// </example>
-    public LazyFrame Join(LazyFrame other, Expr[] leftOn, Expr[] rightOn, JoinType how = JoinType.Inner)
+    public LazyFrame Join(LazyFrame other,        
+        Expr[] leftOn, 
+        Expr[] rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
         var lOn = leftOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         var rOn = rightOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
@@ -917,83 +929,187 @@ public class LazyFrame : IDisposable
             otherClone, 
             lOn, 
             rOn, 
-            how.ToNative()
+            how.ToNative(),
+            suffix,
+            validation.ToNative(),
+            coalesce.ToNative(),
+            maintainOrder.ToNative(),
+            nullsEqual,
+            sliceOffset,
+            sliceLen
         ));
-    }
-    /// <summary>
-    /// Join with another LazyFrame on a single column.
-    /// </summary>
-    /// <param name="other"></param>
-    /// <param name="leftOn"></param>
-    /// <param name="rightOn"></param>
-    /// <param name="how"></param>
-    /// <returns></returns>
-    public LazyFrame Join(LazyFrame other, Expr leftOn, Expr rightOn, JoinType how = JoinType.Inner)
-    {
-        return Join(other,[leftOn], [rightOn], how);
     }
     /// <summary>
     /// Join with another LazyFrame using column names.
     /// </summary>
-    public LazyFrame Join(LazyFrame other, string[] leftOn, string[] rightOn, JoinType how = JoinType.Inner)
+    public LazyFrame Join(LazyFrame other,         
+        string[] leftOn, 
+        string[] rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
         var lExprs = leftOn.Select(Polars.Col).ToArray();
         var rExprs = rightOn.Select(Polars.Col).ToArray();
-
-        return Join(other, lExprs, rExprs, how);
+        return Join(
+            other, 
+            lExprs, 
+            rExprs, 
+            how, 
+            suffix, 
+            validation, 
+            coalesce, 
+            maintainOrder, 
+            nullsEqual, 
+            sliceOffset, 
+            sliceLen
+        );
     }
 
     /// <summary>
     /// Join with another LazyFrame using a single column pair.
     /// </summary>
-    public LazyFrame Join(LazyFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
-        => Join(other, [leftOn], [rightOn], how);
+    public LazyFrame Join(LazyFrame other,
+        string leftOn, 
+        string rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
+    {
+        return Join(
+            other, 
+            [leftOn], 
+            [rightOn], 
+            how, 
+            suffix, 
+            validation, 
+            coalesce, 
+            maintainOrder, 
+            nullsEqual, 
+            sliceOffset, 
+            sliceLen
+        );
+    }
 
     /// <summary>
-    /// Perform an As-Of Join (time-series join).
+    /// Perform an As-of join (also known as a time-series join).
     /// <para>
-    /// This is similar to a left-join except that we match on nearest key rather than equal keys.
-    /// The keys must be sorted.
+    /// This is similar to a left join except that we match on nearest key rather than equal keys.
+    /// The join keys must be sorted.
     /// </para>
     /// </summary>
-    /// <param name="other">The LazyFrame to join with.</param>
-    /// <param name="leftOn">Join key of the left LazyFrame.</param>
-    /// <param name="rightOn">Join key of the right LazyFrame.</param>
-    /// <param name="tolerance">
-    /// Numeric tolerance (e.g. "2", "-1") or temporal tolerance (e.g. "2h", "10s").
-    /// Matches that are further away than this tolerance are discarded.
+    /// <param name="other">The right LazyFrame to join with.</param>
+    /// <param name="leftOn">Join key of the left LazyFrame. Must be sorted.</param>
+    /// <param name="rightOn">Join key of the right LazyFrame. Must be sorted.</param>
+    /// <param name="toleranceStr">
+    /// Tolerance as a time duration string (e.g., "2h", "10s", "1d"). 
+    /// Matches that are further away than this duration are discarded.
+    /// </param>
+    /// <param name="toleranceInt">
+    /// Tolerance as a numeric integer (e.g., for integer-based timestamps or simple counters).
+    /// </param>
+    /// <param name="toleranceFloat">
+    /// Tolerance as a floating point number.
     /// </param>
     /// <param name="strategy">
-    /// The strategy to determine which value is "nearest".
-    /// <list type="bullet">
-    /// <item>
-    ///     <term>backward</term>
-    ///     <description>(Default) Search for the last row in the right frame where <c>right_on &lt;= left_on</c>. 
-    ///     Equivalent to "last known value".</description>
-    /// </item>
-    /// <item>
-    ///     <term>forward</term>
-    ///     <description>Search for the first row in the right frame where <c>right_on &gt;= left_on</c>.
-    ///     Equivalent to "next available value".</description>
-    /// </item>
-    /// <item>
-    ///     <term>nearest</term>
-    ///     <description>Search for the row in the right frame where the absolute difference <c>|left_on - right_on|</c> is smallest.</description>
-    /// </item>
-    /// </list>
+    /// The strategy to determine which value is "nearest" (Backward, Forward, or Nearest).
+    /// Defaults to <see cref="AsofStrategy.Backward"/>.
     /// </param>
-    /// <param name="leftBy">Join on these columns exactly (equivalence join) before performing as-of join.</param>
-    /// <param name="rightBy">Join on these columns exactly (equivalence join) before performing as-of join.</param>
-    public LazyFrame JoinAsOf(
+    /// <param name="leftBy">
+    /// Columns to match exactly (equivalence join) before performing the as-of join. 
+    /// Useful for joining separate time-series per group (e.g., by "Symbol").
+    /// </param>
+    /// <param name="rightBy">
+    /// Columns to match exactly in the right DataFrame.
+    /// </param>
+    /// <param name="allowEq">
+    /// If true, allow exact matches to be included in the result. 
+    /// If false, a match must be strictly unequal (e.g. less than for Backward strategy) to the key.
+    /// </param>
+    /// <param name="checkSorted">
+    /// Check if the join keys are sorted. 
+    /// If false, the user must ensure keys are sorted; otherwise results are undefined (but execution is faster).
+    /// </param>
+    /// <param name="suffix">Suffix to append to columns with name conflicts. Defaults to "_right".</param>
+    /// <param name="validation">Check if join keys are unique (mostly relevant for the 'by' columns).</param>
+    /// <param name="coalesce">How to coalesce the join keys.</param>
+    /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="nullsEqual">Consider nulls as equal.</param>
+    /// <param name="sliceOffset">Slice the result starting at this offset (optimization).</param>
+    /// <param name="sliceLen">Length of the slice to keep.</param>
+    /// <example>
+    /// <code>
+    /// // Trades: Events happening at specific times
+    /// var trades = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] { 10, 20, 30 },
+    ///     stock = new[] { "A", "A", "A" }
+    /// }).Lazy();
+    /// 
+    /// // Quotes: Price updates (irregular intervals)
+    /// // 9->100, 15->101, 25->102, 40->103
+    /// var quotes = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] { 9, 15, 25, 40 },
+    ///     bid = new[] { 100, 101, 102, 103 }
+    /// }).Lazy();
+    /// 
+    /// // Find the latest quote BEFORE or AT the trade time
+    /// var asof = trades.JoinAsOf(
+    ///     quotes, 
+    ///     leftOn: Col("time"), 
+    ///     rightOn: Col("time"),
+    ///     strategy: AsofStrategy.Backward
+    /// );
+    /// 
+    /// var df = asof.Collect();
+    /// df.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌──────┬───────┬─────┐
+    /// │ time ┆ stock ┆ bid │
+    /// │ ---  ┆ ---   ┆ --- │
+    /// │ i32  ┆ str   ┆ i32 │
+    /// ╞══════╪═══════╪═════╡
+    /// │ 10   ┆ A     ┆ 100 │ // Matches time 9
+    /// │ 20   ┆ A     ┆ 101 │ // Matches time 15
+    /// │ 30   ┆ A     ┆ 102 │ // Matches time 25
+    /// └──────┴───────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
+    internal LazyFrame JoinAsOf(
         LazyFrame other, 
         Expr leftOn, Expr rightOn, 
-        string? tolerance = null,
-        string strategy = "backward",
+        string? toleranceStr = null,
+        long? toleranceInt = null,
+        double? toleranceFloat = null,
+        AsofStrategy strategy = AsofStrategy.Backward,
         Expr[]? leftBy = null,
-        Expr[]? rightBy = null)
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
         var lfClone = CloneHandle();
         var otherClone = other.CloneHandle();
+        
         var lOn = PolarsWrapper.CloneExpr(leftOn.Handle);
         var rOn = PolarsWrapper.CloneExpr(rightOn.Handle);
         
@@ -1002,35 +1118,56 @@ public class LazyFrame : IDisposable
 
         return new LazyFrame(PolarsWrapper.JoinAsOf(
             lfClone, otherClone,
-            lOn, rOn,
+            [lOn], [rOn], // Wrap single Expr into array
             lBy, rBy,
-            strategy, tolerance
+            strategy.ToNative(),
+            toleranceStr,
+            toleranceInt,
+            toleranceFloat,
+            allowEq,
+            checkSorted,
+            suffix,
+            validation.ToNative(),
+            coalesce.ToNative(),
+            maintainOrder.ToNative(),
+            nullsEqual,
+            sliceOffset,
+            sliceLen
         ));
     }
-    /// <summary>
-    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/summary"/>
-    /// </summary>
-    /// <param name="other"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='other']"/></param>
-    /// <param name="leftOn"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='leftOn']"/></param>
-    /// <param name="rightOn"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='rightOn']"/></param>
+    // 1. String Tolerance
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
     /// <param name="tolerance">
-    /// The temporal tolerance as a <see cref="TimeSpan"/>. 
+    /// Tolerance as a time duration string (e.g., "2h", "10s", "1d"). 
     /// Matches that are further away than this duration are discarded.
     /// </param>
-    /// <param name="strategy"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='strategy']"/></param>
-    /// <param name="leftBy"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='leftBy']"/></param>
-    /// <param name="rightBy"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='rightBy']"/></param>
-    /// <returns><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/returns"/></returns>
-    public LazyFrame JoinAsOf(
-        LazyFrame other, 
-        Expr leftOn, Expr rightOn, 
-        TimeSpan tolerance,
-        string strategy = "backward",
-        Expr[]? leftBy = null,
-        Expr[]? rightBy = null)
-    {
-        return JoinAsOf(other,leftOn,rightOn,DurationFormatter.ToPolarsString(tolerance),strategy,leftBy,rightBy);
-    }
+    public LazyFrame JoinAsOf(LazyFrame other, Expr leftOn, Expr rightOn, string tolerance, AsofStrategy strategy = AsofStrategy.Backward, Expr[]? leftBy = null, Expr[]? rightBy = null)
+        => JoinAsOf(other, leftOn, rightOn, toleranceStr: tolerance, strategy: strategy, leftBy: leftBy, rightBy: rightBy);
+
+    // 2. TimeSpan Tolerance
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <param name="tolerance">
+    /// Tolerance as a <see cref="TimeSpan"/>. 
+    /// Matches that are further away than this duration are discarded.
+    /// </param>
+    public LazyFrame JoinAsOf(LazyFrame other, Expr leftOn, Expr rightOn, TimeSpan tolerance, AsofStrategy strategy = AsofStrategy.Backward, Expr[]? leftBy = null, Expr[]? rightBy = null)
+        => JoinAsOf(other, leftOn, rightOn, toleranceStr: DurationFormatter.ToPolarsString(tolerance), strategy: strategy, leftBy: leftBy, rightBy: rightBy);
+
+    // 3. Int Tolerance (e.g. integer timestamps)
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <param name="tolerance">
+    /// Tolerance as a numeric integer (e.g., for integer-based timestamps or simple counters).
+    /// </param>
+    public LazyFrame JoinAsOf(LazyFrame other, Expr leftOn, Expr rightOn, long tolerance, AsofStrategy strategy = AsofStrategy.Backward, Expr[]? leftBy = null, Expr[]? rightBy = null)
+        => JoinAsOf(other, leftOn, rightOn, toleranceInt: tolerance, strategy: strategy, leftBy: leftBy, rightBy: rightBy);
+
+    // 4. Double Tolerance (e.g. float keys)
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <param name="tolerance">
+    /// Tolerance as a floating point number.
+    /// </param>
+    public LazyFrame JoinAsOf(LazyFrame other, Expr leftOn, Expr rightOn, double tolerance, AsofStrategy strategy = AsofStrategy.Backward, Expr[]? leftBy = null, Expr[]? rightBy = null)
+        => JoinAsOf(other, leftOn, rightOn, toleranceFloat: tolerance, strategy: strategy, leftBy: leftBy, rightBy: rightBy);
     // ==========================================
     // GroupBy
     // ==========================================

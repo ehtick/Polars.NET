@@ -3,7 +3,7 @@ use std::ffi::{CStr, c_char};
 use polars::prelude::*;
 use crate::types::*;
 use polars::lazy::dsl::UnpivotArgsDSL;
-use crate::utils::{consume_exprs_array, map_jointype, parse_keep_strategy, ptr_to_str};
+use crate::utils::{consume_exprs_array, map_jointype,map_validation, map_coalesce, map_maintain_order, parse_keep_strategy,map_asof_strategy, ptr_to_str};
 
 // ==========================================
 // Macro Definition
@@ -492,27 +492,66 @@ pub extern "C" fn pl_lazy_concat(
 // ==========================================
 // Join & Join As of
 // ==========================================
+
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_join(
+pub extern "C" fn pl_lazyframe_join(
     left_ptr: *mut LazyFrameContext,
     right_ptr: *mut LazyFrameContext,
     left_on_ptr: *const *mut ExprContext, left_on_len: usize,
     right_on_ptr: *const *mut ExprContext, right_on_len: usize,
-    how_code: i32 
+    how_code: u8,
+    suffix_ptr: *const c_char,
+    validation_code: u8,
+    coalesce_code: u8,
+    maintain_order_code: u8,
+    nulls_equal: bool,
+    slice_offset_ptr: *const i64, // Nullable pointer for Slice Offset
+    slice_len: usize              // Slice Length
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let left_ctx = unsafe { Box::from_raw(left_ptr) };
-        let right_ctx = unsafe { Box::from_raw(right_ptr) };
+        let right_ctx = unsafe { Box::from_raw(right_ptr)};
+
+        let how = map_jointype(how_code);
 
         let left_on = unsafe { consume_exprs_array(left_on_ptr, left_on_len) };
         let right_on = unsafe { consume_exprs_array(right_on_ptr, right_on_len) };
 
-        let how = map_jointype(how_code);
-        let args = JoinArgs::new(how);
+        // 1. Map Suffix
+        let suffix = if suffix_ptr.is_null() {
+            None
+        } else {
+            let s_str = ptr_to_str(suffix_ptr)
+                .map_err(|e| PolarsError::ComputeError(format!("Invalid suffix string: {}", e).into()))?;
+            Some(PlSmallStr::from_str(s_str))
+        };
 
-        let new_lf = left_ctx.inner.join(right_ctx.inner, left_on, right_on, args);
+        // 2. Map Enums
+        let validation = map_validation(validation_code);
+        let coalesce = map_coalesce(coalesce_code);
+        let maintain_order = map_maintain_order(maintain_order_code);
 
-        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
+        // 3. Map Slice (Option<(i64, usize)>)
+        let slice = if slice_offset_ptr.is_null() {
+            None
+        } else {
+            Some((unsafe { *slice_offset_ptr }, slice_len))
+        };
+
+        // 4. Construct JoinArgs
+        let args = JoinArgs {
+            how,
+            validation,
+            suffix,
+            slice,
+            nulls_equal,
+            coalesce,
+            maintain_order,
+        };
+        
+        let res_lf = left_ctx.inner.join(right_ctx.inner, left_on, right_on, args);
+
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: res_lf })))
     })
 }
 fn exprs_to_names(exprs: &[Expr]) -> PolarsResult<Vec<PlSmallStr>> {
@@ -525,67 +564,106 @@ fn exprs_to_names(exprs: &[Expr]) -> PolarsResult<Vec<PlSmallStr>> {
     }
     Ok(names)
 }
+
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_join_asof(
+pub extern "C" fn pl_lazyframe_join_asof(
     left_ptr: *mut LazyFrameContext,
     right_ptr: *mut LazyFrameContext,
-    left_on_ptr: *mut ExprContext,
-    right_on_ptr: *mut ExprContext,
-    by_left_ptr: *const *mut ExprContext, by_left_len: usize,
-    by_right_ptr: *const *mut ExprContext, by_right_len: usize,
-    strategy_ptr: *const c_char,
-    tolerance_ptr: *const c_char 
+    left_on_ptr: *const *mut ExprContext, left_on_len: usize,
+    right_on_ptr: *const *mut ExprContext, right_on_len: usize,
+    
+    // --- AsOf Args ---
+    left_by_ptr: *const *mut ExprContext, left_by_len: usize,
+    right_by_ptr: *const *mut ExprContext, right_by_len: usize,
+    strategy_code: u8,
+    
+    // --- Tolerance ---
+    tolerance_str_ptr: *const c_char, // Duration String (e.g. "2h")
+    tolerance_i64_ptr: *const i64,    // Int Scalar (e.g. Timestamp, Int)
+    tolerance_f64_ptr: *const f64,    // Float Scalar (e.g. Float)
+    
+    allow_eq: bool,
+    check_sorted: bool,
+    
+    // --- JoinArgs ---
+    suffix_ptr: *const c_char,
+    validation_code: u8,
+    coalesce_code: u8,
+    maintain_order_code: u8,
+    nulls_equal: bool,
+    slice_offset_ptr: *const i64,     // Slice Offset
+    slice_len: usize                  // Slice Len
 ) -> *mut LazyFrameContext {
     ffi_try!({
-        let left = unsafe { Box::from_raw(left_ptr) };
-        let right = unsafe { Box::from_raw(right_ptr) };
-        let left_on = unsafe { Box::from_raw(left_on_ptr) };
-        let right_on = unsafe { Box::from_raw(right_on_ptr) };
+        let left_ctx = unsafe { Box::from_raw(left_ptr) };
+        let right_ctx = unsafe { Box::from_raw(right_ptr) };
+
+        let left_on = unsafe { consume_exprs_array(left_on_ptr, left_on_len) };
+        let right_on = unsafe { consume_exprs_array(right_on_ptr, right_on_len) };
         
-        let by_left_exprs = unsafe { consume_exprs_array(by_left_ptr, by_left_len) };
-        let by_right_exprs = unsafe { consume_exprs_array(by_right_ptr, by_right_len) };
+        let by_left_exprs = unsafe { consume_exprs_array(left_by_ptr, left_by_len) };
+        let by_right_exprs = unsafe { consume_exprs_array(right_by_ptr, right_by_len) };
 
         let left_by_names = if by_left_exprs.is_empty() { None } else { Some(exprs_to_names(&by_left_exprs)?) };
         let right_by_names = if by_right_exprs.is_empty() { None } else { Some(exprs_to_names(&by_right_exprs)?) };
 
-        let strategy_str = ptr_to_str(strategy_ptr).unwrap_or("backward");
-        let strategy = match strategy_str {
-            "forward" => AsofStrategy::Forward,
-            "nearest" => AsofStrategy::Nearest,
-            _ => AsofStrategy::Backward,
-        };
+        // 1. Strategy
+        let strategy = map_asof_strategy(strategy_code);
 
-        let tol_str = if tolerance_ptr.is_null() { "" } else { ptr_to_str(tolerance_ptr).unwrap() };
-        
-        let (tolerance, tolerance_str_val) = if tol_str.is_empty() {
-            (None, None)
-        } else if let Ok(v) = tol_str.parse::<i64>() {
-            // Pure Interger -> Scalar(Int64)
-            (Some(Scalar::new(DataType::Int64, AnyValue::Int64(v))), None)
-        } else if let Ok(v) = tol_str.parse::<f64>() {
-            // Float -> Scalar(Float64)
-            (Some(Scalar::new(DataType::Float64, AnyValue::Float64(v))), None)
-        } else {
-            (None, Some(PlSmallStr::from_str(tol_str)))
-        };
+        // 2. Tolerance Logic (Priority: Str > I64 > F64)
+        let mut tolerance: Option<Scalar> = None;
+        let mut tolerance_str: Option<PlSmallStr> = None;
 
-        // Build Options
-        let options = AsOfOptions {
+        if !tolerance_str_ptr.is_null() {
+            let s = ptr_to_str(tolerance_str_ptr).unwrap();
+            tolerance_str = Some(PlSmallStr::from_str(s));
+        } else if !tolerance_i64_ptr.is_null() {
+             let v = unsafe { *tolerance_i64_ptr };
+             tolerance = Some(Scalar::new(DataType::Int64, AnyValue::Int64(v)));
+        } else if !tolerance_f64_ptr.is_null() {
+             let v = unsafe { *tolerance_f64_ptr };
+             tolerance = Some(Scalar::new(DataType::Float64, AnyValue::Float64(v)));
+        }
+
+        let asof_options = AsOfOptions {
             strategy,
-            tolerance,      // Option<Scalar>
-            tolerance_str: tolerance_str_val, // Option<PlSmallStr>
+            tolerance,
+            tolerance_str,
             left_by: left_by_names,
             right_by: right_by_names,
-            allow_eq: true, 
-            check_sortedness: true, 
+            allow_eq,
+            check_sortedness: check_sorted,
         };
 
-        let new_lf = left.inner.join_builder()
-            .with(right.inner)
-            .left_on([left_on.inner])
-            .right_on([right_on.inner])
-            .how(JoinType::AsOf(Box::new(options)))
-            .finish();
+        // 3. JoinArgs Common
+        let suffix = if suffix_ptr.is_null() {
+            None
+        } else {
+            let s = ptr_to_str(suffix_ptr).unwrap();
+            Some(PlSmallStr::from_str(s))
+        };
+        
+        let validation = map_validation(validation_code);
+        let coalesce = map_coalesce(coalesce_code);
+        let maintain_order = map_maintain_order(maintain_order_code);
+
+        let slice = if slice_offset_ptr.is_null() {
+            None
+        } else {
+            Some((unsafe { *slice_offset_ptr }, slice_len))
+        };
+
+        let args = JoinArgs {
+            how: JoinType::AsOf(Box::new(asof_options)),
+            validation,
+            suffix,
+            slice,
+            nulls_equal,
+            coalesce,
+            maintain_order,
+        };
+
+        let new_lf = left_ctx.inner.join(right_ctx.inner, left_on, right_on, args);
 
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
     })

@@ -1,3 +1,5 @@
+#pragma warning disable CS1573
+
 using Polars.NET.Core;
 using Polars.NET.Core.Arrow;
 using Apache.Arrow;
@@ -863,29 +865,53 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // Combining DataFrames
     // ==========================================
     /// <summary>
-    /// Join with another DataFrame using expressions to define the keys.
-    /// <para>
-    /// This is the most flexible join method, allowing for joining on calculations or different column names 
-    /// without renaming them first.
-    /// </para>
+    /// Join with another DataFrame using expression expressions.
     /// </summary>
-    /// <param name="other">The right DataFrame to join with.</param>
-    /// <param name="leftOn">Expressions for the left keys.</param>
-    /// <param name="rightOn">Expressions for the right keys.</param>
-    /// <param name="how">Type of join (Inner, Left, Outer, Cross, etc.). Default is Inner.</param>
-    /// <returns>A new DataFrame resulting from the join.</returns>
-    public DataFrame Join(DataFrame other, Expr[] leftOn, Expr[] rightOn, JoinType how = JoinType.Inner)
+    /// <param name="other">DataFrame to join with.</param>
+    /// <param name="leftOn">Left keys.</param>
+    /// <param name="rightOn">Right keys.</param>
+    /// <param name="how">Join type (Inner, Left, etc.).</param>
+    /// <param name="suffix">Suffix to append to columns with same name in right DataFrame. Default "_right".</param>
+    /// <param name="validation">Check if join keys are unique.</param>
+    /// <param name="coalesce">How to coalesce the join keys.</param>
+    /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="nullsEqual">Consider nulls as equal.</param>
+    /// <param name="sliceOffset">Slice the result starting at this offset.</param>
+    /// <param name="sliceLen">Length of the slice.</param>
+    public DataFrame Join(
+        DataFrame other, 
+        Expr[] leftOn, 
+        Expr[] rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
+        // 1. Clone Expression Handles
         var lHandles = leftOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         var rHandles = rightOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
 
-        return new DataFrame(PolarsWrapper.Join(
-                Handle, 
-                other.Handle, 
-                lHandles, 
-                rHandles, 
-                how.ToNative()
-            ));
+        // 2. Call Wrapper with all arguments
+        var dfHandle = PolarsWrapper.Join(
+            Handle, 
+            other.Handle, 
+            lHandles, 
+            rHandles, 
+            how.ToNative(),
+            suffix,
+            validation.ToNative(),
+            coalesce.ToNative(),
+            maintainOrder.ToNative(),
+            nullsEqual,
+            sliceOffset,
+            sliceLen
+        );
+
+        return new DataFrame(dfHandle);
     }
     /// <summary>
     /// Join with another DataFrame using column names.
@@ -894,6 +920,13 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="leftOn">Column names in the left DataFrame to join on.</param>
     /// <param name="rightOn">Column names in the right DataFrame to join on.</param>
     /// <param name="how">Type of join (Inner, Left, Outer, Cross, etc.). Default is Inner.</param>
+    /// <param name="suffix">Suffix to append to columns with same name in right DataFrame. Default "_right".</param>
+    /// <param name="validation">Check if join keys are unique.</param>
+    /// <param name="coalesce">How to coalesce the join keys.</param>
+    /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="nullsEqual">Consider nulls as equal.</param>
+    /// <param name="sliceOffset">Slice the result starting at this offset.</param>
+    /// <param name="sliceLen">Length of the slice.</param>
     /// <returns>A new DataFrame resulting from the join.</returns>
     /// <example>
     /// <code>
@@ -931,12 +964,34 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    public DataFrame Join(DataFrame other, string[] leftOn, string[] rightOn, JoinType how = JoinType.Inner)
+    public DataFrame Join(
+        DataFrame other, 
+        string[] leftOn, 
+        string[] rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
-        var lExprs = leftOn.Select(c => Polars.Col(c)).ToArray();
-        var rExprs = rightOn.Select(c => Polars.Col(c)).ToArray();
-
-        return Join(other, lExprs, rExprs, how);
+        var lExprs = leftOn.Select(Polars.Col).ToArray();
+        var rExprs = rightOn.Select(Polars.Col).ToArray();
+        return Join(
+            other, 
+            lExprs, 
+            rExprs, 
+            how, 
+            suffix, 
+            validation, 
+            coalesce, 
+            maintainOrder, 
+            nullsEqual, 
+            sliceOffset, 
+            sliceLen
+        );
     }
 
     /// <summary>
@@ -946,25 +1001,42 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="leftOn">The column name in the left DataFrame.</param>
     /// <param name="rightOn">The column name in the right DataFrame.</param>
     /// <param name="how">Type of join. Default is Inner.</param>
-    /// <seealso cref="Join(DataFrame, string[], string[], JoinType)"/>
-    public DataFrame Join(DataFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
-        => Join(other, [leftOn], [rightOn], how);
-    /// <summary>
-    /// Perform an As-Of Join (time-series join).
-    /// <para>
-    /// This is similar to a left join, but instead of looking for exact matches, it matches the nearest key 
-    /// according to the specified <paramref name="strategy"/>.
-    /// This is ideal for joining trades with quotes, or synchronizing time-series data with different timestamps.
-    /// </para>
-    /// </summary>
-    /// <param name="other">The right DataFrame to join with.</param>
-    /// <param name="leftOn">The expression for the key column in the left DataFrame (must be sorted).</param>
-    /// <param name="rightOn">The expression for the key column in the right DataFrame (must be sorted).</param>
-    /// <param name="tolerance">Optional tolerance (e.g., "10s", "1d"). Matches beyond this distance are null.</param>
-    /// <param name="strategy">Match strategy: "backward" (default, look for previous value), "forward", or "nearest".</param>
-    /// <param name="leftBy">Optional columns to group by on the left side (exact match required for these).</param>
-    /// <param name="rightBy">Optional columns to group by on the right side (exact match required for these).</param>
-    /// <returns>A new DataFrame with the joined data.</returns>
+    /// <param name="suffix">Suffix to append to columns with same name in right DataFrame. Default "_right".</param>
+    /// <param name="validation">Check if join keys are unique.</param>
+    /// <param name="coalesce">How to coalesce the join keys.</param>
+    /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="nullsEqual">Consider nulls as equal.</param>
+    /// <param name="sliceOffset">Slice the result starting at this offset.</param>
+    /// <param name="sliceLen">Length of the slice.</param>
+    /// <seealso cref="Join(DataFrame, string[], string[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,bool,long?,ulong)"/>
+    public DataFrame Join(
+        DataFrame other, 
+        string leftOn, 
+        string rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
+    {
+        return Join(
+            other, 
+            [leftOn], 
+            [rightOn], 
+            how, 
+            suffix, 
+            validation, 
+            coalesce, 
+            maintainOrder, 
+            nullsEqual, 
+            sliceOffset, 
+            sliceLen
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
     /// <example>
     /// <code>
     /// // Trades: Events happening at specific times
@@ -982,12 +1054,12 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     ///     bid = new[] { 100, 101, 102, 103 }
     /// });
     /// 
-    /// // Find the latest quote BEFORE or AT the trade time (strategy="backward")
+    /// // Find the latest quote BEFORE or AT the trade time
     /// var asof = trades.JoinAsOf(
     ///     quotes, 
     ///     leftOn: Col("time"), 
     ///     rightOn: Col("time"),
-    ///     strategy: "backward"
+    ///     strategy: AsofStrategy.Backward
     /// );
     /// 
     /// asof.Show();
@@ -1005,50 +1077,157 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
+    internal DataFrame JoinAsOf(
+        DataFrame other, 
+        Expr leftOn, Expr rightOn, 
+        string? toleranceStr = null,
+        long? toleranceInt = null,
+        double? toleranceFloat = null,
+        AsofStrategy strategy = AsofStrategy.Backward,
+        Expr[]? leftBy = null,
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
+    {
+        return this.Lazy().JoinAsOf(
+            other.Lazy(),
+            leftOn, rightOn,
+            toleranceStr,
+            toleranceInt,
+            toleranceFloat,
+            strategy,
+            leftBy,
+            rightBy,
+            allowEq,
+            checkSorted,
+            suffix,
+            validation,
+            coalesce,
+            maintainOrder,
+            nullsEqual,
+            sliceOffset,
+            sliceLen
+        ).Collect();
+    }
+
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
-        string? tolerance = null,
-        string strategy = "backward",
+        string tolerance,
+        AsofStrategy strategy = AsofStrategy.Backward,
         Expr[]? leftBy = null,
-        Expr[]? rightBy = null)
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
-        return this.Lazy()
-            .JoinAsOf(
-                other.Lazy(), 
-                leftOn, 
-                rightOn, 
-                tolerance, 
-                strategy, 
-                leftBy, 
-                rightBy
-            )
-            .Collect();
+        return JoinAsOf(
+            other,
+            leftOn,
+            rightOn,
+            tolerance,
+            null,null,
+            strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
+            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+        );
     }
 
-    /// <summary>
-    /// Perform an As-Of Join with tolerance as a TimeSpan.
-    /// <para>
-    /// Convenience overload that formats the <see cref="TimeSpan"/> into a Polars duration string.
-    /// </para>
-    /// </summary>
-    /// <seealso cref="JoinAsOf(DataFrame, Expr, Expr, string?, string, Expr[], Expr[])"/>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
         TimeSpan tolerance,
-        string strategy = "backward",
+        AsofStrategy strategy = AsofStrategy.Backward,
         Expr[]? leftBy = null,
-        Expr[]? rightBy = null)
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
         return JoinAsOf(
             other,
             leftOn,
             rightOn,
             DurationFormatter.ToPolarsString(tolerance),
-            strategy,
-            leftBy,
-            rightBy
+            null,null,
+            strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
+            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+        );
+    }
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    public DataFrame JoinAsOf(
+        DataFrame other, 
+        Expr leftOn, Expr rightOn, 
+        int tolerance,
+        AsofStrategy strategy = AsofStrategy.Backward,
+        Expr[]? leftBy = null,
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
+    {
+        return JoinAsOf(
+            other,
+            leftOn,
+            rightOn,
+            null,
+            tolerance,null,
+            strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
+            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+        );
+    }
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    public DataFrame JoinAsOf(
+        DataFrame other, 
+        Expr leftOn, Expr rightOn, 
+        double tolerance,
+        AsofStrategy strategy = AsofStrategy.Backward,
+        Expr[]? leftBy = null,
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
+    {
+        return JoinAsOf(
+            other,
+            leftOn,
+            rightOn,
+            null,
+            null,tolerance,
+            strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
+            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
         );
     }
     /// <summary>
@@ -1111,6 +1290,36 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         
         return new DataFrame(PolarsWrapper.Concat(handles, how.ToNative()));
     }
+
+    // ==========================================
+    // Stack Ops
+    // ==========================================
+
+    /// <summary>
+    /// Horizontally stack columns to the DataFrame.
+    /// Returns a new DataFrame with the new columns appended.
+    /// </summary>
+    /// <param name="columns">The series to stack.</param>
+    public DataFrame HStack(IEnumerable<Series> columns)
+    {
+        var colsArray = columns as Series[] ?? columns.ToArray();
+        var handles = colsArray.Select(s => s.Handle).ToArray();
+        
+        return new DataFrame(PolarsWrapper.HStack(Handle, handles));
+    }
+
+    /// <summary>
+    /// Horizontally stack columns to the DataFrame.
+    /// </summary>
+    public DataFrame HStack(params Series[] columns) => HStack((IEnumerable<Series>)columns);
+
+    /// <summary>
+    /// Vertically stack another DataFrame to this one.
+    /// Checks that the schema matches.
+    /// </summary>
+    /// <param name="other">The DataFrame to stack vertically.</param>
+    public DataFrame VStack(DataFrame other)
+        => new(PolarsWrapper.VStack(Handle, other.Handle));
 
     // ==========================================
     // GroupBy

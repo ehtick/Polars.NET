@@ -1171,4 +1171,72 @@ type LitTests() =
         let emptyList: int list = []
         let dfEmpty = df.Select(pl.lit emptyList)
         
-        Assert.Equal(0L, dfEmpty.Height) // 结果应该是空表
+        Assert.Equal(0L, dfEmpty.Height)
+    [<Fact>]
+    member _.``Test HStack and VStack``() =
+        // ==========================================
+        // 1. Test HStack (水平拼接)
+        // ==========================================
+        
+        // 初始 DF: [a]
+        // a: [1, 2, 3]
+        use df1 = 
+            DataFrame.create [
+                Series.create("a", [1; 2; 3])
+            ]
+
+        // 新列: [b]
+        // b: [10, 20, 30]
+        use s_new = Series.create("b", [10; 20; 30])
+
+        // 执行 HStack: df1 |> pl.hstack [s_new]
+        // 预期结果: [a, b]
+        use h_stacked = 
+            df1 
+            |> pl.hstack [s_new]
+
+        // 验证维度
+        Assert.Equal(3L, h_stacked.Height)
+        Assert.Equal(2L, h_stacked.Width)
+        
+        // 验证列名
+        let cols = h_stacked.ColumnNames
+        Assert.Equal("a", cols.[0])
+        Assert.Equal("b", cols.[1])
+
+        // 验证数据
+        Assert.Equal(Some 10,unbox h_stacked.[0,"b"]) // Row 0, Col "b"
+
+        // ==========================================
+        // 2. Test VStack (垂直拼接)
+        // ==========================================
+
+        // 准备第二个 DF，结构必须与 h_stacked 一致
+        // DF2: [a, b]
+        // a: [4, 5]
+        // b: [40, 50]
+        use df2 = 
+            DataFrame.create [
+                Series.create("a", [4; 5])
+                Series.create("b", [40; 50])
+            ]
+
+        // 执行 VStack: h_stacked |> pl.vstack df2
+        // 预期结果: 3 + 2 = 5 行
+        use v_stacked = 
+            h_stacked 
+            |> pl.vstack df2
+
+        // 验证维度
+        Assert.Equal(5L, v_stacked.Height)
+        Assert.Equal(2L, v_stacked.Width)
+
+        // 验证数据衔接
+        // Row 0 (来自 df1) -> a=1
+        Assert.Equal(Some 1,unbox v_stacked.[0, 0])
+        
+        // Row 3 (来自 df2 的第1行) -> a=4
+        Assert.Equal(Some 4,unbox v_stacked.[3,"a"])
+        
+        // Row 4 (来自 df2 的第2行) -> b=50
+        Assert.Equal(Some 50,unbox v_stacked.[4,"b"])

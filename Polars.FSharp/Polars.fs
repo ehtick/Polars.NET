@@ -146,7 +146,7 @@ module pl =
         df.Select exprs
     /// <summary> Sort (Order By) the DataFrame. </summary>
     let sort (expr: Expr,desc: bool) (df: DataFrame) : DataFrame =
-        df.Sort (expr,desc )
+        df.Sort (expr,desc)
     let orderBy (expr: Expr) (desc: bool) (df: DataFrame) = sort(expr,desc) df
     /// <summary> Group by keys and apply aggregations. </summary>
     let groupBy (keys: Expr list) (aggs: Expr list) (df: DataFrame) : DataFrame =
@@ -205,6 +205,17 @@ module pl =
         df.Unpivot(index, on, variableName, valueName)
     /// Alias for unpivot
     let melt = unpivot    
+    /// <summary>
+    /// Horizontally stack columns to the DataFrame.
+    /// </summary>
+    let hstack (columns: Series list) (df: DataFrame) : DataFrame =
+        df.HStack columns
+
+    /// <summary>
+    /// Vertically stack another DataFrame to this one.
+    /// </summary>
+    let vstack (other: DataFrame) (df: DataFrame) : DataFrame =
+        df.VStack other
     /// Aggregation Helpers
     // <summary> Sum aggregation. </summary>
     let sum (e: Expr) = e.Sum()
@@ -322,13 +333,28 @@ module pl =
     let joinLazy (other: LazyFrame) (leftOn: Expr list) (rightOn: Expr list) (how: JoinType) (lf: LazyFrame) : LazyFrame =
         lf.Join(other,leftOn, rightOn, how)
     /// <summary> Perform an As-Of Join (time-series join). </summary>
+    /// <summary>
+    /// Perform an As-Of Join (Lite version).
+    /// For full options (int/float tolerance, suffix, validation, etc.), use the member method: df.JoinAsOf(...)
+    /// </summary>
     let joinAsOf (other: LazyFrame) 
-                 (leftOn: Expr) (rightOn: Expr) 
-                 (byLeft: Expr list) (byRight: Expr list) 
-                 (strategy: string option) 
-                 (tolerance: string option) 
+                 (leftOn: Expr) 
+                 (rightOn: Expr) 
+                 (byLeft: Expr list) 
+                 (byRight: Expr list) 
+                 (strategy: AsofStrategy option) 
+                 (tolerance: string option)     
                  (lf: LazyFrame) : LazyFrame =
-        lf.JoinAsOf(other,leftOn,rightOn,byLeft, byRight, strategy, tolerance)
+        
+        lf.JoinAsOfInternal(
+            other, 
+            leftOn, 
+            rightOn, 
+            byLeft = byLeft,
+            byRight = byRight,
+            ?strategy = strategy,
+            ?tolerance = tolerance
+        )
     /// <summary> Concatenate multiple LazyFrames. </summary>
     let concatLazy (lfs: LazyFrame list) (how: ConcatType) : LazyFrame =
         LazyFrame.Concat lfs how

@@ -364,3 +364,49 @@ type RankMethod =
         | Dense -> PlRankMethod.Dense
         | Ordinal -> PlRankMethod.Ordinal
         | Random -> PlRankMethod.Random
+
+type JoinValidation =
+    | ManyToMany
+    | ManyToOne
+    | OneToMany
+    | OneToOne
+    member internal this.ToNative() =
+        match this with
+        | ManyToMany -> PlJoinValidation.ManyToMany
+        | ManyToOne -> PlJoinValidation.ManyToOne
+        | OneToMany -> PlJoinValidation.OneToMany
+        | OneToOne -> PlJoinValidation.OneToOne
+
+type JoinCoalesce =
+    | JoinSpecific
+    | CoalesceColumns
+    | KeepColumns
+    member internal this.ToNative() =
+        match this with
+        | JoinSpecific -> PlJoinCoalesce.JoinSpecific
+        | CoalesceColumns -> PlJoinCoalesce.CoalesceColumns
+        | KeepColumns -> PlJoinCoalesce.KeepColumns
+
+type JoinMaintainOrder =
+    | NotMaintainOrder
+    | Left
+    | Right
+    | LeftRight
+    | RightLeft
+    member internal this.ToNative() =
+        match this with
+        | NotMaintainOrder -> PlJoinMaintainOrder.None
+        | Left -> PlJoinMaintainOrder.Left
+        | Right -> PlJoinMaintainOrder.Right
+        | LeftRight -> PlJoinMaintainOrder.LeftRight
+        | RightLeft -> PlJoinMaintainOrder.RightLeft
+
+type AsofStrategy =
+    | Backward
+    | Forward
+    | Nearest
+    member internal this.ToNative() =
+        match this with
+        | Backward -> PlAsofStrategy.Backward
+        | Forward -> PlAsofStrategy.Forward
+        | Nearest -> PlAsofStrategy.Nearest

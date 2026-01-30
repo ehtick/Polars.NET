@@ -31,14 +31,15 @@ public enum PlDataType : int
     UInt128 =25
 }
 
-public enum PlJoinType
+public enum PlJoinType : byte
 {
     Inner = 0,
     Left = 1,
     Outer = 2, 
     Cross = 3,
     Semi = 4,
-    Anti = 5
+    Anti = 5,
+    IEJoin = 6
 }
 
 public enum PlPivotAgg
@@ -69,7 +70,7 @@ public enum PlTimeUnit
 /// <summary>
 /// Concat Type Enum
 /// </summary>
-public enum PlConcatType
+public enum PlConcatType : byte
 {
     Vertical = 0,
     Horizontal = 1,
@@ -157,4 +158,39 @@ public enum PlUniqueKeepStrategy : byte
     Last = 1,
     Any = 2,
     None = 3
+}
+
+public enum PlJoinValidation: byte
+{
+    // Default
+    ManyToMany = 0,
+    ManyToOne = 1,
+    OneToMany = 2,
+    OneToOne = 3
+}
+
+public enum PlJoinCoalesce: byte
+{
+    // Default
+    JoinSpecific = 0,
+    CoalesceColumns = 1,
+    KeepColumns = 2,
+}
+
+public enum PlJoinMaintainOrder: byte
+{
+    // Default
+    None = 0,
+    Left = 1,
+    Right =2,
+    LeftRight =3,
+    RightLeft =4
+}
+
+public enum PlAsofStrategy: byte  
+{
+    // Default
+    Backward =0,
+    Forward =1,
+    Nearest =2
 }
