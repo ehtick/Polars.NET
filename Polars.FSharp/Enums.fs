@@ -271,14 +271,14 @@ type PivotAgg =
 /// </summary>
 type ConcatType =
     | Vertical
-    | Horizonal
+    | Horizontal
     | Diagonal
     
     // 内部转换 helper
     member internal this.ToNative() =
         match this with
         | Vertical -> PlConcatType.Vertical
-        | Horizonal -> PlConcatType.Horizontal
+        | Horizontal -> PlConcatType.Horizontal
         | Diagonal -> PlConcatType.Diagonal
 
 type Label =

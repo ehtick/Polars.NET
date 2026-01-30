@@ -116,7 +116,7 @@ module Serialization =
                     this |> pl.select exprs
                 )
 
-            pl.concat rowFrames Vertical
+            pl.concat rowFrames
 
         /// <summary>
         /// Get a value from the DataFrame using a generic type argument.

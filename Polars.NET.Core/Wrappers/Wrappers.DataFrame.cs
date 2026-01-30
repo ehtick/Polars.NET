@@ -267,11 +267,11 @@ public static partial class PolarsWrapper
         on.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-    public static DataFrameHandle Concat(DataFrameHandle[] handles, PlConcatType how)
+    public static DataFrameHandle Concat(DataFrameHandle[] handles, PlConcatType how, bool checkDuplicates)
     {
         var ptrs = HandlesToPtrs(handles);
         
-        var h = NativeBindings.pl_concat(ptrs, (UIntPtr)ptrs.Length, how);
+        var h = NativeBindings.pl_concat(ptrs, (UIntPtr)ptrs.Length, how,checkDuplicates);
 
         foreach (var handle in handles)
         {

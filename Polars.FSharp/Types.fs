@@ -1790,10 +1790,34 @@ and DataFrame(handle: DataFrameHandle) =
             toleranceFloat = tolerance, 
             ?strategy = strategy, ?byLeft = byLeft, ?byRight = byRight
         )
-    /// <summary> Concatenate multiple DataFrames. </summary>
-    static member Concat (dfs: DataFrame list) (how: ConcatType): DataFrame =
-        let handles = dfs |> List.map (fun df -> df.CloneHandle()) |> List.toArray
-        new DataFrame(PolarsWrapper.Concat (handles,how.ToNative()))
+    /// <summary>
+    /// General Concat method.
+    /// checkDuplicates is only used when how = ConcatType.Horizontal.
+    /// </summary>
+    static member internal Concat (dfs: seq<DataFrame>, how: ConcatType, ?checkDuplicates: bool) : DataFrame =
+        let handles = dfs |> Seq.map (fun df -> df.CloneHandle()) |> Seq.toArray
+        
+        let check = defaultArg checkDuplicates true
+        let h = PolarsWrapper.Concat(handles, how.ToNative(), check)
+        new DataFrame(h)
+
+    /// <summary>
+    /// Horizontal concatenation (Index alignment).
+    /// </summary>
+    static member ConcatHorizontal (dfs: seq<DataFrame>, ?checkDuplicates: bool) : DataFrame =
+        DataFrame.Concat(dfs, ConcatType.Horizontal, ?checkDuplicates = checkDuplicates)
+
+    /// <summary>
+    /// Vertical concatenation (Column alignment).
+    /// </summary>
+    static member ConcatVertical (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.Concat(dfs, ConcatType.Vertical)
+
+    /// <summary>
+    /// Diagonal concatenation.
+    /// </summary>
+    static member ConcatDiagonal (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.Concat(dfs, ConcatType.Diagonal)
     /// <summary> Get the first n rows. </summary>
     member this.Head (?rows: int) : DataFrame  =
         let n = defaultArg rows 5

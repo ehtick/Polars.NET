@@ -306,7 +306,7 @@ HR,50";
             using var csv2 = new DisposableFile("id,name\n2,Bob","csv");
             using var df2 = DataFrame.ReadCsv(csv2.Path);
 
-            using var res = DataFrame.Concat([df1, df2], ConcatType.Vertical);
+            using var res = DataFrame.Concat([df1, df2]);
 
             Assert.Equal(2, res.Height);
             Assert.Equal(2, res.Width);
@@ -325,7 +325,7 @@ HR,50";
             using var csv2 = new DisposableFile("name,age\nAlice,20\nBob,30",".csv");
             using var df2 = DataFrame.ReadCsv(csv2.Path);
 
-            using var res = DataFrame.Concat([df1, df2], ConcatType.Horizontal);
+            using var res = DataFrame.ConcatHorizontal([df1, df2]);
 
             Assert.Equal(2, res.Height);
             Assert.Equal(3, res.Width); // id + name + age
@@ -351,7 +351,7 @@ HR,50";
             using var csv2 = new DisposableFile("B,C\n20,300",".csv");
             using var df2 = DataFrame.ReadCsv(csv2.Path);
 
-            using var res = DataFrame.Concat([df1, df2], ConcatType.Diagonal);
+            using var res = DataFrame.ConcatDiagonal([df1, df2]);
 
             Assert.Equal(2, res.Height); // 垂直堆叠
             Assert.Equal(3, res.Width);  // A, B, C (列的并集)
@@ -370,7 +370,6 @@ HR,50";
     // Reshaping Tests (Pivot & Unpivot)
     // ==========================================
     [Fact]
-    [Trait("Category", "Debug")] 
     public void Test_Pivot_Unpivot_With_CustomExpr()
     {
         // 1. 准备数据：内存构建 (长表)

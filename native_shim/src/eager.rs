@@ -680,7 +680,8 @@ pub extern "C" fn pl_unpivot(
 pub extern "C" fn pl_concat(
     dfs_ptr: *const *mut DataFrameContext,
     len: usize,
-    how: u8 // 0=Vertical, 1=Horizontal, 2=Diagonal
+    how: u8, // 0=Vertical, 1=Horizontal, 2=Diagonal
+    check_duplicates: bool
 ) -> *mut DataFrameContext {
     ffi_try!({
         if len == 0 {
@@ -698,7 +699,7 @@ pub extern "C" fn pl_concat(
         let out_df = match how {
             0 => concat_df(&dfs)?,
             
-            1 => concat_df_horizontal(&dfs,true)?,
+            1 => concat_df_horizontal(&dfs,check_duplicates)?,
             
             2 => concat_df_diagonal(&dfs)?,
             

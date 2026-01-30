@@ -154,9 +154,28 @@ module pl =
     /// <summary> Perform a join between two DataFrames. </summary>
     let join (other: DataFrame) (leftOn: Expr list) (rightOn: Expr list) (how: JoinType) (left: DataFrame) : DataFrame =
         left.Join (other, leftOn, rightOn, how)
-    /// <summary> Concatenate multiple DataFrames. </summary>
-    let concat (dfs: DataFrame list) (how:ConcatType) : DataFrame =
-        DataFrame.Concat dfs how
+    /// <summary>
+    /// Vertically concat DataFrames (Standard concat).
+    /// </summary>
+    let concat (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.ConcatVertical dfs
+
+    /// <summary>
+    /// Horizontally concat DataFrames.
+    /// </summary>
+    let concatHorizontal (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.ConcatHorizontal(dfs, checkDuplicates=true)
+
+    /// <summary>
+    /// Horizontally concat DataFrames (Allow duplicates).
+    /// </summary>
+    let concatHorizontalNoCheck (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.ConcatHorizontal(dfs, checkDuplicates=false)
+    /// <summary>
+    /// Diagonally concat DataFrames
+    /// </summary>
+    let concatDiagonal (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.ConcatDiagonal dfs
     /// <summary>
     /// Combine multiple expressions horizontally into a List element.
     /// Supports Selectors (e.g. pl.concatList([pl.cs.numeric()])).

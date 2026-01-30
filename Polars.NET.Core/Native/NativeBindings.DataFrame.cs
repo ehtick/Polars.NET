@@ -150,7 +150,8 @@ unsafe internal partial class NativeBindings
     public static partial DataFrameHandle pl_concat(
         IntPtr[] dfs, 
         UIntPtr len,
-        PlConcatType how
+        PlConcatType how,
+        [MarshalAs(UnmanagedType.U1)] bool checkDuplicates
     );
     // --- Reshaping (Eager) ---
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]

@@ -1234,7 +1234,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// Concatenate multiple DataFrames either vertically (union) or horizontally.
     /// </summary>
     /// <param name="dfs">A collection of DataFrames to concatenate.</param>
-    /// <param name="how">The concatenation strategy (Vertical, Horizontal, or Diagonal). Default is Vertical.</param>
     /// <returns>A new combined DataFrame.</returns>
     /// <example>
     /// <code>
@@ -1251,7 +1250,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// });
     /// 
     /// // Vertical Concat (Union rows)
-    /// var catVertical = DataFrame.Concat(new[] { df1, df2 });
+    /// var catVertical = DataFrame.ConcatVertical(new[] { df1, df2 });
     /// catVertical.Show();
     /// /* Output:
     /// shape: (4, 2)
@@ -1269,7 +1268,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// 
     /// // Horizontal Concat (Append columns)
     /// var df3 = DataFrame.FromColumns(new { c = new[] { "x", "y" } });
-    /// var catHorizontal = DataFrame.Concat(new[] { df1, df3 }, ConcatType.Horizontal);
+    /// var catHorizontal = DataFrame.ConcatHorizontal(new[] { df1, df3 });
     /// catHorizontal.Show();
     /// /* Output:
     /// shape: (2, 3)
@@ -1284,11 +1283,42 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    public static DataFrame Concat(IEnumerable<DataFrame> dfs, ConcatType how = ConcatType.Vertical)
+    private static DataFrame ConcatInternal(IEnumerable<DataFrame> dfs, PlConcatType how, bool checkDuplicates)
     {
-        var handles = dfs.Select(d => PolarsWrapper.CloneDataFrame(d.Handle)).ToArray();
-        
-        return new DataFrame(PolarsWrapper.Concat(handles, how.ToNative()));
+        var dfList = dfs.ToList();
+        if (dfList.Count == 0) return new DataFrame(); // 或者抛错
+
+
+        var handles = dfList.Select(df => df.Clone().Handle).ToArray();
+
+        var h = PolarsWrapper.Concat(handles, how, checkDuplicates);
+        return new DataFrame(h);
+    }
+    /// <summary>
+    /// Vertical concatenation of DataFrames.
+    /// </summary>
+    public static DataFrame Concat(IEnumerable<DataFrame> dfs)
+    {
+        return ConcatInternal(dfs, PlConcatType.Vertical, true);
+    }
+    /// <summary>
+    /// Horizontal concatenation of DataFrames.
+    /// </summary>
+    /// <param name="dfs">DataFrames to concat.</param>
+    /// <param name="checkDuplicates">
+    /// If true, check that the column names are unique. 
+    /// If multiple columns have the same name, they will be dropped.
+    /// </param>
+    public static DataFrame ConcatHorizontal(IEnumerable<DataFrame> dfs, bool checkDuplicates = true)
+    {
+        return ConcatInternal(dfs, PlConcatType.Horizontal, checkDuplicates);
+    }
+    /// <summary>
+    /// Diagonal concatenation of DataFrames.
+    /// </summary>
+    public static DataFrame ConcatDiagonal(IEnumerable<DataFrame> dfs)
+    {
+        return ConcatInternal(dfs, PlConcatType.Diagonal, true);
     }
 
     // ==========================================

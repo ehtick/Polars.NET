@@ -324,7 +324,7 @@ type ``Complex Query Tests`` () =
 
         // 1. Horizontal: [a, b]
         let dfHorz = 
-            pl.concatLazy [lf1; lf2] Horizonal
+            pl.concatLazy [lf1; lf2] Horizontal
             |> pl.collect
         
         Assert.Equal(1L, dfHorz.Rows)
@@ -361,7 +361,7 @@ type ``Complex Query Tests`` () =
         let df2 = DataFrame.ReadCsv csv2.Path
 
         // 1. 执行 Concat
-        let bigDf = pl.concat [df1; df2] Vertical
+        let bigDf = pl.concat [df1; df2]
 
         // 验证结果
         Assert.Equal(2L, bigDf.Rows)
