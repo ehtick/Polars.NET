@@ -270,13 +270,108 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             jsonFormat
         );
     }
+
+    // ---------------------------------------------------------
+    // Read IPC (File)
+    // ---------------------------------------------------------
+
     /// <summary>
-    /// Read IPC File
+    /// Read an Arrow IPC (Feather v2) file into a DataFrame.
     /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static DataFrame ReadIpc(string path)
-        => new(PolarsWrapper.ReadIpc(path));
+    /// <param name="path">Path to the IPC file.</param>
+    /// <param name="columns">Columns to select (projection).</param>
+    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
+    /// <param name="rechunk">Make sure the DataFrame is contiguous in memory (default: false).</param>
+    /// <param name="memoryMap">
+    /// Use memory mapping for zero-copy reading. 
+    /// Highly recommended for large files (default: true).
+    /// </param>
+    /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    public static DataFrame ReadIpc(
+        string path,
+        string[]? columns = null,
+        ulong? nRows = null,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool rechunk = false,
+        bool memoryMap = true, 
+        string? includePathColumn = null)
+    {
+        if (!File.Exists(path)) 
+            throw new FileNotFoundException($"IPC file not found: {path}");
+
+        var h = PolarsWrapper.ReadIpc(
+            path,
+            columns,
+            nRows,
+            rowIndexName,
+            rowIndexOffset,
+            rechunk,
+            memoryMap,
+            includePathColumn
+        );
+
+        return new DataFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Read IPC (Memory / Bytes)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read Arrow IPC (Feather v2) from in-memory bytes.
+    /// </summary>
+    public static DataFrame ReadIpc(
+        byte[] buffer,
+        string[]? columns = null,
+        ulong? nRows = null,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool rechunk = false)
+    {
+
+        var h = PolarsWrapper.ReadIpc(
+            buffer,
+            columns,
+            nRows,
+            rowIndexName,
+            rowIndexOffset,
+            rechunk,
+            null
+        );
+
+        return new DataFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Read IPC (Stream)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read Arrow IPC (Feather v2) from a Stream.
+    /// </summary>
+    public static DataFrame ReadIpc(
+        Stream stream,
+        string[]? columns = null,
+        ulong? nRows = null,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool rechunk = false)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        
+        return ReadIpc(
+            ms.ToArray(),
+            columns,
+            nRows,
+            rowIndexName,
+            rowIndexOffset,
+            rechunk
+        );
+    }
 
     /// <summary>
     /// Create DataFrame from Apache Arrow RecordBatch.

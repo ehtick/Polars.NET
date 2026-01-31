@@ -1502,8 +1502,72 @@ and DataFrame(handle: DataFrameHandle) =
             ?ignoreErrors=ignoreErrors, 
             ?jsonFormat=jsonFormat
         )
-    /// <summary> Read an IPC file into a DataFrame (Eager). </summary>
-    static member ReadIpc (path: string) = new DataFrame(PolarsWrapper.ReadIpc path)
+    /// <summary>
+    /// Read an Arrow IPC (Feather v2) file into a DataFrame.
+    /// </summary>
+    static member ReadIpc(path: string,
+                          ?columns: string seq,
+                          ?nRows: uint64,
+                          ?rowIndexName: string,
+                          ?rowIndexOffset: uint32,
+                          ?rechunk: bool,
+                          ?memoryMap: bool,
+                          ?includePathColumn: string) : DataFrame =
+        
+        let cols = columns |> Option.map Seq.toArray |> Option.toObj
+        let rows = Option.toNullable nRows
+        let idxName = Option.toObj rowIndexName
+        let idxOffset = defaultArg rowIndexOffset 0u
+        let rechk = defaultArg rechunk false
+        let mmap = defaultArg memoryMap true 
+        let pathCol = Option.toObj includePathColumn
+
+        let h = PolarsWrapper.ReadIpc(path, cols, rows, idxName, idxOffset, rechk, mmap, pathCol)
+        new DataFrame(h)
+
+    /// <summary>
+    /// Read IPC from in-memory bytes.
+    /// </summary>
+    static member ReadIpc(buffer: byte[],
+                          ?columns: string seq,
+                          ?nRows: uint64,
+                          ?rowIndexName: string,
+                          ?rowIndexOffset: uint32,
+                          ?rechunk: bool,
+                          ?includePathColumn: string) : DataFrame =
+        
+        let cols = columns |> Option.map Seq.toArray |> Option.toObj
+        let rows = Option.toNullable nRows
+        let idxName = Option.toObj rowIndexName
+        let idxOffset = defaultArg rowIndexOffset 0u
+        let rechk = defaultArg rechunk false
+        let pathCol = Option.toObj includePathColumn
+
+        let h = PolarsWrapper.ReadIpc(buffer, cols, rows, idxName, idxOffset, rechk, pathCol)
+        new DataFrame(h)
+
+    /// <summary>
+    /// Read IPC from a Stream.
+    /// </summary>
+    static member ReadIpc(stream: Stream,
+                          ?columns: string seq,
+                          ?nRows: uint64,
+                          ?rowIndexName: string,
+                          ?rowIndexOffset: uint32,
+                          ?rechunk: bool) : DataFrame =
+        
+        use ms = new MemoryStream()
+        stream.CopyTo(ms)
+        let bytes = ms.ToArray()
+
+        DataFrame.ReadIpc(
+            bytes, 
+            ?columns=columns, 
+            ?nRows=nRows, 
+            ?rowIndexName=rowIndexName, 
+            ?rowIndexOffset=rowIndexOffset, 
+            ?rechunk=rechunk
+        )
     /// <summary> Create a DataFrame from a sequence of objects using Arrow streaming. </summary>
     static member ofSeqStream<'T>(data: seq<'T>, ?batchSize: int) : DataFrame =
         let size = defaultArg batchSize 100_000
@@ -1517,7 +1581,7 @@ and DataFrame(handle: DataFrameHandle) =
         let handle = ArrowStreamInterop.ImportEager(batchStream,schema)
 
         if handle.IsInvalid then
-            let emptyBatch = new Apache.Arrow.RecordBatch(schema, System.Array.Empty<Apache.Arrow.IArrowArray>(), 0)
+            let emptyBatch = new RecordBatch(schema, System.Array.Empty<Apache.Arrow.IArrowArray>(), 0)
             let safeHandle = ArrowFfiBridge.ImportDataFrame emptyBatch
             new DataFrame(safeHandle)
         else
@@ -2879,8 +2943,99 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?rowIndexName=rowIndexName,
             ?rowIndexOffset=rowIndexOffset
         )
-    /// <summary> Scan an IPC file into a LazyFrame. </summary>
-    static member ScanIpc (path: string) = new LazyFrame(PolarsWrapper.ScanIpc path)
+    /// <summary>
+    /// Lazily read an Arrow IPC (Feather v2) file.
+    /// </summary>
+    static member ScanIpc(path: string,
+                          ?schema: PolarsSchema,
+                          ?nRows: uint64,
+                          ?rechunk: bool,
+                          ?cache: bool,
+                          ?rowIndexName: string,
+                          ?rowIndexOffset: uint32,
+                          ?includePathColumn: string,
+                          ?hivePartitioning: bool) : LazyFrame =
+        
+        let schemaHandle = match schema with Some s -> s.Handle | None -> null
+        let rows = Option.toNullable nRows
+        let rechk = defaultArg rechunk false
+        let useCache = defaultArg cache true 
+        let idxName = Option.toObj rowIndexName
+        let idxOffset = defaultArg rowIndexOffset 0u
+        let pathCol = Option.toObj includePathColumn
+        let hive = defaultArg hivePartitioning false
+
+        let h = PolarsWrapper.ScanIpc(
+            path, 
+            schemaHandle, 
+            rows, 
+            rechk, 
+            useCache, 
+            idxName, 
+            idxOffset, 
+            pathCol, 
+            hive
+        )
+        new LazyFrame(h)
+
+    /// <summary>
+    /// Lazily read Arrow IPC (Feather v2) from in-memory bytes.
+    /// </summary>
+    static member ScanIpc(buffer: byte[],
+                          ?schema: PolarsSchema,
+                          ?nRows: uint64,
+                          ?rechunk: bool,
+                          ?cache: bool,
+                          ?rowIndexName: string,
+                          ?rowIndexOffset: uint32,
+                          ?hivePartitioning: bool) : LazyFrame =
+        
+        let schemaHandle = match schema with Some s -> s.Handle | None -> null
+        let rows = Option.toNullable nRows
+        let rechk = defaultArg rechunk false
+        let useCache = defaultArg cache true
+        let idxName = Option.toObj rowIndexName
+        let idxOffset = defaultArg rowIndexOffset 0u
+        let hive = defaultArg hivePartitioning false
+
+        let h = PolarsWrapper.ScanIpc(
+            buffer, 
+            schemaHandle, 
+            rows, 
+            rechk, 
+            useCache, 
+            idxName, 
+            idxOffset, 
+            hive
+        )
+        new LazyFrame(h)
+
+    /// <summary>
+    /// Lazily read Arrow IPC (Feather v2) from a Stream.
+    /// </summary>
+    static member ScanIpc(stream: Stream,
+                          ?schema: PolarsSchema,
+                          ?nRows: uint64,
+                          ?rechunk: bool,
+                          ?cache: bool,
+                          ?rowIndexName: string,
+                          ?rowIndexOffset: uint32,
+                          ?hivePartitioning: bool) : LazyFrame =
+        
+        use ms = new MemoryStream()
+        stream.CopyTo(ms)
+        let bytes = ms.ToArray()
+
+        LazyFrame.ScanIpc(
+            bytes,
+            ?schema=schema,
+            ?nRows=nRows,
+            ?rechunk=rechunk,
+            ?cache=cache,
+            ?rowIndexName=rowIndexName,
+            ?rowIndexOffset=rowIndexOffset,
+            ?hivePartitioning=hivePartitioning
+        )
     
     // ==========================================
     // Streaming Scan (Lazy)
@@ -2905,7 +3060,7 @@ and LazyFrame(handle: LazyFrameHandle) =
                 let scope = new IpcStreamService.TempIpcScope<'T>(data, size)
                 
                 // Get FileHandle
-                let handle = PolarsWrapper.ScanIpc scope.FilePath
+                let handle = LazyFrame.ScanIpc(scope.FilePath).Handle
                 
                 { new LazyFrame(handle) with
                     member this.Dispose() =
@@ -2957,7 +3112,7 @@ and LazyFrame(handle: LazyFrameHandle) =
                 new IpcStreamService.TempIpcScopeReader(reader, size)
 
             let scope = runBuffer()
-            let handle = PolarsWrapper.ScanIpc scope.FilePath
+            let handle = LazyFrame.ScanIpc(scope.FilePath).Handle
 
             { new LazyFrame(handle) with
                 member this.Dispose() =
@@ -2997,7 +3152,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         let size = defaultArg batchSize 50_000
         
         let scope = new IpcStreamService.TempIpcScopeReader(reader, size)
-        let handle = PolarsWrapper.ScanIpc scope.FilePath
+        let handle = LazyFrame.ScanIpc(scope.FilePath).Handle
         
         // Inline ScopedLazyFrame
         { new LazyFrame(handle) with

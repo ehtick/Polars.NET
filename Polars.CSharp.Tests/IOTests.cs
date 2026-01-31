@@ -400,25 +400,145 @@ namespace Polars.CSharp.Tests
             // 如果 SafeHandleLock 有问题，这里大概率会 Crash 或者抛出 Invalid Handle
         }
         [Fact]
-        public void Test_Ipc_RoundTrip()
+        public void Test_Ipc_RoundTrip_Advanced()
         {
-            // IPC (Feather) 格式测试
-            using var s = new Series("ts", [new DateTime(2023,1,1), new DateTime(2024,1,1)]);
-            using var dfOriginal = DataFrame.FromSeries(s);
+            // ---------------------------------------------------
+            // 1. 准备数据 (多列，包含不同类型)
+            // ---------------------------------------------------
+            using var sId = new Series("id", new[] { 1, 2, 3, 4, 5 });
+            using var sVal = new Series("val", new[] { "A", "B", "C", "D", "E" });
+            // IPC 对时间类型的保留能力极强，必须测
+            using var sTs = new Series("ts", new[] {
+                new DateTime(2021,1,1),
+                new DateTime(2022,1,1),
+                new DateTime(2023,1,1),
+                new DateTime(2024,1,1),
+                new DateTime(2025,1,1)
+            });
 
-            using var f = new DisposableFile(".ipc"); // 或 .arrow
+            using var dfOriginal = new DataFrame(sId, sVal, sTs);
+            using var f = new DisposableFile(".ipc"); // 或者 .arrow
+
+            // 写入磁盘
             dfOriginal.WriteIpc(f.Path);
 
-            using var dfRead = DataFrame.ReadIpc(f.Path);
-            
-            Assert.Equal(2, dfRead.Height);
-            // 验证时间是否正确读写 (IPC 保留类型能力很强)
-            Assert.Equal(new DateTime(2023,1,1), dfRead.GetValue<DateTime>(0, "ts"));
-            
-            // Lazy Scan IPC
-            using var lf = LazyFrame.ScanIpc(f.Path);
-            using var dfLazy = lf.Collect();
-            Assert.Equal(2, dfLazy.Height);
+            // =================================================================
+            // 2. File Mode (测试高级参数: Projection, Limit, MemoryMap)
+            // =================================================================
+            {
+                // 只读 id 和 val 列，只读前 3 行，启用内存映射
+                using var df = DataFrame.ReadIpc(
+                    f.Path, 
+                    columns: new[] { "id", "val" }, // 列裁剪
+                    nRows: 3,                       // 行限制
+                    memoryMap: true                 // 启用 mmap
+                );
+
+                Assert.Equal(3, df.Height);
+                Assert.Equal(2, df.Width); // ts 列应该不存在
+                
+                Assert.Equal("id", df.ColumnNames[0]);
+                Assert.Equal(1, df.GetValue<int>(0, "id"));
+                Assert.Equal("C", df.GetValue<string>(2, "val"));
+                
+                // 确保 ts 列没读进来
+                Assert.Throws<ArgumentException>(() => df.Column("ts")); 
+            }
+
+            // =================================================================
+            // 3. Memory Mode (Bytes)
+            // =================================================================
+            {
+                byte[] bytes = File.ReadAllBytes(f.Path);
+
+                // 从内存字节读取完整数据
+                using var df = DataFrame.ReadIpc(bytes);
+
+                Assert.Equal(5, df.Height);
+                Assert.Equal(3, df.Width);
+                
+                // 验证时间类型精度是否丢失
+                Assert.Equal(new DateTime(2023,1,1), df.GetValue<DateTime>(2, "ts"));
+            }
+
+            // =================================================================
+            // 4. Stream Mode
+            // =================================================================
+            {
+                using var stream = File.OpenRead(f.Path);
+
+                // 从流读取
+                using var df = DataFrame.ReadIpc(stream);
+
+                Assert.Equal(5, df.Height);
+                Assert.Equal("E", df.GetValue<string>(4, "val"));
+            }
+        }
+        [Fact]
+        public void Test_ScanIpc_Lazy_AllModes()
+        {
+            // ---------------------------------------------------
+            // 1. 准备基准数据
+            // ---------------------------------------------------
+            using var sId = new Series("id", new[] { 1, 2, 3, 4, 5 });
+            using var sVal = new Series("val", new[] { "A", "B", "C", "D", "E" });
+            using var dfOriginal = new DataFrame(sId, sVal);
+
+            using var f = new DisposableFile(".ipc");
+            dfOriginal.WriteIpc(f.Path);
+
+            // =================================================================
+            // 2. File Mode (测试 UnifiedScanArgs: nRows/PreSlice & RowIndex)
+            // =================================================================
+            {
+                // 启用 RowIndex，限制读取前 3 行 (nRows -> PreSlice)
+                using var lf = LazyFrame.ScanIpc(
+                    f.Path, 
+                    nRows: 3, 
+                    rowIndexName: "idx_col"
+                );
+                
+                using var df = lf.Collect();
+
+                Assert.Equal(3, df.Height); // 验证 nRows 生效
+                
+                // 验证 RowIndex 是否存在且正确
+                Assert.True(df.ColumnNames.Contains("idx_col"));
+                Assert.Equal(0u, df.GetValue<uint>(0, "idx_col")); // 0.52 RowIndex 通常是 uint32/64
+                
+                // 验证数据正确性
+                Assert.Equal("C", df.GetValue<string>(2, "val"));
+            }
+
+            // =================================================================
+            // 3. Memory Mode (Bytes) - 验证 Rust ScanSources::Buffers
+            // =================================================================
+            {
+                byte[] bytes = File.ReadAllBytes(f.Path);
+
+                // 这是 C# 独有的能力：直接对内存中的 Feather 数据建立 Lazy 计划
+                using var lf = LazyFrame.ScanIpc(bytes);
+                
+                // 简单过滤一下，证明 Lazy 引擎真的在工作
+                using var df = lf.Filter(Col("id") > 3).Collect();
+
+                Assert.Equal(2, df.Height); // id: 4, 5
+                Assert.Equal(5, df.GetValue<int>(1, "id"));
+            }
+
+            // =================================================================
+            // 4. Stream Mode
+            // =================================================================
+            {
+                using var stream = File.OpenRead(f.Path);
+
+                // API 层会将 Stream 转为 bytes，再走 Memory 路径
+                using var lf = LazyFrame.ScanIpc(stream);
+                using var df = lf.Collect();
+
+                Assert.Equal(5, df.Height);
+                Assert.Equal("E", df.GetValue<string>(4, "val"));
+            }
         }
         [Fact]
         public void Test_Csv_TryParseDates_Auto()

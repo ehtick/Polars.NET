@@ -595,16 +595,163 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
     }
-    public static DataFrameHandle ReadIpc(string path)
+    // ---------------------------------------------------------
+    // Read IPC (File)
+    // ---------------------------------------------------------
+    public static DataFrameHandle ReadIpc(
+        string path,
+        string[]? columns,
+        ulong? nRows,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        bool rechunk,
+        bool memoryMap,
+        string? includePathColumn)
     {
-        if (!File.Exists(path)) throw new FileNotFoundException($"IPC file not found: {path}");
-        return ErrorHelper.Check(NativeBindings.pl_read_ipc(path));
+        return UseUtf8StringArray(columns ?? System.Array.Empty<string>(), colPtrs =>
+        {
+            unsafe
+            {
+                ulong rowsVal = nRows.GetValueOrDefault();
+                IntPtr rowsPtr = nRows.HasValue ? (IntPtr)(&rowsVal) : IntPtr.Zero;
+
+                var h = NativeBindings.pl_read_ipc(
+                    path,
+                    colPtrs, 
+                    (UIntPtr)(columns?.Length ?? 0),
+                    rowsPtr,
+                    rowIndexName,
+                    rowIndexOffset,
+                    rechunk,
+                    memoryMap,
+                    includePathColumn
+                );
+
+                return ErrorHelper.Check(h);
+            }
+        });
     }
 
-    public static LazyFrameHandle ScanIpc(string path)
+    // ---------------------------------------------------------
+    // Read IPC (Memory)
+    // ---------------------------------------------------------
+    public static DataFrameHandle ReadIpc(
+        byte[] buffer,
+        string[]? columns,
+        ulong? nRows,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        bool rechunk,
+        string? includePathColumn)
     {
-        if (!File.Exists(path)) throw new FileNotFoundException($"IPC file not found: {path}");
-        return ErrorHelper.Check(NativeBindings.pl_scan_ipc(path));
+        return UseUtf8StringArray(columns ?? System.Array.Empty<string>(), colPtrs =>
+        {
+            unsafe
+            {
+                fixed (byte* pBuf = buffer)
+                {
+                    ulong rowsVal = nRows.GetValueOrDefault();
+                    IntPtr rowsPtr = nRows.HasValue ? (IntPtr)(&rowsVal) : IntPtr.Zero;
+
+                    var h = NativeBindings.pl_read_ipc_memory(
+                        (IntPtr)pBuf, 
+                        (UIntPtr)buffer.Length,
+                        colPtrs, 
+                        (UIntPtr)(columns?.Length ?? 0),
+                        rowsPtr,
+                        rowIndexName,
+                        rowIndexOffset,
+                        rechunk,
+                        includePathColumn
+                    );
+
+                    return ErrorHelper.Check(h);
+                }
+            }
+        });
+    }
+
+    // ---------------------------------------------------------
+    // Scan IPC (File)
+    // ---------------------------------------------------------
+    public static LazyFrameHandle ScanIpc(
+        string path,
+        SchemaHandle? schema,
+        ulong? nRows,
+        bool rechunk,
+        bool cache,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn,
+        bool hivePartitioning)
+    {
+        unsafe
+        {
+            ulong rowsVal = nRows.GetValueOrDefault();
+            IntPtr rowsPtr = nRows.HasValue ? (IntPtr)(&rowsVal) : IntPtr.Zero;
+
+            using var schemaLock = new SafeHandleLock<SchemaHandle>(
+                schema != null ? new[] { schema } : null
+            );
+            IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+            // 3. 调用 Native
+            var h = NativeBindings.pl_scan_ipc(
+                path,
+                schemaPtr,
+                rowsPtr,
+                rechunk,
+                cache,
+                rowIndexName,
+                rowIndexOffset,
+                includePathColumn,
+                hivePartitioning
+            );
+
+            return ErrorHelper.Check(h);
+        }
+    }
+
+    // ---------------------------------------------------------
+    // Scan IPC (Memory / Bytes)
+    // ---------------------------------------------------------
+    public static LazyFrameHandle ScanIpc(
+        byte[] buffer,
+        SchemaHandle? schema,
+        ulong? nRows,
+        bool rechunk,
+        bool cache,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        bool hivePartitioning)
+    {
+        unsafe
+        {
+            fixed (byte* pBuf = buffer)
+            {
+                ulong rowsVal = nRows.GetValueOrDefault();
+                IntPtr rowsPtr = nRows.HasValue ? (IntPtr)(&rowsVal) : IntPtr.Zero;
+
+                using var schemaLock = new SafeHandleLock<SchemaHandle>(
+                    schema != null ? new[] { schema } : null
+                );
+                IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+                var h = NativeBindings.pl_scan_ipc_memory(
+                    (IntPtr)pBuf, (UIntPtr)buffer.Length,
+                    schemaPtr,
+                    rowsPtr,
+                    rechunk,
+                    cache,
+                    rowIndexName,
+                    rowIndexOffset,
+                    null, 
+                    hivePartitioning
+                );
+
+                return ErrorHelper.Check(h);
+            }
+        }
     }
 
     public static void SinkIpc(LazyFrameHandle lf, string path)

@@ -223,13 +223,126 @@ public class LazyFrame : IDisposable
 
         return new LazyFrame(h);
     }
+    // ---------------------------------------------------------
+    // Scan IPC (File)
+    // ---------------------------------------------------------
+
     /// <summary>
-    /// Read an IPC (Feather) file as a LazyFrame.
+    /// Lazily read an Arrow IPC (Feather v2) file.
     /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static LazyFrame ScanIpc(string path)
-        => new(PolarsWrapper.ScanIpc(path));
+    /// <param name="path">Path to the IPC file.</param>
+    /// <param name="schema">
+    /// Optional schema to enforce. If not provided, the schema is inferred from the file footer.
+    /// </param>
+    /// <param name="nRows">
+    /// Limit the number of rows to scan. 
+    /// Note: In Lazy mode, this acts as a 'Pre-Slice' pushdown.
+    /// </param>
+    /// <param name="rechunk">Rechunk the memory to be contiguous (default: false).</param>
+    /// <param name="cache">Cache the result of the scan (default: true).</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
+    /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    /// <param name="hivePartitioning">Enable Hive partitioning inference (default: false).</param>
+    public static LazyFrame ScanIpc(
+        string path,
+        PolarsSchema? schema = null,
+        ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        bool hivePartitioning = false)
+    {
+        if (!File.Exists(path)) 
+            throw new FileNotFoundException($"IPC file not found: {path}");
+
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ScanIpc(
+            path,
+            schemaHandle,
+            nRows,
+            rechunk,
+            cache,
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            hivePartitioning
+        );
+
+        return new LazyFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Scan IPC (Memory / Bytes)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Lazily read Arrow IPC (Feather v2) from in-memory bytes.
+    /// </summary>
+    public static LazyFrame ScanIpc(
+        byte[] buffer,
+        PolarsSchema? schema = null,
+        ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool hivePartitioning = false)
+    {
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ScanIpc(
+            buffer,
+            schemaHandle,
+            nRows,
+            rechunk,
+            cache,
+            rowIndexName,
+            rowIndexOffset,
+            hivePartitioning
+        );
+
+        return new LazyFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Scan IPC (Stream)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Lazily read Arrow IPC (Feather v2) from a Stream.
+    /// </summary>
+    /// <remarks>
+    /// This reads the stream fully into memory to construct the Lazy execution plan.
+    /// </remarks>
+    public static LazyFrame ScanIpc(
+        Stream stream,
+        PolarsSchema? schema = null,
+        ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool hivePartitioning = false)
+    {
+        // 必须读入内存，因为 ScanSources 需要持有数据所有权
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        
+        return ScanIpc(
+            ms.ToArray(),
+            schema,
+            nRows,
+            rechunk,
+            cache,
+            rowIndexName,
+            rowIndexOffset,
+            hivePartitioning
+        );
+    }
     // ---------------------------------------------------------
     // Scan NDJSON (File)
     // ---------------------------------------------------------
@@ -392,12 +505,11 @@ public class LazyFrame : IDisposable
         if (useBuffered)
         {
             var scope = new IpcStreamService.TempIpcScope<T>(data, batchSize); 
-            var handleBuffered = PolarsWrapper.ScanIpc(scope.FilePath!);
+            var handleBuffered = ScanIpc(scope.FilePath!).Handle;
             return new ScopedLazyFrame(handleBuffered, scope);
         }
 
         // 3. Streaming Mode (Memory Pointer)
-
         IEnumerable<RecordBatch> SafeGenerator()
         {
             bool hasYielded = false;
@@ -562,7 +674,7 @@ public class LazyFrame : IDisposable
         // DataReader cannot be reset, so we must buffer it to disk immediately
         var scope = new IpcStreamService.TempIpcScopeReader(reader, batchSize);
         
-        var handle = PolarsWrapper.ScanIpc(scope.FilePath!);
+        var handle = ScanIpc(scope.FilePath!).Handle;
         
         return new ScopedLazyFrame(handle, scope);
     }

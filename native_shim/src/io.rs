@@ -13,6 +13,8 @@ use std::num::NonZeroUsize;
 use crate::types::{DataFrameContext, LazyFrameContext, SchemaContext};
 use crate::utils::{ptr_to_str,map_parallel_strategy,ptr_to_schema_ref,map_csv_encoding,map_json_format};
 use polars_utils::mmap::MemSlice;
+use std::path::PathBuf;
+use polars_utils::slice_enum::Slice;
 
 // ==========================================
 // Read csv
@@ -780,31 +782,287 @@ pub extern "C" fn pl_scan_ndjson_memory(
 // ==========================================
 // IPC
 // ==========================================
+unsafe fn apply_ipc_options<R: MmapBytesReader>(
+    mut reader: IpcReader<R>,
+    columns_ptr: *const *const c_char, columns_len: usize,
+    n_rows: *const usize,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    rechunk: bool,
+    include_path_ptr: *const c_char,
+    file_path_value: Option<String>
+) -> PolarsResult<IpcReader<R>> {
+    
+    // 1. Columns
+    if columns_len > 0 {
+        let mut cols = Vec::with_capacity(columns_len);
+        for &p in unsafe {std::slice::from_raw_parts(columns_ptr, columns_len)} {
+            if !p.is_null() {
+                if let Ok(s) = ptr_to_str(p) {
+                    cols.push(s.to_string());
+                }
+            }
+        }
+        reader = reader.with_columns(Some(cols));
+    }
+
+    // 2. N Rows
+    if !n_rows.is_null() {
+        reader = unsafe {reader.with_n_rows(Some(*n_rows))};
+    }
+
+    // 3. Row Index
+    if !row_index_name_ptr.is_null() {
+        let name = ptr_to_str(row_index_name_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        reader = reader.with_row_index(Some(RowIndex {
+            name: PlSmallStr::from_str(name),
+            offset: row_index_offset as u32,
+        }));
+    }
+
+    // 4. Include File Path
+    if !include_path_ptr.is_null() {
+        let col_name = ptr_to_str(include_path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        
+        let path_val = file_path_value.unwrap_or_default();
+
+        reader = reader.with_include_file_path(Some((
+            PlSmallStr::from_str(col_name),
+            Arc::from(path_val.as_str())
+        )));
+    }
+
+    // 5. Rechunk
+    reader = reader.set_rechunk(rechunk);
+
+    Ok(reader)
+}
+
+// ---------------------------------------------------------
+// 1. Read IPC (File)
+// ---------------------------------------------------------
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_read_ipc(path_ptr: *const c_char) -> *mut DataFrameContext {
+pub extern "C" fn pl_read_ipc(
+    path_ptr: *const c_char,
+    columns_ptr: *const *const c_char, columns_len: usize,
+    n_rows: *const usize,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    rechunk: bool,
+    memory_map: bool,
+    include_path_ptr: *const c_char
+) -> *mut DataFrameContext {
     ffi_try!({
-        let path = ptr_to_str(path_ptr).unwrap();
-        let file = File::open(path).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        let path_str = ptr_to_str(path_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         
-        let df = IpcReader::new(file).finish()?;
+        let file = File::open(path_str)
+            .map_err(|e| PolarsError::ComputeError(format!("File not found: {}", e).into()))?;
         
+        let mut reader = IpcReader::new(file);
+
+        if memory_map {
+            reader = reader.memory_mapped(Some(PathBuf::from(path_str)));
+        }
+
+        reader = unsafe {
+            apply_ipc_options(
+                reader, 
+                columns_ptr, columns_len, 
+                n_rows, 
+                row_index_name_ptr, row_index_offset, 
+                rechunk,
+                include_path_ptr,
+                Some(path_str.to_string())
+            )?
+        };
+
+        let df = reader.finish()?;
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })
 }
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_scan_ipc(path_ptr: *const c_char) -> *mut LazyFrameContext {
-    ffi_try!({
-        let path = ptr_to_str(path_ptr).unwrap();
-        // [Polars 0.52 Change]
-        // 1. ScanArgsIpc -> IpcScanOptions 
-        let ipc_options = IpcScanOptions::default();
-        
-        // 2.  UnifiedScanArgs (Cloud, Schema, RowCount,etc)
-        let unified_args = UnifiedScanArgs::default();
 
-        // 3. call scan_ipc(path, options, unified_args)
-        let lf = LazyFrame::scan_ipc(PlPath::new(path), ipc_options, unified_args)?;
-        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
+// ---------------------------------------------------------
+// 2. Read IPC (Memory)
+// ---------------------------------------------------------
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_read_ipc_memory(
+    buffer_ptr: *const u8,
+    buffer_len: usize,
+    columns_ptr: *const *const c_char, columns_len: usize,
+    n_rows: *const usize,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    rechunk: bool,
+    include_path_ptr: *const c_char
+) -> *mut DataFrameContext {
+    ffi_try!({
+        let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
+        let cursor = Cursor::new(slice);
+        
+        let reader = IpcReader::new(cursor);
+        
+        let reader = unsafe {
+            apply_ipc_options(
+                reader, 
+                columns_ptr, columns_len, 
+                n_rows, 
+                row_index_name_ptr, row_index_offset, 
+                rechunk,
+                include_path_ptr,
+                None
+            )?
+        };
+
+        let df = reader.finish()?;
+        Ok(Box::into_raw(Box::new(DataFrameContext { df })))
+    })
+}
+unsafe fn apply_unified_scan_args(
+    // Basic paras
+    schema_ptr: *mut SchemaContext,
+    n_rows: *const usize,
+    rechunk: bool,
+    cache: bool,
+    // Row Index
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    // Extra
+    include_path_col_ptr: *const c_char,
+    hive_partitioning: bool,
+) -> PolarsResult<UnifiedScanArgs> {
+    
+    let mut args = UnifiedScanArgs::default();
+
+    // 2. Schema
+    if let Some(s) = unsafe { ptr_to_schema_ref(schema_ptr)} {
+        args.schema = Some(s);
+    }
+
+    // 2. N Rows -> Pre Slice (Enum Variant Correction)
+    if !n_rows.is_null() {
+        let n = unsafe {*n_rows};
+        // Slice is an Enum, use Positive variant
+        args.pre_slice = Some(Slice::Positive { 
+            offset: 0, 
+            len: n // usize
+        });
+    }
+
+    // 4. Row Index
+    if !row_index_name_ptr.is_null() {
+        let name = ptr_to_str(row_index_name_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        args.row_index = Some(RowIndex {
+            name: PlSmallStr::from_str(name),
+            offset: row_index_offset as u32,
+        });
+    }
+
+    // 5. Flags
+    args.rechunk = rechunk;
+    args.cache = cache;
+
+    // 6. Include File Path
+    if !include_path_col_ptr.is_null() {
+        let name = ptr_to_str(include_path_col_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        args.include_file_paths = Some(PlSmallStr::from_str(name));
+    }
+
+    // 7. Hive Options
+    args.hive_options.enabled = Some(hive_partitioning);
+
+    Ok(args)
+}
+
+// ---------------------------------------------------------
+// Scan IPC (File)
+// ---------------------------------------------------------
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_scan_ipc(
+    path_ptr: *const c_char,
+    // --- Unified Args ---
+    schema_ptr: *mut SchemaContext,
+    n_rows: *const usize,
+    rechunk: bool,
+    cache: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    include_path_col_ptr: *const c_char,
+    hive_partitioning: bool
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        let path = ptr_to_str(path_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+
+        let ipc_options = IpcScanOptions::default();
+
+        let unified_args = unsafe {
+            apply_unified_scan_args(
+                schema_ptr,
+                n_rows,
+                rechunk,
+                cache,
+                row_index_name_ptr,
+                row_index_offset,
+                include_path_col_ptr,
+                hive_partitioning
+            )?
+        };
+
+        // 3. Scan
+        let inner = LazyFrame::scan_ipc(
+            PlPath::new(path), 
+            ipc_options, 
+            unified_args
+        )?;
+
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
+    })
+}
+// ---------------------------------------------------------
+// Scan IPC (Memory) 
+// ---------------------------------------------------------
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_scan_ipc_memory(
+    buffer_ptr: *const u8,
+    buffer_len: usize,
+    // --- Unified Args ---
+    schema_ptr: *mut SchemaContext,
+    n_rows: *const usize,
+    rechunk: bool,
+    cache: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    include_path_col_ptr: *const c_char,
+    hive_partitioning: bool
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        // 1. Deep Copy
+        let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
+        let vec_data = slice.to_vec();
+        let mem_slice = MemSlice::from_vec(vec_data);
+        
+        // 2. Construct Sources
+        let sources = ScanSources::Buffers(Arc::new([mem_slice]));
+
+        // 3. Options & Args
+        let ipc_options = IpcScanOptions::default();
+        let unified_args = unsafe {
+            apply_unified_scan_args(
+                schema_ptr, n_rows, rechunk, cache,
+                row_index_name_ptr, row_index_offset,
+                include_path_col_ptr, hive_partitioning
+            )?
+        };
+
+        // 4. Scan Sources
+        let inner = LazyFrame::scan_ipc_sources(
+            sources,
+            ipc_options,
+            unified_args
+        )?;
+
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
     })
 }
 

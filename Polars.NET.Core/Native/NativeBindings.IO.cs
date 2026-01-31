@@ -225,10 +225,72 @@ unsafe internal partial class NativeBindings
     public static partial void pl_lazy_sink_json(LazyFrameHandle lf, string path);
 
     // IPC
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
-    public static partial DataFrameHandle pl_read_ipc(string path);
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
-    public static partial LazyFrameHandle pl_scan_ipc(string path);
+    // ---------------------------------------------------------
+    // Read IPC (File)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_read_ipc(
+        string path,
+        // Options
+        IntPtr[] columns, 
+        UIntPtr columnsLen,
+        IntPtr nRows,               // *const usize
+        string? rowIndexName,
+        uint rowIndexOffset,
+        [MarshalAs(UnmanagedType.U1)] bool rechunk,
+        [MarshalAs(UnmanagedType.U1)] bool memoryMap,
+        string? includePathColumn
+    );
+
+    // ---------------------------------------------------------
+    // Read IPC (Memory)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_read_ipc_memory(
+        IntPtr buffer, 
+        UIntPtr bufferLen,
+        // Options (Same as above)
+        IntPtr[] columns, 
+        UIntPtr columnsLen,
+        IntPtr nRows,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        [MarshalAs(UnmanagedType.U1)] bool rechunk,
+        string? includePathColumn
+    );
+    // ---------------------------------------------------------
+    // Scan IPC (File)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_scan_ipc(
+        string path,
+        // Unified Args
+        IntPtr schema,              // *mut SchemaContext
+        IntPtr nRows,               // *const usize (PreSlice)
+        [MarshalAs(UnmanagedType.U1)] bool rechunk,
+        [MarshalAs(UnmanagedType.U1)] bool cache,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn,
+        [MarshalAs(UnmanagedType.U1)] bool hivePartitioning
+    );
+
+    // ---------------------------------------------------------
+    // Scan IPC (Memory)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_scan_ipc_memory(
+        IntPtr buffer, UIntPtr bufferLen,
+        // Unified Args
+        IntPtr schema,
+        IntPtr nRows,
+        [MarshalAs(UnmanagedType.U1)] bool rechunk,
+        [MarshalAs(UnmanagedType.U1)] bool cache,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn,
+        [MarshalAs(UnmanagedType.U1)] bool hivePartitioning
+    );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial void pl_dataframe_write_ipc(DataFrameHandle df, string path);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
