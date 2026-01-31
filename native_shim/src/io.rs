@@ -1,4 +1,5 @@
 use polars::prelude::*;
+use polars_io::mmap::MmapBytesReader;
 use polars_io::{HiveOptions, RowIndex};
 use polars_arrow::ffi::{self, ArrowArray, ArrowSchema, export_array_to_c, export_field_to_c};
 use polars_arrow::array::StructArray;
@@ -8,8 +9,9 @@ use std::ffi::{CStr, c_void};
 use std::io::{BufReader,Cursor};
 use std::os::raw::c_char;
 use std::fs::File;
+use std::num::NonZeroUsize;
 use crate::types::{DataFrameContext, LazyFrameContext, SchemaContext};
-use crate::utils::{ptr_to_str,map_parallel_strategy,ptr_to_schema_ref,map_csv_encoding};
+use crate::utils::{ptr_to_str,map_parallel_strategy,ptr_to_schema_ref,map_csv_encoding,map_json_format};
 use polars_utils::mmap::MemSlice;
 
 // ==========================================
@@ -102,36 +104,6 @@ pub extern "C" fn pl_read_csv(
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })
 }
-// #[unsafe(no_mangle)]
-// pub extern "C" fn pl_scan_csv(
-//     path: *const c_char,
-//     schema_ptr: *mut SchemaContext,
-//     has_header: bool,
-//     separator: u8,
-//     skip_rows: usize,
-//     try_parse_dates: bool
-// ) -> *mut LazyFrameContext {
-//     ffi_try!({
-//         let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
-
-//         // Schema Overrides
-//         let schema = if schema_ptr.is_null() {
-//             None
-//         } else {
-//             Some(unsafe { &*schema_ptr }.schema.clone())
-//         };
-        
-//         let reader = LazyCsvReader::new(PlPath::new(&p))
-//             .with_has_header(has_header)
-//             .with_separator(separator)
-//             .with_skip_rows(skip_rows)
-//             .with_try_parse_dates(try_parse_dates)
-//             .with_dtype_overwrite(schema); 
-
-//         let inner = reader.finish()?;
-//         Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
-//     })
-// }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_scan_csv(
@@ -539,30 +511,270 @@ pub extern "C" fn pl_scan_parquet_memory(
 // JSON
 // ==========================================
 // Read JSON (Eager)
+unsafe fn apply_json_options<'a, R: MmapBytesReader>(
+    mut reader: JsonReader<'a, R>,
+    // Params
+    columns_ptr: *const *const c_char, 
+    columns_len: usize,
+    schema_overwrite: Option<&'a Schema>,
+    infer_schema_len: *const usize,
+    batch_size: *const usize,
+    ignore_errors: bool,
+    format_code: u8
+) -> PolarsResult<JsonReader<'a, R>> {
+    
+    // 1. Format
+    reader = reader.with_json_format(map_json_format(format_code));
+
+    // 2. Schema
+    if let Some(schema) = schema_overwrite {
+        reader = reader.with_schema_overwrite(schema);
+    }
+
+    // 3. Columns (Projection)
+    if columns_len > 0 {
+        let mut cols = Vec::with_capacity(columns_len);
+        for &p in unsafe {std::slice::from_raw_parts(columns_ptr, columns_len)} {
+            if !p.is_null() {
+                let s = ptr_to_str(p).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+                cols.push(PlSmallStr::from_str(s));
+            }
+        }
+        reader = reader.with_projection(Some(cols));
+    }
+
+    // 4. Infer Schema Length
+    if !infer_schema_len.is_null() {
+        let n = unsafe { *infer_schema_len};
+        reader = reader.infer_schema_len(NonZeroUsize::new(n));
+    }
+
+    // 5. Batch Size
+    if !batch_size.is_null() {
+        let n = unsafe {*batch_size};
+        if let Some(nz) = NonZeroUsize::new(n) {
+            reader = reader.with_batch_size(nz);
+        }
+    }
+
+    // 6. Ignore Errors
+    if ignore_errors {
+        reader = reader.with_ignore_errors(true);
+    }
+
+    Ok(reader)
+}
+
+// ---------------------------------------------------------
+// 1. Read JSON (File)
+// ---------------------------------------------------------
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_read_json(path_ptr: *const c_char) -> *mut DataFrameContext {
+pub extern "C" fn pl_read_json(
+    path_ptr: *const c_char,
+    columns_ptr: *const *const c_char, columns_len: usize,
+    schema_ptr: *mut SchemaContext,
+    infer_schema_len: *const usize,
+    batch_size: *const usize,
+    ignore_errors: bool,
+    format_code: u8
+) -> *mut DataFrameContext {
     ffi_try!({
-        let path = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        let file = File::open(path).map_err(|e| PolarsError::ComputeError(format!("File not found: {}", e).into()))?;
-        
-        // JsonReader need BufReader
+        let path = ptr_to_str(path_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+
+        let file = File::open(path)
+            .map_err(|e| PolarsError::ComputeError(format!("File not found: {}", e).into()))?;
+        let schema_holder = unsafe { ptr_to_schema_ref(schema_ptr) };
+        let schema_ref = schema_holder.as_deref();
         let reader = BufReader::new(file);
-        let df = JsonReader::new(reader).finish()?;
+        
+        let json_reader = JsonReader::new(reader);
+        let configured_reader = unsafe { 
+            apply_json_options(
+                json_reader, 
+                columns_ptr, columns_len, 
+                schema_ref, infer_schema_len, batch_size, 
+                ignore_errors, format_code
+            )? 
+        };
+
+        let df = configured_reader.finish()?;
 
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })
 }
 
-// Scan NDJSON (Lazy)
+// ---------------------------------------------------------
+// 2. Read JSON (Memory)
+// ---------------------------------------------------------
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_scan_ndjson(path_ptr: *const c_char) -> *mut LazyFrameContext {
+pub extern "C" fn pl_read_json_memory(
+    buffer_ptr: *const u8,
+    buffer_len: usize,
+    columns_ptr: *const *const c_char, columns_len: usize,
+    schema_ptr: *mut SchemaContext,
+    infer_schema_len: *const usize,
+    batch_size: *const usize,
+    ignore_errors: bool,
+    format_code: u8
+) -> *mut DataFrameContext {
     ffi_try!({
-        let path = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-        // LazyJsonLineReader accept path
-        let lf = LazyJsonLineReader::new(PlPath::new(path)).finish()?;
+        let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
+        let cursor = Cursor::new(slice);
 
-        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
+        let schema_holder = unsafe { ptr_to_schema_ref(schema_ptr) };
+        let schema_ref = schema_holder.as_deref();
+        
+        let json_reader = JsonReader::new(cursor);
+        let configured_reader = unsafe { 
+            apply_json_options(
+                json_reader, 
+                columns_ptr, columns_len, 
+                schema_ref, infer_schema_len, batch_size, 
+                ignore_errors, format_code
+            )? 
+        };
+
+        let df = configured_reader.finish()?;
+
+        Ok(Box::into_raw(Box::new(DataFrameContext { df })))
+    })
+}
+
+unsafe fn apply_scan_ndjson_options(
+    mut reader: LazyJsonLineReader,
+    // --- Params ---
+    batch_size: *const usize,
+    low_memory: bool,
+    rechunk: bool,
+    schema_ptr: *mut SchemaContext,
+    infer_schema_len: *const usize,
+    n_rows: *const usize,
+    ignore_errors: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    include_path_col_ptr: *const c_char,
+) -> PolarsResult<LazyJsonLineReader> {
+    
+    // 1. Batch Size
+    if !batch_size.is_null() {
+        let n = unsafe {*batch_size};
+        if let Some(nz) = NonZeroUsize::new(n) {
+             reader = reader.with_batch_size(Some(nz));
+        }
+    }
+
+    // 2. Flags
+    reader = reader.low_memory(low_memory);
+    reader = reader.with_rechunk(rechunk);
+    reader = reader.with_ignore_errors(ignore_errors);
+
+    // 3. Schema
+    if let Some(schema) = unsafe {ptr_to_schema_ref(schema_ptr)} {
+        reader = reader.with_schema_overwrite(Some(schema));
+    }
+
+    // 4. Infer Schema Length
+    if !infer_schema_len.is_null() {
+        let n =unsafe { *infer_schema_len};
+        reader = reader.with_infer_schema_length(NonZeroUsize::new(n));
+    }
+
+    // 5. N Rows
+    if !n_rows.is_null() {
+        reader = unsafe {reader.with_n_rows(Some(*n_rows))};
+    }
+
+    // 6. Row Index
+    if !row_index_name_ptr.is_null() {
+        let name = ptr_to_str(row_index_name_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        reader = reader.with_row_index(Some(RowIndex {
+            name: PlSmallStr::from_str(name),
+            offset: row_index_offset as u32,
+        }));
+    }
+
+    // 7. Include Path
+    if !include_path_col_ptr.is_null() {
+        let name = ptr_to_str(include_path_col_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        reader = reader.with_include_file_paths(Some(PlSmallStr::from_str(name)));
+    }
+
+    Ok(reader)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_scan_ndjson(
+    path_ptr: *const c_char,
+    // --- Options ---
+    batch_size: *const usize,
+    low_memory: bool,
+    rechunk: bool,
+    schema_ptr: *mut SchemaContext,
+    infer_schema_len: *const usize,
+    n_rows: *const usize,
+    ignore_errors: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    include_path_col_ptr: *const c_char,
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        let path = ptr_to_str(path_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        
+        let reader = LazyJsonLineReader::new(PlPath::new(path));
+
+        let configured_reader = unsafe {
+            apply_scan_ndjson_options(
+                reader,
+                batch_size, low_memory, rechunk, schema_ptr, 
+                infer_schema_len, n_rows, ignore_errors, 
+                row_index_name_ptr, row_index_offset, include_path_col_ptr
+            )?
+        };
+
+        let inner = configured_reader.finish()?;
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner }))) 
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_scan_ndjson_memory(
+    buffer_ptr: *const u8,
+    buffer_len: usize,
+    // --- Options ---
+    batch_size: *const usize,
+    low_memory: bool,
+    rechunk: bool,
+    schema_ptr: *mut SchemaContext,
+    infer_schema_len: *const usize,
+    n_rows: *const usize,
+    ignore_errors: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    include_path_col_ptr: *const c_char,
+) -> *mut LazyFrameContext {
+    ffi_try!({
+
+        let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
+        let vec_data = slice.to_vec(); 
+        let mem_slice = MemSlice::from_vec(vec_data);
+        
+        let sources = ScanSources::Buffers(Arc::new([mem_slice]));
+
+        let reader = LazyJsonLineReader::new_with_sources(sources);
+
+        let configured_reader = unsafe {
+            apply_scan_ndjson_options(
+                reader,
+                batch_size, low_memory, rechunk, schema_ptr, 
+                infer_schema_len, n_rows, ignore_errors, 
+                row_index_name_ptr, row_index_offset, include_path_col_ptr
+            )?
+        };
+
+        let inner = configured_reader.finish()?;
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
     })
 }
 // ==========================================

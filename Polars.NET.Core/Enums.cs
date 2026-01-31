@@ -209,3 +209,9 @@ public enum PlEncoding: byte
     UTF8=0,
     LossyUTF8=1    
 }
+
+public enum PlJsonFormat: byte
+{
+    Json =0,
+    JsonLines=1
+}

@@ -138,7 +138,6 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool lowMemory,
         string? rowIndexName,
         uint rowIndexOffset
-        // [Removed] bool useStatistics
     );
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
@@ -150,11 +149,76 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.LPUTF8Str)] string path
     );
 
-    // JSON
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
-    public static partial DataFrameHandle pl_read_json(string path);
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
-    public static partial LazyFrameHandle pl_scan_ndjson(string path);
+    // ---------------------------------------------------------
+    // Read JSON (File)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_read_json(
+        string path,
+        // columns (Option<Vec<String>>)
+        IntPtr[] columns, UIntPtr columnsLen,
+        // schema (Option<Schema>)
+        IntPtr schema, 
+        // infer_schema_len (Option<usize>) -> pointer to usize
+        IntPtr inferSchemaLen, 
+        // batch_size (Option<usize>) -> pointer to usize
+        IntPtr batchSize,
+        // ignore_errors (bool)
+        [MarshalAs(UnmanagedType.U1)] bool ignoreErrors,
+        // format (u8 enum)
+        PlJsonFormat jsonFormat
+    );
+
+    // ---------------------------------------------------------
+    // Read JSON (Memory)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_read_json_memory(
+        IntPtr buffer, UIntPtr bufferLen,
+        IntPtr[] columns, UIntPtr columnsLen,
+        IntPtr schema,
+        IntPtr inferSchemaLen,
+        IntPtr batchSize,
+        [MarshalAs(UnmanagedType.U1)] bool ignoreErrors,
+        PlJsonFormat jsonFormat
+    );
+    // ---------------------------------------------------------
+    // Scan NDJSON (File)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_scan_ndjson(
+        string path,
+        // Options
+        IntPtr batchSize,           // *const usize
+        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
+        [MarshalAs(UnmanagedType.U1)] bool rechunk,
+        IntPtr schema,              // *mut SchemaContext (Overwrite)
+        IntPtr inferSchemaLen,      // *const usize
+        IntPtr nRows,               // *const usize
+        [MarshalAs(UnmanagedType.U1)] bool ignoreErrors,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn
+    );
+
+    // ---------------------------------------------------------
+    // Scan NDJSON (Memory)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_scan_ndjson_memory(
+        IntPtr buffer, UIntPtr bufferLen,
+        // Options (Same as above)
+        IntPtr batchSize,
+        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
+        [MarshalAs(UnmanagedType.U1)] bool rechunk,
+        IntPtr schema,
+        IntPtr inferSchemaLen,
+        IntPtr nRows,
+        [MarshalAs(UnmanagedType.U1)] bool ignoreErrors,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn
+    );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial void pl_dataframe_write_json(DataFrameHandle df, string path);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 

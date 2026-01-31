@@ -240,6 +240,12 @@ public enum PlEncoding: byte
     LossyUTF8 = 1,
 }
 
+public enum JsonFormat: byte
+{
+    Json = 0,
+    JsonLines = 1,
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -435,6 +441,12 @@ internal static class EnumExtensions
         PlEncoding.UTF8 => CoreEnums.PlEncoding.UTF8,
         PlEncoding.LossyUTF8 => CoreEnums.PlEncoding.LossyUTF8,
         _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
+    };
+    internal static CoreEnums.PlJsonFormat ToNative(this JsonFormat jsonFormat) => jsonFormat switch
+    {
+        JsonFormat.Json => CoreEnums.PlJsonFormat.Json,
+        JsonFormat.JsonLines => CoreEnums.PlJsonFormat.JsonLines,
+        _ => throw new ArgumentOutOfRangeException(nameof(jsonFormat), jsonFormat, null)
     };
 }
 

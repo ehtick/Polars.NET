@@ -4,6 +4,7 @@ use polars_arrow::ffi::ArrowArray;
 use polars_arrow::ffi::{export_array_to_c,export_field_to_c};
 use polars::prelude::{ArrowSchema, AsofStrategy, CsvEncoding, Expr, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin, ParallelStrategy, SchemaRef};
 use polars_arrow::datatypes::Field;
+use polars_io::prelude::JsonFormat;
 
 use crate::types::{ExprContext,SchemaContext};
 
@@ -167,10 +168,18 @@ pub(crate) fn map_parallel_strategy(code: u8) -> ParallelStrategy {
 }
 
 #[inline]
-pub fn map_csv_encoding(encoding: u8) -> CsvEncoding {
+pub(crate) fn map_csv_encoding(encoding: u8) -> CsvEncoding {
     match encoding {
         0 => CsvEncoding::Utf8,
         1 => CsvEncoding::LossyUtf8,
         _ => CsvEncoding::Utf8,
+    }
+}
+
+#[inline]
+pub(crate) fn map_json_format(code: u8) -> JsonFormat {
+    match code {
+        1 => JsonFormat::JsonLines, // .jsonl / .ndjson
+        0 | _ => JsonFormat::Json,  // standard .json array
     }
 }

@@ -6,7 +6,7 @@ open System
 open System.IO
 
 type DisposableFile (extension: string, ?content: string) =
-    let ext = if extension.StartsWith(".") then extension else "." + extension
+    let ext = if extension.StartsWith "." then extension else "." + extension
     let path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ext)
     
     do
@@ -121,7 +121,7 @@ Alice,30,true
 Bob,25,false
 Charlie,35,true"""
         
-        let bytes = System.Text.Encoding.UTF8.GetBytes(csvString)
+        let bytes = System.Text.Encoding.UTF8.GetBytes csvString
 
         // 2. 调用内存版 ScanCsv
         // 测试参数传递：跳过 header (假设我们要把它当数据读，或者测试 skipRows)
@@ -163,32 +163,123 @@ Charlie,35,true"""
         Assert.Equal(df.Rows, df2.Rows)
         Assert.Equal(4L, df2.Width)
 
-    [<Fact>]
-    member _.``IO: Write & Read IPC/JSON`` () =
+    [<Fact>]    
+    member _.``IO: Read JSON (File, Bytes, Stream)`` () =
         // 准备路径托管
-        use ipcFile = new DisposableFile ".ipc"
         use jsonFile = new DisposableFile ".json"
 
-        // 1. 准备数据
+        // 1. 准备数据并写入文件 (作为测试源)
         let s1 = Series.create("a", [1; 2; 3])
         let s2 = Series.create("b", ["x"; "y"; "z"])
         use df = DataFrame.create [s1; s2]
-
-        // 2. 测试 IPC (Feather)
-        df.WriteIpc ipcFile.Path |> ignore
-        Assert.True(File.Exists ipcFile.Path, "IPC file not found")
         
-        use dfIpc = DataFrame.ReadIpc ipcFile.Path
-        Assert.Equal(3L, dfIpc.Rows)
-        Assert.Equal("x", dfIpc.String("b", 0).Value)
-
-        // 3. 测试 JSON
         df.WriteJson jsonFile.Path |> ignore
         Assert.True(File.Exists jsonFile.Path, "JSON file not found")
+
+        // ---------------------------------------------------
+        // 测试 1: 从文件路径读取 (File)
+        // ---------------------------------------------------
+        use dfFile = DataFrame.ReadJson jsonFile.Path
+        Assert.Equal(3L, dfFile.Rows)
+        Assert.Equal(1L, dfFile.Int("a", 0).Value) // 验证第一行数据
+
+        // ---------------------------------------------------
+        // 测试 2: 从内存字节读取 (Bytes)
+        // ---------------------------------------------------
+        let bytes = File.ReadAllBytes jsonFile.Path
+        use dfBytes = DataFrame.ReadJson bytes
         
-        use dfJson = DataFrame.ReadJson jsonFile.Path
-        Assert.Equal(3L, dfJson.Rows)
-        Assert.Equal(2L, dfJson.Int("a", 1).Value)
+        Assert.Equal(3L, dfBytes.Rows)
+        Assert.Equal("y", dfBytes.String("b", 1).Value) // 验证第二行数据
+
+        // ---------------------------------------------------
+        // 测试 3: 从流读取 (Stream)
+        // ---------------------------------------------------
+        use fs = File.OpenRead jsonFile.Path
+        use dfStream = DataFrame.ReadJson fs
+        
+        Assert.Equal(3L, dfStream.Rows)
+        Assert.Equal("z", dfStream.String("b", 2).Value) // 验证第三行数据
+    [<Fact>]
+    member _.``Lazy: Scan NDJSON (All Modes - Manual IO)`` () =
+        // ---------------------------------------------------
+        // 1. 手动准备环境 (避开 DisposableFile)
+        // ---------------------------------------------------
+        let tempStub = Path.GetTempFileName()
+        let path = Path.ChangeExtension(tempStub, ".ndjson")
+
+        try
+            // 2. 准备纯净数据 (每行一个 JSON 对象，val 是数字)
+            // 使用 String.concat 避免缩进和换行符问题
+            let content = 
+                [ "{\"id\": 1, \"val\": 100, \"tag\": \"A\"}"
+                  "{\"id\": 2, \"val\": 200, \"tag\": \"B\"}"
+                  "{\"id\": 3, \"val\": 300, \"tag\": \"C\"}" ]
+                |> String.concat "\n"
+
+            File.WriteAllText(path, content)
+
+            // =================================================================
+            // Mode 1: File Mode (测试 Schema Overwrite)
+            // =================================================================
+            // 构造 Schema: 强行将 "val" 指定为 Int32 (默认推断通常是 Int64)
+            use schema = new PolarsSchema(["val", DataType.Int32])
+
+            // 使用内部函数隔离作用域，确保对象及时 Dispose
+            let testFileMode () =
+                use lf = LazyFrame.ScanNdjson(path, schema=schema, nRows=3UL)
+                use df = lf.Collect()
+
+                Assert.Equal(3L, df.Rows)
+                
+                // [验证点] Schema Overwrite 是否生效
+                // 如果是 Int32，说明 Rust 端的 with_schema_overwrite 工作正常
+                Assert.Equal(DataType.Int32, df.Column("val").DataType)
+                Assert.Equal(100L, df.Int("val", 0).Value)
+
+            testFileMode()
+
+            // =================================================================
+            // Mode 2: Memory Mode (Bytes)
+            // =================================================================
+            let bytes = File.ReadAllBytes path
+
+            let testMemoryMode () =
+                // 不传 Schema，验证 Rust 端 ScanSources::Buffers 和默认推断
+                use lf = LazyFrame.ScanNdjson(bytes)
+                use df = lf.Collect()
+
+                Assert.Equal(3L, df.Rows)
+                
+                // [验证点] 默认推断通常是 Int64
+                Assert.Equal(DataType.Int64, df.Column("val").DataType)
+                Assert.Equal(200L, df.Int("val", 1).Value)
+                Assert.Equal("B", df.String("tag", 1).Value)
+
+            testMemoryMode()
+
+            // =================================================================
+            // Mode 3: Stream Mode
+            // =================================================================
+            let testStreamMode () =
+                use fs = File.OpenRead path
+                
+                // 验证 API 层 Stream -> MemoryStream -> Bytes 的转换逻辑
+                use lf = LazyFrame.ScanNdjson(fs)
+                use df = lf.Collect()
+
+                Assert.Equal(3L, df.Rows)
+                // 默认推断 id 也是 Int64
+                Assert.Equal(3L, df.Int("id", 2).Value)
+
+            testStreamMode()
+
+        finally
+            // ---------------------------------------------------
+            // 清理战场
+            // ---------------------------------------------------
+            if File.Exists(path) then File.Delete(path)
+            if File.Exists(tempStub) then File.Delete(tempStub)
     [<Fact>]
     member _.``Streaming: Debug Sink`` () =
         // 1. 准备数据

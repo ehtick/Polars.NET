@@ -428,5 +428,13 @@ type PolarsEncoding =
     | LossyUTF8
     member internal this.ToNative() =
         match this with
-        | UTF8 -> Polars.NET.Core.PlEncoding.UTF8
-        | LossyUTF8 -> Polars.NET.Core.PlEncoding.LossyUTF8
+        | UTF8 -> PlEncoding.UTF8
+        | LossyUTF8 -> PlEncoding.LossyUTF8
+
+type JsonFormat =
+    | Json
+    | JsonLines
+    member internal this.ToNative() =
+        match this with
+        | Json -> PlJsonFormat.Json
+        | JsonLines -> PlJsonFormat.JsonLines

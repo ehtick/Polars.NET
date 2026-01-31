@@ -399,18 +399,195 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
     }
-    // JSON Eager
-    public static DataFrameHandle ReadJson(string path)
+    // ---------------------------------------------------------
+    // Read JSON (File)
+    // ---------------------------------------------------------
+    public static DataFrameHandle ReadJson(
+        string path,
+        string[]? columns,
+        SchemaHandle? schema,
+        ulong? inferSchemaLen, // Rust: Option<usize>
+        ulong? batchSize,      // Rust: Option<usize>
+        bool ignoreErrors,
+        PlJsonFormat jsonFormat)
     {
-        if (!File.Exists(path)) throw new FileNotFoundException($"JSON file not found: {path}");
-        return ErrorHelper.Check(NativeBindings.pl_read_json(path));
+        return UseUtf8StringArray(columns ?? [], colPtrs =>
+        {
+            unsafe
+            {
+                ulong inferVal = inferSchemaLen.GetValueOrDefault();
+                IntPtr inferPtr = inferSchemaLen.HasValue ? (IntPtr)(&inferVal) : IntPtr.Zero;
+
+                ulong batchVal = batchSize.GetValueOrDefault();
+                IntPtr batchPtr = batchSize.HasValue ? (IntPtr)(&batchVal) : IntPtr.Zero;
+
+                using var schemaLock = new SafeHandleLock<SchemaHandle>(
+                    schema != null ? new[] { schema } : null
+                );
+                IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+                var h = NativeBindings.pl_read_json(
+                    path,
+                    colPtrs, (UIntPtr)(columns?.Length ?? 0),
+                    schemaPtr,
+                    inferPtr,
+                    batchPtr,
+                    ignoreErrors,
+                    jsonFormat // Enum 转 byte
+                );
+
+                return ErrorHelper.Check(h);
+            }
+        });
     }
 
-    // NDJSON Lazy
-    public static LazyFrameHandle ScanNdjson(string path)
+    // ---------------------------------------------------------
+    // Read JSON (Memory / Bytes)
+    // ---------------------------------------------------------
+    public static DataFrameHandle ReadJson(
+        byte[] buffer,
+        string[]? columns,
+        SchemaHandle? schema,
+        ulong? inferSchemaLen,
+        ulong? batchSize,
+        bool ignoreErrors,
+        PlJsonFormat jsonFormat)
     {
-        if (!File.Exists(path)) throw new FileNotFoundException($"NDJSON file not found: {path}");
-        return ErrorHelper.Check(NativeBindings.pl_scan_ndjson(path));
+        return UseUtf8StringArray(columns ?? [], colPtrs =>
+        {
+            unsafe
+            {
+                fixed (byte* pBuf = buffer)
+                {
+                    ulong inferVal = inferSchemaLen.GetValueOrDefault();
+                    IntPtr inferPtr = inferSchemaLen.HasValue ? (IntPtr)(&inferVal) : IntPtr.Zero;
+
+                    ulong batchVal = batchSize.GetValueOrDefault();
+                    IntPtr batchPtr = batchSize.HasValue ? (IntPtr)(&batchVal) : IntPtr.Zero;
+
+                    using var schemaLock = new SafeHandleLock<SchemaHandle>(
+                        schema != null ? new[] { schema } : null
+                    );
+                    IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+                    var h = NativeBindings.pl_read_json_memory(
+                        (IntPtr)pBuf, (UIntPtr)buffer.Length,
+                        colPtrs, (UIntPtr)(columns?.Length ?? 0),
+                        schemaPtr,
+                        inferPtr,
+                        batchPtr,
+                        ignoreErrors,
+                        jsonFormat
+                    );
+
+                    return ErrorHelper.Check(h);
+                }
+            }
+        });
+    }
+
+    // ---------------------------------------------------------
+    // Scan NDJSON (File)
+    // ---------------------------------------------------------
+    public static LazyFrameHandle ScanNdjson(
+        string path,
+        SchemaHandle? schema,
+        ulong? batchSize,
+        ulong? inferSchemaLen,
+        ulong? nRows,
+        bool lowMemory,
+        bool rechunk,
+        bool ignoreErrors,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn)
+    {
+        unsafe
+        {
+            ulong batchVal = batchSize.GetValueOrDefault();
+            IntPtr batchPtr = batchSize.HasValue ? (IntPtr)(&batchVal) : IntPtr.Zero;
+
+            ulong inferVal = inferSchemaLen.GetValueOrDefault();
+            IntPtr inferPtr = inferSchemaLen.HasValue ? (IntPtr)(&inferVal) : IntPtr.Zero;
+
+            ulong nRowsVal = nRows.GetValueOrDefault();
+            IntPtr nRowsPtr = nRows.HasValue ? (IntPtr)(&nRowsVal) : IntPtr.Zero;
+
+            using var schemaLock = new SafeHandleLock<SchemaHandle>(
+                schema != null ? new[] { schema } : null
+            );
+            IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+            // 3. 调用 Native
+            var h = NativeBindings.pl_scan_ndjson(
+                path,
+                batchPtr,
+                lowMemory,
+                rechunk,
+                schemaPtr,
+                inferPtr,
+                nRowsPtr,
+                ignoreErrors,
+                rowIndexName,
+                rowIndexOffset,
+                includePathColumn
+            );
+
+            return ErrorHelper.Check(h);
+        }
+    }
+
+    // ---------------------------------------------------------
+    // Scan NDJSON (Memory / Bytes)
+    // ---------------------------------------------------------
+    public static LazyFrameHandle ScanNdjson(
+        byte[] buffer,
+        SchemaHandle? schema,
+        ulong? batchSize,
+        ulong? inferSchemaLen,
+        ulong? nRows,
+        bool lowMemory,
+        bool rechunk,
+        bool ignoreErrors,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn)
+    {
+        unsafe
+        {
+            fixed (byte* pBuf = buffer)
+            {
+                ulong batchVal = batchSize.GetValueOrDefault();
+                IntPtr batchPtr = batchSize.HasValue ? (IntPtr)(&batchVal) : IntPtr.Zero;
+
+                ulong inferVal = inferSchemaLen.GetValueOrDefault();
+                IntPtr inferPtr = inferSchemaLen.HasValue ? (IntPtr)(&inferVal) : IntPtr.Zero;
+
+                ulong nRowsVal = nRows.GetValueOrDefault();
+                IntPtr nRowsPtr = nRows.HasValue ? (IntPtr)(&nRowsVal) : IntPtr.Zero;
+
+                using var schemaLock = new SafeHandleLock<SchemaHandle>(
+                    schema != null ? new[] { schema } : null
+                );
+                IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+                
+                var h = NativeBindings.pl_scan_ndjson_memory(
+                    (IntPtr)pBuf, (UIntPtr)buffer.Length,
+                    batchPtr,
+                    lowMemory,
+                    rechunk,
+                    schemaPtr,
+                    inferPtr,
+                    nRowsPtr,
+                    ignoreErrors,
+                    rowIndexName,
+                    rowIndexOffset,
+                    includePathColumn
+                );
+
+                return ErrorHelper.Check(h);
+            }
+        }
     }
     public static void SinkJson(LazyFrameHandle lf, string path)
     {
