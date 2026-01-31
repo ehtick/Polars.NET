@@ -33,10 +33,59 @@ unsafe internal partial class NativeBindings
     public static partial void pl_lazy_sink_csv(LazyFrameHandle lf, string path);
 
     // Parquet
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
-    public static partial LazyFrameHandle pl_scan_parquet(string path);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial DataFrameHandle pl_read_parquet(string path);
+    public static partial LazyFrameHandle pl_scan_parquet(
+        string path,
+        IntPtr nRows,               // *const usize
+        PlParallelStrategy parallel,
+        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
+        [MarshalAs(UnmanagedType.U1)] bool useStatistics,
+        [MarshalAs(UnmanagedType.U1)] bool glob,
+        [MarshalAs(UnmanagedType.U1)] bool allowMissingColumns,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn,
+        IntPtr schema,              // *mut SchemaContext (Override Schema)
+        IntPtr hiveSchema,          // *mut SchemaContext (Hive Partition Schema)
+        [MarshalAs(UnmanagedType.U1)] bool tryParseHiveDates
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_scan_parquet_memory(
+        IntPtr buffer, UIntPtr bufferLen,
+        IntPtr nRows,               // *const usize
+        PlParallelStrategy parallel,
+        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
+        [MarshalAs(UnmanagedType.U1)] bool useStatistics,
+        [MarshalAs(UnmanagedType.U1)] bool glob,
+        [MarshalAs(UnmanagedType.U1)] bool allowMissingColumns,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn,
+        IntPtr schema,              // *mut SchemaContext
+        IntPtr hiveSchema,          // *mut SchemaContext
+        [MarshalAs(UnmanagedType.U1)] bool tryParseHiveDates
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_read_parquet(
+        string path,
+        IntPtr[] columns, UIntPtr columnsLen,
+        IntPtr limit, 
+        PlParallelStrategy parallel,
+        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
+        string? rowIndexName,
+        uint rowIndexOffset
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_read_parquet_memory(
+        IntPtr buffer, UIntPtr bufferLen,
+        IntPtr[] columns, UIntPtr columnsLen,
+        IntPtr limit,
+        PlParallelStrategy parallel,
+        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
+        string? rowIndexName,
+        uint rowIndexOffset
+        // [Removed] bool useStatistics
+    );
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial void pl_write_parquet(DataFrameHandle df, string path);

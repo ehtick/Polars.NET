@@ -1,14 +1,16 @@
 use polars::prelude::*;
+use polars_io::{HiveOptions, RowIndex};
 use polars_arrow::ffi::{self, ArrowArray, ArrowSchema, export_array_to_c, export_field_to_c};
 use polars_arrow::array::StructArray;
 use polars_arrow::datatypes::{ArrowDataType, Field};
 use polars_core::prelude::CompatLevel;
 use std::ffi::{CStr, c_void};
-use std::io::BufReader;
+use std::io::{BufReader,Cursor};
 use std::os::raw::c_char;
 use std::fs::File;
 use crate::types::{DataFrameContext, LazyFrameContext, SchemaContext};
-use crate::utils::ptr_to_str;
+use crate::utils::{ptr_to_str,map_parallel_strategy,ptr_to_schema_ref};
+use polars_utils::mmap::MemSlice;
 
 // ==========================================
 // Read csv
@@ -87,7 +89,15 @@ pub extern "C" fn pl_scan_csv(
 // Read Parquet
 // ==========================================
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_read_parquet(path_ptr: *const c_char) -> *mut DataFrameContext {
+pub extern "C" fn pl_read_parquet(
+    path_ptr: *const c_char,
+    columns_ptr: *const *const c_char, columns_len: usize,
+    limit: *const usize,              
+    parallel_code: u8,
+    low_memory: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32
+) -> *mut DataFrameContext {
     ffi_try!({
         let path = ptr_to_str(path_ptr)
             .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
@@ -95,25 +105,240 @@ pub extern "C" fn pl_read_parquet(path_ptr: *const c_char) -> *mut DataFrameCont
         let file = File::open(path)
             .map_err(|e| PolarsError::ComputeError(format!("File not found: {}", e).into()))?;
 
-        let df = ParquetReader::new(file)
-            .finish()?;
+        let mut reader = ParquetReader::new(file);
 
+        // --- Columns ---
+        if columns_len > 0 {
+            let cols = unsafe {
+                let mut v = Vec::with_capacity(columns_len);
+                for &p in std::slice::from_raw_parts(columns_ptr, columns_len) {
+                    if !p.is_null() {
+                         v.push(ptr_to_str(p).unwrap().to_string());
+                    }
+                }
+                v
+            };
+            reader = reader.with_columns(Some(cols));
+        }
+
+        // --- Limit (Mapped to Slice) ---
+        if !limit.is_null() {
+            let n = unsafe { *limit };
+            // Offset = 0, Length = n
+            reader = reader.with_slice(Some((0, n)));
+        }
+
+        // --- Other Options ---
+        reader = reader.read_parallel(map_parallel_strategy(parallel_code));
+        reader = reader.set_low_memory(low_memory);
+
+        if !row_index_name_ptr.is_null() {
+            let name = ptr_to_str(row_index_name_ptr).unwrap();
+            let row_index = polars::io::RowIndex {
+                name: PlSmallStr::from_str(name),
+                offset: row_index_offset as u32,
+            };
+            reader = reader.with_row_index(Some(row_index));
+        }
+
+        let df = reader.finish()?;
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })
 }
 
+// ---------------------------------------------------------
+// 2. Read Parquet (Memory / Bytes)
+// ---------------------------------------------------------
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_scan_parquet(path_ptr: *const c_char) -> *mut LazyFrameContext {
+pub extern "C" fn pl_read_parquet_memory(
+    buffer_ptr: *const u8,
+    buffer_len: usize,
+    columns_ptr: *const *const c_char, columns_len: usize,
+    limit: *const usize,
+    parallel_code: u8,
+    low_memory: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32
+) -> *mut DataFrameContext {
+    ffi_try!({
+        let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
+        let cursor = Cursor::new(slice);
+
+        let mut reader = ParquetReader::new(cursor);
+
+        // --- Columns ---
+        if columns_len > 0 {
+            let cols = unsafe {
+                let mut v = Vec::with_capacity(columns_len);
+                for &p in std::slice::from_raw_parts(columns_ptr, columns_len) {
+                    if !p.is_null() { v.push(ptr_to_str(p).unwrap().to_string()); }
+                }
+                v
+            };
+            reader = reader.with_columns(Some(cols));
+        }
+
+        // --- Limit (Mapped to Slice) ---
+        if !limit.is_null() {
+            let n = unsafe { *limit };
+            reader = reader.with_slice(Some((0, n)));
+        }
+
+        // --- Other Options ---
+        reader = reader.read_parallel(map_parallel_strategy(parallel_code));
+        reader = reader.set_low_memory(low_memory);
+
+        if !row_index_name_ptr.is_null() {
+            let name = ptr_to_str(row_index_name_ptr).unwrap();
+            let row_index = polars::io::RowIndex {
+                name: PlSmallStr::from_str(name),
+                offset: row_index_offset as u32,
+            };
+            reader = reader.with_row_index(Some(row_index));
+        }
+
+        let df = reader.finish()?;
+        Ok(Box::into_raw(Box::new(DataFrameContext { df })))
+    })
+}
+
+fn build_scan_args(
+    n_rows: *const usize,
+    parallel_code: u8,
+    low_memory: bool,
+    use_statistics: bool,
+    glob: bool,
+    allow_missing_columns: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    include_path_col_ptr: *const c_char,
+    schema_ptr: *mut SchemaContext,        
+    hive_schema_ptr: *mut SchemaContext,   
+    try_parse_hive_dates: bool             
+) -> ScanArgsParquet {
+    let mut args = ScanArgsParquet::default();
+
+    if !n_rows.is_null() { unsafe { args.n_rows = Some(*n_rows); } }
+    args.parallel = map_parallel_strategy(parallel_code);
+    args.low_memory = low_memory;
+    args.use_statistics = use_statistics;
+    args.glob = glob;
+    args.allow_missing_columns = allow_missing_columns;
+
+    if !row_index_name_ptr.is_null() {
+            let name = ptr_to_str(row_index_name_ptr).unwrap();
+            args.row_index = Some(RowIndex {
+                name: PlSmallStr::from_str(name),
+                offset: row_index_offset as u32,
+            });
+    }
+
+    if !include_path_col_ptr.is_null() {
+            let col_name = ptr_to_str(include_path_col_ptr).unwrap();
+            args.include_file_paths = Some(PlSmallStr::from_str(col_name));
+    }
+
+    // --- Schema ---
+    args.schema = unsafe { ptr_to_schema_ref(schema_ptr) };
+
+    // --- HiveOptions ---
+    let hive_schema = unsafe { ptr_to_schema_ref(hive_schema_ptr) };
+    
+    let hive_enabled = hive_schema.is_some() || try_parse_hive_dates;
+    
+    args.hive_options = HiveOptions {
+        enabled: Some(hive_enabled), 
+        hive_start_idx: 0,
+        schema: hive_schema, 
+        try_parse_dates: try_parse_hive_dates,
+    };
+
+    args
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_scan_parquet(
+    path_ptr: *const c_char,
+    n_rows: *const usize,
+    parallel_code: u8,
+    low_memory: bool,
+    use_statistics: bool,
+    glob: bool,
+    allow_missing_columns: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    include_path_col_ptr: *const c_char,
+    // --- New Args ---
+    schema_ptr: *mut SchemaContext,
+    hive_schema_ptr: *mut SchemaContext,
+    try_parse_hive_dates: bool
+) -> *mut LazyFrameContext {
     ffi_try!({
         let path = ptr_to_str(path_ptr)
             .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-        let args = ScanArgsParquet::default();
-        let lf = LazyFrame::scan_parquet(PlPath::new(path), args)?;
 
-        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
+        let args = build_scan_args(
+            n_rows, parallel_code, low_memory, use_statistics, 
+            glob, allow_missing_columns, row_index_name_ptr, 
+            row_index_offset, include_path_col_ptr,
+            schema_ptr, hive_schema_ptr, try_parse_hive_dates // 传入
+        );
+
+        let lf = LazyFrame::scan_parquet(PlPath::new(path), args)?;
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner:lf })))
     })
 }
+
+// ---------------------------------------------------------
+// 2. Scan Parquet (Memory / Buffers)
+// ---------------------------------------------------------
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_scan_parquet_memory(
+    buffer_ptr: *const u8,
+    buffer_len: usize,
+    n_rows: *const usize,
+    parallel_code: u8,
+    low_memory: bool,
+    use_statistics: bool,
+    glob: bool,
+    allow_missing_columns: bool,
+    row_index_name_ptr: *const c_char,
+    row_index_offset: u32,
+    include_path_col_ptr: *const c_char,
+    // --- New Args ---
+    schema_ptr: *mut SchemaContext,
+    hive_schema_ptr: *mut SchemaContext,
+    try_parse_hive_dates: bool
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
+        let vec_data = slice.to_vec(); 
+        let mem_slice = MemSlice::from_vec(vec_data);
+        let sources = ScanSources::Buffers(Arc::new([mem_slice]));
+
+        let args = build_scan_args(
+            n_rows, parallel_code, low_memory, use_statistics, 
+            glob, allow_missing_columns, row_index_name_ptr, 
+            row_index_offset, include_path_col_ptr,
+            schema_ptr, hive_schema_ptr, try_parse_hive_dates 
+        );
+
+        let lf = LazyFrame::scan_parquet_sources(sources, args)?;
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner:lf })))
+    })
+}
+// #[unsafe(no_mangle)]
+// pub extern "C" fn pl_scan_parquet(path_ptr: *const c_char) -> *mut LazyFrameContext {
+//     ffi_try!({
+//         let path = ptr_to_str(path_ptr)
+//             .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        
+//         let args = ScanArgsParquet::default();
+//         let lf = LazyFrame::scan_parquet(PlPath::new(path), args)?;
+
+//         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
+//     })
+// }
 
 // ==========================================
 // JSON
@@ -125,7 +350,7 @@ pub extern "C" fn pl_read_json(path_ptr: *const c_char) -> *mut DataFrameContext
         let path = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         let file = File::open(path).map_err(|e| PolarsError::ComputeError(format!("File not found: {}", e).into()))?;
         
-        // JsonReader 需要 BufReader
+        // JsonReader need BufReader
         let reader = BufReader::new(file);
         let df = JsonReader::new(reader).finish()?;
 
@@ -139,7 +364,7 @@ pub extern "C" fn pl_scan_ndjson(path_ptr: *const c_char) -> *mut LazyFrameConte
     ffi_try!({
         let path = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         
-        // LazyJsonLineReader 接受路径
+        // LazyJsonLineReader accept path
         let lf = LazyJsonLineReader::new(PlPath::new(path)).finish()?;
 
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))

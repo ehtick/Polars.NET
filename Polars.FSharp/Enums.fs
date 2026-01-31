@@ -410,3 +410,15 @@ type AsofStrategy =
         | Backward -> PlAsofStrategy.Backward
         | Forward -> PlAsofStrategy.Forward
         | Nearest -> PlAsofStrategy.Nearest
+
+type ParallelStrategy =
+    | Auto
+    | Columns
+    | RowGroups
+    | NoParallel
+    member internal this.ToNative() =
+        match this with
+        | Auto -> PlParallelStrategy.Auto
+        | Columns -> PlParallelStrategy.Columns
+        | RowGroups -> PlParallelStrategy.RowGroups
+        | NoParallel -> PlParallelStrategy.None

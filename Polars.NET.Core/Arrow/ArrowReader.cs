@@ -112,6 +112,8 @@ namespace Polars.NET.Core.Arrow
         }
         private static Func<int, object?> CreateCoreAccessor(IArrowArray array, Type type)
         {
+            if (array is DictionaryArray dictArray)
+                return CreateDictionaryAccessor(dictArray, type);
             if (array is StructArray sa) return CreateStructAccessor(sa, type);
             
             if (array is ListArray || array is LargeListArray || array is FixedSizeListArray)
@@ -407,6 +409,43 @@ namespace Polars.NET.Core.Arrow
             var accessor = CreateAccessor(array, typeof(T));
             var val = accessor(index);
             return val == null ? default : (T)val;
+        }
+        // =============================================================
+        // Dictionary Accessor (Categorical)
+        // =============================================================
+        private static Func<int, object?> CreateDictionaryAccessor(DictionaryArray array, Type targetType)
+        {
+            // Get Indices
+            var indices = array.Indices;
+            // Get Dictionary
+            var dictionary = array.Dictionary;
+
+            // Build Value Accessor
+            var dictAccessor = CreateAccessor(dictionary, targetType);
+
+            // Build Indices Accessor
+            
+            Func<int, int?> indexGetter = indices switch
+            {
+                Int8Array   i8  => idx => (int?)i8.GetValue(idx),
+                UInt8Array  u8  => idx => (int?)u8.GetValue(idx),
+                Int16Array  i16 => idx => (int?)i16.GetValue(idx),
+                UInt16Array u16 => idx => (int?)u16.GetValue(idx),
+                Int32Array  i32 => idx => i32.GetValue(idx),
+                UInt32Array u32 => idx => (int?)u32.GetValue(idx),
+                Int64Array  i64 => idx => (int?)i64.GetValue(idx),
+                _ => throw new NotSupportedException($"Unsupported Dictionary Index Type: {indices.GetType().Name}")
+            };
+
+            // Assemble Accessor
+            return idx =>
+            {
+                var key = indexGetter(idx);
+                
+                if (key == null) return null; 
+                
+                return dictAccessor(key.Value);
+            };
         }
         // =============================================================
         // High Performance Span / Array Access

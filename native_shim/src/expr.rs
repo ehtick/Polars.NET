@@ -337,7 +337,7 @@ gen_binary_op!(pl_expr_sub, sub); // -
 gen_binary_op!(pl_expr_mul, mul); // *
 gen_binary_op!(pl_expr_div, div); // /
 gen_binary_op!(pl_expr_floor_div, floor_div); // //
-gen_binary_op!(pl_expr_rem, rem); // % (取余)
+gen_binary_op!(pl_expr_rem, rem); // % 
 // Logic Ops
 gen_binary_op!(pl_expr_and, and); // &
 gen_binary_op!(pl_expr_or, or);   // |

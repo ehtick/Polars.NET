@@ -335,7 +335,7 @@ public class StreamingTests
         // [核心修改] 使用 DateOnly，因为我们已经决定 Date32 映射到 DateOnly
         var today = DateOnly.FromDateTime(DateTime.Now); 
 
-        var schema = new Schema.Builder()
+        var schema = new Apache.Arrow.Schema.Builder()
             .Field(new Field("Id", Int32Type.Default, true))
             .Field(new Field("Name", StringViewType.Default, true))
             .Field(new Field("Date", Date32Type.Default, true)) // Date32

@@ -93,7 +93,7 @@ public static partial class PolarsWrapper
         
         public readonly IntPtr[] Pointers;
 
-        public SafeHandleLock(T[] handles)
+        public SafeHandleLock(T[]? handles)
         {
             if (handles == null)
             {

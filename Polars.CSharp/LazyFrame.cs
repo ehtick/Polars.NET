@@ -55,12 +55,103 @@ public class LazyFrame : IDisposable
         return new LazyFrame(handle);
     }
     /// <summary>
-    /// Read a Parquet file as a LazyFrame.
+    /// Lazily read from a parquet file or multiple files via glob patterns.
     /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static LazyFrame ScanParquet(string path)
-        =>  new(PolarsWrapper.ScanParquet(path));
+    /// <param name="path">Path to file or glob pattern (e.g. "data/*.parquet").</param>
+    /// <param name="nRows">Limit number of rows to read (optimization).</param>
+    /// <param name="parallel">Parallel strategy.</param>
+    /// <param name="lowMemory">Reduce memory usage at the expense of performance.</param>
+    /// <param name="useStatistics">Use parquet statistics to optimize the query plan.</param>
+    /// <param name="glob">Expand glob patterns (default: true).</param>
+    /// <param name="allowMissingColumns">Allow missing columns when reading multiple files.</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row number.</param>
+    /// <param name="rowIndexOffset">Offset for the row index.</param>
+    /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    /// <param name="schema">
+    /// Manually specify the schema of the file(s). 
+    /// Useful if the file footer is missing or to avoid I/O overhead of reading the schema.
+    /// </param>
+    /// <param name="hivePartitionSchema">
+    /// Manually specify the schema for Hive partitioning columns.
+    /// Use this to ensure specific types for partition keys (e.g. string instead of int).
+    /// </param>
+    /// <param name="tryParseHiveDates">
+    /// Whether to try parsing dates in Hive partitioning paths (default: true).
+    /// </param>
+    public static LazyFrame ScanParquet(
+        string path,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        bool useStatistics = true,
+        bool glob = true,
+        bool allowMissingColumns = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
+    {
+        var schemaHandle = schema?.Handle;
+        var hiveSchemaHandle = hivePartitionSchema?.Handle;
+
+        var h = PolarsWrapper.ScanParquet(
+            path,
+            nRows,
+            parallel.ToNative(),
+            lowMemory,
+            useStatistics,
+            glob,
+            allowMissingColumns,
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schemaHandle,     
+            hiveSchemaHandle, 
+            tryParseHiveDates
+        );
+
+        return new LazyFrame(h);
+    }
+    /// <summary>
+    /// Lazily read parquet from an in-memory byte array.
+    /// </summary>
+    public static LazyFrame ScanParquet(
+        byte[] buffer,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        bool useStatistics = true,
+        bool allowMissingColumns = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
+    {
+        var schemaHandle = schema?.Handle;
+        var hiveSchemaHandle = hivePartitionSchema?.Handle;
+
+        var h = PolarsWrapper.ScanParquet(
+            buffer,
+            nRows,
+            parallel.ToNative(),
+            lowMemory,
+            useStatistics,
+            false, // glob = false for memory
+            allowMissingColumns,
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schemaHandle,
+            hiveSchemaHandle,
+            tryParseHiveDates
+        );
+
+        return new LazyFrame(h);
+    }
     /// <summary>
     /// Read an IPC (Feather) file as a LazyFrame.
     /// </summary>
@@ -94,7 +185,7 @@ public class LazyFrame : IDisposable
     /// <returns></returns>
     public static LazyFrame ScanEnumerable<T>(
         IEnumerable<T> data, 
-        Schema? schema = null, 
+        Apache.Arrow.Schema? schema = null, 
         int batchSize = 100_000,
         bool useBuffered = false)
     {
@@ -139,7 +230,7 @@ public class LazyFrame : IDisposable
     /// Scan RecordBatch Stream
     /// If schema is provied, first batch won't be consumed for getting schema.
     /// </summary>
-    public static LazyFrame ScanRecordBatches(IEnumerable<RecordBatch> stream, Schema schema)
+    public static LazyFrame ScanRecordBatches(IEnumerable<RecordBatch> stream, Apache.Arrow.Schema schema)
         {
             if (schema == null) throw new ArgumentNullException(nameof(schema));
 
@@ -222,7 +313,7 @@ public class LazyFrame : IDisposable
     /// </example>
     public static LazyFrame ScanDatabase(Func<IDataReader> readerFactory, int batchSize = 50_000)
         {
-            Schema schema;
+            Apache.Arrow.Schema schema;
             // Probe schema
             using (var probe = readerFactory())
             {
@@ -245,13 +336,11 @@ public class LazyFrame : IDisposable
         }
     /// <summary>
     /// A LazyFrame with resource scope which needs to be disposed.
-    /// 当它被 Dispose 时，除了释放 LazyFrame 句柄，还会清理关联的临时资源（如磁盘上的 IPC 文件）。
     /// </summary>
     public class ScopedLazyFrame : LazyFrame
     {
         private readonly IDisposable? _resource;
 
-        // 🟢 修正：构造函数接收 LazyFrameHandle 以匹配基类
         internal ScopedLazyFrame(LazyFrameHandle handle, IDisposable? resource) 
             : base(handle) 
         {
@@ -262,10 +351,8 @@ public class LazyFrame : IDisposable
         /// </summary>
         public new void Dispose()
         {
-            // 1. 先释放基类持有的 Rust 句柄
             base.Dispose();
             
-            // 2. 再清理 C# 端的临时资源 (例如删除临时文件)
             _resource?.Dispose();
         }
     }

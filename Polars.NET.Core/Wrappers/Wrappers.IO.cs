@@ -58,19 +58,181 @@ public static partial class PolarsWrapper
         });
     }
 
-    public static DataFrameHandle ReadParquet(string path)
+    public static DataFrameHandle ReadParquet(
+        string path,
+        string[] columns,
+        ulong? nRows,         
+        PlParallelStrategy parallel,
+        bool lowMemory,
+        string? rowIndexName,
+        uint rowIndexOffset)
     {
-         if (!File.Exists(path)) throw new FileNotFoundException($"Parquet not found: {path}");
-         return ErrorHelper.Check(NativeBindings.pl_read_parquet(path));
+        return UseUtf8StringArray(columns, colPtrs =>
+        {
+            unsafe
+            {
+                ulong limitVal = nRows.GetValueOrDefault();
+                IntPtr limitPtr = nRows.HasValue ? (IntPtr)(&limitVal) : IntPtr.Zero;
+
+                var h = NativeBindings.pl_read_parquet(
+                    path,
+                    colPtrs, (UIntPtr)columns.Length,
+                    limitPtr,
+                    parallel,
+                    lowMemory,
+                    rowIndexName,
+                    rowIndexOffset
+                );
+
+                return ErrorHelper.Check(h);
+            }
+        });
     }
-    public static Task<DataFrameHandle> ReadParquetAsync(string path)
+    public static DataFrameHandle ReadParquet(
+        byte[] buffer,       
+        string[] columns,
+        ulong? nRows,
+        PlParallelStrategy parallel,
+        bool lowMemory,
+        string? rowIndexName,
+        uint rowIndexOffset)
     {
-        return Task.Run(() => ReadParquet(path));
+        return UseUtf8StringArray(columns, colPtrs =>
+        {
+            unsafe
+            {
+                fixed (byte* pBuffer = buffer)
+                {
+                    ulong limitVal = nRows.GetValueOrDefault();
+                    IntPtr limitPtr = nRows.HasValue ? (IntPtr)(&limitVal) : IntPtr.Zero;
+
+                    var h = NativeBindings.pl_read_parquet_memory(
+                        (IntPtr)pBuffer, (UIntPtr)buffer.Length,
+                        colPtrs, (UIntPtr)columns.Length,
+                        limitPtr,
+                        parallel,
+                        lowMemory,
+                        rowIndexName,
+                        rowIndexOffset
+                    );
+
+                    return ErrorHelper.Check(h);
+                }
+            }
+        });
     }
-    public static LazyFrameHandle ScanParquet(string path) {
-        if (!File.Exists(path)) throw new FileNotFoundException($"Parquet not found: {path}");
-        return ErrorHelper.Check(NativeBindings.pl_scan_parquet(path));
-    } 
+    public static Task<DataFrameHandle> ReadParquetAsync(
+        string path,
+        string[] columns, 
+        ulong? nRows,   
+        PlParallelStrategy parallel, 
+        bool lowMemory, 
+        string? rowIndexName, 
+        uint rowIndexOffset)
+    {
+        return Task.Run(() => ReadParquet(path,columns,nRows,parallel,lowMemory,rowIndexName,rowIndexOffset));
+    }
+    public static LazyFrameHandle ScanParquet(
+        string path,
+        ulong? nRows,
+        PlParallelStrategy parallel,
+        bool lowMemory,
+        bool useStatistics,
+        bool glob,
+        bool allowMissingColumns,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn,
+        SchemaHandle? schema,              
+        SchemaHandle? hivePartitionSchema, 
+        bool tryParseHiveDates)
+    {
+        unsafe
+        {
+            ulong nRowsVal = nRows.GetValueOrDefault();
+            IntPtr nRowsPtr = nRows.HasValue ? (IntPtr)(&nRowsVal) : IntPtr.Zero;
+
+            using var schemaLock = new SafeHandleLock<SchemaHandle>(
+                schema != null ? [schema] : null
+            );
+            IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+            using var hiveLock = new SafeHandleLock<SchemaHandle>(
+                hivePartitionSchema != null ? [hivePartitionSchema] : null
+            );
+            IntPtr hiveSchemaPtr = hivePartitionSchema != null ? hiveLock.Pointers[0] : IntPtr.Zero;
+
+            var h = NativeBindings.pl_scan_parquet(
+                path, 
+                nRowsPtr, 
+                parallel, 
+                lowMemory, 
+                useStatistics, 
+                glob, 
+                allowMissingColumns, 
+                rowIndexName, 
+                rowIndexOffset, 
+                includePathColumn,
+                schemaPtr,        
+                hiveSchemaPtr,    
+                tryParseHiveDates
+            );
+
+            return ErrorHelper.Check(h);
+        }
+    }
+    public static LazyFrameHandle ScanParquet(
+        byte[] buffer,
+        ulong? nRows,
+        PlParallelStrategy parallel,
+        bool lowMemory,
+        bool useStatistics,
+        bool glob,
+        bool allowMissingColumns,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn,
+        SchemaHandle? schema,              
+        SchemaHandle? hivePartitionSchema, 
+        bool tryParseHiveDates)
+    {
+        unsafe
+        {
+            fixed (byte* pBuf = buffer)
+            {
+                ulong nRowsVal = nRows.GetValueOrDefault();
+                IntPtr nRowsPtr = nRows.HasValue ? (IntPtr)(&nRowsVal) : IntPtr.Zero;
+
+                using var schemaLock = new SafeHandleLock<SchemaHandle>(
+                    schema != null ? [schema] : null
+                );
+                IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+                using var hiveLock = new SafeHandleLock<SchemaHandle>(
+                    hivePartitionSchema != null ? [hivePartitionSchema] : null
+                );
+                IntPtr hiveSchemaPtr = hivePartitionSchema != null ? hiveLock.Pointers[0] : IntPtr.Zero;
+
+                var h = NativeBindings.pl_scan_parquet_memory(
+                    (IntPtr)pBuf, (UIntPtr)buffer.Length,
+                    nRowsPtr, 
+                    parallel, 
+                    lowMemory, 
+                    useStatistics, 
+                    glob, 
+                    allowMissingColumns, 
+                    rowIndexName, 
+                    rowIndexOffset, 
+                    includePathColumn,
+                    schemaPtr,
+                    hiveSchemaPtr,
+                    tryParseHiveDates
+                );
+
+                return ErrorHelper.Check(h);
+            }
+        }
+    }
 
     public static void WriteCsv(DataFrameHandle df, string path)
     {

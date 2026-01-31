@@ -4,6 +4,7 @@ using Polars.CSharp.Tests.Fixtures;
 namespace Polars.CSharp.Tests
 {
     // 注入我们刚才写的 Fixture
+    [Trait("Category", "Integration")]
     public class IntegrationTests : IClassFixture<MsSqlFixture>
     {
         private readonly MsSqlFixture _fixture;

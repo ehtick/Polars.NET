@@ -194,3 +194,12 @@ public enum PlAsofStrategy: byte
     Forward =1,
     Nearest =2
 }
+
+public enum PlParallelStrategy: byte
+{
+    // Default
+    Auto=0,
+    Columns=1,
+    RowGroups=2,
+    None=3
+}

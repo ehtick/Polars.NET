@@ -226,6 +226,15 @@ public enum AsofStrategy: byte
     Nearest = 2
 }
 
+public enum ParallelStrategy: byte
+{
+    Auto = 0,
+    Columns = 1,
+    RowGroups = 2,
+    None =3
+}
+
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -406,6 +415,14 @@ internal static class EnumExtensions
         AsofStrategy.Backward => CoreEnums.PlAsofStrategy.Backward,
         AsofStrategy.Forward => CoreEnums.PlAsofStrategy.Forward,
         AsofStrategy.Nearest => CoreEnums.PlAsofStrategy.Nearest,
+        _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
+    };
+    internal static CoreEnums.PlParallelStrategy ToNative(this ParallelStrategy strategy) => strategy switch
+    {
+        ParallelStrategy.Auto => CoreEnums.PlParallelStrategy.Auto,
+        ParallelStrategy.Columns => CoreEnums.PlParallelStrategy.Columns,
+        ParallelStrategy.RowGroups => CoreEnums.PlParallelStrategy.RowGroups,
+        ParallelStrategy.None => CoreEnums.PlParallelStrategy.None,
         _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
     };
 }

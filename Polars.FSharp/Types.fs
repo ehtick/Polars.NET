@@ -1307,11 +1307,77 @@ and DataFrame(handle: DataFrameHandle) =
             new DataFrame(handle)
 
     /// <summary> Read a parquet file into a DataFrame (Eager). </summary>
-    static member ReadParquet (path: string) = new DataFrame(PolarsWrapper.ReadParquet path)
+    static member ReadParquet(path: string, 
+                              ?columns: string list, 
+                              ?nRows: uint64, 
+                              ?parallelStrategy: ParallelStrategy,
+                              ?lowMemory: bool,
+                              ?rowIndexName: string,
+                              ?rowIndexOffset: uint32) =
+        
+        let cols = defaultArg columns [] |> List.toArray
+        let para = defaultArg parallelStrategy ParallelStrategy.Auto
+        let lowMem = defaultArg lowMemory false
+        let rName = defaultArg rowIndexName null
+        let rOff = defaultArg rowIndexOffset 0u
+        
+        let nRowsNullable = Option.toNullable nRows
+        
+        // 3. 直接调用 Core 里的 Wrapper
+        let h = PolarsWrapper.ReadParquet(
+            path, 
+            cols, 
+            nRowsNullable, 
+            para.ToNative(), 
+            lowMem, 
+            rName, 
+            rOff
+        )
+
+        new DataFrame(h)
+    static member ReadParquet(buffer: byte[], 
+                              ?columns: string list, 
+                              ?nRows: uint64, 
+                              ?parallelStrategy: ParallelStrategy, 
+                              ?lowMemory: bool,
+                              ?rowIndexName: string,
+                              ?rowIndexOffset: uint32) : DataFrame =
+        
+        let cols = defaultArg columns [] |> List.toArray
+        let para = defaultArg parallelStrategy ParallelStrategy.Auto
+        let lowMem = defaultArg lowMemory false
+        let rName = defaultArg rowIndexName null
+        let rOff = defaultArg rowIndexOffset 0u
+        
+        let nRowsNullable = Option.toNullable nRows
+
+        let h = PolarsWrapper.ReadParquet(
+            buffer, 
+            cols, 
+            nRowsNullable, 
+            para.ToNative(), 
+            lowMem, 
+            rName, 
+            rOff
+        )
+
+        new DataFrame(h)
     /// <summary> Asynchronously read a Parquet file. </summary>
-    static member ReadParquetAsync (path: string): Async<DataFrame> = 
+    static member ReadParquetAsync (path: string,
+                            ?columns: string list, 
+                            ?nRows: uint64, 
+                            ?parallelStrategy: ParallelStrategy, 
+                            ?lowMemory: bool,
+                            ?rowIndexName: string,
+                            ?rowIndexOffset: uint32): Async<DataFrame> = 
+        let cols = defaultArg columns [] |> List.toArray
+        let para = defaultArg parallelStrategy ParallelStrategy.Auto
+        let lowMem = defaultArg lowMemory false
+        let rName = defaultArg rowIndexName null
+        let rOff = defaultArg rowIndexOffset 0u
+        let nRowsNullable = Option.toNullable nRows
         async {
-            let! handle = PolarsWrapper.ReadParquetAsync path |> Async.AwaitTask
+            let! handle = PolarsWrapper.ReadParquetAsync(path,cols,nRowsNullable,para.ToNative(),lowMem,rName,rOff) |> Async.AwaitTask
         return new DataFrame(handle)
         }
 
@@ -2307,7 +2373,159 @@ and LazyFrame(handle: LazyFrameHandle) =
         let h = PolarsWrapper.ScanCsv(path, schemaDict, header, sep, uint64 skip, dates)
         new LazyFrame(h)
     /// <summary> Scan a parquet file into a LazyFrame. </summary>
-    static member ScanParquet (path: string) = new LazyFrame(PolarsWrapper.ScanParquet path)
+    /// <summary>
+    /// Lazily read from a parquet file or a common cloud store (S3, GCS, Azure, etc.).
+    /// </summary>
+    /// <param name="path">Path to file or cloud location.</param>
+    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="parallel">Parallel strategy (Auto, Columns, RowGroups, None).</param>
+    /// <param name="lowMemory">Reduce memory pressure at the expense of performance.</param>
+    /// <param name="useStatistics">Use parquet statistics to prune row groups.</param>
+    /// <param name="glob">Expand path using globbing rules.</param>
+    /// <param name="allowMissingColumns">If true, do not fail if columns are missing.</param>
+    /// <param name="rowIndexName">If provided, add a row index column with this name.</param>
+    /// <param name="rowIndexOffset">Start index for the row index column.</param>
+    /// <param name="includePathColumn">If provided, add a column with the path of the file.</param>
+    /// <param name="schema">Overwrite the schema of the dataset.</param>
+    /// <param name="hiveSchema">The schema of the hive partitions.</param>
+    /// <param name="tryParseHiveDates">Attempt to parse hive values as Date/Datetime.</param>
+    static member ScanParquet
+        (
+            path: string,
+            ?nRows: int64,
+            ?parallelStrategy: ParallelStrategy,
+            ?lowMemory: bool,
+            ?useStatistics: bool,
+            ?glob: bool,
+            ?allowMissingColumns: bool,
+            ?rowIndexName: string,
+            ?rowIndexOffset: uint32,
+            ?includePathColumn: string,
+            ?schema: PolarsSchema,
+            ?hiveSchema: PolarsSchema,
+            ?tryParseHiveDates: bool
+        ) =
+        // Defaults
+        let pParallel = defaultArg parallelStrategy ParallelStrategy.Auto
+        let pLowMem = defaultArg lowMemory false
+        let pStats = defaultArg useStatistics true
+        let pGlob = defaultArg glob true
+        let pAllowMissing = defaultArg allowMissingColumns false
+        let pRowIndexOffset = defaultArg rowIndexOffset 0u
+        let pTryHive = defaultArg tryParseHiveDates false
+
+        //  F# Types -> C# Interop Types
+        
+        // nRows: int64 option -> ulong? (Nullable<ulong>)
+        let pNRows = 
+            nRows 
+            |> Option.map uint64 
+            |> Option.toNullable
+
+        // Schema: Schema Object -> SchemaHandle (Raw Pointer holder)
+        let hSchema = 
+            schema 
+            |> Option.map (fun s -> s.Handle) 
+            |> Option.toObj
+
+        let hHiveSchema = 
+            hiveSchema 
+            |> Option.map (fun s -> s.Handle) 
+            |> Option.toObj
+
+        // 3. 调用底层 Wrapper
+        let handle = PolarsWrapper.ScanParquet(
+            path,
+            pNRows,
+            pParallel.ToNative(),
+            pLowMem,
+            pStats,
+            pGlob,
+            pAllowMissing,
+            Option.toObj rowIndexName,
+            pRowIndexOffset,
+            Option.toObj includePathColumn,
+            hSchema,
+            hHiveSchema,
+            pTryHive
+        )
+
+        new LazyFrame(handle)
+    /// <summary>
+    /// [Memory] Lazily read parquet from a byte array (in-memory buffer).
+    /// </summary>
+    /// <param name="buffer">The byte array containing parquet data.</param>
+    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="parallel">Parallel strategy (Auto, Columns, RowGroups, None).</param>
+    /// <param name="lowMemory">Reduce memory pressure at the expense of performance.</param>
+    /// <param name="useStatistics">Use parquet statistics to prune row groups.</param>
+    /// <param name="glob">Globbing patterns (usually irrelevant for memory scan, defaults to true).</param>
+    /// <param name="allowMissingColumns">If true, do not fail if columns are missing.</param>
+    /// <param name="rowIndexName">If provided, add a row index column with this name.</param>
+    /// <param name="rowIndexOffset">Start index for the row index column.</param>
+    /// <param name="includePathColumn">If provided, add a column with the path (usually irrelevant for memory).</param>
+    /// <param name="schema">Overwrite the schema of the dataset.</param>
+    /// <param name="hiveSchema">The schema of the hive partitions.</param>
+    /// <param name="tryParseHiveDates">Attempt to parse hive values as Date/Datetime.</param>
+    static member ScanParquet
+        (
+            buffer: byte[],
+            ?nRows: int64,
+            ?parallelStrategy: ParallelStrategy,
+            ?lowMemory: bool,
+            ?useStatistics: bool,
+            ?glob: bool,
+            ?allowMissingColumns: bool,
+            ?rowIndexName: string,
+            ?rowIndexOffset: uint32,
+            ?includePathColumn: string,
+            ?schema: PolarsSchema,       
+            ?hiveSchema: PolarsSchema,   
+            ?tryParseHiveDates: bool
+        ) =
+        let pParallel = defaultArg parallelStrategy ParallelStrategy.Auto
+        let pLowMem = defaultArg lowMemory false
+        let pStats = defaultArg useStatistics true
+        let pGlob = defaultArg glob true
+        let pAllowMissing = defaultArg allowMissingColumns false
+        let pRowIndexOffset = defaultArg rowIndexOffset 0u
+        let pTryHive = defaultArg tryParseHiveDates false
+
+        // 2. Type Conversions
+        let pNRows = 
+            nRows 
+            |> Option.map uint64 
+            |> Option.toNullable
+
+        // Extract Handle from PolarsSchema wrapper
+        let hSchema = 
+            schema 
+            |> Option.map (fun s -> s.Handle) 
+            |> Option.toObj
+
+        let hHiveSchema = 
+            hiveSchema 
+            |> Option.map (fun s -> s.Handle) 
+            |> Option.toObj
+
+        // 3. Call C# Wrapper (Memory Overload)
+        let handle = PolarsWrapper.ScanParquet(
+            buffer,
+            pNRows,
+            pParallel.ToNative(),
+            pLowMem,
+            pStats,
+            pGlob,
+            pAllowMissing,
+            Option.toObj rowIndexName,
+            pRowIndexOffset,
+            Option.toObj includePathColumn,
+            hSchema,
+            hHiveSchema,
+            pTryHive
+        )
+
+        new LazyFrame(handle)
     /// <summary> Scan a JSON file into a LazyFrame. </summary>
     static member ScanNdjson (path: string) : LazyFrame =
         new LazyFrame(PolarsWrapper.ScanNdjson path)
@@ -3016,6 +3234,54 @@ and LazyFrame(handle: LazyFrameHandle) =
         new LazyFrame(newH)
 
 /// <summary>
+/// Polars Schema definition (Name -> DataType).
+/// </summary>
+and PolarsSchema (handle: SchemaHandle) =
+    
+    // --- Property ---
+    member val Handle = handle
+
+    // --- Constructor ---
+    static member private CreateHandleFromFields(fields: seq<string * DataType>) =
+        let names = fields |> Seq.map fst |> Seq.toArray
+        let typeHandles = fields |> Seq.map (fun (_, t) -> t.CreateHandle()) |> Seq.toArray
+        
+        try
+            PolarsWrapper.NewSchema(names, typeHandles)
+        finally
+            for th in typeHandles do th.Dispose()
+    /// <summary> Create an empty schema </summary>
+    new () = 
+        new PolarsSchema(PolarsWrapper.SchemaCreate())
+
+    /// <summary> Create schema from field definitions </summary>
+    new (fields: seq<string * DataType>) =
+        new PolarsSchema(PolarsSchema.CreateHandleFromFields(fields))
+
+    // --- Helper Constructors ---
+    
+    static member ofMap (m: Map<string, DataType>) = 
+        new PolarsSchema(m |> Map.toSeq)
+
+    static member ofList (fields: (string * DataType) list) = 
+        new PolarsSchema(fields)
+
+    // --- Methods ---
+
+    member this.Len() = PolarsWrapper.GetSchemaLen this.Handle
+
+    member this.AddField(name: string, dtype: DataType) =
+        use hType = dtype.CreateHandle()
+        PolarsWrapper.SchemaAddField(this.Handle, name, hType)
+
+    // --- Interface ---
+    
+    interface IDisposable with
+        member this.Dispose() = 
+            if not this.Handle.IsInvalid then
+                this.Handle.Dispose()
+
+/// <summary>
 /// SQL Context for executing SQL queries on registered LazyFrames.
 /// </summary>
 type SqlContext() =
@@ -3032,17 +3298,3 @@ type SqlContext() =
     member _.Execute(query: string) =
         new LazyFrame(PolarsWrapper.SqlExecute(handle, query))
 
-type private TempSchema(schema: Map<string, DataType>) =
-    let handles = 
-        schema 
-        |> Seq.map (fun kv -> 
-            kv.Key, kv.Value.CreateHandle()
-        )
-        |> dict
-        |> fun d -> new Dictionary<string, DataTypeHandle>(d)
-
-    member this.Dictionary = handles
-
-    interface IDisposable with
-        member _.Dispose() =
-            for h in handles.Values do h.Dispose()

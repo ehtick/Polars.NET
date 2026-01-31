@@ -14,7 +14,7 @@ public abstract class PolarsHandle : SafeHandle
     public IntPtr TransferOwnership()
     {
         IntPtr ptr = handle;
-        SetHandleAsInvalid();
+        SetHandle(IntPtr.Zero);
         return ptr;
     }
 }

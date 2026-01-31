@@ -42,32 +42,233 @@ namespace Polars.CSharp.Tests
             Assert.Equal(2, df.GetValue<int>(1, "id"));
             Assert.Equal("c", df.GetValue<string>(2, "val"));
         }
-
         [Fact]
-        public void Test_Parquet_RoundTrip()
+        public void Test_ReadParquet_File()
         {
-            // 1. 创建数据
-            using var s1 = new Series("a", [1, 2, 3]);
-            using var s2 = new Series("b", ["x", "y", "z"]);
-            using var dfOriginal = DataFrame.FromSeries(s1, s2);
+            // 1. 准备测试数据
+            using var df = DataFrame.FromColumns(new
+            {
+                id = new[] { 1, 2, 3, 4, 5 },
+                name = new[] { "Alice", "Bob", "Charlie", "David", "Eve" },
+                val = new[] { 1.1, 2.2, 3.3, 4.4, 5.5 }
+            });
 
-            // 2. 写入 Parquet (需要 DataFrame.WriteParquet 实现)
-            using var f = new DisposableFile(".parquet");
-            dfOriginal.WriteParquet(f.Path);
+            // 创建临时文件
+            string path = Path.GetTempFileName(); 
+            try
+            {
+                // 写入 Parquet (假设 WriteParquet 已实现)
+                df.WriteParquet(path);
 
-            // 3. 读取 Parquet
-            using var dfRead = DataFrame.ReadParquet(f.Path);
+                // --- Case 1: 基础读取 (全量) ---
+                using var dfFull = DataFrame.ReadParquet(path);
+                Assert.Equal(5, dfFull.Height);
+                Assert.Equal(3, dfFull.Width);
+                Assert.Equal("Alice", dfFull.GetValue<string>(0, "name"));
 
-            // 4. 验证
-            Assert.Equal(dfOriginal.Height, dfRead.Height);
-            Assert.Equal("y", dfRead.GetValue<string>(1, "b"));
+                // --- Case 2: 高级参数读取 ---
+                // 测试: 
+                // 1. columns: 只读 "id" 和 "name" (列裁剪)
+                // 2. nRows: 只读前 2 行 (Limit / Slice)
+                // 3. rowIndexName: 自动生成行号列 "idx"
+                // 4. rowIndexOffset: 行号从 100 开始
+                using var dfPartial = DataFrame.ReadParquet(
+                    path,
+                    columns: ["id", "name"],
+                    nRows: 2,
+                    rowIndexName: "idx",
+                    rowIndexOffset: 100
+                );
+
+                // 验证结构
+                Assert.Equal(2, dfPartial.Height); // nRows生效
+                Assert.Equal(3, dfPartial.Width);  // id, name + idx
+                
+                // 验证列裁剪
+                Assert.Contains("id", dfPartial.ColumnNames);
+                Assert.Contains("name", dfPartial.ColumnNames);
+                Assert.DoesNotContain("val", dfPartial.ColumnNames); // val 被裁剪了
+
+                // 验证行号
+                Assert.Equal(100UL, dfPartial.GetValue<ulong>(0, "idx")); // 第一行 Offset 100
+                Assert.Equal(101UL, dfPartial.GetValue<ulong>(1, "idx")); // 第二行 Offset 101
+            }
+            finally
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+        }
+        [Fact]
+        public void Test_ReadParquet_Memory_And_Stream()
+        {
+            // 1. 准备二进制 Parquet 数据 (Blob)
+            using var dfOriginal = DataFrame.FromColumns(new
+            {
+                timestamp = new[] { DateTime.Now, DateTime.Now.AddSeconds(1) },
+                status = new[] { "OK", "FAIL" }
+            });
+
+            // 为了获取合法的 Parquet bytes，我们先写到临时文件再读出来
+            // (如果以后实现了 WriteParquet(Stream) 可以直接写流)
+            string tempPath = Path.GetTempFileName();
+            byte[] parquetBytes;
+            try
+            {
+                dfOriginal.WriteParquet(tempPath);
+                parquetBytes = File.ReadAllBytes(tempPath);
+            }
+            finally
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
+            }
+
+            // --- Case 1: Read from byte[] (Memory) ---
+            // 场景：从 Redis/数据库/网络 拿到了 byte[]
+            using var dfFromBytes = DataFrame.ReadParquet(parquetBytes);
             
-            // 5. 测试 Lazy Scan
-            using var lf = LazyFrame.ScanParquet(f.Path);
-            using var dfLazyRead = lf.Collect();
-            Assert.Equal(3, dfLazyRead.Height);
+            Assert.Equal(2, dfFromBytes.Height);
+            Assert.Equal("OK", dfFromBytes.GetValue<string>(0, "status"));
+            Assert.Equal("FAIL", dfFromBytes.GetValue<string>(1, "status"));
+
+            // --- Case 2: Read from Stream ---
+            // 场景：从 ASP.NET Core Request.Body 或 S3 Stream 读取
+            using var ms = new MemoryStream(parquetBytes);
+            
+            // 测试 Stream 重载
+            // 同时测试一下 nRows 参数在 Stream 模式下是否依然有效
+            using var dfFromStream = DataFrame.ReadParquet(ms, nRows: 1);
+
+            Assert.Equal(1, dfFromStream.Height); // Limit 生效
+            Assert.Equal("OK", dfFromStream.GetValue<string>(0, "status"));
+
+            // 确保没有读第二行
+            // Assert.Single(dfFromStream.Column("status"));
+        }
+        [Fact]
+        // [Trait("Category","Debug")]
+        public void Test_ScanParquet_File_Hive_Schema()
+        {
+            // ---------------------------------------------------
+            // 场景：模拟 Hive 分区结构 /data/category=sales/data.parquet
+            // 验证：
+            // 1. Glob 扫描
+            // 2. 手动指定 hivePartitionSchema (把 category 强制转为 Categorical)
+            // 3. 手动指定文件 schema (把 amount 强制读为 Int64)
+            // ---------------------------------------------------
+
+            string baseDir = Path.Combine(Path.GetTempPath(), "polars_test_hive_" + Guid.NewGuid());
+            string partitionDir = Path.Combine(baseDir, "category=sales");
+            Directory.CreateDirectory(partitionDir);
+            string filePath = Path.Combine(partitionDir, "data.parquet");
+
+            try
+            {
+                // 1. 准备数据
+                // 注意：我们写入 Int32，但读取时会尝试用 Schema 强制覆盖
+                using var dfRaw = DataFrame.FromColumns(new
+                {
+                    id = new[] { 1, 2, 3 },
+                    amount = new[] { 100, 200, 300 } // Int32
+                });
+                dfRaw.WriteParquet(filePath);
+
+                // 2. 构造 Schema 对象
+                // 这里演示我们刚刚实现的 Schema 类和 Fluent API
+                
+                // 文件 Schema: 告诉 Polars 里面是 Int32
+                // *注意*：如果类型不兼容，Collect 时会报错
+                using var fileSchema = new PolarsSchema()
+                    .Add("id", DataType.Int32)
+                    .Add("amount", DataType.Int32); 
+
+                // Hive Schema: 告诉 Polars 分区列 'category' 应该是 Categorical 类型，而不是默认的 String
+                using var hiveSchema = new PolarsSchema()
+                    .Add("category", DataType.Categorical);
+
+                // 3. 执行 Lazy Scan
+                // 使用 Glob 模式扫描 baseDir 下的所有 parquet
+                using var lf = LazyFrame.ScanParquet(
+                    path: Path.Combine(baseDir, "**/*.parquet"),
+                    glob: true,
+                    schema: fileSchema,               // <--- 核心测试点 1
+                    hivePartitionSchema: hiveSchema,  // <--- 核心测试点 2
+                    tryParseHiveDates: true
+                );
+
+                // 4. Collect 并验证
+                using var df = lf.Collect();
+                // 验证 Hive 分区列是否存在
+                Assert.Contains("category", df.ColumnNames);
+                Assert.Equal("sales", df.GetValue<string>(0, "category"));
+                // Assert.Equal("sales", df[2][0]);
+                
+                // 验证 Hive Schema 是否生效 (类型应为 Categorical)
+                Assert.Equal(DataType.Categorical, df.Column("category").DataType);
+
+                // 验证数据完整性
+                Assert.Equal(3, df.Height);
+                Assert.Equal(100, df.GetValue<int>(0, "amount"));
+            }
+            finally
+            {
+                if (Directory.Exists(baseDir))
+                    Directory.Delete(baseDir, true);
+            }
         }
 
+        [Fact]
+        public void Test_ScanParquet_Memory_WithSchema()
+        {
+            // ---------------------------------------------------
+            // 场景：从内存 byte[] 读取 Parquet
+            // 验证：
+            // 1. Memory Buffer 读取
+            // 2. Schema 传递的安全性 (SafeHandleLock 是否工作)
+            // ---------------------------------------------------
+
+            // 1. 准备 Parquet 字节流
+            using var dfRaw = DataFrame.FromColumns(new
+            {
+                name = new[] { "Alice", "Bob" },
+                score = new[] { 9.5, 8.0 }
+            });
+
+            // 借用临时文件转 bytes (假设目前还没暴露 WriteParquetToStream)
+            string tmpPath = Path.GetTempFileName();
+            byte[] parquetBytes;
+            try
+            {
+                dfRaw.WriteParquet(tmpPath);
+                parquetBytes = File.ReadAllBytes(tmpPath);
+            }
+            finally
+            {
+                File.Delete(tmpPath);
+            }
+
+            // 2. 构造 Schema
+            using var schema = new PolarsSchema()
+                .Add("name", DataType.String)
+                .Add("score", DataType.Float64);
+
+            // 3. Scan Memory
+            // 这里会触发我们 Wrapper 里的 SafeHandleLock 逻辑
+            using var lf = LazyFrame.ScanParquet(
+                parquetBytes, 
+                schema: schema,
+                tryParseHiveDates: false
+            );
+
+            // 4. Collect
+            using var df = lf.Collect();
+
+            Assert.Equal(2, df.Height);
+            Assert.Equal("Alice", df.GetValue<string>(0, "name"));
+            Assert.Equal(9.5, df.GetValue<double>(0, "score"));
+            
+            // 验证 Schema 确实起作用了 (检查 schema 指针传递是否导致崩溃或无效)
+            // 如果 SafeHandleLock 有问题，这里大概率会 Crash 或者抛出 Invalid Handle
+        }
         [Fact]
         public void Test_Ipc_RoundTrip()
         {

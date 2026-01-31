@@ -112,10 +112,70 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <summary>
     /// Read Parquet File
     /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static DataFrame ReadParquet(string path)
-        => new (PolarsWrapper.ReadParquet(path));
+    public static DataFrame ReadParquet(
+        string path,
+        string[]? columns = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
+    {
+        // 直接透传给 Wrapper，无需处理指针
+        var h = PolarsWrapper.ReadParquet(
+            path,
+            columns ?? [],
+            nRows, 
+            parallel.ToNative(),
+            lowMemory,
+            rowIndexName,
+            rowIndexOffset
+        );
+
+        return new DataFrame(h);
+    }
+
+    /// <summary>
+    /// Read Parquet from a byte array (Memory).
+    /// </summary>
+    public static DataFrame ReadParquet(
+        byte[] buffer,
+        string[]? columns = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
+    {
+        var h = PolarsWrapper.ReadParquet(
+            buffer,
+            columns ?? [],
+            nRows,
+            parallel.ToNative(),
+            lowMemory,
+            rowIndexName,
+            rowIndexOffset
+        );
+
+        return new DataFrame(h);
+    }
+    /// <summary>
+    /// Read Parquet from a Stream.
+    /// </summary>
+    public static DataFrame ReadParquet(
+        Stream stream,
+        string[]? columns = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        return ReadParquet(ms.ToArray(), columns, nRows, parallel, lowMemory, rowIndexName, rowIndexOffset);
+    }
+
     /// <summary>
     /// Read JSON File
     /// </summary>
@@ -175,9 +235,23 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <summary>
     /// Read a Parquet file asynchronously.
     /// </summary>
-    public static async Task<DataFrame> ReadParquetAsync(string path)
+    public static async Task<DataFrame> ReadParquetAsync(
+        string path,
+        string[]? columns = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
     {
-        var handle = await PolarsWrapper.ReadParquetAsync(path);
+        var handle = await PolarsWrapper.ReadParquetAsync(
+            path,
+            columns ?? [],
+            nRows, 
+            parallel.ToNative(),
+            lowMemory,
+            rowIndexName,
+            rowIndexOffset);
         return new DataFrame(handle);
     }
 
@@ -1801,143 +1875,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     // Object Mapping (From Records)
     // ==========================================
-    // private static bool TryCreateSeriesFast(string name, object values, out Series? series)
-    // {
-    //     series = null;
-    //     if (values == null) return false;
-
-    //     switch (values)
-    //     {
-    //         // --- Signed Integers ---
-    //         case sbyte[] v:    series = new Series(name, v); return true;
-    //         case sbyte?[] v:   series = new Series(name, v); return true;
-    //         case short[] v:    series = new Series(name, v); return true;
-    //         case short?[] v:   series = new Series(name, v); return true;
-    //         case int[] v:      series = new Series(name, v); return true;
-    //         case int?[] v:     series = new Series(name, v); return true;
-    //         case long[] v:     series = new Series(name, v); return true;
-    //         case long?[] v:    series = new Series(name, v); return true;
-    //         case Int128[] v:   series = new Series(name, v); return true;
-    //         case Int128?[] v:  series = new Series(name, v); return true;
-
-    //         // --- Unsigned Integers (Zero-Copy Cast inside Series) ---
-    //         case byte[] v:     series = new Series(name, v); return true;
-    //         case byte?[] v:    series = new Series(name, v); return true;
-    //         case ushort[] v:   series = new Series(name, v); return true;
-    //         case ushort?[] v:  series = new Series(name, v); return true;
-    //         case uint[] v:     series = new Series(name, v); return true;
-    //         case uint?[] v:    series = new Series(name, v); return true;
-    //         case ulong[] v:    series = new Series(name, v); return true;
-    //         case ulong?[] v:   series = new Series(name, v); return true;
-    //         case UInt128[] v:  series = new Series(name, v); return true;
-    //         case UInt128?[] v: series = new Series(name, v); return true;
-
-    //         // --- Floating Point ---
-    //         case float[] v:    series = new Series(name, v); return true;
-    //         case float?[] v:   series = new Series(name, v); return true;
-    //         case double[] v:   series = new Series(name, v); return true;
-    //         case double?[] v:  series = new Series(name, v); return true;
-            
-    //         // --- Boolean (Bit Packing) ---
-    //         case bool[] v:     series = new Series(name, v); return true;
-    //         case bool?[] v:    series = new Series(name, v); return true;
-
-    //         // --- String ---
-    //         case string?[] v:   series = new Series(name, v); return true;
-
-    //         // --- DateTime ---
-    //         case DateTime[] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case DateTime?[] v:
-    //             series = new Series(name, v);
-    //             return true;
-
-    //         // --- DateTimeOffset ---
-    //         case DateTimeOffset[] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case DateTimeOffset?[] v:
-    //             series = new Series(name, v);
-    //             return true;
-
-    //         // --- DateOnly ---
-    //         case DateOnly[] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case DateOnly?[] v:
-    //             series = new Series(name, v);
-    //             return true;
-
-    //         // --- TimeOnly ---
-    //         case TimeOnly[] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case TimeOnly?[] v:
-    //             series = new Series(name, v);
-    //             return true;
-            
-    //         // --- TimeSpan ---
-    //         case TimeSpan[] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case TimeSpan?[] v:
-    //             series = new Series(name, v);
-    //             return true;
-
-    //         // --- Decimal ---
-    //         case decimal[] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case decimal?[] v:
-    //             series = new Series(name, v);
-    //             return true;
-
-    //         // --- Fixed Size List with non-null primitive inner type(Array) ---
-    //         case sbyte[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case byte[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case short[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case ushort[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case int[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case uint[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case long[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case ulong[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case Int128[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case UInt128[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case float[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case double[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         case decimal[,] v:
-    //             series = new Series(name, v);
-    //             return true;
-    //         // --- Default ---
-    //         default:
-    //             return false; 
-    //     }
-    // }
     /// <summary>
     /// Create a DataFrame from a collection of strongly-typed objects (POCOs).
     /// <para>
@@ -2204,7 +2141,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="data">Source data collection</param>
     /// <param name="batchSize">Rows per chunk (default 100,000)</param>
     /// <param name="providedSchema">Stream schema provided by user</param>
-    public static DataFrame FromArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000,Schema? providedSchema = null)
+    public static DataFrame FromArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000,Apache.Arrow.Schema? providedSchema = null)
     {
         var schema = providedSchema ?? ArrowConverter.GetSchemaFromType<T>();
         var stream = data.ToArrowBatches(batchSize);

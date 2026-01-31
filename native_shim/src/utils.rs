@@ -1,12 +1,11 @@
 use std::ffi::{CStr, c_char};
-
 use polars::frame::UniqueKeepStrategy;
 use polars_arrow::ffi::ArrowArray;
 use polars_arrow::ffi::{export_array_to_c,export_field_to_c};
-use polars::prelude::{ArrowSchema, AsofStrategy, Expr, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin};
+use polars::prelude::{ArrowSchema, SchemaRef,AsofStrategy, Expr, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin, ParallelStrategy};
 use polars_arrow::datatypes::Field;
 
-use crate::types::ExprContext;
+use crate::types::{ExprContext,SchemaContext};
 
 pub struct ArrowArrayContext {
     pub array: Box<dyn polars_arrow::array::Array>, 
@@ -84,6 +83,16 @@ pub(crate) unsafe fn consume_exprs_array(
         .collect()
 }
 
+pub(crate) unsafe fn ptr_to_schema_ref(ptr: *mut SchemaContext) -> Option<SchemaRef> {
+    if ptr.is_null() {
+        None
+    } else {
+        let ctx = unsafe { &*ptr };
+        Some(ctx.schema.clone())
+    }
+}
+
+
 pub(crate) fn map_jointype(code: u8) -> JoinType {
     match code {
         0 => JoinType::Inner,
@@ -93,7 +102,6 @@ pub(crate) fn map_jointype(code: u8) -> JoinType {
         4 => JoinType::Semi,
         5 => JoinType::Anti,
         6 => JoinType::IEJoin,
-        7 => JoinType::Cross,
         _ => JoinType::Inner, // Default
     }
 }
@@ -147,5 +155,14 @@ pub(crate) fn parse_keep_strategy(val: u8) -> UniqueKeepStrategy {
         2 => UniqueKeepStrategy::Any,
         3 => UniqueKeepStrategy::None,
         _ => UniqueKeepStrategy::First, // Default fallback
+    }
+}
+
+pub(crate) fn map_parallel_strategy(code: u8) -> ParallelStrategy {
+    match code {
+        1 => ParallelStrategy::Columns,
+        2 => ParallelStrategy::RowGroups,
+        3 => ParallelStrategy::None,
+        0 | _ => ParallelStrategy::Auto,
     }
 }

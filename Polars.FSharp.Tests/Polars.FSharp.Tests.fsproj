@@ -22,6 +22,7 @@
     <Compile Include="SeriesTests.fs" />
     <Compile Include="ExtensionsTests.fs" />
     <Compile Include="SelectorTests.fs" />
+    <Compile Include="ScanParquetTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

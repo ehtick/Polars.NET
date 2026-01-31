@@ -15,29 +15,6 @@ public static partial class PolarsWrapper
     public static SchemaHandle GetLazySchema(LazyFrameHandle lf)
         => ErrorHelper.Check(NativeBindings.pl_lazy_frame_get_schema(lf));
 
-    /// <summary>
-    /// Get the length of Schema
-    /// </summary>
-    public static ulong GetSchemaLen(SchemaHandle schema)
-        => (ulong)NativeBindings.pl_schema_len(schema);
-
-
-    /// <summary>
-    /// Get Schema Field by Index
-    /// </summary>
-    public static void GetSchemaFieldAt(SchemaHandle schema, ulong index, out string name, out DataTypeHandle typeHandle)
-    {
-        NativeBindings.pl_schema_get_at_index(
-            schema, 
-            (UIntPtr)index, 
-            out IntPtr namePtr, 
-            out var outTypeHandle
-        );
-
-        typeHandle = ErrorHelper.Check(outTypeHandle);
-
-        name = ErrorHelper.CheckString(namePtr);
-    }
     public static string Explain(LazyFrameHandle lf, bool optimized)
     {
         IntPtr ptr = NativeBindings.pl_lazy_explain(lf, optimized);

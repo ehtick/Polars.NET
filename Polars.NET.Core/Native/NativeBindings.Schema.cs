@@ -25,4 +25,10 @@ unsafe internal partial class NativeBindings
         out IntPtr namePtr,
         out DataTypeHandle dtypeHandle
     );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_schema_add_field(
+        IntPtr schema,  // *mut SchemaContext
+        string name,    // *const c_char
+        IntPtr dtype    // *mut DataTypeContext
+    );
 }
