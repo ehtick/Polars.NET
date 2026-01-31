@@ -31,45 +31,31 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
 
     /// <summary>
-    /// Get the schema of the DataFrame as a dictionary (Column Name -> Data Type String).
+    /// Gets the Schema of the DataFrame.
+    /// Returns a disposable PolarsSchema object (Zero-Copy wrapper).
     /// </summary>
-    public Dictionary<string, DataType> Schema
+    public PolarsSchema Schema
     {
         get
         {
-            int width = (int)PolarsWrapper.DataFrameWidth(Handle);
-            var schema = new Dictionary<string, DataType>(width);
-
-            for (int i = 0; i < width; i++)
-            {
-                // Get Series
-                using var seriesHandle = PolarsWrapper.DataFrameGetColumnAt(Handle, i);
-                
-                // Get Column Name
-                string name = PolarsWrapper.SeriesName(seriesHandle);
-
-                // Get DataType
-                var dtHandle = PolarsWrapper.GetSeriesDataType(seriesHandle);
-                
-                // 4. Build DataType object
-                schema[name] = new DataType(dtHandle);
-            }
-
-            return schema;
+            var handle = PolarsWrapper.GetDataFrameSchema(Handle);
+            return new PolarsSchema(handle);
         }
     }
+
     /// <summary>
-    /// Prints the schema to the console in a tree format.
-    /// Useful for debugging column names and data types.
+    /// Prints the schema to the console.
     /// </summary>
     public void PrintSchema()
     {
-        var schema = Schema; 
+        using var schema = Schema;
         
         Console.WriteLine("root");
-        foreach (var kvp in schema)
+        
+        foreach (var name in schema.ColumnNames)
         {
-            Console.WriteLine($" |-- {kvp.Key}: {kvp.Value}");
+            var type = schema[name]; 
+            Console.WriteLine($" |-- {name}: {type.Kind}");
         }
     }
     // ==========================================
@@ -79,34 +65,46 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// Reads a CSV file into a DataFrame.
     /// </summary>
     /// <param name="path">Path to the CSV file.</param>
-    /// <param name="schema">Optional schema dictionary.</param>
+    /// <param name="schema">Optional PolarsSchema to specify types or overwrite schema.</param>
+    /// <param name="columns">Optional list of column names to project (select).</param>
     /// <param name="hasHeader">Whether the CSV has a header row.</param>
     /// <param name="separator">Character used as separator.</param>
-    /// <param name="skipRows">Choose how many rows should be skipped.</param>
-    /// <param name="tryParseDates">Whether to automatically try parsing dates/datetimes. Default is true.</param>
+    /// <param name="ignoreErrors">Whether to ignore parsing errors (skip bad rows).</param>
+    /// <param name="tryParseDates">Whether to automatically try parsing dates/datetimes.</param>
+    /// <param name="lowMemory">Reduce memory usage at the cost of performance.</param>
+    /// <param name="skipRows">Number of rows to skip at start.</param>
+    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (100 is default).</param>
+    /// <param name="encoding">File encoding (UTF8 or LossyUTF8).</param>
     /// <returns>A new DataFrame.</returns>
     public static DataFrame ReadCsv(
-        string path, 
-        Dictionary<string, DataType>? schema = null,
-        bool hasHeader = true, 
+        string path,
+        PolarsSchema? schema = null,
+        string[]? columns = null,
+        bool hasHeader = true,
         char separator = ',',
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
         ulong skipRows = 0,
-        bool tryParseDates = true) 
+        ulong? nRows = null,
+        ulong? inferSchemaLength = 100,
+        PlEncoding encoding = PlEncoding.UTF8)
     {
-        var schemaHandles = schema?.ToDictionary(
-            kv => kv.Key, 
-            kv => kv.Value.Handle
-        );
-
         var handle = PolarsWrapper.ReadCsv(
-            path, 
-            schemaHandles, 
-            hasHeader, 
-            separator, 
+            path,
+            columns,
+            schema?.Handle, 
+            hasHeader,
+            separator,
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
             skipRows,
-            tryParseDates
+            nRows,
+            inferSchemaLength,
+            encoding.ToNative()
         );
-
         return new DataFrame(handle);
     }
     /// <summary>
@@ -121,7 +119,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         string? rowIndexName = null,
         uint rowIndexOffset = 0)
     {
-        // 直接透传给 Wrapper，无需处理指针
         var h = PolarsWrapper.ReadParquet(
             path,
             columns ?? [],
@@ -210,24 +207,31 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public static async Task<DataFrame> ReadCsvAsync(
         string path,
-        Dictionary<string, DataType>? schema = null,
+        string[]? columns = null,
+        PolarsSchema? schema = null, 
         bool hasHeader = true,
         char separator = ',',
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
         ulong skipRows = 0,
-        bool tryParseDates = true) 
+        ulong? nRows = null,
+        ulong? inferSchemaLength = 100,
+        PlEncoding encoding = PlEncoding.UTF8)
     {
-        var schemaHandles = schema?.ToDictionary(
-            kv => kv.Key, 
-            kv => kv.Value.Handle
-        );
-
         var handle = await PolarsWrapper.ReadCsvAsync(
             path, 
-            schemaHandles, 
+            columns,
+            schema?.Handle,
             hasHeader, 
             separator, 
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
             skipRows,
-            tryParseDates 
+            nRows,
+            inferSchemaLength,
+            encoding.ToNative()
         );
 
         return new DataFrame(handle);
@@ -1788,17 +1792,25 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public DataFrame Describe()
     {
-        // 1. Select Numeric Column
-        var schema = Schema;
-        var numericCols = schema
-            .Where(kv => kv.Value.IsNumeric)
-            .Select(kv => kv.Key)
-            .ToList();
+        using var schema = Schema;
+        
+        var numericCols = new List<string>();
+
+        foreach (var name in schema.ColumnNames)
+        {
+            using var dtype = schema[name];
+            
+            if (dtype.IsNumeric)
+            {
+                numericCols.Add(name);
+            }
+        }
 
         if (numericCols.Count == 0)
             throw new InvalidOperationException("No numeric columns to describe.");
 
-        // 2. Define stastistical metrics
+        // 2. Define statistical metrics
+        // (这部分逻辑保持不变，依然非常优雅)
         var metrics = new List<(string Name, Func<string, Expr> Op)>
         {
             ("count",      c => Polars.Col(c).Count().Cast(DataType.Float64)),

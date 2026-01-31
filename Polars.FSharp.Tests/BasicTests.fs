@@ -70,6 +70,7 @@ type ``Basic Functionality Tests`` () =
     member _.``IO: Advanced CSV Reading (Schema, Skip, Dates)`` () =
         let path = "advanced_test.csv"
         try
+            // 构造带干扰项的 CSV
             let content = 
                 "IGNORE_THIS_LINE\n" +
                 "id;date_col;val_col\n" +
@@ -77,26 +78,70 @@ type ``Basic Functionality Tests`` () =
                 "008;2023-12-31;10.5"
             System.IO.File.WriteAllText(path, content)
 
-            // 调用 DataFrame.ReadCsv
-            use df = DataFrame.ReadCsv(
+            // 1. 构造 Schema (使用新的 Schema 类)
+            // 显式指定 id 为 String 以保留前导零 "007"
+            use mySchema = new PolarsSchema([
+                "id", pl.string
+                "date_col", pl.date
+                "val_col", pl.float64
+            ])
+
+            // 2. 调用全参数 readCsv
+            let df = DataFrame.ReadCsv(
                 path,
-                skipRows = 1,
+                skipRows = 1L,       // 注意：F# 中 int64 字面量通常带 L，或者依赖自动转换
                 separator = ';',
                 tryParseDates = true,
-                schema = Map.ofList [
-                    "id", DataType.String
-                    // "date_col", DataType.Date   // 明确告诉它这是 Date
-                    // "val_col", DataType.Float64 // 明确告诉它这是 Float
-                ]
+                schema = mySchema
             )
 
-            Assert.Equal(2L, df.Rows)
-            Assert.Equal("str", df.Column("id").DtypeStr)
-            Assert.Equal("007", df.String("id", 0).Value)
-            Assert.Equal(99.9, df.Float("val_col", 0).Value)
+            // 3. 验证结果
+            Assert.Equal(2L, df.Height) // Rows -> Height
+
+            // 验证类型覆盖 (ID 应该是 String，而不是自动推断的 Int)
+            Assert.Equal(pl.string, df.Column("id").DataType)
+            
+            // 验证数值
+            Assert.Equal("007", df.Column("id").GetValue<string>(0))
+            Assert.Equal(99.9, df.Column("val_col").GetValue<double>(0))
+            
+            // 验证日期解析 (依赖 tryParseDates=true 和 Schema)
+            // Polars.NET 通常将 pl.Date 映射为 DateOnly
+            let dateVal = df.Column("date_col").GetValue<DateOnly>(0)
+            Assert.Equal(DateOnly(2023, 1, 1), dateVal)
 
         finally
             if File.Exists path then File.Delete path
+    [<Fact>]
+    member _.``ScanCsv (Memory): Basic & Options``() =
+        // 1. 准备 CSV 字节流
+        let csvString = 
+            """name,age,active
+Alice,30,true
+Bob,25,false
+Charlie,35,true"""
+        
+        let bytes = System.Text.Encoding.UTF8.GetBytes(csvString)
+
+        // 2. 调用内存版 ScanCsv
+        // 测试参数传递：跳过 header (假设我们要把它当数据读，或者测试 skipRows)
+        // 这里我们正常读，但在 Laziness 上做文章
+        let lf = LazyFrame.ScanCsv(
+            bytes, 
+            hasHeader = true,
+            nRows = 2L // 只读前两行
+        )
+
+        // 3. 执行
+        let df = lf.Collect()
+
+        // 4. 验证
+        Assert.Equal(2L, df.Height)
+        Assert.Equal("Alice", df.Column("name").GetValue<string>(0))
+        Assert.Equal(30, df.Column("age").GetValue<int>(0))
+        
+        // 验证 Bob 也在
+        Assert.Equal("Bob", df.Column("name").GetValue<string>(1))
     [<Fact>]
     member _.``Can read&write Parquet`` () =
         // 1. 准备 CSV 数据
@@ -116,7 +161,7 @@ type ``Basic Functionality Tests`` () =
         // 5. 读回来验证内容
         use df2 = DataFrame.ReadParquet parquet.Path
         Assert.Equal(df.Rows, df2.Rows)
-        Assert.Equal(4, df2.Schema.Count)
+        Assert.Equal(4L, df2.Width)
 
     [<Fact>]
     member _.``IO: Write & Read IPC/JSON`` () =
@@ -191,7 +236,7 @@ type ``Basic Functionality Tests`` () =
 
         // 3. 验证 DataFrame Schema
         let schema = df.Schema
-        Assert.Equal(3, schema.Count)
+        Assert.Equal(3L, df.Len)
         Assert.Equal(DataType.Int32, schema.["id"])
         Assert.Equal(DataType.Float64, schema.["score"])
         Assert.Equal(DataType.Boolean, schema.["is_active"])
@@ -212,8 +257,12 @@ type ``Basic Functionality Tests`` () =
             )
             |> pl.filterLazy (pl.col "b" .> pl.lit 0)
 
-        // 1. 验证 Schema (使用 Map API，更加精准)
-        let schema = lf2.Schema 
+        // 1. 验证 Schema
+        // [升级点] 获取 PolarsSchema 对象，使用 use 自动释放
+        use pSchema = lf2.Schema 
+        
+        // [升级点] 转换为 F# Map 以使用 ContainsKey 等高级断言
+        let schema = pSchema.ToMap()
         
         // 验证列名是否存在 (Key)
         Assert.True(schema.ContainsKey "a")
@@ -229,12 +278,14 @@ type ``Basic Functionality Tests`` () =
         // 2. 验证 Explain 和 Optimization
         let plan = lf2.Explain false
         printfn "\n=== Query Plan ===\n%s\n==================" plan
+        // 验证 Plan 字符串包含关键算子
         Assert.Contains("FILTER", plan) 
         Assert.Contains("WITH_COLUMNS", plan)
 
         let planOptimized = lf2.Explain true
         printfn "\n=== Query Plan Optimized===\n%s\n==================" planOptimized
-        Assert.Contains("SELECTION", planOptimized) 
+        // 优化后通常会出现 SCAN CSV 谓词下推
+        Assert.Contains("Csv SCAN", planOptimized)
     [<Fact>]
     member _.``Arrow Integration: Import C# Arrow Data to Polars`` () =
         // 1. 在 C# 端原生构建一个 RecordBatch

@@ -50,7 +50,7 @@ public static partial class PolarsWrapper
         }
     }
 
-    private static R UseUtf8StringArray<R>(string[] strings, Func<IntPtr[], R> action)
+    private static R UseUtf8StringArray<R>(string[]? strings, Func<IntPtr[], R> action)
     {
         if (strings == null || strings.Length == 0)
         {

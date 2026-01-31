@@ -4,16 +4,11 @@ namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
 {
-    public static string GetSchemaString(LazyFrameHandle lf)
-    {
-        IntPtr ptr = NativeBindings.pl_lazy_schema(lf);
-        return ErrorHelper.CheckString(ptr); 
-    }
     /// <summary>
     /// Get the schema handle for LazyFrame 
     /// </summary>
     public static SchemaHandle GetLazySchema(LazyFrameHandle lf)
-        => ErrorHelper.Check(NativeBindings.pl_lazy_frame_get_schema(lf));
+        => ErrorHelper.Check(NativeBindings.pl_lazyframe_get_schema(lf));
 
     public static string Explain(LazyFrameHandle lf, bool optimized)
     {

@@ -28,28 +28,99 @@ public class LazyFrame : IDisposable
     // Scan IO
     // ==========================================
     /// <summary>
-    /// Scans a CSV file lazily.
+    /// Lazily scans a CSV file into a LazyFrame.
     /// </summary>
+    /// <param name="path">Path to the CSV file.</param>
+    /// <param name="schema">Optional PolarsSchema to specify types or overwrite schema.</param>
+    /// <param name="hasHeader">Whether the CSV has a header row.</param>
+    /// <param name="separator">Character used as separator.</param>
+    /// <param name="ignoreErrors">Whether to ignore parsing errors (skip bad rows).</param>
+    /// <param name="tryParseDates">Whether to automatically try parsing dates/datetimes.</param>
+    /// <param name="lowMemory">Reduce memory usage at the cost of performance.</param>
+    /// <param name="cache">Cache the result after reading (default true).</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks after reading (default false).</param>
+    /// <param name="skipRows">Number of rows to skip at start.</param>
+    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (100 is default).</param>
+    /// <param name="rowIndexName">If provided, adds a row index column with this name.</param>
+    /// <param name="rowIndexOffset">Offset to start the row index from.</param>
+    /// <param name="encoding">File encoding (UTF8 or LossyUTF8).</param>
+    /// <returns>A new LazyFrame.</returns>
     public static LazyFrame ScanCsv(
         string path,
-        Dictionary<string, DataType>? schema = null,
+        PolarsSchema? schema = null, // ✅ 升级为强类型 Schema 对象
         bool hasHeader = true,
         char separator = ',',
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
+        bool cache = true,           // ✅ Lazy 特有参数
+        bool rechunk = false,        // ✅ Lazy 特有参数
         ulong skipRows = 0,
-        bool tryParseDates = true) 
+        ulong? nRows = null,
+        ulong? inferSchemaLength = 100,
+        string? rowIndexName = null, // ✅ 行号生成
+        ulong rowIndexOffset = 0,
+        PlEncoding encoding = PlEncoding.UTF8)
     {
-        var schemaHandles = schema?.ToDictionary(
-            kv => kv.Key, 
-            kv => kv.Value.Handle
+        var handle = PolarsWrapper.ScanCsv(
+            path,
+            schema?.Handle,
+            hasHeader,
+            separator,
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
+            cache,
+            rechunk,
+            skipRows,
+            nRows,
+            inferSchemaLength,
+            rowIndexName,
+            rowIndexOffset,
+            encoding.ToNative()
         );
 
+        return new LazyFrame(handle);
+    }
+    /// <summary>
+    /// Lazily scans a CSV from an in-memory byte array.
+    /// Useful for processing data from Web APIs, S3, or embedded resources without writing to disk.
+    /// </summary>
+    public static LazyFrame ScanCsv(
+        byte[] buffer, 
+        PolarsSchema? schema = null,
+        bool hasHeader = true,
+        char separator = ',',
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
+        bool cache = true,
+        bool rechunk = false,
+        ulong skipRows = 0,
+        ulong? nRows = null,
+        ulong? inferSchemaLength = 100,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0,
+        PlEncoding encoding = PlEncoding.UTF8)
+    {
+        // 调用 Wrapper
         var handle = PolarsWrapper.ScanCsv(
-            path, 
-            schemaHandles, 
-            hasHeader, 
-            separator, 
+            buffer,
+            schema?.Handle,
+            hasHeader,
+            separator,
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
+            cache,
+            rechunk,
             skipRows,
-            tryParseDates
+            nRows,
+            inferSchemaLength,
+            rowIndexName,
+            rowIndexOffset,
+            encoding.ToNative()
         );
 
         return new LazyFrame(handle);
@@ -375,49 +446,33 @@ public class LazyFrame : IDisposable
     // ==========================================
 
     /// <summary>
-    /// Fetch the schema as a dictionary of column names and their data types.
-    /// </summary>
-    /// <summary>
     /// Gets the Schema of the LazyFrame.
-    /// <para>
-    /// This operation triggers type inference on the query plan.
-    /// The returned DataTypes are strongly typed and backed by native handles.
-    /// </para>
+    /// Note: The returned PolarsSchema object is IDisposable. 
+    /// Usage in 'using' block is recommended if accessed frequently.
     /// </summary>
-    public Dictionary<string, DataType> Schema
+    public PolarsSchema Schema
     {
         get
         {
-            using var schemaHandle = PolarsWrapper.GetLazySchema(Handle);
+            var handle = PolarsWrapper.GetLazySchema(Handle);
             
-            ulong len = PolarsWrapper.GetSchemaLen(schemaHandle);
-            
-            var result = new Dictionary<string, DataType>((int)len);
-
-            for (ulong i = 0; i < len; i++)
-            {
-                PolarsWrapper.GetSchemaFieldAt(schemaHandle, i, out string name, out DataTypeHandle dtHandle);
-                
-                result[name] = new DataType(dtHandle);
-            }
-
-            return result;
+            return new PolarsSchema(handle);
         }
     }
 
     /// <summary>
-    /// Get Schema description string
+    /// Prints the schema to the console.
     /// </summary>
-    public string SchemaString
+    public void PrintSchema()
     {
-        get
+        using var schema = Schema;
+        
+        Console.WriteLine("root");
+        
+        foreach (var name in schema.ColumnNames)
         {
-            var schema = this.Schema;
-
-            // Format: {"a": i32, "b": list[str], "c": datetime[ms]}
-            var parts = schema.Select(kv => $"\"{kv.Key}\": {kv.Value}");
-            
-            return "{" + string.Join(", ", parts) + "}";
+            var type = schema[name]; 
+            Console.WriteLine($" |-- {name}: {type.Kind}");
         }
     }
 

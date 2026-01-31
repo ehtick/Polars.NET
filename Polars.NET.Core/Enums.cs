@@ -203,3 +203,9 @@ public enum PlParallelStrategy: byte
     RowGroups=2,
     None=3
 }
+
+public enum PlEncoding: byte
+{
+    UTF8=0,
+    LossyUTF8=1    
+}

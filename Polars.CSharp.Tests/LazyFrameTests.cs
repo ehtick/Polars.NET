@@ -389,9 +389,9 @@ HR,50";
         Assert.Equal("c", res.GetValue<string>(2, "expanded"));
     }
     [Fact]
-    public void TestLazySchema_ZeroParse()
+    public void TestLazySchema_ZeroParse_Introspection()
     {
-        Console.WriteLine("===  LazyFrame Schema Zero-Parse Test ===");
+        Console.WriteLine("=== LazyFrame Schema Zero-Parse Test ===");
 
         // 1. 准备数据
         // Schema: { "a": Int32, "b": Float64, "c": String }
@@ -403,52 +403,57 @@ HR,50";
         using var lf = df.Lazy();
 
         // 2. 获取初始 Schema
+        // [Architectural Change] lf.Schema 返回 PolarsSchema 对象 (IDisposable)
+        // 我们需要用 'using' 来确保 Handle 被释放
         Console.WriteLine("--- 1. Initial Schema ---");
-        var schema1 = lf.Schema; // 这里触发 Rust collect_schema
+        using var schema1 = lf.Schema; 
 
-        Assert.Equal(3, schema1.Count);
+        // [API Update] 使用 .Length 而不是 .Count
+        Assert.Equal(3, schema1.Length);
         
-        // 验证类型 (强类型枚举匹配)
+        // [Zero-Parse] 直接访问 Kind 枚举，没有任何字符串比较
         Assert.Equal(DataTypeKind.Int32, schema1["a"].Kind);
         Assert.Equal(DataTypeKind.Float64, schema1["b"].Kind);
         Assert.Equal(DataTypeKind.String, schema1["c"].Kind);
 
-        PrintSchema(schema1);
+        // 调用新的 ToString() 实现
+        Console.WriteLine(schema1.ToString()); 
 
         // 3. 执行 Lazy 操作并验证 Schema 变更
         // 操作：
-        // - "a" 转为 Float64
-        // - "c" 进行聚合 (Implode) 变成 List<String>
+        // - "a" Cast 为 Float64
+        // - "c" Implode 聚合为 List<String>
         Console.WriteLine("\n--- 2. Modified Schema (Type Inference) ---");
         
         using var lf2 = lf.Select(
             Col("a").Cast(DataType.Float64).Alias("a_cast"),
-            Col("c").Implode().Alias("c_list") // 变成 List
+            Col("c").Implode().Alias("c_list") // 结果应该是 List<String>
         );
 
-        var schema2 = lf2.Schema;
+        // 再次获取 Schema (Rust 会在这一步运行 Logical Plan 的类型推断)
+        using var schema2 = lf2.Schema;
 
-        // 验证 "a_cast" 变成了 Float64
+        // 验证 "a_cast"
         Assert.Equal(DataTypeKind.Float64, schema2["a_cast"].Kind);
         Console.WriteLine($"[Check] a_cast is Float64: {schema2["a_cast"].Kind == DataTypeKind.Float64}");
 
-        // 验证 "c_list" 变成了 List
-        var cListType = schema2["c_list"];
-        Assert.Equal(DataTypeKind.List, cListType.Kind);
-        Console.WriteLine($"[Check] c_list is List: {cListType.Kind == DataTypeKind.List}");
+        // 4. [高光时刻] 验证嵌套类型 (Deep Introspection)
+        // 这里的 c_list 是 DataTypeKind.List
+        var listType = schema2["c_list"];
+        Assert.Equal(DataTypeKind.List, listType.Kind);
+        Console.WriteLine($"[Check] c_list is List: {listType.Kind == DataTypeKind.List}");
 
-        // 4. [高光时刻] 验证嵌套类型 (Introspection)
-        // 我们没有解析字符串 "list[str]"，而是直接问 Rust 内部类型是什么
-        // cListType.InnerType 会触发 pl_datatype_get_inner FFI 调用
-        var innerType = cListType.InnerType; 
+        // [Zero-Parse Ultimate] 获取内部类型
+        // 我们不解析 "List<String>" 字符串，而是直接请求 Inner Handle
+        // listType.InnerType 返回一个新的 DataType 对象
+        using var innerType = listType.InnerType; 
         
         Assert.NotNull(innerType);
         Assert.Equal(DataTypeKind.String, innerType!.Kind);
         Console.WriteLine($"[Check] c_list inner type is String: {innerType.Kind == DataTypeKind.String}");
 
-        PrintSchema(schema2);
-        
-        Console.WriteLine("=== NO STRING PARSE! ===");
+        Console.WriteLine(schema2.ToString());
+        Console.WriteLine("=== SUCCESS: Validated without a single string parse! ===");
     }
     [Fact]
     public void Test_LazyFrame_Sort_FullOptions()

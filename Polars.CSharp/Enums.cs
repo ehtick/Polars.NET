@@ -234,6 +234,11 @@ public enum ParallelStrategy: byte
     None =3
 }
 
+public enum PlEncoding: byte
+{
+    UTF8 = 0,
+    LossyUTF8 = 1,
+}
 
 internal static class EnumExtensions
 {
@@ -424,6 +429,12 @@ internal static class EnumExtensions
         ParallelStrategy.RowGroups => CoreEnums.PlParallelStrategy.RowGroups,
         ParallelStrategy.None => CoreEnums.PlParallelStrategy.None,
         _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
+    };
+    internal static CoreEnums.PlEncoding ToNative(this PlEncoding encoding) => encoding switch
+    {
+        PlEncoding.UTF8 => CoreEnums.PlEncoding.UTF8,
+        PlEncoding.LossyUTF8 => CoreEnums.PlEncoding.LossyUTF8,
+        _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
     };
 }
 

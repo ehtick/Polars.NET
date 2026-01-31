@@ -1,21 +1,6 @@
-use crate::{types::{DataTypeContext, LazyFrameContext, SchemaContext}, utils::ptr_to_str};
+use crate::{types::{DataTypeContext, SchemaContext}, utils::ptr_to_str};
 use std::{ffi::{CStr, CString}, os::raw::c_char};
 use polars_core::prelude::*;
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pl_lazy_frame_get_schema(lf_ptr: *mut LazyFrameContext) -> *mut SchemaContext {
-    ffi_try!({
-        if lf_ptr.is_null() {
-            return Ok(std::ptr::null_mut());
-        }
-        
-        let ctx = unsafe { &mut *lf_ptr };
-        
-        let schema_ref = ctx.inner.collect_schema().map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-        Ok(Box::into_raw(Box::new(SchemaContext { schema: schema_ref })))
-    })
-}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_schema_len(ptr: *mut SchemaContext) -> usize {

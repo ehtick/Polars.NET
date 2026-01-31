@@ -39,7 +39,7 @@ type ``Complex Query Tests`` () =
     [<Fact>]
     member _.``GroupBy Queries`` () =
         use csv = new TempCsv "name,birthdate,weight,height\nBen Brown,1985-02-15,72.5,1.77\nQinglei,2025-11-25,70.0,1.80\nZhang,2025-10-31,55,1.75"
-        let lf = LazyFrame.ScanCsv csv.Path
+        let lf = LazyFrame.ScanCsv(csv.Path,tryParseDates=true)
 
         let res = 
             lf 
@@ -67,7 +67,7 @@ type ``Complex Query Tests`` () =
             "Li Si,1988-05-20,60.5678,1.604\n" +
             "Wang Wu,1996-12-31,80.9999,1.859"
         use csv = new TempCsv(csvContent)
-        let lf = LazyFrame.ScanCsv csv.Path
+        let lf = LazyFrame.ScanCsv(csv.Path,tryParseDates=true)
 
         let res = 
             lf

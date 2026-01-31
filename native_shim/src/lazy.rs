@@ -707,24 +707,21 @@ pub extern "C" fn pl_lazyframe_unique_stable(
     })
 }
 
-
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_schema(lf_ptr: *mut LazyFrameContext) -> *mut c_char {
+pub unsafe extern "C" fn pl_lazyframe_get_schema(lf_ptr: *mut LazyFrameContext) -> *mut SchemaContext {
     ffi_try!({
+        if lf_ptr.is_null() {
+            return Ok(std::ptr::null_mut());
+        }
+        
         let ctx = unsafe { &mut *lf_ptr };
         
-        let schema = ctx.inner.collect_schema()?;
+        let schema_ref = ctx.inner.collect_schema().map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         
-        let mut json_parts = Vec::new();
-        for (name, dtype) in schema.iter() {
-            let dtype_str = dtype.to_string();
-            json_parts.push(format!("\"{}\": \"{}\"", name, dtype_str));
-        }
-        let json = format!("{{ {} }}", json_parts.join(", "));
-        
-        Ok(std::ffi::CString::new(json).unwrap().into_raw())
+        Ok(Box::into_raw(Box::new(SchemaContext { schema: schema_ref })))
     })
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_explain(lf_ptr: *mut LazyFrameContext, optimized: bool) -> *mut c_char {

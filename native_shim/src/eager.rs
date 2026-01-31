@@ -277,18 +277,31 @@ pub extern "C" fn pl_dataframe_get_column_name(
     CString::new(cols[index].as_str()).unwrap().into_raw()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_dataframe_schema(df_ptr: *mut DataFrameContext) -> *mut c_char {
-    let ctx = unsafe { &*df_ptr };
-    let schema = ctx.df.schema();
+// #[unsafe(no_mangle)]
+// pub extern "C" fn pl_dataframe_schema(df_ptr: *mut DataFrameContext) -> *mut c_char {
+//     let ctx = unsafe { &*df_ptr };
+//     let schema = ctx.df.schema();
       
-    let map: std::collections::HashMap<String, String> = schema.iter_names_and_dtypes()
-        .map(|(name, dtype)| (name.to_string(), dtype.to_string()))
-        .collect();
+//     let map: std::collections::HashMap<String, String> = schema.iter_names_and_dtypes()
+//         .map(|(name, dtype)| (name.to_string(), dtype.to_string()))
+//         .collect();
 
-    let json = serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string());
+//     let json = serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string());
     
-    CString::new(json).unwrap().into_raw()
+//     CString::new(json).unwrap().into_raw()
+// }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_dataframe_get_schema(
+    df_ptr: *mut DataFrameContext,
+) -> *mut SchemaContext {
+    let _df = unsafe { &*df_ptr };
+
+    let schema = unsafe { &*df_ptr }.df.schema();
+    
+    Box::into_raw(Box::new(SchemaContext { 
+        schema: schema.to_owned() 
+    }))
 }
 
 // --- Convenience Ops ---

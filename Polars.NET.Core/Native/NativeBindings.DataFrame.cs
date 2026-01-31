@@ -29,8 +29,8 @@ unsafe internal partial class NativeBindings
     public static partial DataFrameHandle pl_dataframe_new_from_stream(
         Arrow.CArrowArrayStream* stream
     );
-      [LibraryImport(LibName)]
-    public static partial IntPtr pl_dataframe_schema(DataFrameHandle df);
+    [LibraryImport(LibName)]
+    public static partial SchemaHandle pl_dataframe_get_schema(DataFrameHandle df);
     [LibraryImport(LibName)]
     public static partial UIntPtr pl_dataframe_height(DataFrameHandle df);
     

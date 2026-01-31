@@ -8,7 +8,7 @@ type ``Expression Logic Tests`` () =
     [<Fact>]
         member _.``Select inline style (Pythonic)`` () =
             use csv = new TempCsv "name,birthdate,weight,height\nQinglei,2025-11-25,70,1.80"
-            let df = DataFrame.ReadCsv csv.Path
+            let df = DataFrame.ReadCsv (path=csv.Path,tryParseDates=true) 
 
             // 像 Python 一样写在 list 里面！
             let res = 

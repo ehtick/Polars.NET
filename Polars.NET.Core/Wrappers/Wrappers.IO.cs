@@ -7,55 +7,186 @@ namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
 {
-    public static DataFrameHandle ReadCsv(
-        string path, 
-        Dictionary<string, DataTypeHandle>? schema = null,
-        bool hasHeader = true,
-        char separator = ',',
-        ulong skipRows = 0,
-        bool tryParseDates = true)
+    public static unsafe DataFrameHandle ReadCsv(
+        string path,
+        // 1. Columns Projection
+        string[]? columns, 
+        // 2. Schema Handle
+        SchemaHandle? schema, 
+        // 3. Configs
+        bool hasHeader,
+        char separator,
+        bool ignoreErrors,
+        bool tryParseDates,
+        bool lowMemory,
+        ulong skipRows,
+        ulong? nRows,
+        ulong? inferSchemaLength,
+        PlEncoding encoding
+    )
     {
-        return WithSchemaHandle(schema, (schemaHandle) => 
+        // --- Optional Sizes ---
+        UIntPtr nRowsVal = nRows.HasValue ? (UIntPtr)nRows.Value : 0;
+        UIntPtr* pNRows = nRows.HasValue ? &nRowsVal : null;
+
+        UIntPtr inferVal = inferSchemaLength.HasValue ? (UIntPtr)inferSchemaLength.Value : 0;
+        UIntPtr* pInfer = inferSchemaLength.HasValue ? &inferVal : null;
+
+        // --- Prepare Handle ---
+        SchemaHandle schemaHandle = schema ?? new SchemaHandle();
+
+        // --- Execute ---
+        return UseUtf8StringArray(columns, (colPtrs) =>
         {
             return ErrorHelper.Check(NativeBindings.pl_read_csv(
-                path, 
-                schemaHandle, 
-                hasHeader, 
-                (byte)separator, 
+                path,
+                
+                // Columns
+                colPtrs,
+                (UIntPtr)colPtrs.Length,
+
+                // Configs
+                hasHeader,
+                (byte)separator,
+                ignoreErrors,
+                tryParseDates,
+                lowMemory,
+
+                // Sizes
                 (UIntPtr)skipRows,
-                tryParseDates
+                pNRows,
+                pInfer,
+
+                // Schema & Encoding
+                schemaHandle, 
+                encoding
             ));
         });
     }
     public static Task<DataFrameHandle> ReadCsvAsync(
-            string path,
-            Dictionary<string, DataTypeHandle>? schema = null,
-            bool hasHeader = true,
-            char separator = ',',
-            ulong skipRows = 0, 
-            bool tryParseDates = true)
+        string path,
+        string[]? columns, 
+        // 2. Schema Handle
+        SchemaHandle? schema, 
+        // 3. Configs
+        bool hasHeader,
+        char separator,
+        bool ignoreErrors,
+        bool tryParseDates,
+        bool lowMemory,
+        ulong skipRows,
+        ulong? nRows,
+        ulong? inferSchemaLength,
+        PlEncoding encoding)
     {
-        return Task.Run(() => ReadCsv(path,schema,hasHeader,separator,skipRows, tryParseDates));
+        return Task.Run(() => ReadCsv(
+        path,
+        columns,
+        schema,
+        hasHeader,
+        separator,
+        ignoreErrors,
+        tryParseDates,
+        lowMemory,
+        skipRows,
+        nRows,
+        inferSchemaLength,
+        encoding
+        ));
     }
-    public static LazyFrameHandle ScanCsv(
-        string path, 
-        Dictionary<string, DataTypeHandle>? schema = null,
-        bool hasHeader = true,
-        char separator = ',',
-        ulong skipRows = 0,
-        bool tryParseDates = true)
+    public static unsafe LazyFrameHandle ScanCsv(
+        string path,
+        SchemaHandle? schema,
+        bool hasHeader,
+        char separator,
+        bool ignoreErrors,
+        bool tryParseDates,
+        bool lowMemory,
+        bool cache,
+        bool rechunk,
+        ulong skipRows,
+        ulong? nRows,
+        ulong? inferSchemaLength,
+        string? rowIndexName,
+        ulong rowIndexOffset,
+        PlEncoding encoding)
     {
-        return WithSchemaHandle(schema, (schemaHandle) => 
+        UIntPtr nRowsVal = nRows.HasValue ? (UIntPtr)nRows.Value : 0;
+        UIntPtr* pNRows = nRows.HasValue ? &nRowsVal : null;
+
+        UIntPtr inferVal = inferSchemaLength.HasValue ? (UIntPtr)inferSchemaLength.Value : 0;
+        UIntPtr* pInfer = inferSchemaLength.HasValue ? &inferVal : null;
+
+        SchemaHandle schemaHandle = schema ?? new SchemaHandle();
+
+        return ErrorHelper.Check(NativeBindings.pl_scan_csv(
+            path,
+            hasHeader,
+            (byte)separator,
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
+            cache,
+            rechunk,
+            (UIntPtr)skipRows,
+            pNRows,
+            pInfer,
+            rowIndexName, 
+            (UIntPtr)rowIndexOffset,
+            schemaHandle,
+            encoding
+        ));
+    }
+    public static unsafe LazyFrameHandle ScanCsv(
+        byte[] buffer,
+        SchemaHandle? schema,
+        bool hasHeader,
+        char separator,
+        bool ignoreErrors,
+        bool tryParseDates,
+        bool lowMemory,
+        bool cache,
+        bool rechunk,
+        ulong skipRows,
+        ulong? nRows,
+        ulong? inferSchemaLength,
+        string? rowIndexName,
+        ulong rowIndexOffset,
+        PlEncoding encoding)
+    {
+        if (buffer == null || buffer.Length == 0)
+            throw new ArgumentException("Buffer cannot be empty", nameof(buffer));
+
+        UIntPtr nRowsVal = nRows.HasValue ? (UIntPtr)nRows.Value : 0;
+        UIntPtr* pNRows = nRows.HasValue ? &nRowsVal : null;
+
+        UIntPtr inferVal = inferSchemaLength.HasValue ? (UIntPtr)inferSchemaLength.Value : 0;
+        UIntPtr* pInfer = inferSchemaLength.HasValue ? &inferVal : null;
+
+        SchemaHandle schemaHandle = schema ?? new SchemaHandle();
+
+        fixed (byte* pBuffer = buffer)
         {
-            return ErrorHelper.Check(NativeBindings.pl_scan_csv(
-                path, 
-                schemaHandle, 
-                hasHeader, 
-                (byte)separator, 
+            return ErrorHelper.Check(NativeBindings.pl_scan_csv_mem(
+                pBuffer,
+                (UIntPtr)buffer.Length,
+                
+                hasHeader,
+                (byte)separator,
+                ignoreErrors,
+                tryParseDates,
+                lowMemory,
+                cache,
+                rechunk,
                 (UIntPtr)skipRows,
-                tryParseDates
+                pNRows,
+                pInfer,
+                rowIndexName,
+                (UIntPtr)rowIndexOffset,
+                schemaHandle,
+                encoding
             ));
-        });
+        }
     }
 
     public static DataFrameHandle ReadParquet(

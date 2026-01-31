@@ -12,6 +12,7 @@ open System.Threading.Tasks
 open System.Collections.Concurrent
 open System.Collections
 open System.Reflection
+open System.Text
 /// --- Series ---
 /// <summary>
 /// An eager Series holding a single column of data.
@@ -1207,76 +1208,124 @@ and DataFrame(handle: DataFrameHandle) =
     /// Read a CSV file into a DataFrame.
     /// </summary>
     /// <param name="path">Path to the CSV file.</param>
-    /// <param name="schema">Optional map of column names to DataTypes to enforce schema.</param>
-    /// <param name="separator">Character used as separator (default ',').</param>
-    /// <param name="hasHeader">Indicate if the first row is a header (default true).</param>
-    /// <param name="skipRows">Number of rows to skip at the start.</param>
-    /// <param name="tryParseDates">Try to automatically parse date strings (default true).</param>
-    static member ReadCsv(
-        path: string, 
-        ?schema: Map<string, DataType>, 
-        ?separator: char,
-        ?hasHeader: bool,
-        ?skipRows: int,
-        ?tryParseDates: bool
-    ) : DataFrame =
+    /// <param name="columns">Columns to select.</param>
+    /// <param name="schema">Overwrite the schema of the dataset.</param>
+    /// <param name="hasHeader">Indicate if the CSV file has a header line (default: true).</param>
+    /// <param name="separator">Character used as separator (default: ',').</param>
+    /// <param name="ignoreErrors">Ignore parsing errors (default: false).</param>
+    /// <param name="tryParseDates">Try to automatically parse dates (default: false).</param>
+    /// <param name="lowMemory">Reduce memory usage at expense of performance (default: false).</param>
+    /// <param name="skipRows">Number of rows to skip (default: 0).</param>
+    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (default: 100). Set to 0 to read all.</param>
+    /// <param name="encoding">File encoding (UTF8 or LossyUTF8).</param>
+    static member ReadCsv
+        (
+            path: string,
+            ?columns: string list,
+            ?schema: PolarsSchema,
+            ?hasHeader: bool,
+            ?separator: char,
+            ?ignoreErrors: bool,
+            ?tryParseDates: bool,
+            ?lowMemory: bool,
+            ?skipRows: int64,
+            ?nRows: int64,
+            ?inferSchemaLength: int64,
+            ?encoding: PolarsEncoding
+        ) : DataFrame =
         
-        let sep = defaultArg separator ','
-        let header = defaultArg hasHeader true
-        let skip = defaultArg skipRows 0 |> uint64 
-        let parseDates = defaultArg tryParseDates true
+        // 1. Defaults
+        let pHeader = defaultArg hasHeader true
+        let pSep = defaultArg separator ','
+        let pIgnoreErrors = defaultArg ignoreErrors false
+        let pTryParseDates = defaultArg tryParseDates false
+        let pLowMem = defaultArg lowMemory false
+        let pSkipRows = defaultArg skipRows 0L |> uint64
+        let pEncoding = defaultArg encoding PolarsEncoding.UTF8
 
-        let mutable dictArg : Dictionary<string, DataTypeHandle> = null
+        // 2. Complex Conversions
         
-        let mutable handlesToDispose = new List<DataTypeHandle>()
+        // Columns: string list -> string[]
+        let pCols = 
+            columns 
+            |> Option.map List.toArray 
+            |> Option.toObj
 
-        try
-            if schema.IsSome then
-                dictArg <- new Dictionary<string, DataTypeHandle>()
-                for kv in schema.Value do
-                    let h = kv.Value.CreateHandle()
-                    dictArg.Add(kv.Key, h)
-                    handlesToDispose.Add h
+        // Schema: Schema obj -> SchemaHandle
+        let hSchema = 
+            schema 
+            |> Option.map (fun s -> s.Handle) 
+            |> Option.toObj
 
-            let dfHandle = PolarsWrapper.ReadCsv(path, dictArg, header, sep, skip, parseDates)
-            
-            new DataFrame(dfHandle)
+        // Nullable ulongs
+        let pNRows = nRows |> Option.map uint64 |> Option.toNullable
+        let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
 
-        finally
-            for h in handlesToDispose do
-                h.Dispose()
-    /// <summary> Asynchronously read a CSV file into a DataFrame. </summary>
-    static member ReadCsvAsync(path: string, 
-                               ?schema: Map<string, DataType>,
-                               ?hasHeader: bool,
-                               ?separator: char,
-                               ?skipRows: int,
-                               ?tryParseDates: bool) : Async<DataFrame> =
-        
-        let header = defaultArg hasHeader true
-        let sep = defaultArg separator ','
-        let skip = defaultArg skipRows 0
-        let dates = defaultArg tryParseDates true
-        
-        let schemaDict = 
-            match schema with
-            | Some m -> 
-                let d = Dictionary<string, DataTypeHandle>()
-                m |> Map.iter (fun k v -> d.Add(k, v.CreateHandle()))
-                d
-            | None -> null
+        // 3. Call Wrapper
+        let handle = PolarsWrapper.ReadCsv(
+            path,
+            pCols,
+            hSchema,
+            pHeader,
+            pSep,
+            pIgnoreErrors,
+            pTryParseDates,
+            pLowMem,
+            pSkipRows,
+            pNRows,
+            pInfer,
+            pEncoding.ToNative() // Enum Conversion
+        )
 
-        async {
-            let! handle = 
-                PolarsWrapper.ReadCsvAsync(
-                    path, 
-                    schemaDict, 
-                    header, 
-                    sep, 
-                    uint64 skip, 
-                    dates
-                ) |> Async.AwaitTask
+        new DataFrame(handle)
+    /// <summary>
+    /// Read a CSV file asynchronously into a DataFrame.
+    /// </summary>
+    static member ReadCsvAsync
+        (
+            path: string,
+            ?columns: string list,
+            ?schema: PolarsSchema,
+            ?hasHeader: bool,
+            ?separator: char,
+            ?ignoreErrors: bool,
+            ?tryParseDates: bool,
+            ?lowMemory: bool,
+            ?skipRows: int64,
+            ?nRows: int64,
+            ?inferSchemaLength: int64,
+            ?encoding: PolarsEncoding
+        ) =
+        // Async Wrapper logic (Copy-paste of parameter prep)
+        let pHeader = defaultArg hasHeader true
+        let pSep = defaultArg separator ','
+        let pIgnoreErrors = defaultArg ignoreErrors false
+        let pTryParseDates = defaultArg tryParseDates false
+        let pLowMem = defaultArg lowMemory false
+        let pSkipRows = defaultArg skipRows 0L |> uint64
+        let pEncoding = defaultArg encoding PolarsEncoding.UTF8
 
+        let pCols = columns |> Option.map List.toArray |> Option.toObj
+        let hSchema = schema |> Option.map (fun s -> s.Handle) |> Option.toObj
+        let pNRows = nRows |> Option.map uint64 |> Option.toNullable
+        let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
+
+        task {
+            let! handle = PolarsWrapper.ReadCsvAsync(
+                path,
+                pCols,
+                hSchema,
+                pHeader,
+                pSep,
+                pIgnoreErrors,
+                pTryParseDates,
+                pLowMem,
+                pSkipRows,
+                pNRows,
+                pInfer,
+                pEncoding.ToNative()
+            )
             return new DataFrame(handle)
         }
 
@@ -1587,16 +1636,9 @@ and DataFrame(handle: DataFrameHandle) =
     /// <summary>
     /// Get the schema as Map<ColumnName, DataType>.
     /// </summary>
-    member this.Schema : Map<string, DataType> =
-        let names = this.ColumnNames
-        
-        names
-        |> Array.map (fun (name: string) ->
-            let s = this.Column name
-            
-            name, s.DataType
-        )
-        |> Map.ofArray
+    member this.Schema =
+        let h = PolarsWrapper.GetDataFrameSchema this.Handle 
+        new PolarsSchema(h)
     member this.Lazy() : LazyFrame =
         let lfHandle = PolarsWrapper.DataFrameToLazy handle
         new LazyFrame(lfHandle)
@@ -1605,9 +1647,14 @@ and DataFrame(handle: DataFrameHandle) =
     /// </summary>
     member this.PrintSchema() =
         printfn "--- DataFrame Schema ---"
-        this.Schema |> Map.iter (fun name dtype -> 
-            printfn "%-15s | %A" name dtype
+        
+        use sc = this.Schema
+
+        sc.ToMap() 
+        |> Map.iter (fun name dtype -> 
+            printfn "%-15s | %O" name dtype
         )
+        
         printfn "------------------------"
     // ==========================================
     // Eager Ops
@@ -2311,67 +2358,191 @@ and LazyFrame(handle: LazyFrameHandle) =
         let dfHandle = PolarsWrapper.LazyCollect handle
         new DataFrame(dfHandle)
     /// <summary> Execute the plan using the streaming engine. </summary>
-    member this.CollectStreaming() =
+    member _.CollectStreaming() =
         let dfHandle = PolarsWrapper.CollectStreaming handle
         new DataFrame(dfHandle)
-    /// <summary> Get the schema string of the LazyFrame without executing it. </summary>
-    member _.SchemaRaw = PolarsWrapper.GetSchemaString handle
 
     /// <summary>
     /// Get the schema of the LazyFrame without executing it.
     /// Uses Zero-Copy native introspection.
     /// </summary>
-    member _.Schema : Map<string, DataType> =
-        use schemaHandle = PolarsWrapper.GetLazySchema handle
+    member this.Schema =
+        let h = PolarsWrapper.GetLazySchema this.Handle 
+        new PolarsSchema(h)
+    member this.PrintSchema() =
+        printfn "--- LazyFrame Schema ---"
+        
+        use sc = this.Schema
 
-        let len = PolarsWrapper.GetSchemaLen schemaHandle
-
-        if len = 0UL then 
-            Map.empty
-        else
-            [| for i in 0UL .. len - 1UL do
-                let mutable name = Unchecked.defaultof<string>
-                let mutable typeHandle = Unchecked.defaultof<DataTypeHandle>
-                
-                PolarsWrapper.GetSchemaFieldAt(schemaHandle, i, &name, &typeHandle)
-                
-                use h = typeHandle
-                
-                let dtype = DataType.FromHandle h
-                
-                yield name, dtype
-            |]
-            |> Map.ofArray
+        sc.ToMap() 
+        |> Map.iter (fun name dtype -> 
+            printfn "%-15s | %O" name dtype
+        )
+        
+        printfn "------------------------"
 
     /// <summary> Print the query plan. </summary>
     member this.Explain(?optimized: bool) = 
         let opt = defaultArg optimized true
         PolarsWrapper.Explain(handle, opt)
     /// <summary>
-    /// Lazily scan a CSV file into a LazyFrame.
+    /// Lazily read from a CSV file.
     /// </summary>
-    static member ScanCsv(path: string,
-                          ?schema: Map<string, DataType>,
-                          ?hasHeader: bool,
-                          ?separator: char,
-                          ?skipRows: int,
-                          ?tryParseDates: bool) : LazyFrame =
-        
-        let header = defaultArg hasHeader true
-        let sep = defaultArg separator ','
-        let skip = defaultArg skipRows 0
-        let dates = defaultArg tryParseDates true
-        
-        let schemaDict = 
-            match schema with
-            | Some m -> 
-                let d = Dictionary<string, DataTypeHandle>()
-                m |> Map.iter (fun k v -> d.Add(k, v.CreateHandle()))
-                d
-            | None -> null
+    /// <param name="path">Path to the CSV file.</param>
+    /// <param name="separator">Character used as separator (default: ',').</param>
+    /// <param name="hasHeader">Indicate if the CSV file has a header line (default: true).</param>
+    /// <param name="ignoreErrors">Ignore parsing errors (default: false).</param>
+    /// <param name="skipRows">Number of rows to skip (default: 0).</param>
+    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="cache">Cache the result after reading.</param>
+    /// <param name="lowMemory">Reduce memory usage at expense of performance.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (default: 100).</param>
+    /// <param name="schema">Overwrite the schema.</param>
+    /// <param name="tryParseDates">Try to automatically parse dates.</param>
+    /// <param name="rowIndexName">Add a row index column.</param>
+    /// <param name="rowIndexOffset">Offset for row index.</param>
+    /// <param name="encoding">File encoding.</param>
+    static member ScanCsv
+        (
+            path: string,
+            ?separator: char,
+            ?hasHeader: bool,
+            ?ignoreErrors: bool,
+            ?skipRows: int64,
+            ?nRows: int64,
+            ?cache: bool,
+            ?rechunk: bool,
+            ?lowMemory: bool,
+            ?inferSchemaLength: int64,
+            ?schema: PolarsSchema,
+            ?tryParseDates: bool,
+            ?rowIndexName: string,
+            ?rowIndexOffset: uint32,
+            ?encoding: PolarsEncoding
+        ) =
+        // 1. Defaults
+        let pSep = defaultArg separator ','
+        let pHeader = defaultArg hasHeader true
+        let pIgnoreErrors = defaultArg ignoreErrors false
+        let pSkipRows = defaultArg skipRows 0L |> uint64
+        let pCache = defaultArg cache true
+        let pRechunk = defaultArg rechunk false
+        let pLowMem = defaultArg lowMemory false
+        let pTryParseDates = defaultArg tryParseDates false
+        let pRowIndexOffset = defaultArg rowIndexOffset 0u |> uint64
+        let pEncoding = defaultArg encoding PolarsEncoding.UTF8
 
-        let h = PolarsWrapper.ScanCsv(path, schemaDict, header, sep, uint64 skip, dates)
-        new LazyFrame(h)
+        // 2. Options -> Nullables / Objects
+        let pNRows = nRows |> Option.map uint64 |> Option.toNullable
+        let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
+        
+        let hSchema = 
+            schema 
+            |> Option.map (fun s -> s.Handle) 
+            |> Option.toObj
+            
+        // 3. Call Wrapper
+        let handle = PolarsWrapper.ScanCsv(
+            path,
+            hSchema,
+            pHeader,
+            pSep,         
+            pIgnoreErrors,
+            pTryParseDates,
+            pLowMem,
+            pCache,
+            pRechunk,
+            pSkipRows,
+            pNRows,
+            pInfer,
+            Option.toObj rowIndexName,
+            pRowIndexOffset,
+            pEncoding.ToNative()
+        )
+
+        new LazyFrame(handle)
+    /// <summary>
+    /// [Memory] Lazily read CSV from a byte array.
+    /// </summary>
+    /// <param name="buffer">The byte array containing CSV data.</param>
+    /// <param name="separator">Character used as separator (default: ',').</param>
+    /// <param name="hasHeader">Indicate if the CSV file has a header line (default: true).</param>
+    /// <param name="ignoreErrors">Ignore parsing errors (default: false).</param>
+    /// <param name="skipRows">Number of rows to skip (default: 0).</param>
+    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="cache">Cache the result after reading.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous memory after reading.</param>
+    /// <param name="lowMemory">Reduce memory usage at expense of performance.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference.</param>
+    /// <param name="schema">Overwrite the schema.</param>
+    /// <param name="tryParseDates">Try to automatically parse dates.</param>
+    /// <param name="rowIndexName">Add a row index column.</param>
+    /// <param name="rowIndexOffset">Offset for row index.</param>
+    /// <param name="encoding">File encoding.</param>
+    static member ScanCsv
+        (
+            buffer: byte[],
+            ?separator: char,
+            ?hasHeader: bool,
+            ?ignoreErrors: bool,
+            ?skipRows: int64,
+            ?nRows: int64,
+            ?cache: bool,
+            ?rechunk: bool,
+            ?lowMemory: bool,
+            ?inferSchemaLength: int64,
+            ?schema: PolarsSchema,
+            ?tryParseDates: bool,
+            ?rowIndexName: string,
+            ?rowIndexOffset: uint32,
+            ?encoding: PolarsEncoding
+        ) =
+        // 1. Defaults
+        let pSep = defaultArg separator ','
+        let pHeader = defaultArg hasHeader true
+        let pIgnoreErrors = defaultArg ignoreErrors false
+        let pSkipRows = defaultArg skipRows 0L |> uint64
+        let pCache = defaultArg cache true
+        let pRechunk = defaultArg rechunk true
+        let pLowMem = defaultArg lowMemory false
+        let pTryParseDates = defaultArg tryParseDates false
+        let pRowIndexOffset = defaultArg rowIndexOffset 0u |> uint64
+        let pEncoding = defaultArg encoding PolarsEncoding.UTF8
+
+        // 2. Options -> Nullables
+        let pNRows = nRows |> Option.map uint64 |> Option.toNullable
+        let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
+        
+        // 3. Schema Handle
+        let hSchema = 
+            schema 
+            |> Option.map (fun s -> s.Handle) 
+            |> Option.toObj
+
+        // 4. Call C# Wrapper (Memory Overload)
+        // buffer, schema, hasHeader, separator, ignoreErrors, tryParseDates, lowMemory, cache, rechunk, skipRows, nRows, inferSchemaLength, rowIndexName, rowIndexOffset, encoding
+        let handle = PolarsWrapper.ScanCsv(
+            buffer,
+            hSchema,
+            pHeader,
+            pSep,
+            pIgnoreErrors,
+            pTryParseDates,
+            pLowMem,
+            pCache,
+            pRechunk,
+            pSkipRows,
+            pNRows,
+            pInfer,
+            Option.toObj rowIndexName,
+            pRowIndexOffset,
+            pEncoding.ToNative()
+        )
+
+        new LazyFrame(handle)
+    /// <summary> Helper: Scan CSV with default settings </summary>
+    static member ScanCsv(path: string) = 
+        LazyFrame.ScanCsv(path, hasHeader=true)
     /// <summary> Scan a parquet file into a LazyFrame. </summary>
     /// <summary>
     /// Lazily read from a parquet file or a common cloud store (S3, GCS, Azure, etc.).
@@ -3239,46 +3410,104 @@ and LazyFrame(handle: LazyFrameHandle) =
 and PolarsSchema (handle: SchemaHandle) =
     
     // --- Property ---
-    member val Handle = handle
+  member val Handle = handle
 
-    // --- Constructor ---
+    // --- Constructors ---
     static member private CreateHandleFromFields(fields: seq<string * DataType>) =
-        let names = fields |> Seq.map fst |> Seq.toArray
-        let typeHandles = fields |> Seq.map (fun (_, t) -> t.CreateHandle()) |> Seq.toArray
-        
-        try
-            PolarsWrapper.NewSchema(names, typeHandles)
-        finally
-            for th in typeHandles do th.Dispose()
+            let names = fields |> Seq.map fst |> Seq.toArray
+            let typeHandles = fields |> Seq.map (fun (_, t) -> t.CreateHandle()) |> Seq.toArray
+            
+            try
+                PolarsWrapper.NewSchema(names, typeHandles)
+            finally
+                for th in typeHandles do th.Dispose()
     /// <summary> Create an empty schema </summary>
-    new () = 
-        new PolarsSchema(PolarsWrapper.SchemaCreate())
+    new () = new PolarsSchema(PolarsWrapper.SchemaCreate())
 
     /// <summary> Create schema from field definitions </summary>
     new (fields: seq<string * DataType>) =
         new PolarsSchema(PolarsSchema.CreateHandleFromFields(fields))
 
-    // --- Helper Constructors ---
+    static member ofMap (m: Map<string, DataType>) = new PolarsSchema(m |> Map.toSeq)
+    static member ofList (fields: (string * DataType) list) = new PolarsSchema(fields)
+
+    // --- Inspection API (Alignment with C#) ---
+
+    member this.Len() = PolarsWrapper.GetSchemaLen(this.Handle)
+
+    /// <summary> Get column name and type at specific index </summary>
+    member private this.GetFieldAt(index: uint64) =
+        let mutable name = Unchecked.defaultof<string>
+        let mutable typeHandle = Unchecked.defaultof<DataTypeHandle>
+        
+        PolarsWrapper.GetSchemaFieldAt(this.Handle, index, &name, &typeHandle)
+        
+        try
+            let dt = DataType.FromHandle typeHandle
+            name, dt
+        finally
+            if not typeHandle.IsInvalid then 
+                typeHandle.Dispose()
+
+    /// <summary> Get all column names </summary>
+    member this.Names =
+        let len = this.Len()
+        [ for i in 0UL .. (len - 1UL) -> 
+            let mutable name = Unchecked.defaultof<string>
+            let mutable _th = Unchecked.defaultof<DataTypeHandle>
+            PolarsWrapper.GetSchemaFieldAt(this.Handle, i, &name, &_th)
+            if not _th.IsInvalid then _th.Dispose() 
+            name 
+        ]
+
+    /// <summary> Convert to F# Map </summary>
+    member this.ToMap() =
+        let len = this.Len()
+        [ for i in 0UL .. (len - 1UL) do
+            yield this.GetFieldAt(i) 
+        ] |> Map.ofList
+
+    /// <summary> Convert to Dictionary </summary>
+    member this.ToDictionary() =
+        let len = this.Len()
+        let dict = Dictionary<string, DataType>(int len)
+        for i in 0UL .. (len - 1UL) do
+            let name, dtype = this.GetFieldAt(i)
+            dict.[name] <- dtype
+        dict
+
+    /// <summary> Indexer: schema["col_name"] </summary>
+    member this.Item 
+        with get(name: string) =
+            let len = this.Len()
+            let rec find i =
+                if i >= len then raise (KeyNotFoundException $"Column '{name}' not found in Schema.")
+                else
+                    let colName, dtype = this.GetFieldAt(i)
+                    if colName = name then dtype
+                    else 
+                        find (i + 1UL)
+            find 0UL
+
+    // --- Display ---
     
-    static member ofMap (m: Map<string, DataType>) = 
-        new PolarsSchema(m |> Map.toSeq)
-
-    static member ofList (fields: (string * DataType) list) = 
-        new PolarsSchema(fields)
-
-    // --- Methods ---
-
-    member this.Len() = PolarsWrapper.GetSchemaLen this.Handle
-
-    member this.AddField(name: string, dtype: DataType) =
-        use hType = dtype.CreateHandle()
-        PolarsWrapper.SchemaAddField(this.Handle, name, hType)
+    override this.ToString() =
+        if this.Handle.IsInvalid then "Schema: {}"
+        else
+            let sb = StringBuilder "Schema: {"
+            let len = this.Len()
+            for i in 0UL .. (len - 1UL) do
+                let name, dtype = this.GetFieldAt(i)
+                sb.Append $"{name}: {dtype}" |> ignore
+                if i < len - 1UL then sb.Append(", ") |> ignore
+            sb.Append "}" |> ignore
+            sb.ToString()
 
     // --- Interface ---
     
     interface IDisposable with
         member this.Dispose() = 
-            if not this.Handle.IsInvalid then
+            if not (isNull (box this.Handle)) && not this.Handle.IsInvalid then
                 this.Handle.Dispose()
 
 /// <summary>

@@ -422,3 +422,11 @@ type ParallelStrategy =
         | Columns -> PlParallelStrategy.Columns
         | RowGroups -> PlParallelStrategy.RowGroups
         | NoParallel -> PlParallelStrategy.None
+
+type PolarsEncoding =
+    | UTF8
+    | LossyUTF8
+    member internal this.ToNative() =
+        match this with
+        | UTF8 -> Polars.NET.Core.PlEncoding.UTF8
+        | LossyUTF8 -> Polars.NET.Core.PlEncoding.LossyUTF8

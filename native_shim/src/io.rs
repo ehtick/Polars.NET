@@ -9,79 +9,286 @@ use std::io::{BufReader,Cursor};
 use std::os::raw::c_char;
 use std::fs::File;
 use crate::types::{DataFrameContext, LazyFrameContext, SchemaContext};
-use crate::utils::{ptr_to_str,map_parallel_strategy,ptr_to_schema_ref};
+use crate::utils::{ptr_to_str,map_parallel_strategy,ptr_to_schema_ref,map_csv_encoding};
 use polars_utils::mmap::MemSlice;
 
 // ==========================================
 // Read csv
 // ==========================================
+
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_read_csv(
     path: *const c_char,
-    schema_ptr: *mut SchemaContext,
+    
+    // --- 1. Columns Projection ---
+    col_names_ptr: *const *const c_char,
+    col_names_len: usize,
+
+    // --- 2. Core Configs ---
     has_header: bool,
     separator: u8,
+    ignore_errors: bool,
+    try_parse_dates: bool,
+    low_memory: bool,
+    
+    // --- 3. Optional Sizes ---
     skip_rows: usize,
-    try_parse_dates: bool
+    n_rows_ptr: *const usize,
+    infer_schema_len_ptr: *const usize,
+
+    // --- 4. Schema & Encoding ---
+    schema_ptr: *mut SchemaContext,
+    encoding: u8, 
 ) -> *mut DataFrameContext {
     ffi_try!({
         let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
         
-        // Build ParseOptions
-        let parse_options = CsvParseOptions::default()
-            .with_separator(separator)
-            .with_try_parse_dates(try_parse_dates);
-        
-        // Schema Overrides
-        let schema = if schema_ptr.is_null() {
+        // --- Encoding ---
+        let csv_encoding = map_csv_encoding(encoding);
+        // --- Columns ---
+        let columns = if col_names_ptr.is_null() || col_names_len == 0 {
+            None
+        } else {
+            let mut cols = Vec::with_capacity(col_names_len);
+            for i in 0..col_names_len {
+                let c_str = unsafe { *col_names_ptr.add(i) };
+                let s = unsafe { CStr::from_ptr(c_str).to_string_lossy() };
+                cols.push(PlSmallStr::from_str(&s));
+            }
+            Some(Arc::from(cols.into_boxed_slice()))
+        };
+
+        // --- Option ptr ---
+        let n_rows = if n_rows_ptr.is_null() { None } else { Some(unsafe { *n_rows_ptr }) };
+        let infer_schema_length = if infer_schema_len_ptr.is_null() { 
+            None 
+        } else { 
+            Some(unsafe { *infer_schema_len_ptr }) 
+        };
+
+        let schema_overwrite = if schema_ptr.is_null() {
             None
         } else {
             Some(unsafe { &*schema_ptr }.schema.clone())
         };
 
-        // Build ReadOptions
-        let options = CsvReadOptions::default()
-            .with_has_header(has_header)
-            .with_skip_rows(skip_rows)
-            .with_parse_options(parse_options)
-            .with_schema_overwrite(schema);
+        // --- ParseOptions ---
+        let parse_options = CsvParseOptions {
+            separator,
+            try_parse_dates,
+            encoding: csv_encoding,
+            ..Default::default()
+        };
 
-        // Execute
-        // p.into_owned().into() -> String -> PathBuf
-        let df = options
+        // ---  ReadOptions ---
+        let read_options = CsvReadOptions {
+            has_header,
+            skip_rows,
+            n_rows,
+            infer_schema_length,
+            ignore_errors,
+            low_memory,
+            columns, 
+            schema_overwrite,
+            parse_options: Arc::new(parse_options),
+            ..Default::default() 
+        };
+
+        // --- Execuate ---
+        let df = read_options
             .try_into_reader_with_file_path(Some(p.into_owned().into()))?
             .finish()?;
 
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })
 }
+// #[unsafe(no_mangle)]
+// pub extern "C" fn pl_scan_csv(
+//     path: *const c_char,
+//     schema_ptr: *mut SchemaContext,
+//     has_header: bool,
+//     separator: u8,
+//     skip_rows: usize,
+//     try_parse_dates: bool
+// ) -> *mut LazyFrameContext {
+//     ffi_try!({
+//         let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
+
+//         // Schema Overrides
+//         let schema = if schema_ptr.is_null() {
+//             None
+//         } else {
+//             Some(unsafe { &*schema_ptr }.schema.clone())
+//         };
+        
+//         let reader = LazyCsvReader::new(PlPath::new(&p))
+//             .with_has_header(has_header)
+//             .with_separator(separator)
+//             .with_skip_rows(skip_rows)
+//             .with_try_parse_dates(try_parse_dates)
+//             .with_dtype_overwrite(schema); 
+
+//         let inner = reader.finish()?;
+//         Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
+//     })
+// }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_scan_csv(
     path: *const c_char,
-    schema_ptr: *mut SchemaContext,
+    
+    // Core Configs
     has_header: bool,
     separator: u8,
+    ignore_errors: bool,
+    try_parse_dates: bool,
+    low_memory: bool,
+    cache: bool,
+    rechunk: bool,
+
+    // Sizes
     skip_rows: usize,
-    try_parse_dates: bool
+    n_rows_ptr: *const usize,
+    infer_schema_len_ptr: *const usize,
+
+    // Row Index
+    row_index_name: *const c_char,
+    row_index_offset: usize,
+
+    // Schema & Encoding
+    schema_ptr: *mut SchemaContext,
+    encoding: u8, 
 ) -> *mut LazyFrameContext {
     ffi_try!({
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
+        // Path
+        let p_cow = unsafe { CStr::from_ptr(path).to_string_lossy() };
+        let p_ref = p_cow.as_ref();
 
-        // Schema Overrides
-        let schema = if schema_ptr.is_null() {
+        // Encoding
+        let csv_encoding = crate::utils::map_csv_encoding(encoding);
+
+        // Option ptr handle
+        let n_rows = if n_rows_ptr.is_null() { None } else { Some(unsafe { *n_rows_ptr }) };
+        let infer_schema_length = if infer_schema_len_ptr.is_null() { 
+            None 
+        } else { 
+            Some(unsafe { *infer_schema_len_ptr }) 
+        };
+        
+        // Schema overwrite
+        let schema_overwrite = if schema_ptr.is_null() {
             None
         } else {
             Some(unsafe { &*schema_ptr }.schema.clone())
         };
-        
-        let reader = LazyCsvReader::new(PlPath::new(&p))
+
+        // Row Index
+        let row_index = if row_index_name.is_null() {
+            None
+        } else {
+            let name_cow = unsafe { CStr::from_ptr(row_index_name).to_string_lossy() };
+            Some(RowIndex {
+                name: PlSmallStr::from_str(name_cow.as_ref()),
+                offset: row_index_offset as u32,
+            })
+        };
+
+        // Build Reader
+        let reader = LazyCsvReader::new(PlPath::new(p_ref))
             .with_has_header(has_header)
             .with_separator(separator)
-            .with_skip_rows(skip_rows)
+            .with_ignore_errors(ignore_errors)
             .with_try_parse_dates(try_parse_dates)
-            .with_dtype_overwrite(schema); 
+            .with_low_memory(low_memory)
+            .with_cache(cache)
+            .with_rechunk(rechunk)
+            .with_skip_rows(skip_rows)
+            .with_n_rows(n_rows)
+            .with_infer_schema_length(infer_schema_length)
+            .with_encoding(csv_encoding)
+            .with_dtype_overwrite(schema_overwrite) 
+            .with_row_index(row_index); 
+
+        // Finish
+        let inner = reader.finish()?;
+
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_scan_csv_mem(
+    // --- Memory Buffer Input ---
+    buffer_ptr: *const u8,
+    buffer_len: usize,
+
+    // --- Core Configs---
+    has_header: bool,
+    separator: u8,
+    ignore_errors: bool,
+    try_parse_dates: bool,
+    low_memory: bool,
+    cache: bool,
+    rechunk: bool,
+
+    // --- Sizes ---
+    skip_rows: usize,
+    n_rows_ptr: *const usize,
+    infer_schema_len_ptr: *const usize,
+
+    // --- Row Index---
+    row_index_name: *const c_char,
+    row_index_offset: usize,
+
+    // --- 5. Schema & Encoding ---
+    schema_ptr: *mut SchemaContext,
+    encoding: u8, 
+) -> *mut LazyFrameContext {
+    ffi_try!({
+
+        let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
+        let mem_slice = MemSlice::from_vec(slice.to_vec());
+        
+        let sources = ScanSources::Buffers(Arc::new([mem_slice]));
+
+        let csv_encoding = crate::utils::map_csv_encoding(encoding);
+
+        let n_rows = if n_rows_ptr.is_null() { None } else { Some(unsafe { *n_rows_ptr }) };
+        let infer_schema_length = if infer_schema_len_ptr.is_null() { None } else { Some(unsafe { *infer_schema_len_ptr }) };
+        
+        let schema_overwrite = if schema_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { &*schema_ptr }.schema.clone())
+        };
+
+        let row_index = if row_index_name.is_null() {
+            None
+        } else {
+            let name_cow = unsafe { CStr::from_ptr(row_index_name).to_string_lossy() };
+            Some(RowIndex {
+                name: PlSmallStr::from_str(name_cow.as_ref()),
+                offset: row_index_offset as u32,
+            })
+        };
+
+        let reader = LazyCsvReader::new_with_sources(sources)
+            .with_has_header(has_header)
+            .with_separator(separator)
+            .with_ignore_errors(ignore_errors)
+            .with_try_parse_dates(try_parse_dates)
+            .with_low_memory(low_memory)
+            .with_cache(cache)
+            .with_rechunk(rechunk)
+            .with_skip_rows(skip_rows)
+            .with_n_rows(n_rows)
+            .with_infer_schema_length(infer_schema_length)
+            .with_encoding(csv_encoding)
+            .with_dtype_overwrite(schema_overwrite)
+            .with_row_index(row_index);
 
         let inner = reader.finish()?;
+
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
     })
 }
@@ -281,7 +488,7 @@ pub extern "C" fn pl_scan_parquet(
             n_rows, parallel_code, low_memory, use_statistics, 
             glob, allow_missing_columns, row_index_name_ptr, 
             row_index_offset, include_path_col_ptr,
-            schema_ptr, hive_schema_ptr, try_parse_hive_dates // 传入
+            schema_ptr, hive_schema_ptr, try_parse_hive_dates 
         );
 
         let lf = LazyFrame::scan_parquet(PlPath::new(path), args)?;
@@ -327,18 +534,6 @@ pub extern "C" fn pl_scan_parquet_memory(
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner:lf })))
     })
 }
-// #[unsafe(no_mangle)]
-// pub extern "C" fn pl_scan_parquet(path_ptr: *const c_char) -> *mut LazyFrameContext {
-//     ffi_try!({
-//         let path = ptr_to_str(path_ptr)
-//             .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-//         let args = ScanArgsParquet::default();
-//         let lf = LazyFrame::scan_parquet(PlPath::new(path), args)?;
-
-//         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
-//     })
-// }
 
 // ==========================================
 // JSON

@@ -739,21 +739,11 @@ namespace Polars.CSharp.Tests
 
                 // 2. 定义强制 Schema (覆盖默认推断)
                 // 我们故意使用非默认类型来验证 Schema 是否生效
-                var explicitSchema = new Dictionary<string, DataType>
-                {
-                    // 强制 id 为 Int32 (默认是 Int64)
-                    ["id"] = DataType.Int32,
-                    
-                    // name 保持 String
-                    ["name"] = DataType.String,
-                    
-                    // 强制 rate 为 Float32 (默认是 Float64)
-                    ["rate"] = DataType.Float32,
-                    
-                    // 强制 date 为 String (禁止自动解析日期)
-                    ["date"] = DataType.String 
-                };
-
+                using var explicitSchema = new PolarsSchema()
+                    .Add("id", DataType.Int32)
+                    .Add("name", DataType.String)
+                    .Add("rate", DataType.Float32)
+                    .Add("date", DataType.String);
                 // 3. 执行读取 (Eager Mode)
                 // 这里会触发 WithSchemaHandle -> pl_schema_new -> pl_read_csv
                 using var df = DataFrame.ReadCsv(filePath, schema: explicitSchema);
@@ -789,33 +779,52 @@ namespace Polars.CSharp.Tests
         [Fact]
         public void Test_ScanCsv_With_Explicit_Schema()
         {
-            // 测试 LazyFrame (ScanCsv)
+            // 1. 准备数据
             string csvContent = "val\n100\n200";
             string filePath = Path.GetTempFileName() + ".csv";
             File.WriteAllText(filePath, csvContent);
 
             try
             {
-                // 强制转为 Float64 (默认 Int64)
-                var schema = new Dictionary<string, DataType>
-                {
-                    ["val"] = DataType.Float64
-                };
+                // 2. 准备 PolarsSchema (Fluent API)
+                // 这里的关键是验证 Schema 对象能正确穿透到 Rust 端
+                using var explicitSchema = new PolarsSchema()
+                    .Add("val", DataType.Float64); // 强制 Int64 -> Float64
 
-                // Lazy Mode
-                // 这里触发 pl_scan_csv
-                using var lf = LazyFrame.ScanCsv(filePath, schema: schema);
+                // 3. Lazy Mode 扫描
+                // 顺便测试一下新的 Lazy 参数：行号生成 (rowIndexName)
+                using var lf = LazyFrame.ScanCsv(
+                    filePath, 
+                    schema: explicitSchema,
+                    rowIndexName: "row_id", // 让 Polars 自动生成行号列
+                    rowIndexOffset: 10      // 从 10 开始计数
+                );
                 
+                // 4. 验证 Lazy Schema (Metadata Check)
                 // 此时还未读取文件，但 Schema 应该是我们指定的
-                // 注意：LazyFrame.Schema 属性会触发 collect_schema
                 var lfSchema = lf.Schema;
 
-                Assert.Equal(DataTypeKind.Float64, lfSchema["val"].Kind);
+                // 验证类型覆盖是否成功
+                Assert.Equal(DataType.Float64, lfSchema["val"]);
+                // 验证行号列是否出现在 Schema 中
+                Assert.Contains("row_id", lfSchema.ColumnNames);
+                Assert.Equal(DataType.UInt32, lfSchema["row_id"]); // 行号通常是 UInt32
+
                 Console.WriteLine("[Test] LazyFrame Schema validated.");
 
-                // Collect 并验证结果
+                // 5. Collect 并验证真实数据 (Execution Check)
                 using var df = lf.Collect();
+                
+                // 类型验证
                 Assert.Equal(DataTypeKind.Float64, df.Schema["val"].Kind);
+                
+                // 数据验证
+                // "100" -> 100.0
+                Assert.Equal(100.0, df["val"][0]); 
+                
+                // 行号验证 (Offset=10)
+                Assert.Equal(10u, df["row_id"][0]); 
+                Assert.Equal(11u, df["row_id"][1]);
             }
             finally
             {
@@ -844,57 +853,54 @@ ID;ProductName;Weight;ReleaseDate
 
             try
             {
-                // 2. 定义强制 Schema (Introspection 验证点)
-                var explicitSchema = new Dictionary<string, DataType>
-                {
-                    ["ID"] = DataType.Int32,        // 强制 Int32
-                    // ["ProductName"] = DataType.String,
-                    ["Weight"] = DataType.Float32,  // 强制 Float32
-                    ["ReleaseDate"] = DataType.Date // 强制 Date
-                };
+                // 2. 定义强制 Schema (Fluent API 写法)
+                // 优势：链式调用，无需创建临时 Dictionary，阅读流畅
+                using var explicitSchema = new PolarsSchema()
+                    .Add("ID", DataType.Int32)        // 强制 Int32
+                    .Add("Weight", DataType.Float32)  // 强制 Float32
+                    .Add("ReleaseDate", DataType.Date); // 强制 Date
+                    // ProductName 没写，让 Polars 自动推断为 String
 
                 // 3. 调用全参数 ReadCsv
                 using var df = DataFrame.ReadCsv(
                     path: filePath,
-                    schema: explicitSchema,    // 验证 Schema 注入
-                    hasHeader: true,           // 验证表头解析
-                    separator: ';',            // 验证自定义分隔符
-                    skipRows: 2,               // 验证跳过行
-                    tryParseDates: true        // 验证日期解析
+                    schema: explicitSchema,    
+                    hasHeader: true,           
+                    separator: ';',            
+                    skipRows: 2,               
+                    tryParseDates: true        
                 );
 
                 // 4. 验证结构 (Shape)
-                Assert.Equal(2, df.Height); // 2 行数据
-                Assert.Equal(4, df.Width);  // 4 列
+                Assert.Equal(2, df.Height); 
+                Assert.Equal(4, df.Width);  
 
                 // 5. 验证元数据 (Schema)
-                var resultSchema = df.Schema;
-                Assert.Equal(DataTypeKind.Int32, resultSchema["ID"].Kind);
-                Assert.Equal(DataTypeKind.Float32, resultSchema["Weight"].Kind);
-                Assert.Equal(DataTypeKind.Date, resultSchema["ReleaseDate"].Kind);
+                // 确保我们注入的类型生效了
+                Assert.Equal(DataType.Int32, df.Schema["ID"]);
+                Assert.Equal(DataType.Float32, df.Schema["Weight"]);
+                Assert.Equal(DataType.Date, df.Schema["ReleaseDate"]);
+                Assert.Equal(DataType.String, df.Schema["ProductName"]); // 自动推断的
 
-                // 6. 验证标量值 (利用索引器)
+                // 6. 验证标量值
                 
-                // 第一行数据验证
+                // ID (Int32)
                 Assert.Equal(101, df["ID"][0]); 
+                
+                // String
                 Assert.Equal("Quantum Gadget", df["ProductName"][0]);
                 
-                // 浮点数精度验证
-                // 注意：Float32 在 C# 是 float，在 Assert.Equal 时最好指定精度
-                Assert.Equal(1.55f, (float)df["Weight"][0], 0.0001f);
+                // Weight (Float32)
+                // 注意：df["Weight"][0] 返回的是 object(float)，Assert.Equal 需要精度容差
+                Assert.Equal(1.55f, (float)df["Weight"][0]!, 0.0001f);
                 
-                // 日期验证 (Polars Date 内部通常存储为 Days Int32，或者 C# Binding 映射为 DateTime/DateOnly)
-                // 这里假设你的 Binding 将 Date 映射为 DateTime 或 DateOnly
-                // 如果返回的是 DateTime：
+                // Date
+                // 假设 ArrowReader 将 Polars Date 映射为 .NET DateOnly
                 var dateVal = df["ReleaseDate"][0];
                 Assert.Equal(new DateOnly(2023, 12, 25), dateVal);
 
                 // 7. 验证 Null 处理 (第二行 Weight 为 null)
-                // 方式 A: 检查 NullCount
                 Assert.Equal(1, df["Weight"].NullCount);
-                
-                // 方式 B: 标量值检查 (取决于你的 indexer 对 null 的返回是 null 还是 DBNull.Value)
-                // 假设是 null
                 Assert.Null(df["Weight"][1]);
             }
             finally
@@ -940,6 +946,33 @@ ID;ProductName;Weight;ReleaseDate
             // 为了兼容性，我们要么转 decimal，要么转 double 比较
             Assert.Equal(1234.56m, Convert.ToDecimal(val0));
             Assert.Equal(99.99m, Convert.ToDecimal(val1));
+        }
+        [Fact]
+        public void Test_ScanCsv_From_Memory()
+        {
+            // 1. 模拟 CSV 数据 (In-Memory)
+            string csvString = "id,name,score\n1,Alice,99.5\n2,Bob,88.0";
+            byte[] csvBytes = System.Text.Encoding.UTF8.GetBytes(csvString);
+
+            // 2. 内存扫描 (不落盘!)
+            using var lf = LazyFrame.ScanCsv(
+                csvBytes,
+                hasHeader: true,
+                rowIndexName: "row_idx" // 顺便测测参数传递
+            );
+
+            // 3. 验证 Schema (Metadata)
+            using var schema = lf.Schema;
+            Assert.Equal(DataTypeKind.Int64, schema["id"].Kind);
+            Assert.Equal(DataTypeKind.String, schema["name"].Kind);
+            Assert.Equal(DataTypeKind.Float64, schema["score"].Kind);
+            Assert.Equal(DataTypeKind.UInt32, schema["row_idx"].Kind); // 行号列
+
+            // 4. Collect 验证数据
+            using var df = lf.Collect();
+            Assert.Equal(2, df.Height);
+            Assert.Equal("Alice", df["name"][0]);
+            Assert.Equal(99.5, df["score"][0]);
         }
     }
 }

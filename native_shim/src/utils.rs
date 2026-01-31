@@ -2,7 +2,7 @@ use std::ffi::{CStr, c_char};
 use polars::frame::UniqueKeepStrategy;
 use polars_arrow::ffi::ArrowArray;
 use polars_arrow::ffi::{export_array_to_c,export_field_to_c};
-use polars::prelude::{ArrowSchema, SchemaRef,AsofStrategy, Expr, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin, ParallelStrategy};
+use polars::prelude::{ArrowSchema, AsofStrategy, CsvEncoding, Expr, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin, ParallelStrategy, SchemaRef};
 use polars_arrow::datatypes::Field;
 
 use crate::types::{ExprContext,SchemaContext};
@@ -92,7 +92,6 @@ pub(crate) unsafe fn ptr_to_schema_ref(ptr: *mut SchemaContext) -> Option<Schema
     }
 }
 
-
 pub(crate) fn map_jointype(code: u8) -> JoinType {
     match code {
         0 => JoinType::Inner,
@@ -164,5 +163,14 @@ pub(crate) fn map_parallel_strategy(code: u8) -> ParallelStrategy {
         2 => ParallelStrategy::RowGroups,
         3 => ParallelStrategy::None,
         0 | _ => ParallelStrategy::Auto,
+    }
+}
+
+#[inline]
+pub fn map_csv_encoding(encoding: u8) -> CsvEncoding {
+    match encoding {
+        0 => CsvEncoding::Utf8,
+        1 => CsvEncoding::LossyUtf8,
+        _ => CsvEncoding::Utf8,
     }
 }

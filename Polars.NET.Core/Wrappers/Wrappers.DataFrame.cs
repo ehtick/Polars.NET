@@ -22,11 +22,8 @@ public static partial class PolarsWrapper
         }
         return names;
     }
-    public static string GetDataFrameSchemaString(DataFrameHandle h)
-    {
-        var ptr = NativeBindings.pl_dataframe_schema(h);
-        return ErrorHelper.CheckString(ptr);
-    }
+    public static SchemaHandle GetDataFrameSchema(DataFrameHandle handle)
+        =>ErrorHelper.Check(NativeBindings.pl_dataframe_get_schema(handle));
     public static DataFrameHandle CloneDataFrame(DataFrameHandle df)
     {
         return ErrorHelper.Check(NativeBindings.pl_dataframe_clone(df));

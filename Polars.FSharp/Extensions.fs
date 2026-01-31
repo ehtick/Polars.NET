@@ -85,8 +85,10 @@ module Serialization =
     
     type DataFrame with
         member this.Describe() : DataFrame =
+            use schema = this.Schema
+            
             let numericCols = 
-                this.Schema 
+                schema.ToMap()
                 |> Map.filter (fun _ dtype -> dtype.IsNumeric)
                 |> Map.keys
                 |> Seq.toList
