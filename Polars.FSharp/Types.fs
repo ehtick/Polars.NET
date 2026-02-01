@@ -1519,7 +1519,7 @@ and DataFrame(handle: DataFrameHandle) =
         let idxName = Option.toObj rowIndexName
         let idxOffset = defaultArg rowIndexOffset 0u
         let rechk = defaultArg rechunk false
-        let mmap = defaultArg memoryMap true 
+        let mmap = defaultArg memoryMap false 
         let pathCol = Option.toObj includePathColumn
 
         let h = PolarsWrapper.ReadIpc(path, cols, rows, idxName, idxOffset, rechk, mmap, pathCol)
@@ -1748,12 +1748,18 @@ and DataFrame(handle: DataFrameHandle) =
         PolarsWrapper.WriteParquet(this.Handle, path)
         this
     /// <summary>
-    /// Write DataFrame to an Arrow IPC (Feather) file.
-    /// This is a fast, zero-copy binary format.
+    /// Write DataFrame to IPC (Arrow) file.
     /// </summary>
-    member this.WriteIpc(path: string)=
-        PolarsWrapper.WriteIpc(this.Handle, path)
-        this
+    /// <param name="path">The file path to write to.</param>
+    /// <param name="compression">Compression method (NoCompression, LZ4, ZSTD). Defaults to NoCompression.</param>
+    /// <param name="parallel">Whether to use parallel writing. Defaults to true.</param>
+    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    member this.WriteIpc(path: string, ?compression: IpcCompression, ?parallelStrategy: bool, ?compatLevel: int) =
+        let compression = defaultArg compression IpcCompression.NoCompression
+        let parallelOn = defaultArg parallelStrategy true
+        let compatLevel = defaultArg compatLevel -1
+        
+        PolarsWrapper.WriteIpc(this.Handle, path, compression.ToNative(), parallelOn, compatLevel)
     /// <summary>
     /// Write DataFrame to a JSON file (standard array format).
     /// </summary>

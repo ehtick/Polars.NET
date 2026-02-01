@@ -381,10 +381,22 @@ public static partial class PolarsWrapper
         NativeBindings.pl_write_parquet(df, path);
         ErrorHelper.CheckVoid();
     }
-    public static void WriteIpc(DataFrameHandle df, string path)
+    public static void WriteIpc(
+        DataFrameHandle df, 
+        string path, 
+        PlIpcCompression compression = PlIpcCompression.None, 
+        bool parallel = true, 
+        int compatLevel = -1)
     {
-        NativeBindings.pl_dataframe_write_ipc(df, path);
-        ErrorHelper.CheckVoid(); 
+        NativeBindings.pl_dataframe_write_ipc(
+            df, 
+            path, 
+            compression, 
+            parallel, 
+            compatLevel
+        );
+        
+        ErrorHelper.CheckVoid();
     }
 
     public static void WriteJson(DataFrameHandle df, string path)
@@ -754,10 +766,31 @@ public static partial class PolarsWrapper
         }
     }
 
-    public static void SinkIpc(LazyFrameHandle lf, string path)
+    /// <summary>
+    /// Sinks the LazyFrame to an IPC file. 
+    /// Consumes the LazyFrame handle.
+    /// </summary>
+    public static void SinkIpc(
+        LazyFrameHandle lf, 
+        string path,
+        PlIpcCompression compression,
+        int compatLevel,
+        bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir)
     {
-        NativeBindings.pl_lazy_sink_ipc(lf, path);
+        NativeBindings.pl_lazyframe_sink_ipc(
+            lf, 
+            path, 
+            compression, 
+            compatLevel, 
+            maintainOrder, 
+            syncOnClose, 
+            mkdir
+        );
+        
         lf.TransferOwnership();
+        
         ErrorHelper.CheckVoid();
     }
     public static unsafe DataFrameHandle FromArrow(RecordBatch batch)
@@ -787,7 +820,7 @@ public static partial class PolarsWrapper
         var handle = NativeBindings.pl_lazy_frame_scan_stream(schema, callback,destroyCallback, userData);
         return ErrorHelper.Check(handle);
     }
-    public static void ExportBatches(DataFrameHandle dfHandle, Action<Apache.Arrow.RecordBatch> onBatchReceived)
+    public static void ExportBatches(DataFrameHandle dfHandle, Action<RecordBatch> onBatchReceived)
     {
         var (callback, cleanup, userData) = ArrowStreamInterop.PrepareSink(onBatchReceived);
 

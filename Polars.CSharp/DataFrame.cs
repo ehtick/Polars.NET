@@ -286,7 +286,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="rechunk">Make sure the DataFrame is contiguous in memory (default: false).</param>
     /// <param name="memoryMap">
     /// Use memory mapping for zero-copy reading. 
-    /// Highly recommended for large files (default: true).
+    /// Highly recommended for large, uncompressed files (default: false).
+    /// <br/>
+    /// <b>Warning:</b> This MUST be set to <c>false</c> if the IPC file is compressed (e.g. LZ4, ZSTD).
+    /// Attempting to memory map a compressed file will result in a runtime exception.
     /// </param>
     /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
     public static DataFrame ReadIpc(
@@ -296,7 +299,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
         bool rechunk = false,
-        bool memoryMap = true, 
+        bool memoryMap = false, 
         string? includePathColumn = null)
     {
         if (!File.Exists(path)) 
@@ -1981,11 +1984,19 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     public void WriteParquet(string path)
         => PolarsWrapper.WriteParquet(Handle, path);
     /// <summary>
-    /// Write DataFrame to IPC File    
+    /// Write DataFrame to IPC (Arrow) file with compression and parallel options.
     /// </summary>
-    /// <param name="path"></param>
-    public void WriteIpc(string path)
-        => PolarsWrapper.WriteIpc(Handle, path);
+    /// <param name="path">The file path to write to.</param>
+    /// <param name="compression">Compression method (None, LZ4, ZSTD). Defaults to None.</param>
+    /// <param name="parallel">Whether to use parallel writing. Defaults to true.</param>
+    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    public void WriteIpc(
+        string path, 
+        IpcCompression compression = IpcCompression.None, 
+        bool parallel = true, 
+        int compatLevel = -1)
+            => PolarsWrapper.WriteIpc(Handle, path, compression.ToNative(), parallel, compatLevel);
+
     /// <summary>
     /// Write DataFrame to JSON File
     /// </summary>

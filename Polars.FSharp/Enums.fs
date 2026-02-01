@@ -438,3 +438,13 @@ type JsonFormat =
         match this with
         | Json -> PlJsonFormat.Json
         | JsonLines -> PlJsonFormat.JsonLines
+
+type IpcCompression =
+    | NoCompression
+    | LZ4
+    | ZSTD
+    member internal this.ToNative() =
+        match this with
+        | NoCompression -> PlIpcCompression.None
+        | LZ4 -> PlIpcCompression.LZ4
+        | ZSTD -> PlIpcCompression.ZSTD

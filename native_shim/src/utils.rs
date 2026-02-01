@@ -5,6 +5,7 @@ use polars_arrow::ffi::{export_array_to_c,export_field_to_c};
 use polars::prelude::{ArrowSchema, AsofStrategy, CsvEncoding, Expr, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin, ParallelStrategy, SchemaRef};
 use polars_arrow::datatypes::Field;
 use polars_io::prelude::JsonFormat;
+use polars_io::utils::sync_on_close::SyncOnCloseType;
 
 use crate::types::{ExprContext,SchemaContext};
 
@@ -181,5 +182,14 @@ pub(crate) fn map_json_format(code: u8) -> JsonFormat {
     match code {
         1 => JsonFormat::JsonLines, // .jsonl / .ndjson
         0 | _ => JsonFormat::Json,  // standard .json array
+    }
+}
+
+#[inline]
+pub fn map_sync_on_close(val: u8) -> SyncOnCloseType {
+    match val {
+        1 => SyncOnCloseType::Data,
+        2 => SyncOnCloseType::All,
+        _ => SyncOnCloseType::None,
     }
 }

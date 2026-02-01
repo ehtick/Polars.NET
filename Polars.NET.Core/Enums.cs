@@ -215,3 +215,17 @@ public enum PlJsonFormat: byte
     Json =0,
     JsonLines=1
 }
+
+public enum PlIpcCompression : byte
+{
+    None = 0,
+    LZ4 = 1,
+    ZSTD = 2
+}
+
+public enum PlSyncOnClose : byte
+{
+    None = 0,
+    Data = 1,
+    All = 2
+}

@@ -291,7 +291,7 @@ Charlie,35,true"""
 
             let testMemoryMode () =
                 // 不传 Schema，验证 Rust 端 ScanSources::Buffers 和默认推断
-                use lf = LazyFrame.ScanNdjson(bytes)
+                use lf = LazyFrame.ScanNdjson bytes
                 use df = lf.Collect()
 
                 Assert.Equal(3L, df.Rows)

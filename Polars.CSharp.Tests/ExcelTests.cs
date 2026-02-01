@@ -6,7 +6,6 @@ namespace Polars.CSharp.Tests;
 public class ExcelTests
 {
     [Fact]
-    [Trait("Category","Debug")]
     public void Test_ReadExcel_RoundTrip_With_MiniExcel()
     {
         // ---------------------------------------------------

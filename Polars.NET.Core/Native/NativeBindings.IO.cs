@@ -292,9 +292,23 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool hivePartitioning
     );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void pl_dataframe_write_ipc(DataFrameHandle df, string path);
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
-    public static partial void pl_lazy_sink_ipc(LazyFrameHandle lf, string path);
+    public static partial void pl_dataframe_write_ipc(
+        DataFrameHandle df, 
+        string path, 
+        PlIpcCompression compression, 
+        [MarshalAs(UnmanagedType.U1)] bool parallel, 
+        int compat_level
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_ipc(
+        LazyFrameHandle lf, 
+        string path,
+        PlIpcCompression compression,
+        int compat_level,
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,
+        [MarshalAs(UnmanagedType.U1)] bool mkdir
+    );
 
     // ---------------------------------------------------------
     // Read Excel (Calamine Engine)

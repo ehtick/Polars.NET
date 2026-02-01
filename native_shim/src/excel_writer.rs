@@ -3,7 +3,6 @@ use rust_xlsxwriter::{Workbook, Format};
 use chrono::{NaiveDate,DateTime};
 use std::ffi::c_char;
 use crate::utils::ptr_to_str;
-
 use crate::types::DataFrameContext;
 
 // ---------------------------------------------------------
@@ -46,7 +45,7 @@ pub fn write_excel_native(
 
         match series.dtype() {
             // --- Safe Integers ---
-            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 |
+            DataType::Int8 | DataType::Int16 | DataType::Int32 |
             DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
                 let ca = series.cast(&DataType::Int64)?; 
                 let ca_i64 = ca.i64()?;
@@ -59,8 +58,9 @@ pub fn write_excel_native(
                 }
             },
 
-            // --- Unsafe Integers ---
-            DataType::UInt64 | DataType::Int128 | DataType::UInt128 => {
+            // --- Unsafe Integers & Decimal ---
+            DataType::Int64 | DataType::UInt64 | DataType::Int128 | DataType::UInt128 |
+            DataType::Decimal(_, _) => {
                 let s_str = series.cast(&DataType::String)?;
                 let ca = s_str.str()?;
                 

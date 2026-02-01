@@ -11,7 +11,7 @@ use std::os::raw::c_char;
 use std::fs::File;
 use std::num::NonZeroUsize;
 use crate::types::{DataFrameContext, LazyFrameContext, SchemaContext};
-use crate::utils::{ptr_to_str,map_parallel_strategy,ptr_to_schema_ref,map_csv_encoding,map_json_format};
+use crate::utils::{ptr_to_str,map_parallel_strategy,ptr_to_schema_ref,map_csv_encoding,map_json_format,map_sync_on_close};
 use polars_utils::mmap::MemSlice;
 use std::path::PathBuf;
 use polars_utils::slice_enum::Slice;
@@ -1067,34 +1067,67 @@ pub extern "C" fn pl_scan_ipc_memory(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_sink_ipc(
+pub extern "C" fn pl_lazyframe_sink_ipc(
     lf_ptr: *mut LazyFrameContext,
-    path_ptr: *const c_char
+    path_ptr: *const c_char,
+    // IpcWriterOptions params
+    compression: u8,      // 0: None, 1: LZ4, 2: ZSTD
+    compat_level: i32,    // -1: Newest
+    // SinkOptions params
+    maintain_order: bool,
+    sync_on_close: u8,    // 0: None, 1: Data, 2: All
+    mkdir: bool,
 ) {
     ffi_try_void!({
+        // 1. Consume the pointer (LazyFrame operations consume self)
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        let path = ptr_to_str(path_ptr).unwrap();
+        let path = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
 
-        // Prepare Option
-        let writer_options = IpcWriterOptions::default();
-        let sink_options = SinkOptions::default();
+        // 2. Build IpcWriterOptions (Reuse logic from IO)
+        let compression_opt = match compression {
+            1 => Some(IpcCompression::LZ4),
+            2 => {
+                let level = polars_utils::compression::ZstdLevel::try_new(3).unwrap();
+                Some(IpcCompression::ZSTD(level))
+            },
+            _ => None,
+        };
 
-        // Build Target
-        let target = SinkTarget::Path(PlPath::new(path));
+        let compat = if compat_level < 0 {
+            CompatLevel::newest()
+        } else {
+            CompatLevel::with_level(compat_level as u16)
+                .unwrap_or(CompatLevel::newest())
+        };
 
-        // Call sink_ipc
-        // target, options, cloud_options, sink_options
-        let sink_lf = lf_ctx.inner.sink_ipc(
-            target, 
-            writer_options, 
-            None, // CloudOptions
-            sink_options
-        )?;
+        let writer_options = IpcWriterOptions {
+            compression: compression_opt,
+            compat_level: compat,
+            ..Default::default()
+        };
 
-        
-        let _ = sink_lf
-        .with_new_streaming(true)
-        .collect()?;
+        let sink_options = SinkOptions {
+            maintain_order,
+            sync_on_close: map_sync_on_close(sync_on_close),
+            mkdir,
+            ..Default::default()
+        };
+
+        // 4. Build Target
+        let target = SinkTarget::Path(PlPath::new(path)); // PlPath usually maps to PathBuf internally in Polars IO
+
+        // 5. Execute Sink
+        // sink_ipc returns a LazyFrame that represents the sink operation.
+        // We then call collect() to actually execute the streaming write.
+        let _ = lf_ctx.inner
+            .sink_ipc(
+                target, 
+                writer_options, 
+                None, // CloudOptions (Future work)
+                sink_options
+            )?
+            .with_new_streaming(true) // Ensure streaming engine is used
+            .collect()?;
         
         Ok(())
     })
@@ -1186,14 +1219,40 @@ pub extern "C" fn pl_write_parquet(df_ptr: *mut DataFrameContext, path_ptr: *con
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_dataframe_write_ipc(df_ptr: *mut DataFrameContext, path: *const c_char) {
+pub extern "C" fn pl_dataframe_write_ipc(
+    df_ptr: *mut DataFrameContext,
+    path: *const c_char,
+    compression: u8, // 0: None, 1: LZ4, 2: ZSTD
+    parallel: bool,
+    compat_level: i32,
+) {
     ffi_try_void!({
         let ctx = unsafe { &mut *df_ptr };
         let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
         
-        let file = File::create(&*p).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        let file = File::create(&*p)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         
+        let compression_opt = match compression {
+            1 => Some(IpcCompression::LZ4),
+            2 => {
+                let level = polars_utils::compression::ZstdLevel::try_new(3).unwrap();
+                Some(IpcCompression::ZSTD(level))
+            },
+            _ => None,
+        };
+
+        let compat = if compat_level < 0 {
+            CompatLevel::newest()
+        } else {
+            CompatLevel::with_level(compat_level as u16)
+                .unwrap_or(CompatLevel::newest())
+        };
+
         IpcWriter::new(file)
+            .with_compression(compression_opt)
+            .with_parallel(parallel)
+            .with_compat_level(compat)
             .finish(&mut ctx.df)
     })
 }
@@ -1211,7 +1270,6 @@ pub extern "C" fn pl_dataframe_write_json(df_ptr: *mut DataFrameContext, path: *
         .finish(&mut ctx.df)
     })
 }
-
 
 // ==========================================
 // Memory and Convert Ops

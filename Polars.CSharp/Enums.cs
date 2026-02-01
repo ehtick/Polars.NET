@@ -246,6 +246,34 @@ public enum JsonFormat: byte
     JsonLines = 1,
 }
 
+public enum IpcCompression: byte
+{
+    None = 0,
+    LZ4 = 1,
+    ZSTD = 2
+}
+
+/// <summary>
+/// Controls the file synchronization behavior when closing the file.
+/// </summary>
+public enum SyncOnClose : byte
+{
+    /// <summary>
+    /// Don't call sync on close. (Default, fastest)
+    /// </summary>
+    None = 0,
+    
+    /// <summary>
+    /// Sync only the file contents.
+    /// </summary>
+    Data = 1,
+    
+    /// <summary>
+    /// Sync the file contents and the metadata. (Slowest, safest)
+    /// </summary>
+    All = 2
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -301,7 +329,6 @@ internal static class EnumExtensions
         _ => CoreEnums.PlJoinType.Inner
     };
 
-    //
     public static CoreEnums.PlPivotAgg ToNative(this PivotAgg agg) => agg switch
     {
         PivotAgg.First => CoreEnums.PlPivotAgg.First,
@@ -447,6 +474,20 @@ internal static class EnumExtensions
         JsonFormat.Json => CoreEnums.PlJsonFormat.Json,
         JsonFormat.JsonLines => CoreEnums.PlJsonFormat.JsonLines,
         _ => throw new ArgumentOutOfRangeException(nameof(jsonFormat), jsonFormat, null)
+    };
+    internal static CoreEnums.PlIpcCompression ToNative(this IpcCompression compression) => compression switch
+    {
+        IpcCompression.None => CoreEnums.PlIpcCompression.None,
+        IpcCompression.LZ4 => CoreEnums.PlIpcCompression.LZ4,
+        IpcCompression.ZSTD => CoreEnums.PlIpcCompression.ZSTD,
+        _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
+    };
+    internal static CoreEnums.PlSyncOnClose ToNative(this SyncOnClose syncOnClose) => syncOnClose switch
+    {
+        SyncOnClose.None => CoreEnums.PlSyncOnClose.None,
+        SyncOnClose.Data => CoreEnums.PlSyncOnClose.Data,
+        SyncOnClose.All => CoreEnums.PlSyncOnClose.All,
+        _ => throw new ArgumentOutOfRangeException(nameof(syncOnClose), syncOnClose, null)
     };
 }
 

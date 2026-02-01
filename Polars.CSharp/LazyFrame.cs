@@ -1681,11 +1681,34 @@ public class LazyFrame : IDisposable
     public void SinkParquet(string path)
         => PolarsWrapper.SinkParquet(Handle, path);
     /// <summary>
-    /// Sink the LazyFrame to a CSV file.
+    /// Sink the LazyFrame to an IPC (Arrow) file.
+    /// <br/>
+    /// This allows writing datasets larger than memory by streaming the results to disk.
     /// </summary>
-    /// <param name="path"></param>
-    public void SinkIpc(string path)
-       => PolarsWrapper.SinkIpc(Handle, path);
+    /// <param name="path">The output file path.</param>
+    /// <param name="compression">Compression method (None, LZ4, ZSTD). Defaults to None.</param>
+    /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
+    /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
+    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    public void SinkIpc(
+        string path,
+        IpcCompression compression = IpcCompression.None,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        int compatLevel = -1)
+    {
+        PolarsWrapper.SinkIpc(
+            Handle, 
+            path, 
+            compression.ToNative(), 
+            compatLevel, 
+            maintainOrder, 
+            syncOnClose.ToNative(), 
+            mkdir
+        );
+    }
     /// <summary>
     /// Sink the LazyFrame to JSON file.
     /// </summary>
