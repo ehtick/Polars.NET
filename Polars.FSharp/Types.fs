@@ -1743,9 +1743,36 @@ and DataFrame(handle: DataFrameHandle) =
     member this.WriteCsv (path: string) = 
         PolarsWrapper.WriteCsv(this.Handle, path)
         this 
-    /// <summary> Write DataFrame to Parquet. </summary>
-    member this.WriteParquet (path: string) = 
-        PolarsWrapper.WriteParquet(this.Handle, path)
+    /// <summary>
+    /// Write DataFrame to Parquet file.
+    /// </summary>
+    /// <param name="path">Output file path.</param>
+    /// <param name="compression">Compression method. Defaults to Snappy.</param>
+    /// <param name="compressionLevel">Compression level for Gzip/Brotli/Zstd. -1 means default. Defaults to -1.</param>
+    /// <param name="statistics">Compute and write column statistics. Defaults to false.</param>
+    /// <param name="rowGroupSize">Number of rows per row group. 0 means use default.</param>
+    /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
+    /// <param name="parallel">Write in parallel. Defaults to true.</param>
+    member this.WriteParquet(path: string, ?compression: ParquetCompression, ?compressionLevel: int, ?statistics: bool, ?rowGroupSize: int, ?dataPageSize: int, ?parallelOn: bool) =
+        // 1. 处理默认值
+        let compression = defaultArg compression ParquetCompression.Snappy
+        let compressionLevel = defaultArg compressionLevel -1
+        let statistics = defaultArg statistics false
+        let rowGroupSize = defaultArg rowGroupSize 0
+        let dataPageSize = defaultArg dataPageSize 0
+        let p = defaultArg parallelOn true
+
+        PolarsWrapper.WriteParquet(
+            this.Handle, 
+            path, 
+            compression.ToNative(), 
+            compressionLevel, 
+            statistics, 
+            rowGroupSize, 
+            dataPageSize, 
+            p
+        )
+        
         this
     /// <summary>
     /// Write DataFrame to IPC (Arrow) file.
@@ -3238,9 +3265,38 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <summary> Write LazyFrame execution result to Parquet (Streaming). </summary>
     member this.SinkParquet (path: string) : unit =
         PolarsWrapper.SinkParquet(this.CloneHandle(), path)
-    /// <summary> Write LazyFrame execution result to IPC (Streaming). </summary>
-    member this.SinkIpc (path: string) = 
-        PolarsWrapper.SinkIpc(this.CloneHandle(), path)
+    /// <summary>
+    /// Sink the LazyFrame to an IPC (Arrow) file.
+    /// </summary>
+    /// <param name="path">Output file path.</param>
+    /// <param name="compression">Compression method (NoCompression, LZ4, ZSTD). Defaults to NoCompression.</param>
+    /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
+    /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
+    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    member this.SinkIpc(
+        path: string, 
+        ?compression: IpcCompression, 
+        ?maintainOrder: bool, 
+        ?syncOnClose: SyncOnClose, 
+        ?mkdir: bool, 
+        ?compatLevel: int
+    ) =
+        let compression = defaultArg compression IpcCompression.NoCompression
+        let maintainOrder = defaultArg maintainOrder true
+        let syncOnClose = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkdir = defaultArg mkdir false
+        let compatLevel = defaultArg compatLevel -1
+
+        PolarsWrapper.SinkIpc(
+            this.CloneHandle(), 
+            path,
+            compression.ToNative(),
+            compatLevel,
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir
+        )
     // ==========================================
     // Streaming Sink (Lazy)
     // ==========================================

@@ -229,3 +229,13 @@ public enum PlSyncOnClose : byte
     Data = 1,
     All = 2
 }
+
+public enum PlParquetCompression : byte
+{
+    Uncompressed = 0,
+    Snappy = 1,
+    Gzip = 2,
+    Brotli = 3,
+    Zstd = 4,
+    Lz4Raw = 5
+}

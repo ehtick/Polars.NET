@@ -5,7 +5,7 @@ open System.IO
 open Xunit
 open Polars.FSharp
 
-type ScanParquetTests() =
+type IOTests() =
     
     // 准备一个临时文件路径
     let tempPath = Path.Combine(Path.GetTempPath(), $"scan_test_{Guid.NewGuid()}.parquet")
@@ -18,8 +18,13 @@ type ScanParquetTests() =
                 Series.create("val", [10.5; 20.5; 30.5; 40.5; 50.5])
                 Series.create("cat", ["A"; "B"; "A"; "B"; "C"])
             ]
-        // 假设你有 WriteParquet，如果没有就用 CSV 替代，原理一样
-        df.WriteParquet tempPath |> ignore
+        df.WriteParquet(
+            tempPath,
+            compression = ParquetCompression.Zstd,
+            compressionLevel = 3,
+            statistics = true,
+            rowGroupSize = 2
+        ) |> ignore
 
     // 析构函数清理垃圾
     interface IDisposable with
@@ -105,10 +110,6 @@ type ScanParquetTests() =
         
         runScope()
 
-        // 此时 schema 已经 Dispose 了。
-        // 如果 Polars (Rust) 在 scan 时只是拷贝了 schema 信息（通常是的），那么 collect 应该成功。
-        // 如果 Rust 实际上持有 schema 的引用（不太可能，通常是指针拷贝），这里会炸。
-        // 这个测试主要验证我们的 C# SafeHandleLock 是否正确延长了生命周期直到 Native 调用结束。
         let df = lf.Collect()
         Assert.True(df.Height > 0L)
     [<Fact>]
@@ -415,7 +416,11 @@ Charlie,35,true"""
             let s2 = Series.create("val", ["A"; "B"; "C"; "D"; "E"])
             
             use dfOrig = DataFrame.create [s1; s2]
-            dfOrig.WriteIpc path |> ignore
+            dfOrig.Lazy().SinkIpc(
+                path, 
+                compression = IpcCompression.LZ4, 
+                maintainOrder = true
+            )
 
             // =================================================================
             // 2. File Mode (测试 nRows/PreSlice & RowIndex)
@@ -436,13 +441,7 @@ Charlie,35,true"""
                 // [验证点 2] RowIndex 列存在
                 let cols = df.ColumnNames
                 Assert.Contains("idx_col", cols)
-                
-                // 0.52 RowIndex 通常是 UInt32 或 UInt64，我们作为 Int 读取测试值
-                // 验证第一行行号为 0
-                // 注意：根据 Polars 版本，可能是 UInt32，用 Generic GetValue 比较稳
-                // 这里简单假设可以用 Convert 转换
-                // F# 访问列数据：
-                // 验证 id=3 的那行 (index 2)
+
                 Assert.Equal(3L, df.Int("id", 2).Value)
                 Assert.Equal("C", df.String("val", 2).Value)
 

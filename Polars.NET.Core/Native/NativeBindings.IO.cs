@@ -141,12 +141,29 @@ unsafe internal partial class NativeBindings
     );
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void pl_write_parquet(DataFrameHandle df, string path);
+    public static partial void pl_dataframe_write_parquet(
+        DataFrameHandle df, 
+        string path,
+        PlParquetCompression compression,
+        int compression_level,      // -1 default
+        [MarshalAs(UnmanagedType.U1)] bool statistics,
+        nuint row_group_size,       // usize -> nuint, 0 default
+        nuint data_page_size,       // usize -> nuint, 0 default
+        [MarshalAs(UnmanagedType.U1)] bool parallel
+    );
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void pl_lazy_sink_parquet(
+    public static partial void pl_lazyframe_sink_parquet(
         LazyFrameHandle lf, 
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string path
+        string path,
+        PlParquetCompression compression,
+        int compression_level,
+        [MarshalAs(UnmanagedType.U1)] bool statistics,
+        nuint row_group_size,
+        nuint data_page_size,
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,
+        [MarshalAs(UnmanagedType.U1)] bool mkdir
     );
 
     // ---------------------------------------------------------

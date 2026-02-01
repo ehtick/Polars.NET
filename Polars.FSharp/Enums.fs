@@ -448,3 +448,29 @@ type IpcCompression =
         | NoCompression -> PlIpcCompression.None
         | LZ4 -> PlIpcCompression.LZ4
         | ZSTD -> PlIpcCompression.ZSTD
+
+type SyncOnClose =
+    | NoSync
+    | Data
+    | All
+    member internal this.ToNative() =
+        match this with
+        | NoSync -> PlSyncOnClose.None
+        | Data -> PlSyncOnClose.Data
+        | All -> PlSyncOnClose.All
+
+type ParquetCompression =
+    | Uncompressed
+    | Snappy
+    | Gzip
+    | Brotli
+    | Zstd
+    | Lz4Raw
+    member internal this.ToNative() =
+        match this with
+        | Uncompressed -> PlParquetCompression.Uncompressed
+        | Snappy -> PlParquetCompression.Snappy
+        | Gzip -> PlParquetCompression.Gzip
+        | Brotli -> PlParquetCompression.Brotli
+        | Zstd -> PlParquetCompression.Zstd
+        | Lz4Raw -> PlParquetCompression.Lz4Raw

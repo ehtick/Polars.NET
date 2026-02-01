@@ -173,60 +173,65 @@ public void Test_Ndjson_Scan_Lazy_AllModes()
     }
 }
     [Fact]
-    public void Test_ReadParquet_File()
+    public void Test_ReadParquet_Advanced()
     {
         // 1. 准备测试数据
-        using var df = DataFrame.FromColumns(new
-        {
-            id = new[] { 1, 2, 3, 4, 5 },
-            name = new[] { "Alice", "Bob", "Charlie", "David", "Eve" },
-            val = new[] { 1.1, 2.2, 3.3, 4.4, 5.5 }
-        });
+        // 包含 Null 值以测试统计信息 (NullCount)
+        using var sId = new Series("id", [1, 2, 3, 4, 5]);
+        using var sName = new Series("name", ["Alice", "Bob", null, "David", "Eve"]); 
+        using var df = new DataFrame(sId, sName);
 
         // 创建临时文件
-        string path = Path.GetTempFileName(); 
-        try
-        {
-            // 写入 Parquet (假设 WriteParquet 已实现)
-            df.WriteParquet(path);
+        using var f = new DisposableFile(".parquet");
+        
+        // ---------------------------------------------------------
+        // Test Write Options: 
+        // ---------------------------------------------------------
+        // 1. 使用 ZSTD 压缩 (Level 3)
+        // 2. 开启统计信息 (Statistics = true)
+        // 3. 强制极小的 RowGroupSize (2行一组) -> 理论上产生 3 个 Group
+        df.WriteParquet(
+            f.Path,
+            compression: ParquetCompression.Zstd,
+            compressionLevel: 3,
+            statistics: true,
+            rowGroupSize: 2
+        );
 
-            // --- Case 1: 基础读取 (全量) ---
-            using var dfFull = DataFrame.ReadParquet(path);
-            Assert.Equal(5, dfFull.Height);
-            Assert.Equal(3, dfFull.Width);
-            Assert.Equal("Alice", dfFull.GetValue<string>(0, "name"));
+        // 验证文件已生成
+        Assert.True(File.Exists(f.Path));
+        Assert.True(new FileInfo(f.Path).Length > 0);
 
-            // --- Case 2: 高级参数读取 ---
-            // 测试: 
-            // 1. columns: 只读 "id" 和 "name" (列裁剪)
-            // 2. nRows: 只读前 2 行 (Limit / Slice)
-            // 3. rowIndexName: 自动生成行号列 "idx"
-            // 4. rowIndexOffset: 行号从 100 开始
-            using var dfPartial = DataFrame.ReadParquet(
-                path,
-                columns: ["id", "name"],
-                nRows: 2,
-                rowIndexName: "idx",
-                rowIndexOffset: 100
-            );
+        // ---------------------------------------------------------
+        // Case 1: 基础读取 (全量验证压缩文件可读性)
+        // ---------------------------------------------------------
+        using var dfFull = DataFrame.ReadParquet(f.Path);
+        Assert.Equal(5, dfFull.Height);
+        Assert.Equal(2, dfFull.Width);
+        Assert.Equal("Alice", dfFull.GetValue<string>(0, "name"));
+        Assert.Null(dfFull.GetValue<string>(2, "name")); // 验证 Null 保留
 
-            // 验证结构
-            Assert.Equal(2, dfPartial.Height); // nRows生效
-            Assert.Equal(3, dfPartial.Width);  // id, name + idx
-            
-            // 验证列裁剪
-            Assert.Contains("id", dfPartial.ColumnNames);
-            Assert.Contains("name", dfPartial.ColumnNames);
-            Assert.DoesNotContain("val", dfPartial.ColumnNames); // val 被裁剪了
+        // ---------------------------------------------------------
+        // Case 2: 高级参数读取 (Projection, Limit, RowIndex)
+        // ---------------------------------------------------------
+        using var dfPartial = DataFrame.ReadParquet(
+            f.Path,
+            columns: ["id"], // 列裁剪
+            nRows: 3,                // Limit
+            rowIndexName: "row_idx", // 生成行号
+            rowIndexOffset: 10   
+        );
 
-            // 验证行号
-            Assert.Equal(100UL, dfPartial.GetValue<ulong>(0, "idx")); // 第一行 Offset 100
-            Assert.Equal(101UL, dfPartial.GetValue<ulong>(1, "idx")); // 第二行 Offset 101
-        }
-        finally
-        {
-            if (File.Exists(path)) File.Delete(path);
-        }
+        // 验证结构
+        Assert.Equal(3, dfPartial.Height); 
+        Assert.Equal(2, dfPartial.Width);  // id + row_idx (name 被裁剪)
+        
+        Assert.True(dfPartial.ColumnNames.Contains("id"));
+        Assert.False(dfPartial.ColumnNames.Contains("name"));
+
+        // 验证行号
+        Assert.Equal(10UL, dfPartial.GetValue<ulong>(0, "row_idx"));
+        Assert.Equal(12UL, dfPartial.GetValue<ulong>(2, "row_idx"));
     }
     [Fact]
     public void Test_ReadParquet_Memory_And_Stream()
@@ -579,45 +584,67 @@ public void Test_Ndjson_Scan_Lazy_AllModes()
         Assert.Equal(DataTypeKind.String,strType.Kind);
     }
     private class SinkTestPoco
-{
-    public int Id { get; set; }
-    public string Type { get; set; }
-    public double Val { get; set; }
-}
+    {
+        public int Id { get; set; }
+        public string Type { get; set; }
+        public double Val { get; set; }
+    }
     [Fact]
-    public void Test_SinkParquet_Basic()
+    public void Test_SinkParquet_Advanced()
     {
         // 1. 准备数据
-        var df = DataFrame.FromColumns(new
+        // 构造 5 行数据，稍后设置 RowGroupSize = 2，预期会生成 3 个 RowGroups
+        using var df = DataFrame.FromColumns(new
         {
-            Id = new[] { 1, 2, 3 },
-            Name = new[] { "Alice", "Bob", "Charlie" }
+            Id = new[] { 1, 2, 3, 4, 5 },
+            Name = new[] { "Alice", "Bob", "Charlie", "David", "Eve" }
         });
 
-        // 生成临时文件路径
-        string path = Path.GetTempFileName(); 
-        // GetTempFileName 创建了一个空文件，ParquetWriter 可能会抱怨文件已存在或为空。
-        // 安全起见，删掉它，让 Polars 创建
-        File.Delete(path); 
-        path += ".parquet"; // 加个后缀
+        // 2. 准备文件路径
+        // GetTempFileName 创建了一个空文件，ParquetWriter 需要自己创建文件
+        // 所以我们先生成路径，删掉文件，再加个 .parquet 后缀
+        string tempStub = Path.GetTempFileName();
+        File.Delete(tempStub);
+        string path = tempStub + ".parquet";
 
         try
         {
-            // 2. Lazy -> Sink
-            // Sink 这是一个 Action (就像 Collect 一样)，会触发执行
-            df.Lazy().SinkParquet(path);
+            // 3. Lazy -> Sink (使用高级参数)
+            // [UPGRADE]: 
+            // - Compression: ZSTD (验证枚举映射)
+            // - Statistics: true (验证 bool 传递)
+            // - RowGroupSize: 2 (验证 usize 传递，5行数据将切分为 2+2+1)
+            // - SyncOnClose: All (验证 Sync 枚举传递)
+            df.Lazy().SinkParquet(
+                path,
+                compression: ParquetCompression.Zstd,
+                compressionLevel: 3, // 指定压缩等级
+                statistics: true,
+                rowGroupSize: 2,
+                maintainOrder: true,
+                syncOnClose: SyncOnClose.All
+            );
 
-            // 3. 验证文件是否存在
-            Assert.True(File.Exists(path));
-            Assert.True(new FileInfo(path).Length > 0);
+            // 4. 验证文件物理存在
+            var fileInfo = new FileInfo(path);
+            Assert.True(fileInfo.Exists);
+            Assert.True(fileInfo.Length > 0);
 
-            // 4. 读取回验证 (假设你有 ScanParquet，如果没有，可以先只测文件存在)
+            // 5. 读取回验证 (Round-Trip)
+            // 使用 ScanParquet 读取，确保 Polars 能正确识别并解压我们生成的 ZSTD 文件
             using var dfRead = LazyFrame.ScanParquet(path).Collect();
-            Assert.Equal(3, dfRead.Height);
+            
+            Assert.Equal(5, dfRead.Height);
+            Assert.Equal(2, dfRead.Width);
+            
+            // 验证数据准确性
             Assert.Equal("Alice", dfRead.GetValue<string>(0, "Name"));
+            Assert.Equal("Charlie", dfRead.GetValue<string>(2, "Name"));
+            Assert.Equal(5, dfRead.GetValue<int>(4, "Id"));
         }
         finally
         {
+            // 清理垃圾
             if (File.Exists(path)) File.Delete(path);
         }
     }
@@ -801,7 +828,7 @@ public void Test_Ndjson_Scan_Lazy_AllModes()
             Assert.True(fileInfo.Length > 0);
         }
 
-// --- 辅助 POCO ---
+    // --- 辅助 POCO ---
     private class ComplexPoco
     {
         public int Id { get; set; }

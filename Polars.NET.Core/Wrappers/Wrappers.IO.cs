@@ -376,9 +376,30 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
     }
-    public static void WriteParquet(DataFrameHandle df, string path)
+    public static void WriteParquet(
+        DataFrameHandle df, 
+        string path, 
+        PlParquetCompression compression, 
+        int compressionLevel,
+        bool statistics,
+        int rowGroupSize, 
+        int dataPageSize,
+        bool parallel)
     {
-        NativeBindings.pl_write_parquet(df, path);
+        nuint rgs = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
+        nuint dps = dataPageSize > 0 ? (nuint)dataPageSize : 0;
+
+        NativeBindings.pl_dataframe_write_parquet(
+            df, 
+            path, 
+            compression, 
+            compressionLevel, 
+            statistics, 
+            rgs, 
+            dps, 
+            parallel
+        );
+        
         ErrorHelper.CheckVoid();
     }
     public static void WriteIpc(
@@ -405,9 +426,34 @@ public static partial class PolarsWrapper
         ErrorHelper.CheckVoid();
     }
     // Sink Parquet
-    public static void SinkParquet(LazyFrameHandle lf, string path)
+    public static void SinkParquet(
+        LazyFrameHandle lf, 
+        string path,
+        PlParquetCompression compression,
+        int compressionLevel,
+        bool statistics,
+        int rowGroupSize,
+        int dataPageSize,
+        bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir)
     {
-        NativeBindings.pl_lazy_sink_parquet(lf, path);
+        nuint rgs = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
+        nuint dps = dataPageSize > 0 ? (nuint)dataPageSize : 0;
+
+        NativeBindings.pl_lazyframe_sink_parquet(
+            lf, 
+            path, 
+            compression, 
+            compressionLevel, 
+            statistics, 
+            rgs, 
+            dps, 
+            maintainOrder, 
+            syncOnClose, 
+            mkdir
+        );
+        
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
     }

@@ -274,6 +274,16 @@ public enum SyncOnClose : byte
     All = 2
 }
 
+public enum ParquetCompression : byte
+{
+    Uncompressed = 0,
+    Snappy = 1,
+    Gzip = 2,
+    Brotli = 3,
+    Zstd = 4,
+    Lz4Raw = 5
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -488,6 +498,16 @@ internal static class EnumExtensions
         SyncOnClose.Data => CoreEnums.PlSyncOnClose.Data,
         SyncOnClose.All => CoreEnums.PlSyncOnClose.All,
         _ => throw new ArgumentOutOfRangeException(nameof(syncOnClose), syncOnClose, null)
+    };
+    internal static CoreEnums.PlParquetCompression ToNative(this ParquetCompression compression) => compression switch
+    {
+        ParquetCompression.Uncompressed => CoreEnums.PlParquetCompression.Uncompressed,
+        ParquetCompression.Snappy => CoreEnums.PlParquetCompression.Snappy,
+        ParquetCompression.Gzip => CoreEnums.PlParquetCompression.Gzip,
+        ParquetCompression.Brotli => CoreEnums.PlParquetCompression.Brotli,
+        ParquetCompression.Zstd => CoreEnums.PlParquetCompression.Zstd,
+        ParquetCompression.Lz4Raw => CoreEnums.PlParquetCompression.Lz4Raw,
+        _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
     };
 }
 

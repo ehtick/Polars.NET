@@ -1978,11 +1978,35 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     public void WriteCsv(string path)
         => PolarsWrapper.WriteCsv(Handle, path);
     /// <summary>
-    /// Write DataFrame to Parquet File
+    /// Write DataFrame to Parquet file.
     /// </summary>
-    /// <param name="path"></param>
-    public void WriteParquet(string path)
-        => PolarsWrapper.WriteParquet(Handle, path);
+    /// <param name="path">Output file path.</param>
+    /// <param name="compression">Compression method. Defaults to Snappy (common standard) or Uncompressed depending on preference. Let's default to Snappy.</param>
+    /// <param name="compressionLevel">Compression level for Gzip/Brotli/Zstd. -1 means default.</param>
+    /// <param name="statistics">Compute and write column statistics. Defaults to false (faster).</param>
+    /// <param name="rowGroupSize">Number of rows per row group. 0 means use default.</param>
+    /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
+    /// <param name="parallel">Write in parallel. Defaults to true.</param>
+    public void WriteParquet(
+        string path,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = false,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        bool parallel = true)
+    {
+        PolarsWrapper.WriteParquet(
+            Handle,
+            path,
+            compression.ToNative(),
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            parallel
+        );
+    }
     /// <summary>
     /// Write DataFrame to IPC (Arrow) file with compression and parallel options.
     /// </summary>

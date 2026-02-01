@@ -328,7 +328,7 @@ pub extern "C" fn pl_read_parquet(
 }
 
 // ---------------------------------------------------------
-// 2. Read Parquet (Memory / Bytes)
+// Read Parquet (Memory / Bytes)
 // ---------------------------------------------------------
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_read_parquet_memory(
@@ -471,7 +471,7 @@ pub extern "C" fn pl_scan_parquet(
 }
 
 // ---------------------------------------------------------
-// 2. Scan Parquet (Memory / Buffers)
+// Scan Parquet (Memory / Buffers)
 // ---------------------------------------------------------
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_scan_parquet_memory(
@@ -506,6 +506,177 @@ pub extern "C" fn pl_scan_parquet_memory(
 
         let lf = LazyFrame::scan_parquet_sources(sources, args)?;
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner:lf })))
+    })
+}
+
+// ==========================================
+// Write&Sink Parquet
+// ==========================================
+fn build_parquet_write_options(
+    compression: u8,        // 0:Uncompressed, 1:Snappy, 2:Gzip, 3:Brotli, 4:Zstd, 5:Lz4Raw
+    compression_level: i32, // -1: Default
+    statistics: bool,
+    row_group_size: usize,
+    data_page_size: usize,
+) -> PolarsResult<ParquetWriteOptions> {
+    // 1. Map Compression Options 
+    let compression_opts = match compression {
+        1 => ParquetCompression::Snappy,
+        2 => {
+            // Gzip (level is u8)
+            let lvl = if compression_level >= 0 {
+                Some(
+                    GzipLevel::try_new(compression_level as u8)
+                        .map_err(|_| PolarsError::ComputeError("Invalid Gzip Level".into()))?
+                )
+            } else {
+                None
+            };
+            ParquetCompression::Gzip(lvl)
+        },
+        3 => {
+            // Brotli (level is u32)
+            let lvl = if compression_level >= 0 {
+                Some(
+                    BrotliLevel::try_new(compression_level as u32)
+                        .map_err(|_| PolarsError::ComputeError("Invalid Brotli Level".into()))?
+                )
+            } else {
+                None
+            };
+            ParquetCompression::Brotli(lvl)
+        },
+        4 => {
+            // Zstd (level is i32)
+            let lvl = if compression_level >= 0 {
+                Some(
+                    ZstdLevel::try_new(compression_level)
+                        .map_err(|_| PolarsError::ComputeError("Invalid Zstd Level".into()))?
+                )
+            } else {
+                None
+            };
+            ParquetCompression::Zstd(lvl)
+        },
+        5 => ParquetCompression::Lz4Raw,
+        _ => ParquetCompression::Uncompressed,
+    };
+
+    // 2. Build StatisticsOptions
+    let stats_opts = StatisticsOptions {
+        min_value: statistics,
+        max_value: statistics,
+        distinct_count: statistics,
+        null_count: statistics,
+    };
+
+    // 3. Construct ParquetWriteOptions
+    Ok(ParquetWriteOptions {
+        compression: compression_opts,
+        statistics: stats_opts,
+        row_group_size: if row_group_size > 0 { Some(row_group_size) } else { None },
+        data_page_size: if data_page_size > 0 { Some(data_page_size) } else { None },
+        key_value_metadata: None,
+        field_overwrites: vec![], 
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_dataframe_write_parquet(
+    df_ptr: *mut DataFrameContext,
+    path_ptr: *const c_char,
+    compression: u8,        
+    compression_level: i32, 
+    statistics: bool,       
+    row_group_size: usize,  
+    data_page_size: usize,  
+    parallel: bool,
+) {
+    ffi_try_void!({
+        let ctx = unsafe { &mut *df_ptr };
+        let path = ptr_to_str(path_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+
+        let file = File::create(path)
+            .map_err(|e| PolarsError::ComputeError(format!("Could not create file: {}", e).into()))?;
+
+        let options = build_parquet_write_options(
+            compression,
+            compression_level,
+            statistics,
+            row_group_size,
+            data_page_size
+        )?;
+
+        // Config Writer 
+        let mut writer = ParquetWriter::new(file)
+            .with_compression(options.compression)
+            .with_statistics(options.statistics)
+            .set_parallel(parallel);
+
+        if let Some(s) = options.row_group_size {
+            writer = writer.with_row_group_size(Some(s));
+        }
+        
+        if let Some(s) = options.data_page_size {
+            writer = writer.with_data_page_size(Some(s));
+        }
+
+        writer.finish(&mut ctx.df)?;
+            
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_sink_parquet(
+    lf_ptr: *mut LazyFrameContext,
+    path_ptr: *const c_char,
+    // ParquetWriteOptions 
+    compression: u8,        
+    compression_level: i32, 
+    statistics: bool,       
+    row_group_size: usize,  
+    data_page_size: usize,
+    // SinkOptions 
+    maintain_order: bool,
+    sync_on_close: u8,
+    mkdir: bool,
+) {
+    ffi_try_void!({
+        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+        let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+
+        // ParquetWriteOptions
+        let write_options = build_parquet_write_options(
+            compression,
+            compression_level,
+            statistics,
+            row_group_size,
+            data_page_size
+        )?;
+
+        // SinkOptions
+        let sink_options = SinkOptions {
+            maintain_order,
+            sync_on_close: map_sync_on_close(sync_on_close),
+            mkdir,
+            ..Default::default()
+        };
+
+        let target = SinkTarget::Path(PlPath::new(path_str));
+
+        let _ = lf_ctx.inner
+            .sink_parquet(
+                target, 
+                write_options, 
+                None, // cloud_options
+                sink_options
+            )?
+            .with_new_streaming(true)
+            .collect()?;
+
+        Ok(())
     })
 }
 
@@ -1202,23 +1373,6 @@ pub extern "C" fn pl_write_csv(df_ptr: *mut DataFrameContext, path_ptr: *const c
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_write_parquet(df_ptr: *mut DataFrameContext, path_ptr: *const c_char) {
-    ffi_try_void!({
-        let ctx = unsafe { &mut *df_ptr };
-        let path = ptr_to_str(path_ptr)
-            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-
-        let file = File::create(path)
-            .map_err(|e| PolarsError::ComputeError(format!("Could not create file: {}", e).into()))?;
-
-        ParquetWriter::new(file)
-            .finish(&mut ctx.df)?;
-            
-        Ok(())
-    })
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn pl_dataframe_write_ipc(
     df_ptr: *mut DataFrameContext,
     path: *const c_char,
@@ -1319,36 +1473,6 @@ pub extern "C" fn pl_to_arrow(
             *out_schema = export_field_to_c(&root_field);
         }
         
-        Ok(())
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_sink_parquet(
-    lf_ptr: *mut LazyFrameContext,
-    path_ptr: *const c_char
-) {
-    ffi_try_void!({
-        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        let path_str = ptr_to_str(path_ptr).unwrap();
-
-        let pl_path = PlPath::new(path_str);
-        let target = SinkTarget::Path(pl_path.into());
-
-        let write_options = ParquetWriteOptions::default();
-        let sink_options = SinkOptions::default();
-
-        let sink_lf = lf_ctx.inner.sink_parquet(
-            target, 
-            write_options, 
-            None, // cloud_options
-            sink_options
-        )?;
-
-        let _ = sink_lf
-        .with_new_streaming(true)
-        .collect()?;
-
         Ok(())
     })
 }

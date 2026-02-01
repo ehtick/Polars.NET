@@ -1677,9 +1677,30 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Sink the LazyFrame to a Parquet file.
     /// </summary>
-    /// <param name="path"></param>
-    public void SinkParquet(string path)
-        => PolarsWrapper.SinkParquet(Handle, path);
+    public void SinkParquet(
+        string path,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = false,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false)
+    {
+        PolarsWrapper.SinkParquet(
+            Handle,
+            path,
+            compression.ToNative(),
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir
+        );
+    }
     /// <summary>
     /// Sink the LazyFrame to an IPC (Arrow) file.
     /// <br/>
