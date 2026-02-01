@@ -296,4 +296,31 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
     public static partial void pl_lazy_sink_ipc(LazyFrameHandle lf, string path);
 
+    // ---------------------------------------------------------
+    // Read Excel (Calamine Engine)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_read_excel(
+        string path,
+        string? sheetName,
+        UIntPtr sheetIndex,
+        IntPtr schema,               // *mut SchemaContext
+        [MarshalAs(UnmanagedType.U1)] bool hasHeader,
+        UIntPtr inferSchemaLen,      // usize
+        [MarshalAs(UnmanagedType.U1)] bool dropEmptyRows,
+        [MarshalAs(UnmanagedType.U1)] bool raiseIfEmpty
+    );
+
+    // ---------------------------------------------------------
+    // Write Excel (Native Rust Engine)
+    // ---------------------------------------------------------
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_write_excel(
+        DataFrameHandle df,
+        string path,
+        string? sheetName,       // Option<&str>
+        string? dateFormat,      // Option<&str>
+        string? datetimeFormat   // Option<&str>
+    );
+
 }

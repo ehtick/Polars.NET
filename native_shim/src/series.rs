@@ -55,7 +55,7 @@ macro_rules! gen_series_new {
                 );
 
                 let ca = ChunkedArray::<$pl_type>::with_chunk(
-                    name.as_ref().into(),
+                    PlSmallStr::from_str(name.as_ref()), 
                     arrow_array,
                 );
                 
@@ -106,7 +106,7 @@ pub unsafe extern "C" fn pl_series_new_bool(
             validity_bitmap
         );
 
-        let ca = BooleanChunked::with_chunk(name.as_ref().into(), arrow_array);
+        let ca = BooleanChunked::with_chunk(PlSmallStr::from_str(name.as_ref()), arrow_array);
         
         Ok(Box::into_raw(Box::new(SeriesContext { series: ca.into_series() })))
     })
@@ -178,7 +178,7 @@ pub unsafe extern "C" fn pl_series_new_str_simd(
         );
 
         // Convert to Series
-        let series = Series::from_arrow(name_str.as_ref().into(), Box::new(array)).expect("Failed to create Series");
+        let series = Series::from_arrow(PlSmallStr::from_str(name_str.as_ref()), Box::new(array)).expect("Failed to create Series");
 
         Ok(Box::into_raw(Box::new(SeriesContext { series })))
     })
@@ -217,7 +217,7 @@ pub unsafe extern "C" fn pl_series_new_datetime(
         );
         
         // Generate Int64Chunked
-        let ca_i64 = Int64Chunked::with_chunk(name_str.as_ref().into(), arrow_array);
+        let ca_i64 = Int64Chunked::with_chunk(PlSmallStr::from_str(name_str.as_ref()), arrow_array);
 
         // Parse TimeUnit
         let time_unit = parse_timeunit(unit);
@@ -264,7 +264,7 @@ macro_rules! create_physical_ca {
         );
 
         // 4. Polars ChunkedArray (Physical)
-        $ca_ty::with_chunk(name_str.as_ref().into(), arrow_array)
+        $ca_ty::with_chunk(PlSmallStr::from_str(name_str.as_ref()), arrow_array)
     }}
 }
 
@@ -361,7 +361,7 @@ pub unsafe extern "C" fn pl_series_new_decimal(
         );
 
         // 4. Wrap into Series
-        let series = Series::from_arrow(name_str.as_ref().into(), Box::new(arrow_array)).unwrap();
+        let series = Series::from_arrow(PlSmallStr::from_str(name_str.as_ref()), Box::new(arrow_array)).unwrap();
         
         Ok(Box::into_raw(Box::new(SeriesContext { series })))
     })
@@ -416,7 +416,7 @@ macro_rules! impl_fixed_list_ffi {
                 );
 
                 // 4. Series Wrap
-                let s = Series::from_arrow(name_str.as_ref().into(), Box::new(list_array)).unwrap();
+                let s = Series::from_arrow(PlSmallStr::from_str(name_str.as_ref()), Box::new(list_array)).unwrap();
                 Ok(Box::into_raw(Box::new(SeriesContext { series: s })))
             })
         }
@@ -497,7 +497,7 @@ pub unsafe extern "C" fn pl_series_new_array_decimal(
         );
 
         // 4. Wrap in Series
-        let s = Series::from_arrow(name_str.as_ref().into(), Box::new(list_array)).unwrap();
+        let s = Series::from_arrow(PlSmallStr::from_str(name_str.as_ref()), Box::new(list_array)).unwrap();
         Ok(Box::into_raw(Box::new(SeriesContext { series: s })))
     })
 }
@@ -525,7 +525,7 @@ pub extern "C" fn pl_series_new_struct(
 
         // Call StructChunked::from_series
         let ca = StructChunked::from_series(
-            name_str.as_ref().into(), // &str -> PlSmallStr
+            PlSmallStr::from_str(name_str.as_ref()), // &str -> PlSmallStr
             struct_height, 
             fields.iter()
         )?;

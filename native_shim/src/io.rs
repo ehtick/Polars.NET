@@ -1191,7 +1191,7 @@ pub extern "C" fn pl_dataframe_write_ipc(df_ptr: *mut DataFrameContext, path: *c
         let ctx = unsafe { &mut *df_ptr };
         let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
         
-        let file = File::create(p.as_ref()).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        let file = File::create(&*p).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         
         IpcWriter::new(file)
             .finish(&mut ctx.df)
@@ -1204,7 +1204,7 @@ pub extern "C" fn pl_dataframe_write_json(df_ptr: *mut DataFrameContext, path: *
         let ctx = unsafe { &mut *df_ptr };
         let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
         
-        let file = File::create(p.as_ref()).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        let file = File::create(&*p).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         
         JsonWriter::new(file)
         .with_json_format(JsonFormat::Json)

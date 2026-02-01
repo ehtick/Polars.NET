@@ -12,6 +12,8 @@ mod sql;
 mod series;
 mod datatypes;
 mod schema;
+mod excel_reader;
+mod excel_writer;
 
 
 

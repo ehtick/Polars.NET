@@ -164,17 +164,17 @@ type ``Expression Logic Tests`` () =
         // 这里用原来的列式访问
         
         // Truncate: 10:15 -> 10:00
-        let t0 = res.Datetime("truncated", 0).Value
+        let t0 = res.DateTime("truncated", 0).Value
         Assert.Equal(10, t0.Hour)
         Assert.Equal(0, t0.Minute)
 
         // Round: 10:45 (Row 1) -> 11:00
-        let r1 = res.Datetime("rounded", 1).Value
+        let r1 = res.DateTime("rounded", 1).Value
         Assert.Equal(11, r1.Hour)
         Assert.Equal(0, r1.Minute)
 
         // Offset: 10:15 -> 10:45
-        let o0 = res.Datetime("offset", 0).Value
+        let o0 = res.DateTime("offset", 0).Value
         Assert.Equal(10, o0.Hour)
         Assert.Equal(45, o0.Minute)
         

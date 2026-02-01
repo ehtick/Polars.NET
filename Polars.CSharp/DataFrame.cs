@@ -372,7 +372,61 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             rechunk
         );
     }
+    // ---------------------------------------------------------
+    // Read Excel (Native Rust Engine)
+    // ---------------------------------------------------------
 
+    /// <summary>
+    /// Read an Excel file (.xlsx) into a DataFrame.
+    /// <para>
+    /// This uses the high-performance native Rust 'calamine' engine. 
+    /// It is significantly faster and more memory-efficient than traditional .NET Excel libraries.
+    /// </para>
+    /// </summary>
+    /// <param name="path">Path to the .xlsx file.</param>
+    /// <param name="sheetName">Name of the sheet to read. If provided, it takes precedence over <paramref name="sheetIndex"/>.</param>
+    /// <param name="sheetIndex">Index of the sheet to read (0-based). Default is 0 (the first sheet).</param>
+    /// <param name="schema">
+    /// Optional schema overrides. 
+    /// Provide this to strictly enforce specific column types (e.g., forcing a numeric column to be read as String).
+    /// </param>
+    /// <param name="hasHeader">Indicates if the first row contains header names. Default is true.</param>
+    /// <param name="inferSchemaLen">
+    /// Number of rows to use for schema inference. 
+    /// (Note: The underlying engine scans implicitly, but this is kept for API alignment).
+    /// </param>
+    /// <param name="dropEmptyRows">If true, rows where all cells are empty or null will be skipped. Default is true.</param>
+    /// <param name="raiseIfEmpty">If true, throws an exception if the sheet is empty or contains no data. Default is true.</param>
+    /// <returns>A new DataFrame containing the Excel data.</returns>
+    /// <exception cref="FileNotFoundException">Thrown if the file does not exist.</exception>
+    public static DataFrame ReadExcel(
+        string path,
+        string? sheetName = null,
+        ulong sheetIndex = 0,
+        PolarsSchema? schema = null,
+        bool hasHeader = true,
+        ulong inferSchemaLen = 100,
+        bool dropEmptyRows = true,
+        bool raiseIfEmpty = true)
+    {
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"Excel file not found: {path}");
+
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ReadExcel(
+            path,
+            sheetName,
+            sheetIndex,
+            schemaHandle,
+            hasHeader,
+            inferSchemaLen,
+            dropEmptyRows,
+            raiseIfEmpty
+        );
+
+        return new DataFrame(h);
+    }
     /// <summary>
     /// Create DataFrame from Apache Arrow RecordBatch.
     /// </summary>
@@ -1938,6 +1992,42 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="path"></param>
     public void WriteJson(string path)
         => PolarsWrapper.WriteJson(Handle, path);
+    // ---------------------------------------------------------
+    // Write Excel (Native)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Writes the DataFrame to an Excel file (.xlsx) using the native high-performance engine.
+    /// <para>
+    /// <b>Performance:</b> Uses columnar writing strategies for maximum speed (via <c>rust_xlsxwriter</c>).
+    /// </para>
+    /// <para>
+    /// <b>Data Integrity:</b> 
+    /// <br/>- <c>UInt64</c>, <c>Int128</c>, <c>UInt128</c> will be automatically written as <b>Text</b> to prevent Excel's 53-bit floating-point precision loss.
+    /// <br/>- <c>Date</c> and <c>Datetime</c> are written as native Excel date objects with specified formatting.
+    /// </para>
+    /// </summary>
+    /// <param name="path">The file path to save the .xlsx file.</param>
+    /// <param name="sheetName">Name of the worksheet. Defaults to "Sheet1" if null.</param>
+    /// <param name="dateFormat">
+    /// Excel format string for <c>Date</c> columns (e.g., "yyyy-mm-dd"). 
+    /// If null, defaults to "yyyy-mm-dd".
+    /// </param>
+    /// <param name="datetimeFormat">
+    /// Excel format string for <c>Datetime</c> columns (e.g., "yyyy-mm-dd hh:mm:ss"). 
+    /// If null, defaults to "yyyy-mm-dd hh:mm:ss".
+    /// </param>
+    public void WriteExcel(
+        string path, 
+        string? sheetName = null,
+        string? dateFormat = null, 
+        string? datetimeFormat = null)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            throw new ArgumentException("File path cannot be empty.", nameof(path));
+
+        PolarsWrapper.WriteExcel(Handle, path, sheetName, dateFormat, datetimeFormat);
+    }
     /// <summary>
     /// Export DataFrame to Record Batch
     /// </summary>

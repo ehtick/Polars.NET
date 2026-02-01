@@ -23,11 +23,13 @@
     <Compile Include="ExtensionsTests.fs" />
     <Compile Include="SelectorTests.fs" />
     <Compile Include="IOTests.fs" />
+    <Compile Include="ExcelTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="MiniExcel" Version="1.42.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
     <PackageReference Include="FSharp.Core" Version="10.0.102" />

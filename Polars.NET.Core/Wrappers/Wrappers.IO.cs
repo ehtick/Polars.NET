@@ -799,12 +799,7 @@ public static partial class PolarsWrapper
         );
         ErrorHelper.CheckVoid();
     }
-    /// <summary>
-    /// 封装 Sink 逻辑：准备回调上下文 -> 调用 Native -> 返回新的 LazyFrameHandle
-    /// </summary>
-    /// <param name="lfPtr">已经 TransferOwnership 的裸指针</param>
-    /// <param name="onBatchReceived">用户回调</param>
-    /// <returns>新的 LazyFrameHandle (通常是空的，用于驱动执行)</returns>
+
     public static LazyFrameHandle SinkBatches(LazyFrameHandle lf, Action<Apache.Arrow.RecordBatch> onBatchReceived)
     {
         // Prepare Interop Resource (Delegate, GCHandle, Cleanup)
@@ -818,5 +813,54 @@ public static partial class PolarsWrapper
         );
         lf.TransferOwnership();
         return ErrorHelper.Check(handle);
+    }
+    // ---------------------------------------------------------
+    // Read Excel
+    // ---------------------------------------------------------
+    public static DataFrameHandle ReadExcel(
+        string path,
+        string? sheetName,
+        ulong sheetIndex,
+        SchemaHandle? schema,
+        bool hasHeader,
+        ulong inferSchemaLen,
+        bool dropEmptyRows,
+        bool raiseIfEmpty)
+    {
+        unsafe
+        {
+            using var schemaLock = new SafeHandleLock<SchemaHandle>(
+                schema != null ? new[] { schema } : null
+            );
+            IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+            var h = NativeBindings.pl_read_excel(
+                path,
+                sheetName,
+                (UIntPtr)sheetIndex, // ulong -> usize
+                schemaPtr,
+                hasHeader,
+                (UIntPtr)inferSchemaLen,
+                dropEmptyRows,
+                raiseIfEmpty
+            );
+
+            return ErrorHelper.Check(h);
+        }
+    }
+
+    // ---------------------------------------------------------
+    // Write Excel
+    // ---------------------------------------------------------
+    public static void WriteExcel(
+        DataFrameHandle handle,
+        string path,
+        string? sheetName,
+        string? dateFormat,
+        string? datetimeFormat)
+    {
+        if (handle.IsInvalid)
+            throw new ObjectDisposedException(nameof(handle), "DataFrame handle is invalid or closed.");
+        NativeBindings.pl_write_excel(handle, path, sheetName, dateFormat, datetimeFormat);
     }
 }

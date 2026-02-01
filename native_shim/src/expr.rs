@@ -620,7 +620,7 @@ unsafe fn str_or_null_lit(ptr: *const c_char) -> Expr {
         lit(NULL) 
     } else {
         let s = unsafe { CStr::from_ptr(ptr).to_string_lossy() };
-        lit(s.as_ref())
+        lit(s.as_ref() as &str)
     }
 }
 
@@ -681,7 +681,7 @@ pub extern "C" fn pl_expr_str_strip_prefix(
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let prefix_str = unsafe { CStr::from_ptr(prefix).to_string_lossy() };
         
-        let new_expr = ctx.inner.str().strip_prefix(lit(prefix_str.as_ref()));
+        let new_expr = ctx.inner.str().strip_prefix(lit(prefix_str.as_ref() as &str));
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -697,7 +697,7 @@ pub extern "C" fn pl_expr_str_strip_suffix(
         let ctx = unsafe { Box::from_raw(expr_ptr)};
         let suffix_str = unsafe { CStr::from_ptr(suffix).to_string_lossy() };
         
-        let new_expr = ctx.inner.str().strip_suffix(lit(suffix_str.as_ref()));
+        let new_expr = ctx.inner.str().strip_suffix(lit(suffix_str.as_ref()as &str));
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -708,7 +708,7 @@ pub extern "C" fn pl_expr_str_starts_with(expr_ptr: *mut ExprContext, prefix: *c
     let ctx = unsafe { Box::from_raw(expr_ptr) };
     let p = unsafe { CStr::from_ptr(prefix).to_string_lossy() };
     
-    let new_expr = ctx.inner.str().starts_with(lit(p.as_ref()));
+    let new_expr = ctx.inner.str().starts_with(lit(p.as_ref()as &str));
     Box::into_raw(Box::new(ExprContext { inner: new_expr }))
 }
 
@@ -717,7 +717,7 @@ pub extern "C" fn pl_expr_str_ends_with(expr_ptr: *mut ExprContext, suffix: *con
     let ctx = unsafe {Box::from_raw(expr_ptr)};
     let s = unsafe { CStr::from_ptr(suffix).to_string_lossy() };
     
-    let new_expr = ctx.inner.str().ends_with(lit(s.as_ref()));
+    let new_expr = ctx.inner.str().ends_with(lit(s.as_ref()as &str));
     Box::into_raw(Box::new(ExprContext { inner: new_expr }))
 }
 
@@ -794,7 +794,7 @@ pub extern "C" fn pl_expr_dt_truncate(expr_ptr: *mut ExprContext, every: *const 
         let every_str = unsafe { CStr::from_ptr(every).to_string_lossy() };
         
         // dt().truncate(every)
-        let new_expr = ctx.inner.dt().truncate(lit(every_str.as_ref()));
+        let new_expr = ctx.inner.dt().truncate(lit(every_str.as_ref()as &str));
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -807,7 +807,7 @@ pub extern "C" fn pl_expr_dt_round(expr_ptr: *mut ExprContext, every: *const c_c
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let every_str = unsafe { CStr::from_ptr(every).to_string_lossy() };
         
-        let new_expr = ctx.inner.dt().round(lit(every_str.as_ref()));
+        let new_expr = ctx.inner.dt().round(lit(every_str.as_ref()as &str));
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
@@ -863,7 +863,7 @@ pub extern "C" fn pl_expr_dt_convert_time_zone(
         let tz_str = unsafe { CStr::from_ptr(tz_ptr).to_string_lossy() };
         
         // Polars 0.50+ TimeZone::new(str)
-        let tz = unsafe{ TimeZone::new_unchecked(tz_str.as_ref()) };
+        let tz = unsafe{ TimeZone::new_unchecked(tz_str.as_ref()as &str) };
         
         let new_expr = ctx.inner.dt().convert_time_zone(tz);
         
@@ -889,7 +889,7 @@ pub extern "C" fn pl_expr_dt_replace_time_zone(
             None
         } else {
             let s = unsafe { CStr::from_ptr(tz_ptr).to_string_lossy() };
-            unsafe { Some(TimeZone::new_unchecked(s.as_ref())) }
+            unsafe { Some(TimeZone::new_unchecked(s.as_ref()as &str)) }
         };
 
         // Build Ambiguous Expr
