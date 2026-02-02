@@ -68,6 +68,30 @@ pub extern "C" fn pl_free_c_string(c_str: *mut std::os::raw::c_char) {
     }
 }
 
+pub unsafe fn ptr_to_vec_string(ptr: *const *const c_char, len: usize) -> Vec<String> {
+    if ptr.is_null() || len == 0 {
+        return Vec::new();
+    }
+    let mut res = Vec::with_capacity(len);
+    for i in 0..len {
+        let c_str = unsafe { *ptr.add(i)};
+        if !c_str.is_null() {
+            if let Ok(s) = unsafe {CStr::from_ptr(c_str).to_str()}{
+                res.push(s.to_string());
+            }
+        }
+    }
+    res
+}
+
+pub unsafe fn ptr_to_opt_string(ptr: *const c_char) -> Option<String> {
+    if ptr.is_null() {
+        None
+    } else {
+       unsafe {CStr::from_ptr(ptr).to_str().ok().map(|s| s.to_string())}
+    }
+}
+
 pub fn ptr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, std::str::Utf8Error> {
     if ptr.is_null() { 
         panic!("Null pointer passed to ptr_to_str"); 

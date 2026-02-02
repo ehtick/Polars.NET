@@ -27,71 +27,42 @@ public class LazyFrame : IDisposable
     // ==========================================
     // Scan IO
     // ==========================================
-    /// <summary>
+ /// <summary>
     /// Lazily scans a CSV file into a LazyFrame.
+    /// <para>
+    /// This allows for query optimization (predicate pushdown, projection pushdown) 
+    /// and streaming processing of datasets larger than memory.
+    /// </para>
     /// </summary>
     /// <param name="path">Path to the CSV file.</param>
-    /// <param name="schema">Optional PolarsSchema to specify types or overwrite schema.</param>
-    /// <param name="hasHeader">Whether the CSV has a header row.</param>
-    /// <param name="separator">Character used as separator.</param>
-    /// <param name="ignoreErrors">Whether to ignore parsing errors (skip bad rows).</param>
-    /// <param name="tryParseDates">Whether to automatically try parsing dates/datetimes.</param>
-    /// <param name="lowMemory">Reduce memory usage at the cost of performance.</param>
-    /// <param name="cache">Cache the result after reading (default true).</param>
-    /// <param name="rechunk">Rechunk the memory to contiguous chunks after reading (default false).</param>
-    /// <param name="skipRows">Number of rows to skip at start.</param>
-    /// <param name="nRows">Stop reading after n rows.</param>
-    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (100 is default).</param>
-    /// <param name="rowIndexName">If provided, adds a row index column with this name.</param>
-    /// <param name="rowIndexOffset">Offset to start the row index from.</param>
-    /// <param name="encoding">File encoding (UTF8 or LossyUTF8).</param>
+    /// <param name="schema">Optional PolarsSchema to specify column types or overwrite inference.</param>
+    /// <param name="hasHeader">Whether the CSV file has a header row. Defaults to true.</param>
+    /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
+    /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'. Set to '\0' to disable quoting.</param>
+    /// <param name="eolChar">The character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Whether to ignore parsing errors (skip bad rows). Defaults to false.</param>
+    /// <param name="tryParseDates">Whether to automatically try parsing dates/datetimes. Defaults to true.</param>
+    /// <param name="lowMemory">Reduce memory usage at the cost of performance. Defaults to false.</param>
+    /// <param name="cache">Cache the result after reading. Defaults to true.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks after reading. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip at the start of the file. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, reads the entire file.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. Defaults to 100. Set to 0 to disable inference (requires schema).</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row index using this name.</param>
+    /// <param name="rowIndexOffset">Offset to start the row index from. Defaults to 0.</param>
+    /// <param name="encoding">File encoding (UTF8 or LossyUTF8). Defaults to UTF8.</param>
+    /// <param name="nullValues">List of strings to consider as null values. E.g., ["NA", "null"].</param>
+    /// <param name="missingIsNull">Treat missing fields (empty strings between delimiters) as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored. E.g., "#".</param>
+    /// <param name="decimalComma">Use comma ',' as the decimal separator (European style). Defaults to false.</param>
     /// <returns>A new LazyFrame.</returns>
     public static LazyFrame ScanCsv(
         string path,
-        PolarsSchema? schema = null, // ✅ 升级为强类型 Schema 对象
-        bool hasHeader = true,
-        char separator = ',',
-        bool ignoreErrors = false,
-        bool tryParseDates = true,
-        bool lowMemory = false,
-        bool cache = true,           // ✅ Lazy 特有参数
-        bool rechunk = false,        // ✅ Lazy 特有参数
-        ulong skipRows = 0,
-        ulong? nRows = null,
-        ulong? inferSchemaLength = 100,
-        string? rowIndexName = null, // ✅ 行号生成
-        ulong rowIndexOffset = 0,
-        PlEncoding encoding = PlEncoding.UTF8)
-    {
-        var handle = PolarsWrapper.ScanCsv(
-            path,
-            schema?.Handle,
-            hasHeader,
-            separator,
-            ignoreErrors,
-            tryParseDates,
-            lowMemory,
-            cache,
-            rechunk,
-            skipRows,
-            nRows,
-            inferSchemaLength,
-            rowIndexName,
-            rowIndexOffset,
-            encoding.ToNative()
-        );
-
-        return new LazyFrame(handle);
-    }
-    /// <summary>
-    /// Lazily scans a CSV from an in-memory byte array.
-    /// Useful for processing data from Web APIs, S3, or embedded resources without writing to disk.
-    /// </summary>
-    public static LazyFrame ScanCsv(
-        byte[] buffer, 
         PolarsSchema? schema = null,
         bool hasHeader = true,
         char separator = ',',
+        char quoteChar = '"',           
+        char eolChar = '\n',            
         bool ignoreErrors = false,
         bool tryParseDates = true,
         bool lowMemory = false,
@@ -102,14 +73,19 @@ public class LazyFrame : IDisposable
         ulong? inferSchemaLength = 100,
         string? rowIndexName = null,
         ulong rowIndexOffset = 0,
-        PlEncoding encoding = PlEncoding.UTF8)
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,    
+        bool missingIsNull = true,      
+        string? commentPrefix = null,   
+        bool decimalComma = false)      
     {
-        // 调用 Wrapper
         var handle = PolarsWrapper.ScanCsv(
-            buffer,
+            path,
             schema?.Handle,
             hasHeader,
             separator,
+            quoteChar,
+            eolChar,
             ignoreErrors,
             tryParseDates,
             lowMemory,
@@ -120,11 +96,94 @@ public class LazyFrame : IDisposable
             inferSchemaLength,
             rowIndexName,
             rowIndexOffset,
-            encoding.ToNative()
+            encoding.ToNative(),
+            nullValues,
+            missingIsNull,
+            commentPrefix,
+            decimalComma
         );
 
         return new LazyFrame(handle);
     }
+
+    /// <summary>
+    /// Lazily scans a CSV from an in-memory byte array.
+    /// <para>
+    /// Useful for processing data from Web APIs, S3, or embedded resources without writing to disk.
+    /// </para>
+    /// </summary>
+    /// <param name="buffer">The byte array containing CSV data.</param>
+    /// <param name="schema">Optional PolarsSchema to specify column types or overwrite inference.</param>
+    /// <param name="hasHeader">Whether the CSV data has a header row. Defaults to true.</param>
+    /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
+    /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'. Set to '\0' to disable.</param>
+    /// <param name="eolChar">The character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Whether to ignore parsing errors. Defaults to false.</param>
+    /// <param name="tryParseDates">Whether to automatically try parsing dates. Defaults to true.</param>
+    /// <param name="lowMemory">Reduce memory usage at the cost of performance. Defaults to false.</param>
+    /// <param name="cache">Cache the result after reading. Defaults to true.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks after reading. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip at the start. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, reads all data.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. Defaults to 100.</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row index using this name.</param>
+    /// <param name="rowIndexOffset">Offset to start the row index from. Defaults to 0.</param>
+    /// <param name="encoding">Data encoding (UTF8 or LossyUTF8). Defaults to UTF8.</param>
+    /// <param name="nullValues">List of strings to consider as null values.</param>
+    /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    /// <param name="decimalComma">Use comma ',' as the decimal separator. Defaults to false.</param>
+    /// <returns>A new LazyFrame.</returns>
+    public static LazyFrame ScanCsv(
+        byte[] buffer,
+        PolarsSchema? schema = null,
+        bool hasHeader = true,
+        char separator = ',',
+        char quoteChar = '"',          
+        char eolChar = '\n',           
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
+        bool cache = true,
+        bool rechunk = false,
+        ulong skipRows = 0,
+        ulong? nRows = null,
+        ulong? inferSchemaLength = 100,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0,
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,   
+        bool missingIsNull = true,     
+        string? commentPrefix = null,  
+        bool decimalComma = false)     
+    {
+        var handle = PolarsWrapper.ScanCsv(
+            buffer,
+            schema?.Handle,
+            hasHeader,
+            separator,
+            quoteChar,
+            eolChar,
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
+            cache,
+            rechunk,
+            skipRows,
+            nRows,
+            inferSchemaLength,
+            rowIndexName,
+            rowIndexOffset,
+            encoding.ToNative(),
+            nullValues,
+            missingIsNull,
+            commentPrefix,
+            decimalComma
+        );
+
+        return new LazyFrame(handle);
+    }
+
     /// <summary>
     /// Lazily read from a parquet file or multiple files via glob patterns.
     /// </summary>
@@ -1767,11 +1826,84 @@ public class LazyFrame : IDisposable
         SinkJson(path, JsonFormat.JsonLines, maintainOrder, syncOnClose, mkdir);
     }
     /// <summary>
-    /// Sink the LazyFrame to CSV file.
+    /// Execute the LazyFrame and sink the result to a CSV file.
+    /// <para>
+    /// This operation allows processing datasets larger than memory by streaming results 
+    /// directly to the file system.
+    /// </para>
     /// </summary>
-    /// <param name="path"></param>
-    public void SinkCsv(string path)
-        => PolarsWrapper.SinkCsv(Handle, path);
+    /// <param name="path">The output file path.</param>
+    /// <param name="includeHeader">Whether to include the header row. Defaults to true.</param>
+    /// <param name="includeBom">Whether to include the UTF-8 Byte Order Mark (BOM). Defaults to false.</param>
+    /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
+    /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'.</param>
+    /// <param name="quoteStyle">The quoting style to use. Defaults to <see cref="QuoteStyle.Necessary"/>.</param>
+    /// <param name="nullValue">The string representation for null values. Defaults to empty string.</param>
+    /// <param name="lineTerminator">The character sequence used to terminate lines. Defaults to "\n".</param>
+    /// <param name="floatScientific">
+    /// Whether to always use scientific notation for floats. 
+    /// If null (default), formatting is automatic.
+    /// </param>
+    /// <param name="floatPrecision">
+    /// The number of decimal places to write for floats. 
+    /// If null (default), uses full precision.
+    /// </param>
+    /// <param name="decimalComma">Whether to use a comma ',' as the decimal separator. Defaults to false.</param>
+    /// <param name="dateFormat">Format string for Date columns. If null, uses ISO 8601.</param>
+    /// <param name="timeFormat">Format string for Time columns. If null, uses ISO 8601.</param>
+    /// <param name="datetimeFormat">Format string for Datetime columns. If null, uses ISO 8601.</param>
+    /// <param name="maintainOrder">
+    /// Whether to maintain the order of the data. 
+    /// Setting this to false can improve performance in streaming mode. Defaults to true.
+    /// </param>
+    /// <param name="syncOnClose">File synchronization behavior on close (e.g., flush to disk). Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the output directory if it does not exist. Defaults to false.</param>
+    /// <param name="batchSize">
+    /// The batch size for writing rows. 
+    /// 0 means use the Polars default.
+    /// </param>
+    public void SinkCsv(
+        string path,
+        bool includeHeader = true,
+        bool includeBom = false,
+        char separator = ',',
+        char quoteChar = '"',
+        QuoteStyle quoteStyle = QuoteStyle.Necessary,
+        string? nullValue = null,
+        string? lineTerminator = "\n",
+        bool? floatScientific = null,
+        int? floatPrecision = null,
+        bool decimalComma = false,
+        string? dateFormat = null,
+        string? timeFormat = null,
+        string? datetimeFormat = null,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        int batchSize = 0)
+    {
+        PolarsWrapper.SinkCsv(
+            Handle,
+            path,
+            includeHeader,
+            includeBom,
+            batchSize,
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir,
+            separator,
+            quoteChar,
+            quoteStyle.ToNative(),
+            nullValue,
+            lineTerminator,
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            floatScientific, 
+            floatPrecision,  
+            decimalComma
+        );
+    }
     /// <summary>
     /// Streaming Sink to Batchs
     /// </summary>

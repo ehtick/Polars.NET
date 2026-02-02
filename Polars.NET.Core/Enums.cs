@@ -204,7 +204,7 @@ public enum PlParallelStrategy: byte
     None=3
 }
 
-public enum PlEncoding: byte
+public enum PlCsvEncoding: byte
 {
     UTF8=0,
     LossyUTF8=1    
@@ -238,4 +238,12 @@ public enum PlParquetCompression : byte
     Brotli = 3,
     Zstd = 4,
     Lz4Raw = 5
+}
+
+public enum PlQuoteStyle : byte
+{
+    Necessary = 0,
+    Always = 1,
+    NonNumeric = 2,
+    Never = 3
 }

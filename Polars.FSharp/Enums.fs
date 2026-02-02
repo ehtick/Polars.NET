@@ -423,13 +423,13 @@ type ParallelStrategy =
         | RowGroups -> PlParallelStrategy.RowGroups
         | NoParallel -> PlParallelStrategy.None
 
-type PolarsEncoding =
+type CsvEncoding =
     | UTF8
     | LossyUTF8
     member internal this.ToNative() =
         match this with
-        | UTF8 -> PlEncoding.UTF8
-        | LossyUTF8 -> PlEncoding.LossyUTF8
+        | UTF8 -> PlCsvEncoding.UTF8
+        | LossyUTF8 -> PlCsvEncoding.LossyUTF8
 
 type JsonFormat =
     | Json
@@ -474,3 +474,15 @@ type ParquetCompression =
         | Brotli -> PlParquetCompression.Brotli
         | Zstd -> PlParquetCompression.Zstd
         | Lz4Raw -> PlParquetCompression.Lz4Raw
+
+type QuoteStyle =
+    | Always
+    | Necessary
+    | Never
+    | NonNumeric
+    member internal this.ToNative() =
+        match this with
+        | Always -> PlQuoteStyle.Always
+        | Necessary -> PlQuoteStyle.Necessary
+        | Never -> PlQuoteStyle.Never
+        | NonNumeric -> PlQuoteStyle.NonNumeric

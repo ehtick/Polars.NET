@@ -1213,13 +1213,22 @@ and DataFrame(handle: DataFrameHandle) =
     /// <param name="schema">Overwrite the schema of the dataset.</param>
     /// <param name="hasHeader">Indicate if the CSV file has a header line (default: true).</param>
     /// <param name="separator">Character used as separator (default: ',').</param>
+    /// <param name="quoteChar">Character used for quoting (default: '"'). Set to '\0' to disable.</param>
+    /// <param name="eolChar">Character used as End-Of-Line (default: '\n').</param>
     /// <param name="ignoreErrors">Ignore parsing errors (default: false).</param>
-    /// <param name="tryParseDates">Try to automatically parse dates (default: false).</param>
+    /// <param name="tryParseDates">Try to automatically parse dates (default: true).</param>
     /// <param name="lowMemory">Reduce memory usage at expense of performance (default: false).</param>
     /// <param name="skipRows">Number of rows to skip (default: 0).</param>
     /// <param name="nRows">Stop reading after n rows.</param>
-    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (default: 100). Set to 0 to read all.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (default: 100).</param>
     /// <param name="encoding">File encoding (UTF8 or LossyUTF8).</param>
+    /// <param name="nullValues">List of strings to consider as null values.</param>
+    /// <param name="missingIsNull">Treat missing fields as null (default: true).</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    /// <param name="decimalComma">Use comma as decimal separator (default: false).</param>
+    /// <param name="truncateRaggedLines">Truncate lines longer than schema (default: false).</param>
+    /// <param name="rowIndexName">If provided, add a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
     static member ReadCsv
         (
             path: string,
@@ -1227,23 +1236,39 @@ and DataFrame(handle: DataFrameHandle) =
             ?schema: PolarsSchema,
             ?hasHeader: bool,
             ?separator: char,
+            ?quoteChar: char,          // [NEW]
+            ?eolChar: char,            // [NEW]
             ?ignoreErrors: bool,
             ?tryParseDates: bool,
             ?lowMemory: bool,
             ?skipRows: int64,
             ?nRows: int64,
             ?inferSchemaLength: int64,
-            ?encoding: PolarsEncoding
+            ?encoding: CsvEncoding,    
+            ?nullValues: string list,  // [NEW]
+            ?missingIsNull: bool,      // [NEW]
+            ?commentPrefix: string,    // [NEW]
+            ?decimalComma: bool,       // [NEW]
+            ?truncateRaggedLines: bool,// [NEW]
+            ?rowIndexName: string,     // [NEW]
+            ?rowIndexOffset: uint64    // [NEW]
         ) : DataFrame =
         
         // 1. Defaults
         let pHeader = defaultArg hasHeader true
-        let pSep = defaultArg separator ','
+        let pSep = defaultArg separator ',' |> byte
+        let pQuote = defaultArg quoteChar '"' |> byte
+        let pEol = defaultArg eolChar '\n' |> byte
         let pIgnoreErrors = defaultArg ignoreErrors false
-        let pTryParseDates = defaultArg tryParseDates false
+        let pTryParseDates = defaultArg tryParseDates true
         let pLowMem = defaultArg lowMemory false
-        let pSkipRows = defaultArg skipRows 0L |> uint64
-        let pEncoding = defaultArg encoding PolarsEncoding.UTF8
+        let pSkipRows = defaultArg skipRows 0L |> unativeint
+        let pEncoding = defaultArg encoding CsvEncoding.UTF8
+        
+        let pMissingIsNull = defaultArg missingIsNull true
+        let pDecimalComma = defaultArg decimalComma false
+        let pTruncateRagged = defaultArg truncateRaggedLines false
+        let pRowIndexOffset = defaultArg rowIndexOffset 0UL |> unativeint
 
         // 2. Complex Conversions
         
@@ -1253,6 +1278,12 @@ and DataFrame(handle: DataFrameHandle) =
             |> Option.map List.toArray 
             |> Option.toObj
 
+        // NullValues: string list -> string[]
+        let pNullValues = 
+            nullValues
+            |> Option.map List.toArray
+            |> Option.toObj
+
         // Schema: Schema obj -> SchemaHandle
         let hSchema = 
             schema 
@@ -1260,26 +1291,42 @@ and DataFrame(handle: DataFrameHandle) =
             |> Option.toObj
 
         // Nullable ulongs
-        let pNRows = nRows |> Option.map uint64 |> Option.toNullable
-        let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
+        let pNRows = 
+            nRows 
+            |> Option.map unativeint 
+            |> Option.toNullable
+        let pInfer = 
+            inferSchemaLength 
+            |> Option.map unativeint 
+            |> Option.toNullable
 
         // 3. Call Wrapper
         let handle = PolarsWrapper.ReadCsv(
             path,
             pCols,
-            hSchema,
             pHeader,
             pSep,
+            pQuote,
+            pEol,
             pIgnoreErrors,
             pTryParseDates,
             pLowMem,
             pSkipRows,
             pNRows,
             pInfer,
-            pEncoding.ToNative() // Enum Conversion
+            hSchema,
+            pEncoding.ToNative(),
+            pNullValues,
+            pMissingIsNull,
+            Option.toObj commentPrefix,
+            pDecimalComma,
+            pTruncateRagged,
+            Option.toObj rowIndexName,
+            pRowIndexOffset
         )
 
         new DataFrame(handle)
+
     /// <summary>
     /// Read a CSV file asynchronously into a DataFrame.
     /// </summary>
@@ -1290,46 +1337,48 @@ and DataFrame(handle: DataFrameHandle) =
             ?schema: PolarsSchema,
             ?hasHeader: bool,
             ?separator: char,
+            ?quoteChar: char,
+            ?eolChar: char,
             ?ignoreErrors: bool,
             ?tryParseDates: bool,
             ?lowMemory: bool,
             ?skipRows: int64,
             ?nRows: int64,
             ?inferSchemaLength: int64,
-            ?encoding: PolarsEncoding
+            ?encoding: CsvEncoding,
+            ?nullValues: string list,
+            ?missingIsNull: bool,
+            ?commentPrefix: string,
+            ?decimalComma: bool,
+            ?truncateRaggedLines: bool,
+            ?rowIndexName: string,
+            ?rowIndexOffset: uint64
         ) =
-        // Async Wrapper logic (Copy-paste of parameter prep)
-        let pHeader = defaultArg hasHeader true
-        let pSep = defaultArg separator ','
-        let pIgnoreErrors = defaultArg ignoreErrors false
-        let pTryParseDates = defaultArg tryParseDates false
-        let pLowMem = defaultArg lowMemory false
-        let pSkipRows = defaultArg skipRows 0L |> uint64
-        let pEncoding = defaultArg encoding PolarsEncoding.UTF8
-
-        let pCols = columns |> Option.map List.toArray |> Option.toObj
-        let hSchema = schema |> Option.map (fun s -> s.Handle) |> Option.toObj
-        let pNRows = nRows |> Option.map uint64 |> Option.toNullable
-        let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
-
         task {
-            let! handle = PolarsWrapper.ReadCsvAsync(
+             return DataFrame.ReadCsv(
                 path,
-                pCols,
-                hSchema,
-                pHeader,
-                pSep,
-                pIgnoreErrors,
-                pTryParseDates,
-                pLowMem,
-                pSkipRows,
-                pNRows,
-                pInfer,
-                pEncoding.ToNative()
+                ?columns = columns,
+                ?schema = schema,
+                ?hasHeader = hasHeader,
+                ?separator = separator,
+                ?quoteChar = quoteChar,
+                ?eolChar = eolChar,
+                ?ignoreErrors = ignoreErrors,
+                ?tryParseDates = tryParseDates,
+                ?lowMemory = lowMemory,
+                ?skipRows = skipRows,
+                ?nRows = nRows,
+                ?inferSchemaLength = inferSchemaLength,
+                ?encoding = encoding,
+                ?nullValues = nullValues,
+                ?missingIsNull = missingIsNull,
+                ?commentPrefix = commentPrefix,
+                ?decimalComma = decimalComma,
+                ?truncateRaggedLines = truncateRaggedLines,
+                ?rowIndexName = rowIndexName,
+                ?rowIndexOffset = rowIndexOffset
             )
-            return new DataFrame(handle)
         }
-
     /// <summary>
     /// [Eager] Create a DataFrame from an IDataReader (e.g. SqlDataReader).
     /// <para>
@@ -1739,10 +1788,87 @@ and DataFrame(handle: DataFrameHandle) =
     /// <summary> Create a DataFrame directly from an Apache Arrow RecordBatch. </summary>
     static member FromArrow (batch: RecordBatch) : DataFrame =
         new DataFrame(PolarsWrapper.FromArrow batch)
-    /// <summary> Write DataFrame to CSV. </summary>
-    member this.WriteCsv (path: string) = 
-        PolarsWrapper.WriteCsv(this.Handle, path)
-        this 
+    /// <summary>
+    /// Write DataFrame to a comma-separated values (CSV) file.
+    /// </summary>
+    /// <param name="path">The output file path.</param>
+    /// <param name="hasHeader">Whether to include the header row (default: true).</param>
+    /// <param name="useBom">Whether to include the UTF-8 Byte Order Mark (BOM) (default: false).</param>
+    /// <param name="separator">Character used as separator (default: ',').</param>
+    /// <param name="quoteChar">Character used for quoting (default: '"').</param>
+    /// <param name="quoteStyle">The quoting style to use (default: Necessary).</param>
+    /// <param name="nullValue">String representation for null values (default: "").</param>
+    /// <param name="lineTerminator">Character sequence used to terminate lines (default: "\n").</param>
+    /// <param name="floatScientific">Always use scientific notation for floats.</param>
+    /// <param name="floatPrecision">Number of decimal places to write for floats.</param>
+    /// <param name="decimalComma">Use comma as decimal separator (default: false).</param>
+    /// <param name="dateFormat">Format string for Date columns.</param>
+    /// <param name="timeFormat">Format string for Time columns.</param>
+    /// <param name="datetimeFormat">Format string for Datetime columns.</param>
+    /// <param name="batchSize">Batch size for writing rows (default: 0 = Polars default).</param>
+    member this.WriteCsv
+        (
+            path: string,
+            ?hasHeader: bool,
+            ?useBom: bool,
+            ?separator: char,
+            ?quoteChar: char,
+            ?quoteStyle: QuoteStyle, 
+            ?nullValue: string,
+            ?lineTerminator: string,
+            ?floatScientific: bool,
+            ?floatPrecision: int,
+            ?decimalComma: bool,
+            ?dateFormat: string,
+            ?timeFormat: string,
+            ?datetimeFormat: string,
+            ?batchSize: int
+        ) = 
+        
+        // 1. Defaults
+        let pHeader = defaultArg hasHeader true
+        let pBom = defaultArg useBom false
+        let pSep = defaultArg separator ',' 
+        let pQuote = defaultArg quoteChar '"' 
+        let pStyle = defaultArg quoteStyle QuoteStyle.Necessary
+        let pLineTerm = defaultArg lineTerminator "\n"
+        let pDecimalComma = defaultArg decimalComma false
+        let pBatchSize = defaultArg batchSize 0
+
+        // 2. Optionals (Strings)
+        let pNullVal = Option.toObj nullValue
+        let pDateFmt = Option.toObj dateFormat
+        let pTimeFmt = Option.toObj timeFormat
+        let pDateTimeFmt = Option.toObj datetimeFormat
+
+        // 3. Nullables (Primitive Types)
+        // Option<bool> -> Nullable<bool>
+        let pFloatSci = Option.toNullable floatScientific
+        // Option<int> -> Nullable<int>
+        let pFloatPrec = Option.toNullable floatPrecision
+
+        // 4. Call Wrapper
+        PolarsWrapper.WriteCsv(
+            this.Handle,
+            path,
+            pHeader,
+            pBom,
+            pBatchSize,
+            pSep,
+            pQuote,
+            pStyle.ToNative(),
+            pNullVal,
+            pLineTerm,
+            pDateFmt,
+            pTimeFmt,
+            pDateTimeFmt,
+            pFloatSci,
+            pFloatPrec,
+            pDecimalComma
+        )
+        
+        // Return self for fluent API
+        this
     /// <summary>
     /// Write DataFrame to Parquet file.
     /// </summary>
@@ -2628,25 +2754,13 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <summary>
     /// Lazily read from a CSV file.
     /// </summary>
-    /// <param name="path">Path to the CSV file.</param>
-    /// <param name="separator">Character used as separator (default: ',').</param>
-    /// <param name="hasHeader">Indicate if the CSV file has a header line (default: true).</param>
-    /// <param name="ignoreErrors">Ignore parsing errors (default: false).</param>
-    /// <param name="skipRows">Number of rows to skip (default: 0).</param>
-    /// <param name="nRows">Stop reading after n rows.</param>
-    /// <param name="cache">Cache the result after reading.</param>
-    /// <param name="lowMemory">Reduce memory usage at expense of performance.</param>
-    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (default: 100).</param>
-    /// <param name="schema">Overwrite the schema.</param>
-    /// <param name="tryParseDates">Try to automatically parse dates.</param>
-    /// <param name="rowIndexName">Add a row index column.</param>
-    /// <param name="rowIndexOffset">Offset for row index.</param>
-    /// <param name="encoding">File encoding.</param>
     static member ScanCsv
         (
             path: string,
             ?separator: char,
             ?hasHeader: bool,
+            ?quoteChar: char,          // [NEW]
+            ?eolChar: char,            // [NEW]
             ?ignoreErrors: bool,
             ?skipRows: int64,
             ?nRows: int64,
@@ -2657,25 +2771,42 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?schema: PolarsSchema,
             ?tryParseDates: bool,
             ?rowIndexName: string,
-            ?rowIndexOffset: uint32,
-            ?encoding: PolarsEncoding
+            ?rowIndexOffset: uint64,   // [FIX] uint32 -> uint64 to match C# nuint
+            ?encoding: CsvEncoding,    // [FIX] Use new CsvEncoding enum
+            ?nullValues: string list,  // [NEW]
+            ?missingIsNull: bool,      // [NEW]
+            ?commentPrefix: string,    // [NEW]
+            ?decimalComma: bool        // [NEW]
         ) =
         // 1. Defaults
         let pSep = defaultArg separator ','
         let pHeader = defaultArg hasHeader true
+        let pQuote = defaultArg quoteChar '"'
+        let pEol = defaultArg eolChar '\n'
         let pIgnoreErrors = defaultArg ignoreErrors false
+        
         let pSkipRows = defaultArg skipRows 0L |> uint64
         let pCache = defaultArg cache true
         let pRechunk = defaultArg rechunk false
         let pLowMem = defaultArg lowMemory false
-        let pTryParseDates = defaultArg tryParseDates false
-        let pRowIndexOffset = defaultArg rowIndexOffset 0u |> uint64
-        let pEncoding = defaultArg encoding PolarsEncoding.UTF8
+        let pTryParseDates = defaultArg tryParseDates true
+        
+        let pRowIndexOffset = defaultArg rowIndexOffset 0UL
+        let pEncoding = defaultArg encoding CsvEncoding.UTF8
+        let pMissingIsNull = defaultArg missingIsNull true
+        let pDecimalComma = defaultArg decimalComma false
 
         // 2. Options -> Nullables / Objects
         let pNRows = nRows |> Option.map uint64 |> Option.toNullable
         let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
         
+        // NullValues: string list -> string[]
+        let pNullValues = 
+            nullValues
+            |> Option.map List.toArray
+            |> Option.toObj
+
+        // Schema Handle (Reference Type)
         let hSchema = 
             schema 
             |> Option.map (fun s -> s.Handle) 
@@ -2686,7 +2817,9 @@ and LazyFrame(handle: LazyFrameHandle) =
             path,
             hSchema,
             pHeader,
-            pSep,         
+            pSep,
+            pQuote,
+            pEol,
             pIgnoreErrors,
             pTryParseDates,
             pLowMem,
@@ -2697,33 +2830,25 @@ and LazyFrame(handle: LazyFrameHandle) =
             pInfer,
             Option.toObj rowIndexName,
             pRowIndexOffset,
-            pEncoding.ToNative()
+            pEncoding.ToNative(),
+            pNullValues,
+            pMissingIsNull,
+            Option.toObj commentPrefix,
+            pDecimalComma
         )
 
         new LazyFrame(handle)
+
     /// <summary>
     /// [Memory] Lazily read CSV from a byte array.
     /// </summary>
-    /// <param name="buffer">The byte array containing CSV data.</param>
-    /// <param name="separator">Character used as separator (default: ',').</param>
-    /// <param name="hasHeader">Indicate if the CSV file has a header line (default: true).</param>
-    /// <param name="ignoreErrors">Ignore parsing errors (default: false).</param>
-    /// <param name="skipRows">Number of rows to skip (default: 0).</param>
-    /// <param name="nRows">Stop reading after n rows.</param>
-    /// <param name="cache">Cache the result after reading.</param>
-    /// <param name="rechunk">Rechunk the memory to contiguous memory after reading.</param>
-    /// <param name="lowMemory">Reduce memory usage at expense of performance.</param>
-    /// <param name="inferSchemaLength">Number of rows to scan for schema inference.</param>
-    /// <param name="schema">Overwrite the schema.</param>
-    /// <param name="tryParseDates">Try to automatically parse dates.</param>
-    /// <param name="rowIndexName">Add a row index column.</param>
-    /// <param name="rowIndexOffset">Offset for row index.</param>
-    /// <param name="encoding">File encoding.</param>
     static member ScanCsv
         (
             buffer: byte[],
             ?separator: char,
             ?hasHeader: bool,
+            ?quoteChar: char,          // [NEW]
+            ?eolChar: char,            // [NEW]
             ?ignoreErrors: bool,
             ?skipRows: int64,
             ?nRows: int64,
@@ -2734,25 +2859,40 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?schema: PolarsSchema,
             ?tryParseDates: bool,
             ?rowIndexName: string,
-            ?rowIndexOffset: uint32,
-            ?encoding: PolarsEncoding
+            ?rowIndexOffset: uint64,   // [FIX] uint32 -> uint64
+            ?encoding: CsvEncoding,
+            ?nullValues: string list,  // [NEW]
+            ?missingIsNull: bool,      // [NEW]
+            ?commentPrefix: string,    // [NEW]
+            ?decimalComma: bool        // [NEW]
         ) =
         // 1. Defaults
         let pSep = defaultArg separator ','
         let pHeader = defaultArg hasHeader true
+        let pQuote = defaultArg quoteChar '"'
+        let pEol = defaultArg eolChar '\n'
         let pIgnoreErrors = defaultArg ignoreErrors false
+        
         let pSkipRows = defaultArg skipRows 0L |> uint64
         let pCache = defaultArg cache true
         let pRechunk = defaultArg rechunk true
         let pLowMem = defaultArg lowMemory false
-        let pTryParseDates = defaultArg tryParseDates false
-        let pRowIndexOffset = defaultArg rowIndexOffset 0u |> uint64
-        let pEncoding = defaultArg encoding PolarsEncoding.UTF8
+        let pTryParseDates = defaultArg tryParseDates true
+        
+        let pRowIndexOffset = defaultArg rowIndexOffset 0UL |> uint64
+        let pEncoding = defaultArg encoding CsvEncoding.UTF8
+        let pMissingIsNull = defaultArg missingIsNull true
+        let pDecimalComma = defaultArg decimalComma false
 
         // 2. Options -> Nullables
         let pNRows = nRows |> Option.map uint64 |> Option.toNullable
         let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
         
+        let pNullValues = 
+            nullValues
+            |> Option.map List.toArray
+            |> Option.toObj
+
         // 3. Schema Handle
         let hSchema = 
             schema 
@@ -2760,12 +2900,13 @@ and LazyFrame(handle: LazyFrameHandle) =
             |> Option.toObj
 
         // 4. Call C# Wrapper (Memory Overload)
-        // buffer, schema, hasHeader, separator, ignoreErrors, tryParseDates, lowMemory, cache, rechunk, skipRows, nRows, inferSchemaLength, rowIndexName, rowIndexOffset, encoding
         let handle = PolarsWrapper.ScanCsv(
             buffer,
             hSchema,
             pHeader,
             pSep,
+            pQuote,
+            pEol,
             pIgnoreErrors,
             pTryParseDates,
             pLowMem,
@@ -2776,7 +2917,11 @@ and LazyFrame(handle: LazyFrameHandle) =
             pInfer,
             Option.toObj rowIndexName,
             pRowIndexOffset,
-            pEncoding.ToNative()
+            pEncoding.ToNative(),
+            pNullValues,
+            pMissingIsNull,
+            Option.toObj commentPrefix,
+            pDecimalComma
         )
 
         new LazyFrame(handle)

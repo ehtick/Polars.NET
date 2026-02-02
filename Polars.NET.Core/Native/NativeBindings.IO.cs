@@ -10,81 +10,163 @@ unsafe internal partial class NativeBindings
     public static partial DataFrameHandle pl_read_csv(
         string path,
 
-        // ---  Columns Projection ---
-        [In] IntPtr[] colNames, 
-        UIntPtr colNamesLen,
+        // --- 1. Columns ---
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[]? col_names,
+        nuint col_names_len,
 
-        // --- Core Configs ---
-        [MarshalAs(UnmanagedType.I1)] bool hasHeader,
+        // --- 2. Core Configs ---
+        [MarshalAs(UnmanagedType.U1)] bool has_header,
         byte separator,
-        [MarshalAs(UnmanagedType.I1)] bool ignoreErrors,     
-        [MarshalAs(UnmanagedType.I1)] bool tryParseDates,
-        [MarshalAs(UnmanagedType.I1)] bool lowMemory,        
+        byte quote_char,
+        byte eol_char,
+        [MarshalAs(UnmanagedType.U1)] bool ignore_errors,
+        [MarshalAs(UnmanagedType.U1)] bool try_parse_dates,
+        [MarshalAs(UnmanagedType.U1)] bool low_memory,
 
-        // --- Sizes ---
-        UIntPtr skipRows,
-        UIntPtr* nRowsPtr,           
-        UIntPtr* inferSchemaLenPtr,  
+        // --- 3. Optional Sizes (Pointers for Option<usize>) ---
+        nuint skip_rows,
+        IntPtr n_rows_ptr,          // nuint*
+        IntPtr infer_schema_len_ptr,// nuint*
 
-        // --- Schema & Encoding ---
-        SchemaHandle schema,         
-        PlEncoding encoding         
+        // --- 4. Schema & Encoding ---
+        SchemaHandle schema,        // Nullable handle
+        PlCsvEncoding encoding,
+
+        // --- 5. Advanced Parsing ---
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[]? null_values,
+        nuint null_values_len,
+        [MarshalAs(UnmanagedType.U1)] bool missing_is_null,
+        string? comment_prefix,
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma,
+        [MarshalAs(UnmanagedType.U1)] bool truncate_ragged_lines,
+
+        // --- 6. Row Index ---
+        string? row_index_name,
+        nuint row_index_offset
     );
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_csv(
         string path,
-
-        // Core Configs
-        [MarshalAs(UnmanagedType.I1)] bool hasHeader,
+        
+        // --- Core ---
+        [MarshalAs(UnmanagedType.U1)] bool has_header,
         byte separator,
-        [MarshalAs(UnmanagedType.I1)] bool ignoreErrors,    // New
-        [MarshalAs(UnmanagedType.I1)] bool tryParseDates,
-        [MarshalAs(UnmanagedType.I1)] bool lowMemory,       // New
-        [MarshalAs(UnmanagedType.I1)] bool cache,           // New
-        [MarshalAs(UnmanagedType.I1)] bool rechunk,         // New
+        byte quote_char,       
+        byte eol_char,         
+        [MarshalAs(UnmanagedType.U1)] bool ignore_errors,
+        [MarshalAs(UnmanagedType.U1)] bool try_parse_dates,
+        [MarshalAs(UnmanagedType.U1)] bool low_memory,
+        [MarshalAs(UnmanagedType.U1)] bool cache,
+        [MarshalAs(UnmanagedType.U1)] bool rechunk,
 
-        // Sizes
-        UIntPtr skipRows,
-        UIntPtr* nRowsPtr,           // New (Optional)
-        UIntPtr* inferSchemaLenPtr,  // New (Optional)
+        // --- Sizes ---
+        nuint skip_rows,
+        IntPtr n_rows_ptr,
+        IntPtr infer_schema_len_ptr,
 
-        // Row Index (New)
-        string? rowIndexName,
-        UIntPtr rowIndexOffset,
+        // --- Row Index ---
+        string? row_index_name,
+        nuint row_index_offset,
 
-        // Schema & Encoding
+        // --- Schema ---
         SchemaHandle schema,
-        PlEncoding encoding          // New
+        PlCsvEncoding encoding,
+
+        // --- Advanced ---
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[]? null_values, 
+        nuint null_values_len,
+        [MarshalAs(UnmanagedType.U1)] bool missing_is_null,
+        string? comment_prefix,
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma
     );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-        public static partial LazyFrameHandle pl_scan_csv_mem(
-            byte* bufferPtr,        // Buffer Pointer
-            UIntPtr bufferLen,      // Buffer Length
+    public static partial LazyFrameHandle pl_scan_csv_mem(
+        byte* bufferPtr,        // Buffer Pointer
+        UIntPtr bufferLen,      // Buffer Length
+        // --- Core ---
+        [MarshalAs(UnmanagedType.U1)] bool has_header,
+        byte separator,
+        byte quote_char,       
+        byte eol_char,         
+        [MarshalAs(UnmanagedType.U1)] bool ignore_errors,
+        [MarshalAs(UnmanagedType.U1)] bool try_parse_dates,
+        [MarshalAs(UnmanagedType.U1)] bool low_memory,
+        [MarshalAs(UnmanagedType.U1)] bool cache,
+        [MarshalAs(UnmanagedType.U1)] bool rechunk,
 
-            [MarshalAs(UnmanagedType.I1)] bool hasHeader,
-            byte separator,
-            [MarshalAs(UnmanagedType.I1)] bool ignoreErrors,
-            [MarshalAs(UnmanagedType.I1)] bool tryParseDates,
-            [MarshalAs(UnmanagedType.I1)] bool lowMemory,
-            [MarshalAs(UnmanagedType.I1)] bool cache,
-            [MarshalAs(UnmanagedType.I1)] bool rechunk,
+        // --- Sizes ---
+        nuint skip_rows,
+        IntPtr n_rows_ptr,
+        IntPtr infer_schema_len_ptr,
 
-            UIntPtr skipRows,
-            UIntPtr* nRowsPtr,
-            UIntPtr* inferSchemaLenPtr,
+        // --- Row Index ---
+        string? row_index_name,
+        nuint row_index_offset,
 
-            string? rowIndexName,
-            UIntPtr rowIndexOffset,
+        // --- Schema ---
+        SchemaHandle schema,
+        PlCsvEncoding encoding,
 
-            SchemaHandle schema,
-            PlEncoding encoding
-        );
+        // --- Advanced ---
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[]? null_values, 
+        nuint null_values_len,
+        [MarshalAs(UnmanagedType.U1)] bool missing_is_null,
+        string? comment_prefix,
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma
+    );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void pl_write_csv(DataFrameHandle df, string path);
+    public static partial void pl_dataframe_write_csv(
+        DataFrameHandle df, 
+        string path,
+        
+        // CsvWriter Specific
+        [MarshalAs(UnmanagedType.U1)] bool has_header,
+        [MarshalAs(UnmanagedType.U1)] bool use_bom,
+        nuint batch_size,
 
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
-    public static partial void pl_lazy_sink_csv(LazyFrameHandle lf, string path);
+        // SerializeOptions
+        byte separator,
+        byte quote_char,
+        PlQuoteStyle quote_style,
+        string? null_value,        
+        string? line_terminator,
+        string? date_format,
+        string? time_format,
+        string? datetime_format,
+        int float_scientific,       // -1: null, 0: false, 1: true
+        int float_precision,        // -1: null, >=0: precision
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma
+    );
+
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_csv(
+        LazyFrameHandle lf, 
+        string path,
+        
+        // CsvWriterOptions
+        [MarshalAs(UnmanagedType.U1)] bool include_header,
+        [MarshalAs(UnmanagedType.U1)] bool include_bom,
+        nuint batch_size,
+        
+        // SinkOptions
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // SerializeOptions
+        byte separator,
+        byte quote_char,
+        PlQuoteStyle quote_style,
+        string? null_value,
+        string? line_terminator,
+        string? date_format,
+        string? time_format,
+        string? datetime_format,
+        int float_scientific,
+        int float_precision,
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma
+    );
 
     // Parquet
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]

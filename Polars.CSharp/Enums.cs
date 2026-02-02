@@ -234,7 +234,7 @@ public enum ParallelStrategy: byte
     None =3
 }
 
-public enum PlEncoding: byte
+public enum CsvEncoding: byte
 {
     UTF8 = 0,
     LossyUTF8 = 1,
@@ -284,6 +284,28 @@ public enum ParquetCompression : byte
     Lz4Raw = 5
 }
 
+public enum QuoteStyle : byte
+{
+    /// <summary>
+    /// Quote fields only when necessary (e.g. containing delimiter/quote). Default.
+    /// </summary>
+    Necessary = 0,
+    
+    /// <summary>
+    /// Quote every field.
+    /// </summary>
+    Always = 1,
+    
+    /// <summary>
+    /// Quote non-numeric fields.
+    /// </summary>
+    NonNumeric = 2,
+    
+    /// <summary>
+    /// Never quote fields.
+    /// </summary>
+    Never = 3
+}
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -473,10 +495,10 @@ internal static class EnumExtensions
         ParallelStrategy.None => CoreEnums.PlParallelStrategy.None,
         _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
     };
-    internal static CoreEnums.PlEncoding ToNative(this PlEncoding encoding) => encoding switch
+    internal static CoreEnums.PlCsvEncoding ToNative(this CsvEncoding encoding) => encoding switch
     {
-        PlEncoding.UTF8 => CoreEnums.PlEncoding.UTF8,
-        PlEncoding.LossyUTF8 => CoreEnums.PlEncoding.LossyUTF8,
+        CsvEncoding.UTF8 => CoreEnums.PlCsvEncoding.UTF8,
+        CsvEncoding.LossyUTF8 => CoreEnums.PlCsvEncoding.LossyUTF8,
         _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
     };
     internal static CoreEnums.PlJsonFormat ToNative(this JsonFormat jsonFormat) => jsonFormat switch
@@ -508,6 +530,14 @@ internal static class EnumExtensions
         ParquetCompression.Zstd => CoreEnums.PlParquetCompression.Zstd,
         ParquetCompression.Lz4Raw => CoreEnums.PlParquetCompression.Lz4Raw,
         _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
+    };
+    internal static CoreEnums.PlQuoteStyle ToNative(this QuoteStyle style) => style switch
+    {
+        QuoteStyle.Necessary => CoreEnums.PlQuoteStyle.Necessary,
+        QuoteStyle.Always => CoreEnums.PlQuoteStyle.Always,
+        QuoteStyle.NonNumeric => CoreEnums.PlQuoteStyle.NonNumeric,
+        QuoteStyle.Never => CoreEnums.PlQuoteStyle.Never,
+        _ => throw new ArgumentOutOfRangeException(nameof(style), style, null)
     };
 }
 

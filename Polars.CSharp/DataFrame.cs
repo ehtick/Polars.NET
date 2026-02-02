@@ -62,49 +62,76 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // Static IO Read
     // ==========================================
     /// <summary>
-    /// Reads a CSV file into a DataFrame.
+    /// Read a DataFrame from a CSV file.
     /// </summary>
     /// <param name="path">Path to the CSV file.</param>
-    /// <param name="schema">Optional PolarsSchema to specify types or overwrite schema.</param>
-    /// <param name="columns">Optional list of column names to project (select).</param>
-    /// <param name="hasHeader">Whether the CSV has a header row.</param>
-    /// <param name="separator">Character used as separator.</param>
-    /// <param name="ignoreErrors">Whether to ignore parsing errors (skip bad rows).</param>
-    /// <param name="tryParseDates">Whether to automatically try parsing dates/datetimes.</param>
-    /// <param name="lowMemory">Reduce memory usage at the cost of performance.</param>
-    /// <param name="skipRows">Number of rows to skip at start.</param>
-    /// <param name="nRows">Stop reading after n rows.</param>
-    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (100 is default).</param>
-    /// <param name="encoding">File encoding (UTF8 or LossyUTF8).</param>
-    /// <returns>A new DataFrame.</returns>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <param name="hasHeader">Whether the CSV file has a header. Defaults to true.</param>
+    /// <param name="separator">Character used as separator. Defaults to ','.</param>
+    /// <param name="quoteChar">Character used for quoting. Defaults to '"'. Set to '\0' to disable.</param>
+    /// <param name="eolChar">Character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Try to keep reading lines if some are invalid. Defaults to false.</param>
+    /// <param name="tryParseDates">Try to automatically parse dates. Defaults to true.</param>
+    /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default.</param>
+    /// <param name="schema">Provide a schema to ignore schema inference.</param>
+    /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
+    /// <param name="nullValues">List of strings to consider as null values.</param>
+    /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    /// <param name="decimalComma">Use comma as decimal separator. Defaults to false.</param>
+    /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
+    /// <param name="rowIndexName">If provided, add a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
     public static DataFrame ReadCsv(
         string path,
-        PolarsSchema? schema = null,
         string[]? columns = null,
         bool hasHeader = true,
         char separator = ',',
+        char quoteChar = '"',
+        char eolChar = '\n',
         bool ignoreErrors = false,
         bool tryParseDates = true,
         bool lowMemory = false,
-        ulong skipRows = 0,
-        ulong? nRows = null,
-        ulong? inferSchemaLength = 100,
-        PlEncoding encoding = PlEncoding.UTF8)
+        int skipRows = 0,
+        int? nRows = null,
+        int? inferSchemaLength = null,
+        PolarsSchema? schema = null,
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,
+        bool missingIsNull = true,
+        string? commentPrefix = null,
+        bool decimalComma = false,
+        bool truncateRaggedLines = false,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0)
     {
         var handle = PolarsWrapper.ReadCsv(
             path,
             columns,
-            schema?.Handle, 
             hasHeader,
-            separator,
+            (byte)separator,
+            (byte)quoteChar,
+            (byte)eolChar,
             ignoreErrors,
             tryParseDates,
             lowMemory,
-            skipRows,
-            nRows,
-            inferSchemaLength,
-            encoding.ToNative()
+            (nuint)skipRows,
+            nRows.HasValue ? (nuint)nRows.Value : null,
+            inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
+            schema?.Handle,
+            encoding.ToNative(),
+            nullValues,
+            missingIsNull,
+            commentPrefix,
+            decimalComma,
+            truncateRaggedLines,
+            rowIndexName,
+            (nuint)rowIndexOffset
         );
+
         return new DataFrame(handle);
     }
     /// <summary>
@@ -450,30 +477,48 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     public static async Task<DataFrame> ReadCsvAsync(
         string path,
         string[]? columns = null,
-        PolarsSchema? schema = null, 
         bool hasHeader = true,
         char separator = ',',
+        char quoteChar = '"',
+        char eolChar = '\n',
         bool ignoreErrors = false,
         bool tryParseDates = true,
         bool lowMemory = false,
-        ulong skipRows = 0,
-        ulong? nRows = null,
-        ulong? inferSchemaLength = 100,
-        PlEncoding encoding = PlEncoding.UTF8)
+        int skipRows = 0,
+        int? nRows = null,
+        int? inferSchemaLength = null,
+        PolarsSchema? schema = null,
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,
+        bool missingIsNull = true,
+        string? commentPrefix = null,
+        bool decimalComma = false,
+        bool truncateRaggedLines = false,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0)
     {
         var handle = await PolarsWrapper.ReadCsvAsync(
             path, 
             columns,
-            schema?.Handle,
-            hasHeader, 
-            separator, 
+            hasHeader,
+            (byte)separator, 
+            (byte)quoteChar,
+            (byte)eolChar, 
             ignoreErrors,
             tryParseDates,
             lowMemory,
-            skipRows,
-            nRows,
-            inferSchemaLength,
-            encoding.ToNative()
+            (nuint)skipRows,
+            nRows.HasValue ? (nuint)nRows.Value : null,
+            inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
+            schema?.Handle,
+            encoding.ToNative(),
+            nullValues,
+            missingIsNull,
+            commentPrefix,
+            decimalComma,
+            truncateRaggedLines,
+            rowIndexName,
+            (nuint)rowIndexOffset
         );
 
         return new DataFrame(handle);
@@ -1972,11 +2017,69 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // IO Write
     // ==========================================
     /// <summary>
-    /// Write DataFrame to CSV File
+    /// Write DataFrame to a comma-separated values (CSV) file.
     /// </summary>
-    /// <param name="path"></param>
-    public void WriteCsv(string path)
-        => PolarsWrapper.WriteCsv(Handle, path);
+    /// <param name="path">The output file path.</param>
+    /// <param name="hasHeader">Whether to include the header row. Defaults to true.</param>
+    /// <param name="useBom">Whether to include the UTF-8 Byte Order Mark (BOM). Useful for Excel compatibility. Defaults to false.</param>
+    /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
+    /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'.</param>
+    /// <param name="quoteStyle">The quoting style to use. Defaults to <see cref="QuoteStyle.Necessary"/>.</param>
+    /// <param name="nullValue">The string representation for null values. Defaults to empty string.</param>
+    /// <param name="lineTerminator">The character sequence used to terminate lines. Defaults to "\n".</param>
+    /// <param name="floatScientific">
+    /// Whether to always use scientific notation for floats. 
+    /// If null (default), formatting is automatic.
+    /// </param>
+    /// <param name="floatPrecision">
+    /// The number of decimal places to write for floats. 
+    /// If null (default), uses full precision.
+    /// </param>
+    /// <param name="decimalComma">Whether to use a comma ',' as the decimal separator (European style). Defaults to false.</param>
+    /// <param name="dateFormat">Format string for Date columns. If null, uses ISO 8601.</param>
+    /// <param name="timeFormat">Format string for Time columns. If null, uses ISO 8601.</param>
+    /// <param name="datetimeFormat">Format string for Datetime columns. If null, uses ISO 8601.</param>
+    /// <param name="batchSize">
+    /// The batch size for writing rows. 
+    /// Larger values may improve performance but consume more memory. 
+    /// 0 means use the Polars default.
+    /// </param>
+    public void WriteCsv(
+        string path,
+        bool hasHeader = true,
+        bool useBom = false,
+        char separator = ',',
+        char quoteChar = '"',
+        QuoteStyle quoteStyle = QuoteStyle.Necessary,
+        string? nullValue = null,
+        string? lineTerminator = "\n",
+        bool? floatScientific = null,
+        int? floatPrecision = null,
+        bool decimalComma = false,
+        string? dateFormat = null,
+        string? timeFormat = null,
+        string? datetimeFormat = null,
+        int batchSize = 0)
+    {
+        PolarsWrapper.WriteCsv(
+            Handle, 
+            path, 
+            hasHeader, 
+            useBom, 
+            batchSize,
+            separator, 
+            quoteChar, 
+            quoteStyle.ToNative(),
+            nullValue, 
+            lineTerminator,
+            dateFormat, 
+            timeFormat, 
+            datetimeFormat,
+            floatScientific, 
+            floatPrecision, 
+            decimalComma
+        );
+    }
     /// <summary>
     /// Write DataFrame to Parquet file.
     /// </summary>

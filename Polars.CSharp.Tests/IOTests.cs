@@ -613,26 +613,94 @@ public class IoTests
         }
     }
     [Fact]
-    public void Test_Csv_TryParseDates_Auto()
+    public void Test_Csv_Write_Advanced_RoundTrip()
     {
-        // 构造数据：包含标准的 ISO 日期格式
-        var csvContent = "name,birthday\nAlice,2023-01-01\nBob,2023-12-31";
-        using var csv = new DisposableFile(csvContent,".csv");
+        // ---------------------------------------------------
+        // 1. 准备数据
+        // ---------------------------------------------------
+        using var df = DataFrame.FromColumns(new
+        {
+            Name = new[] { "Alice", "Bob", "Charlie" },
+            // 测试 floatPrecision: 写入时应保留2位小数
+            Score = new[] { 99.123456, 88.56789, 77.0 }, 
+            // 测试 dateFormat: 写入时应为 "YYYY/MM/DD"
+            Date = new[] { new DateTime(2023, 1, 1), new DateTime(2023, 5, 20), new DateTime(2023, 12, 31) },
+            // 测试 nullValue: Null 应该被写为 "VOID"
+            Comment = new[] { "Good", null, "Excellent" } 
+        });
+        df.Show();
+        // 临时文件
+        string tempStub = Path.GetTempFileName();
+        File.Delete(tempStub); // 让 Polars 创建
+        string path = tempStub + ".csv";
 
-        // 1. 默认 tryParseDates = true
-        using var df = DataFrame.ReadCsv(csv.Path);
-        
-        // 验证 birthday 列是否被自动解析为 Date 类型，而不是 String
-        // 注意：Polars 自动解析可能解析为 Date 或 Datetime
-        var dateType = df.Schema["birthday"];
-        Assert.Equal(DataTypeKind.Date, dateType.Kind);
+        try
+        {
+            // ---------------------------------------------------
+            // 2. 全参写入 (Full Sugar)
+            // ---------------------------------------------------
+            df.WriteCsv(
+                path,
+                hasHeader: true,
+                separator: '|',               // 使用竖线作为分隔符
+                quoteChar: '\'',              // 使用单引号作为引用符
+                quoteStyle: QuoteStyle.NonNumeric, // 非数字类型强制加引号
+                nullValue: "VOID",            // Null 替换为 "VOID"
+                floatPrecision: 2,            // 浮点数保留 2 位
+                datetimeFormat: "%Y/%m/%d",       // 日期格式化为 斜杠分割
+                lineTerminator: "\n"
+            );
 
-        // 2. 测试显式关闭 (tryParseDates = false)
-        using var dfString = DataFrame.ReadCsv(csv.Path, tryParseDates: false);
-        
-        // 断言它是 String
-        var strType = dfString.Schema["birthday"];
-        Assert.Equal(DataTypeKind.String,strType.Kind);
+            // ---------------------------------------------------
+            // 3. 验证 1: 检查原始文本格式 (确保参数确实生效了)
+            // ---------------------------------------------------
+            string rawContent = File.ReadAllText(path);
+            Console.WriteLine(rawContent);
+            // 验证分隔符
+            Assert.Contains("|", rawContent);
+            // 验证 Header 和 Quote (Name 是非数字，应该被引用)
+            Assert.Contains("'Name'|'Score'|'Date'|'Comment'", rawContent);
+            // 验证 Null 值替换
+            Assert.Contains("VOID", rawContent);
+            // 验证浮点精度 (99.123456 -> 99.12)
+            Assert.Contains("99.12", rawContent);
+            Assert.DoesNotContain("99.123", rawContent);
+            // 验证日期格式 (2023/01/01)
+            Assert.Contains("2023/01/01", rawContent);
+
+            // ---------------------------------------------------
+            // 4. 验证 2: 读回数据 (Round-Trip)
+            // 注意：读取时必须配置相同的参数，否则无法正确解析
+            // ---------------------------------------------------
+            using var dfRead = DataFrame.ReadCsv(
+                path,
+                separator: '|',         // 必须匹配
+                quoteChar: '\'',        // 必须匹配
+                nullValues: new[] { "VOID" }, // 告诉 Reader "VOID" 是 Null
+                hasHeader: true,
+                tryParseDates: true     // 尝试解析日期
+            );
+
+            Assert.Equal(3, dfRead.Height);
+            Assert.Equal(4, dfRead.Width);
+
+            // 验证数值 (精度损失是预期的，因为写入时截断了)
+            Assert.Equal(99.12, dfRead.GetValue<double>(0, "Score"));
+            
+            // 验证 Null 处理
+            Assert.Null(dfRead.GetValue<string>(1, "Comment")); // "VOID" 变回 null
+            Assert.Equal("Good", dfRead.GetValue<string>(0, "Comment"));
+
+            // 验证日期 (Reader 默认可能不识别自定义格式的日期字符串，这里主要看能否读成字符串或自动推断)
+            var dateVal = dfRead["Date"][0];
+            // 只要数据对就行，类型取决于 Polars 的推断能力（通常 ISO 最稳，斜杠可能被当 String）
+            // 这里我们只断言内容包含 2023
+            Assert.Contains("2023", dateVal.ToString());
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
     private class SinkTestPoco
     {

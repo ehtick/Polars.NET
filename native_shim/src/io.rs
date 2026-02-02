@@ -11,7 +11,7 @@ use std::os::raw::c_char;
 use std::fs::File;
 use std::num::NonZeroUsize;
 use crate::types::{DataFrameContext, LazyFrameContext, SchemaContext};
-use crate::utils::{ptr_to_str,map_parallel_strategy,ptr_to_schema_ref,map_csv_encoding,map_json_format,map_sync_on_close};
+use crate::utils::{ptr_to_str,ptr_to_opt_string,map_parallel_strategy,ptr_to_schema_ref,map_csv_encoding,map_json_format,map_sync_on_close,ptr_to_vec_string};
 use polars_utils::mmap::MemSlice;
 use std::path::PathBuf;
 use polars_utils::slice_enum::Slice;
@@ -31,6 +31,8 @@ pub extern "C" fn pl_read_csv(
     // --- 2. Core Configs ---
     has_header: bool,
     separator: u8,
+    quote_char: u8,           
+    eol_char: u8,            
     ignore_errors: bool,
     try_parse_dates: bool,
     low_memory: bool,
@@ -43,12 +45,25 @@ pub extern "C" fn pl_read_csv(
     // --- 4. Schema & Encoding ---
     schema_ptr: *mut SchemaContext,
     encoding: u8, 
+    
+    // --- 5. Advanced Parsing ---
+    null_values_ptr: *const *const c_char, 
+    null_values_len: usize,                
+    missing_is_null: bool,                 
+    comment_prefix: *const c_char,        
+    decimal_comma: bool,
+    truncate_ragged_lines: bool,                   
+    
+    // --- 6. Row Index ---
+    row_index_name: *const c_char,         
+    row_index_offset: usize,               
 ) -> *mut DataFrameContext {
     ffi_try!({
         let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
         
         // --- Encoding ---
         let csv_encoding = map_csv_encoding(encoding);
+
         // --- Columns ---
         let columns = if col_names_ptr.is_null() || col_names_len == 0 {
             None
@@ -62,7 +77,7 @@ pub extern "C" fn pl_read_csv(
             Some(Arc::from(cols.into_boxed_slice()))
         };
 
-        // --- Option ptr ---
+        // --- Basic Options ---
         let n_rows = if n_rows_ptr.is_null() { None } else { Some(unsafe { *n_rows_ptr }) };
         let infer_schema_length = if infer_schema_len_ptr.is_null() { 
             None 
@@ -76,15 +91,56 @@ pub extern "C" fn pl_read_csv(
             Some(unsafe { &*schema_ptr }.schema.clone())
         };
 
-        // --- ParseOptions ---
+        // --- Process Null Values ---
+        let null_vals = if !null_values_ptr.is_null() && null_values_len > 0 {
+            let vec_str = unsafe { ptr_to_vec_string(null_values_ptr, null_values_len) };
+            if vec_str.is_empty() {
+                None
+            } else {
+                let small_strs: Vec<PlSmallStr> = vec_str.into_iter()
+                    .map(|s| PlSmallStr::from_str(&s))
+                    .collect();
+                Some(NullValues::AllColumns(small_strs))
+            }
+        } else {
+            None
+        };
+
+        // --- Process Comment Prefix ---
+        let comment_prefix_str = if comment_prefix.is_null() {
+            None
+        } else {
+            Some(unsafe { CStr::from_ptr(comment_prefix).to_string_lossy().into_owned() })
+        };
+        let comment = comment_prefix_str.map(|s| CommentPrefix::new_from_str(&s));
+
+        // --- Process Row Index ---
+        let row_index = if !row_index_name.is_null() {
+            let name = unsafe { CStr::from_ptr(row_index_name).to_string_lossy() };
+            Some(RowIndex {
+                offset: row_index_offset as u32, // Polars uses IdxSize (u32) usually
+                name: PlSmallStr::from_str(&name),
+            })
+        } else {
+            None
+        };
+
+        // --- Construct ParseOptions ---
         let parse_options = CsvParseOptions {
             separator,
+            quote_char: if quote_char == 0 { None } else { Some(quote_char) }, 
+            eol_char,
             try_parse_dates,
             encoding: csv_encoding,
+            null_values: null_vals,
+            missing_is_null,
+            truncate_ragged_lines: truncate_ragged_lines, 
+            comment_prefix: comment,
+            decimal_comma,
             ..Default::default()
         };
 
-        // ---  ReadOptions ---
+        // --- Construct ReadOptions ---
         let read_options = CsvReadOptions {
             has_header,
             skip_rows,
@@ -94,11 +150,12 @@ pub extern "C" fn pl_read_csv(
             low_memory,
             columns, 
             schema_overwrite,
+            row_index,
             parse_options: Arc::new(parse_options),
             ..Default::default() 
         };
 
-        // --- Execuate ---
+        // --- Execute ---
         let df = read_options
             .try_into_reader_with_file_path(Some(p.into_owned().into()))?
             .finish()?;
@@ -111,27 +168,36 @@ pub extern "C" fn pl_read_csv(
 pub extern "C" fn pl_scan_csv(
     path: *const c_char,
     
-    // Core Configs
+    // --- 1. Core Configs ---
     has_header: bool,
     separator: u8,
+    quote_char: u8,           
+    eol_char: u8,             
     ignore_errors: bool,
     try_parse_dates: bool,
     low_memory: bool,
     cache: bool,
     rechunk: bool,
 
-    // Sizes
+    // --- 2. Sizes ---
     skip_rows: usize,
     n_rows_ptr: *const usize,
     infer_schema_len_ptr: *const usize,
 
-    // Row Index
+    // --- 3. Row Index ---
     row_index_name: *const c_char,
     row_index_offset: usize,
 
-    // Schema & Encoding
+    // --- 4. Schema & Encoding ---
     schema_ptr: *mut SchemaContext,
     encoding: u8, 
+    
+    // --- 5. Advanced Parsing (Sync with Eager) ---
+    null_values_ptr: *const *const c_char, 
+    null_values_len: usize,                
+    missing_is_null: bool,                 
+    comment_prefix: *const c_char,         
+    decimal_comma: bool,                   
 ) -> *mut LazyFrameContext {
     ffi_try!({
         // Path
@@ -167,10 +233,35 @@ pub extern "C" fn pl_scan_csv(
             })
         };
 
+        // --- Process Null Values ---
+        let null_vals = if !null_values_ptr.is_null() && null_values_len > 0 {
+            let vec_str = unsafe { ptr_to_vec_string(null_values_ptr, null_values_len) };
+            if vec_str.is_empty() {
+                None
+            } else {
+                let small_strs: Vec<PlSmallStr> = vec_str.into_iter()
+                    .map(|s| PlSmallStr::from_str(&s))
+                    .collect();
+                Some(NullValues::AllColumns(small_strs))
+            }
+        } else {
+            None
+        };
+
+        // --- Process Comment Prefix (Lazy Version) ---
+        let comment = if comment_prefix.is_null() {
+            None
+        } else {
+            let s = unsafe { CStr::from_ptr(comment_prefix).to_string_lossy() };
+            Some(PlSmallStr::from_str(&s))
+        };
+
         // Build Reader
         let reader = LazyCsvReader::new(PlPath::new(p_ref))
             .with_has_header(has_header)
             .with_separator(separator)
+            .with_quote_char(if quote_char == 0 { None } else { Some(quote_char) }) 
+            .with_eol_char(eol_char)                                        
             .with_ignore_errors(ignore_errors)
             .with_try_parse_dates(try_parse_dates)
             .with_low_memory(low_memory)
@@ -181,7 +272,11 @@ pub extern "C" fn pl_scan_csv(
             .with_infer_schema_length(infer_schema_length)
             .with_encoding(csv_encoding)
             .with_dtype_overwrite(schema_overwrite) 
-            .with_row_index(row_index); 
+            .with_row_index(row_index)
+            .with_null_values(null_vals)         
+            .with_missing_is_null(missing_is_null) 
+            .with_comment_prefix(comment)        
+            .with_decimal_comma(decimal_comma);  
 
         // Finish
         let inner = reader.finish()?;
@@ -196,39 +291,52 @@ pub extern "C" fn pl_scan_csv_mem(
     buffer_ptr: *const u8,
     buffer_len: usize,
 
-    // --- Core Configs---
+    // --- 1. Core Configs ---
     has_header: bool,
     separator: u8,
+    quote_char: u8,           
+    eol_char: u8,             
     ignore_errors: bool,
     try_parse_dates: bool,
     low_memory: bool,
     cache: bool,
     rechunk: bool,
 
-    // --- Sizes ---
+    // --- 2. Sizes ---
     skip_rows: usize,
     n_rows_ptr: *const usize,
     infer_schema_len_ptr: *const usize,
 
-    // --- Row Index---
+    // --- 3. Row Index ---
     row_index_name: *const c_char,
     row_index_offset: usize,
 
-    // --- 5. Schema & Encoding ---
+    // --- 4. Schema & Encoding ---
     schema_ptr: *mut SchemaContext,
     encoding: u8, 
+    
+    // --- 5. Advanced Parsing (Sync with File Scan) ---
+    null_values_ptr: *const *const c_char, 
+    null_values_len: usize,                
+    missing_is_null: bool,                 
+    comment_prefix: *const c_char,         
+    decimal_comma: bool,                   
 ) -> *mut LazyFrameContext {
     ffi_try!({
-
+        // --- 1. Prepare Buffer Source ---
         let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
         let mem_slice = MemSlice::from_vec(slice.to_vec());
-        
         let sources = ScanSources::Buffers(Arc::new([mem_slice]));
 
+        // --- 2. Prepare Options ---
         let csv_encoding = crate::utils::map_csv_encoding(encoding);
 
         let n_rows = if n_rows_ptr.is_null() { None } else { Some(unsafe { *n_rows_ptr }) };
-        let infer_schema_length = if infer_schema_len_ptr.is_null() { None } else { Some(unsafe { *infer_schema_len_ptr }) };
+        let infer_schema_length = if infer_schema_len_ptr.is_null() { 
+            None 
+        } else { 
+            Some(unsafe { *infer_schema_len_ptr }) 
+        };
         
         let schema_overwrite = if schema_ptr.is_null() {
             None
@@ -236,6 +344,7 @@ pub extern "C" fn pl_scan_csv_mem(
             Some(unsafe { &*schema_ptr }.schema.clone())
         };
 
+        // Row Index
         let row_index = if row_index_name.is_null() {
             None
         } else {
@@ -246,9 +355,35 @@ pub extern "C" fn pl_scan_csv_mem(
             })
         };
 
+        // Null Values
+        let null_vals = if !null_values_ptr.is_null() && null_values_len > 0 {
+            let vec_str = unsafe { ptr_to_vec_string(null_values_ptr, null_values_len) };
+            if vec_str.is_empty() {
+                None
+            } else {
+                let small_strs: Vec<PlSmallStr> = vec_str.into_iter()
+                    .map(|s| PlSmallStr::from_str(&s))
+                    .collect();
+                Some(NullValues::AllColumns(small_strs))
+            }
+        } else {
+            None
+        };
+
+        // Comment Prefix 
+        let comment = if comment_prefix.is_null() {
+            None
+        } else {
+            let s = unsafe { CStr::from_ptr(comment_prefix).to_string_lossy() };
+            Some(PlSmallStr::from_str(&s))
+        };
+
+        // --- 3. Build Reader ---
         let reader = LazyCsvReader::new_with_sources(sources)
             .with_has_header(has_header)
             .with_separator(separator)
+            .with_quote_char(if quote_char == 0 { None } else { Some(quote_char) })
+            .with_eol_char(eol_char)
             .with_ignore_errors(ignore_errors)
             .with_try_parse_dates(try_parse_dates)
             .with_low_memory(low_memory)
@@ -258,12 +393,247 @@ pub extern "C" fn pl_scan_csv_mem(
             .with_n_rows(n_rows)
             .with_infer_schema_length(infer_schema_length)
             .with_encoding(csv_encoding)
-            .with_dtype_overwrite(schema_overwrite)
-            .with_row_index(row_index);
+            .with_dtype_overwrite(schema_overwrite) 
+            .with_row_index(row_index)
+            .with_null_values(null_vals)         
+            .with_missing_is_null(missing_is_null) 
+            .with_comment_prefix(comment)        
+            .with_decimal_comma(decimal_comma);  
 
+        // --- 4. Finish ---
         let inner = reader.finish()?;
 
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
+    })
+}
+
+// ==========================================
+// Write & Sink CSV
+// ==========================================
+
+fn build_csv_serialize_options(
+    // Delimiters
+    separator: u8,
+    quote_char: u8,
+    quote_style: u8,       // 0:Necessary, 1:Always, 2:NonNumeric, 3:Never
+    null_value_ptr: *const c_char,
+    line_terminator_ptr: *const c_char,
+    
+    // Formatting
+    date_format_ptr: *const c_char,
+    time_format_ptr: *const c_char,
+    datetime_format_ptr: *const c_char,
+    
+    // Floats
+    float_scientific: i32, // -1:None, 0:False, 1:True
+    float_precision: i32,  // -1:None, >=0:Some(usize)
+    decimal_comma: bool,
+) -> PolarsResult<SerializeOptions> {
+    
+    // 1. Handle Strings
+    let null_value = unsafe { ptr_to_opt_string(null_value_ptr) }.unwrap_or_default();
+    
+    // line terminator default is "\n"
+    let line_terminator = unsafe { ptr_to_opt_string(line_terminator_ptr) }
+        .unwrap_or_else(|| "\n".to_string());
+
+    let date_format = unsafe { ptr_to_opt_string(date_format_ptr) };
+    let time_format = unsafe { ptr_to_opt_string(time_format_ptr) };
+    let datetime_format = unsafe { ptr_to_opt_string(datetime_format_ptr) };
+
+    // 2. Handle QuoteStyle
+    let style = match quote_style {
+        1 => QuoteStyle::Always,
+        2 => QuoteStyle::NonNumeric,
+        3 => QuoteStyle::Never,
+        _ => QuoteStyle::Necessary,
+    };
+
+    // 3. Handle Floats
+    let scientific = match float_scientific {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    };
+
+    let precision = if float_precision >= 0 {
+        Some(float_precision as usize)
+    } else {
+        None
+    };
+
+    Ok(SerializeOptions {
+        date_format,
+        time_format,
+        datetime_format,
+        float_scientific: scientific,
+        float_precision: precision,
+        decimal_comma,
+        separator,
+        quote_char,
+        null: null_value,
+        line_terminator,
+        quote_style: style,
+    })
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_dataframe_write_csv(
+    df_ptr: *mut DataFrameContext,
+    path_ptr: *const c_char,
+    
+    // CsvWriter Specific
+    has_header: bool,
+    use_bom: bool,
+    batch_size: usize, // 0 usually means default
+    
+    // SerializeOptions
+    separator: u8,
+    quote_char: u8,
+    quote_style: u8,
+    null_value_ptr: *const c_char,
+    line_terminator_ptr: *const c_char,
+    date_format_ptr: *const c_char,
+    time_format_ptr: *const c_char,
+    datetime_format_ptr: *const c_char,
+    float_scientific: i32,
+    float_precision: i32,
+    decimal_comma: bool,
+) {
+    ffi_try_void!({
+        let ctx = unsafe { &mut *df_ptr };
+        let path = ptr_to_str(path_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+
+        let file = File::create(path)
+            .map_err(|e| PolarsError::ComputeError(format!("Could not create file: {}", e).into()))?;
+
+        // 1. Build SerializeOptions
+        let options = build_csv_serialize_options(
+            separator,
+            quote_char,
+            quote_style,
+            null_value_ptr,
+            line_terminator_ptr,
+            date_format_ptr,
+            time_format_ptr,
+            datetime_format_ptr,
+            float_scientific,
+            float_precision,
+            decimal_comma
+        )?;
+
+        let mut writer = CsvWriter::new(file)
+            .include_header(has_header)
+            .include_bom(use_bom);
+            
+        writer = writer
+            .with_separator(options.separator)
+            .with_quote_char(options.quote_char)
+            .with_quote_style(options.quote_style)
+            .with_null_value(options.null)
+            .with_line_terminator(options.line_terminator)
+            .with_decimal_comma(options.decimal_comma);
+            
+        if let Some(fmt) = options.date_format { writer = writer.with_date_format(Some(fmt)); }
+        if let Some(fmt) = options.time_format { writer = writer.with_time_format(Some(fmt)); }
+        if let Some(fmt) = options.datetime_format { writer = writer.with_datetime_format(Some(fmt)); }
+        if let Some(p) = options.float_precision { writer = writer.with_float_precision(Some(p)); }
+        if let Some(s) = options.float_scientific { writer = writer.with_float_scientific(Some(s)); }
+
+        if batch_size > 0 {
+            writer = writer.with_batch_size(std::num::NonZeroUsize::new(batch_size).unwrap());
+        }
+
+        writer.finish(&mut ctx.df)?;
+            
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_sink_csv(
+    lf_ptr: *mut LazyFrameContext,
+    path_ptr: *const c_char,
+    
+    // CsvWriterOptions specific
+    include_header: bool,
+    include_bom: bool,
+    batch_size: usize,
+    
+    // SinkOptions specific
+    maintain_order: bool,
+    sync_on_close: u8,    // 0: None, 1: Data, 2: All
+    mkdir: bool,
+
+    // SerializeOptions (pass-through to utils)
+    separator: u8,
+    quote_char: u8,
+    quote_style: u8,
+    null_value_ptr: *const c_char,
+    line_terminator_ptr: *const c_char,
+    date_format_ptr: *const c_char,
+    time_format_ptr: *const c_char,
+    datetime_format_ptr: *const c_char,
+    float_scientific: i32,
+    float_precision: i32,
+    decimal_comma: bool,
+) {
+    ffi_try_void!({
+        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+        let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+
+        // Build SerializeOptions
+        let serialize_options = build_csv_serialize_options(
+            separator,
+            quote_char,
+            quote_style,
+            null_value_ptr,
+            line_terminator_ptr,
+            date_format_ptr,
+            time_format_ptr,
+            datetime_format_ptr,
+            float_scientific,
+            float_precision,
+            decimal_comma
+        )?;
+
+        // Set Batch Size
+        let default_options = CsvWriterOptions::default();
+        
+        let final_batch_size = NonZeroUsize::new(batch_size)
+            .unwrap_or(default_options.batch_size);
+
+        // Build CsvWriterOptions
+        let writer_options = CsvWriterOptions {
+            serialize_options,
+            include_header,       
+            include_bom,         
+            batch_size: final_batch_size
+        };
+
+        // Build SinkOptions 
+        let sink_options = SinkOptions {
+            maintain_order,
+            sync_on_close: map_sync_on_close(sync_on_close),
+            mkdir,
+            ..Default::default()
+        };
+
+        // Execuate Sink
+        let target = SinkTarget::Path(PlPath::new(path_str));
+
+        let _ = lf_ctx.inner.sink_csv(
+            target, 
+            writer_options, 
+            None, // cloud_options
+            sink_options
+        )?
+        .with_new_streaming(true)
+        .collect()?;
+
+        Ok(())
     })
 }
 // ==========================================
@@ -1307,6 +1677,50 @@ pub extern "C" fn pl_scan_ipc_memory(
     })
 }
 
+// ---------------------------------------------------------
+// Read & Sink IPC  
+// ---------------------------------------------------------
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_dataframe_write_ipc(
+    df_ptr: *mut DataFrameContext,
+    path: *const c_char,
+    compression: u8, // 0: None, 1: LZ4, 2: ZSTD
+    parallel: bool,
+    compat_level: i32,
+) {
+    ffi_try_void!({
+        let ctx = unsafe { &mut *df_ptr };
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
+        
+        let file = File::create(&*p)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        
+        let compression_opt = match compression {
+            1 => Some(IpcCompression::LZ4),
+            2 => {
+                let level = polars_utils::compression::ZstdLevel::try_new(3).unwrap();
+                Some(IpcCompression::ZSTD(level))
+            },
+            _ => None,
+        };
+
+        let compat = if compat_level < 0 {
+            CompatLevel::newest()
+        } else {
+            CompatLevel::with_level(compat_level as u16)
+                .unwrap_or(CompatLevel::newest())
+        };
+
+        IpcWriter::new(file)
+            .with_compression(compression_opt)
+            .with_parallel(parallel)
+            .with_compat_level(compat)
+            .finish(&mut ctx.df)
+    })
+}
+
+
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazyframe_sink_ipc(
     lf_ptr: *mut LazyFrameContext,
@@ -1421,65 +1835,6 @@ pub extern "C" fn pl_dataframe_from_arrow_record_batch(
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })
 }
-// ==========================================
-// Write Ops
-// ==========================================
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_write_csv(df_ptr: *mut DataFrameContext, path_ptr: *const c_char) {
-    ffi_try_void!({
-        let ctx = unsafe { &mut *df_ptr };
-        let path = ptr_to_str(path_ptr)
-            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-
-        let mut file = File::create(path)
-            .map_err(|e| PolarsError::ComputeError(format!("Could not create file: {}", e).into()))?;
-
-        CsvWriter::new(&mut file)
-            .finish(&mut ctx.df)?;
-        
-        Ok(())
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_dataframe_write_ipc(
-    df_ptr: *mut DataFrameContext,
-    path: *const c_char,
-    compression: u8, // 0: None, 1: LZ4, 2: ZSTD
-    parallel: bool,
-    compat_level: i32,
-) {
-    ffi_try_void!({
-        let ctx = unsafe { &mut *df_ptr };
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
-        
-        let file = File::create(&*p)
-            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-        let compression_opt = match compression {
-            1 => Some(IpcCompression::LZ4),
-            2 => {
-                let level = polars_utils::compression::ZstdLevel::try_new(3).unwrap();
-                Some(IpcCompression::ZSTD(level))
-            },
-            _ => None,
-        };
-
-        let compat = if compat_level < 0 {
-            CompatLevel::newest()
-        } else {
-            CompatLevel::with_level(compat_level as u16)
-                .unwrap_or(CompatLevel::newest())
-        };
-
-        IpcWriter::new(file)
-            .with_compression(compression_opt)
-            .with_parallel(parallel)
-            .with_compat_level(compat)
-            .finish(&mut ctx.df)
-    })
-}
 
 // ==========================================
 // Memory and Convert Ops
@@ -1533,34 +1888,6 @@ pub extern "C" fn pl_to_arrow(
     })
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_sink_csv(
-    lf_ptr: *mut LazyFrameContext,
-    path_ptr: *const c_char
-) {
-    ffi_try_void!({
-        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        let path_str = ptr_to_str(path_ptr).unwrap();
-        let pl_path = PlPath::new(path_str);
-        
-        let target = SinkTarget::Path(pl_path.into());
-        let writer_options = CsvWriterOptions::default();
-        let sink_options = SinkOptions::default();
-
-        let sink_lf = lf_ctx.inner.sink_csv(
-            target, 
-            writer_options, 
-            None, 
-            sink_options
-        )?;
-        
-        let _ = sink_lf
-        .with_new_streaming(true)
-        .collect()?;
-
-        Ok(())
-    })
-}
 // ==========================================
 // Streaming Sink to DataBase
 // ==========================================
