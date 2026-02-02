@@ -236,10 +236,24 @@ unsafe internal partial class NativeBindings
         uint rowIndexOffset,
         string? includePathColumn
     );
+    // -----------------------------------------------------
+    // Write & Sink JSON
+    // -----------------------------------------------------
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void pl_dataframe_write_json(DataFrameHandle df, string path);
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
-    public static partial void pl_lazy_sink_json(LazyFrameHandle lf, string path);
+    public static partial void pl_dataframe_write_json(
+        DataFrameHandle df, 
+        string path,
+        PlJsonFormat jsonFormat
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_json(
+        LazyFrameHandle lf, 
+        string path,
+        PlJsonFormat json_format,
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,
+        [MarshalAs(UnmanagedType.U1)] bool mkdir
+    );
 
     // IPC
     // ---------------------------------------------------------

@@ -420,9 +420,9 @@ public static partial class PolarsWrapper
         ErrorHelper.CheckVoid();
     }
 
-    public static void WriteJson(DataFrameHandle df, string path)
+    public static void WriteJson(DataFrameHandle df, string path, PlJsonFormat format)
     {
-        NativeBindings.pl_dataframe_write_json(df, path);
+        NativeBindings.pl_dataframe_write_json(df, path, format);
         ErrorHelper.CheckVoid();
     }
     // Sink Parquet
@@ -647,10 +647,24 @@ public static partial class PolarsWrapper
             }
         }
     }
-    public static void SinkJson(LazyFrameHandle lf, string path)
+    public static void SinkJson(
+        LazyFrameHandle lf, 
+        string path,
+        PlJsonFormat format,
+        bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir)
     {
-        NativeBindings.pl_lazy_sink_json(lf, path);
-        lf.TransferOwnership();
+        NativeBindings.pl_lazyframe_sink_json(
+            lf, 
+            path, 
+            format, 
+            maintainOrder, 
+            syncOnClose, 
+            mkdir
+        );
+        
+        lf.TransferOwnership(); 
         ErrorHelper.CheckVoid();
     }
     // ---------------------------------------------------------

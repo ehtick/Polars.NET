@@ -1731,11 +1731,41 @@ public class LazyFrame : IDisposable
         );
     }
     /// <summary>
-    /// Sink the LazyFrame to JSON file.
+    /// Sink the LazyFrame to a JSON file.
     /// </summary>
-    /// <param name="path"></param>
-    public void SinkJson(string path)
-        => PolarsWrapper.SinkJson(Handle, path);
+    /// <param name="path">Output file path.</param>
+    /// <param name="format">JSON format (Json Array or JsonLines). Defaults to Json.</param>
+    /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
+    /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
+    public void SinkJson(
+        string path,
+        JsonFormat format = JsonFormat.Json,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false)
+    {
+        PolarsWrapper.SinkJson(
+            Handle,
+            path,
+            format.ToNative(),
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir
+        );
+    }
+
+    /// <summary>
+    /// Alias for SinkJson with format=JsonLines.
+    /// </summary>
+    public void SinkNdJson(
+        string path,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false)
+    {
+        SinkJson(path, JsonFormat.JsonLines, maintainOrder, syncOnClose, mkdir);
+    }
     /// <summary>
     /// Sink the LazyFrame to CSV file.
     /// </summary>

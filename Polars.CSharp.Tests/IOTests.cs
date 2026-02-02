@@ -6,49 +6,78 @@ namespace Polars.CSharp.Tests;
 public class IoTests
 {
     [Fact]
-    public void Test_ReadJson_File_Advanced()
+    public void Test_ReadJson_File_Advanced_WithSink()
     {
         // ---------------------------------------------------
-        // 场景：读取 .jsonl (NDJSON) 文件
-        // 验证：
-        // 1. JsonFormat.JsonLines 参数是否生效
-        // 2. PolarsSchema 是否强制生效 (把 age 读成 Float64)
-        // 3. columns 裁剪是否生效 (只读 age, 忽略 extra)
+        // 1. 准备数据 (Source)
         // ---------------------------------------------------
+        using var dfOrig = DataFrame.FromColumns(new
+        {
+            name = new[] { "Alice", "Bob" },
+            age = new[] { 20, 30 }, // Int32
+            extra = new[] { "junk", "junk" }
+        });
 
-        var jsonLinesContent = 
-            @"{""name"": ""Alice"", ""age"": 20, ""extra"": ""junk""}
-            {""name"": ""Bob"",   ""age"": 30, ""extra"": ""junk""}";
+        // ---------------------------------------------------
+        // 2. 使用 Sink 生成 NDJSON 文件
+        // ---------------------------------------------------
+        // GetTempFileName 创建了一个空文件，我们删掉它让 Polars 自己创建
+        string tempStub = Path.GetTempFileName();
+        File.Delete(tempStub);
+        string path = tempStub + ".jsonl";
 
-        using var f = new DisposableFile(jsonLinesContent, ".jsonl");
+        try
+        {
+            // [UPGRADE]: 使用 Lazy Sink 生成数据
+            // 虽然 Rust 端暂时忽略了 format 参数，但 Sink 模式通常默认就是 NDJSON
+            dfOrig.Lazy().SinkNdJson(path);
 
-        // 构造 Schema：强制 age 为 Float64 (原数据是 Int)
-        using var schema = new PolarsSchema()
-            .Add("age", DataType.Float64); 
-            // 注意：因为我们要裁剪列，只读 age，所以 Schema 里只需要定义 age 即可
-            // 或者定义全部但 projection 只选 age
+            // 验证文件已生成
+            Assert.True(File.Exists(path));
+            Assert.True(new FileInfo(path).Length > 0);
 
-        using var df = DataFrame.ReadJson(
-            f.Path,
-            columns: new[] { "age" },       // 只读 age 列
-            schema: schema,                 // 强制类型转换
-            jsonFormat: JsonFormat.JsonLines,
-            ignoreErrors: false
-        );
+            // ---------------------------------------------------
+            // 3. 读取验证 (Read JsonLines)
+            // 验证：JsonLines 格式读取 + Schema 强转 + 列裁剪
+            // ---------------------------------------------------
+            
+            // 构造 Schema：强制 age 为 Float64 (原数据是 Int)
+            // 场景：数据源是整数，但业务逻辑要求按浮点数处理
+            using var schema = new PolarsSchema()
+                .Add("age", DataType.Float64);
 
-        // 验证结构
-        Assert.Equal(1, df.Width); // name 和 extra 应该被忽略
-        Assert.Equal("age", df.ColumnNames[0]);
-        
-        // 验证类型 (Schema 生效)
-        Assert.Equal(DataType.Float64, df.Column("age").DataType);
-        
-        // 验证数据
-        Assert.Equal(2, df.Height);
-        Assert.Equal(20.0, df.GetValue<double>(0, "age"));
-        Assert.Equal(30.0, df.GetValue<double>(1, "age"));
+            using var df = DataFrame.ReadJson(
+                path,
+                columns: new[] { "age" },       // 只读 age 列
+                schema: schema,                 // 强制类型转换
+                jsonFormat: JsonFormat.JsonLines,
+                ignoreErrors: false
+            );
+
+            // ---------------------------------------------------
+            // 4. 断言
+            // ---------------------------------------------------
+            
+            // 验证结构: 只有一列
+            Assert.Equal(1, df.Width); 
+            Assert.Equal("age", df.ColumnNames[0]);
+            
+            // 验证裁剪: name 和 extra 应该不存在
+            Assert.DoesNotContain("name", df.ColumnNames);
+
+            // 验证类型: Schema 生效 (Int -> Float64)
+            Assert.Equal(DataType.Float64, df.Column("age").DataType);
+            
+            // 验证数据准确性
+            Assert.Equal(2, df.Height);
+            Assert.Equal(20.0, df.GetValue<double>(0, "age"));
+            Assert.Equal(30.0, df.GetValue<double>(1, "age"));
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
-
     [Fact]
     public void Test_ReadJson_Memory_Bytes()
     {
@@ -100,78 +129,100 @@ public class IoTests
         Assert.Equal("London", df.GetValue<string>(1, "city"));
     }
 
-[Fact]
-public void Test_Ndjson_Scan_Lazy_AllModes()
-{
-    // ---------------------------------------------------
-    // 修正数据：val 现在是纯数字 (JSON Number)，不再是字符串
-    // 这样我们才能测试 schema_overwrite 对数字类型的控制
-    // ---------------------------------------------------
-    var ndjsonContent = 
-@"{""id"": 1, ""val"": 100, ""tag"": ""A""}
-{""id"": 2, ""val"": 200, ""tag"": ""B""}
-{""id"": 3, ""val"": 300, ""tag"": ""C""}";
-
-    using var f = new DisposableFile(ndjsonContent, ".ndjson");
-
-    // =================================================================
-    // 1. File Mode (测试 Schema Overwrite)
-    // =================================================================
+    [Fact]
+    public void Test_Ndjson_Scan_Lazy_AllModes()
     {
-        // 默认情况下，Polars 可能会把整数推断为 Int64 (最安全)
-        // 这里我们强行指定为 Int32，如果生效，说明 schema 参数传递成功
-        using var schema = new PolarsSchema()
-            .Add("val", DataType.Int32);
+        // ---------------------------------------------------
+        // 1. 准备数据 (使用 DataFrame + WriteNdJson 生成)
+        // ---------------------------------------------------
+        // C# 的匿名对象数组默认生成 Int32，这正好用来测试
+        // 读取时是否会被 Polars 默认推断为 Int64 (JSON Number 行为)
+        using var dfOrig = DataFrame.FromColumns(new
+        {
+            id = new[] { 1, 2, 3 },
+            val = new[] { 100, 200, 300 }, 
+            tag = new[] { "A", "B", "C" }
+        });
 
-        using var lf = LazyFrame.ScanNdjson(
-            f.Path, 
-            schema: schema,
-            nRows: 3 
-        );
-        
-        using var df = lf.Collect();
+        // 生成临时文件路径
+        string tempStub = Path.GetTempFileName();
+        File.Delete(tempStub); // 删除空文件，让 Polars 创建
+        string path = tempStub + ".ndjson";
 
-        Assert.Equal(3, df.Height);
-        
-        // 验证关键点：类型必须是我们强制指定的 Int32
-        Assert.Equal(DataType.Int32, df.Column("val").DataType);
-        Assert.Equal(100, df.GetValue<int>(0, "val"));
+        try
+        {
+            // [UPGRADE]: 使用 WriteNdJson 生成测试文件
+            dfOrig.WriteNdJson(path);
+
+            // 验证文件物理存在
+            Assert.True(File.Exists(path));
+            Assert.True(new FileInfo(path).Length > 0);
+
+            // =================================================================
+            // 2. File Mode (测试 Schema Overwrite)
+            // =================================================================
+            {
+                // 默认情况下，Polars 读取 JSON 整数会推断为 Int64 (最安全)
+                // 这里我们强行指定为 Int32，如果生效，说明 schema 参数传递成功
+                using var schema = new PolarsSchema()
+                    .Add("val", DataType.Int32);
+
+                using var lf = LazyFrame.ScanNdjson(
+                    path, 
+                    schema: schema,
+                    nRows: 3 
+                );
+                
+                using var df = lf.Collect();
+
+                Assert.Equal(3, df.Height);
+                
+                // 验证关键点：类型必须是我们强制指定的 Int32 (而非默认的 Int64)
+                Assert.Equal(DataType.Int32, df.Column("val").DataType);
+                Assert.Equal(100, df.GetValue<int>(0, "val"));
+                Assert.Equal("A", df.GetValue<string>(0, "tag"));
+            }
+
+            // =================================================================
+            // 3. Memory Mode (Bytes)
+            // =================================================================
+            {
+                byte[] bytes = File.ReadAllBytes(path);
+
+                // 这里不传 Schema，使用默认推断
+                // 验证 Rust 端的 new_with_sources 逻辑
+                using var lf = LazyFrame.ScanNdjson(bytes);
+                using var df = lf.Collect();
+
+                Assert.Equal(3, df.Height);
+                
+                // 验证默认推断通常是 Int64 (因为 JSON 没有明确的 Int32/64 之分)
+                Assert.Equal(DataType.Int64, df.Column("val").DataType);
+                Assert.Equal(200, df.GetValue<long>(1, "val"));
+                
+                Assert.Equal("B", df.GetValue<string>(1, "tag"));
+            }
+
+            // =================================================================
+            // 4. Stream Mode
+            // =================================================================
+            {
+                using var fs = File.OpenRead(path);
+
+                using var lf = LazyFrame.ScanNdjson(fs);
+                using var df = lf.Collect();
+
+                Assert.Equal(3, df.Height);
+                Assert.Equal(3, df.GetValue<long>(2, "id"));
+                Assert.Equal("C", df.GetValue<string>(2, "tag"));
+            }
+        }
+        finally
+        {
+            // 清理垃圾
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
-
-    // =================================================================
-    // 2. Memory Mode (Bytes)
-    // =================================================================
-    {
-        byte[] bytes = File.ReadAllBytes(f.Path);
-
-        // 这里不传 Schema，使用默认推断
-        // 验证 Rust 端的 new_with_sources 逻辑
-        using var lf = LazyFrame.ScanNdjson(bytes);
-        using var df = lf.Collect();
-
-        Assert.Equal(3, df.Height);
-        
-        // 验证默认推断通常是 Int64
-        Assert.Equal(DataType.Int64, df.Column("val").DataType);
-        Assert.Equal(200, df.GetValue<long>(1, "val"));
-        
-        Assert.Equal("B", df.GetValue<string>(1, "tag"));
-    }
-
-    // =================================================================
-    // 3. Stream Mode
-    // =================================================================
-    {
-        byte[] bytes = File.ReadAllBytes(f.Path);
-        using var ms = new MemoryStream(bytes);
-
-        using var lf = LazyFrame.ScanNdjson(ms);
-        using var df = lf.Collect();
-
-        Assert.Equal(3, df.Height);
-        Assert.Equal(3, df.GetValue<long>(2, "id"));
-    }
-}
     [Fact]
     public void Test_ReadParquet_Advanced()
     {

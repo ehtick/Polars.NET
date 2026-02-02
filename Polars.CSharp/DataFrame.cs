@@ -2022,11 +2022,19 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             => PolarsWrapper.WriteIpc(Handle, path, compression.ToNative(), parallel, compatLevel);
 
     /// <summary>
-    /// Write DataFrame to JSON File
+    /// Write DataFrame to a JSON file.
     /// </summary>
-    /// <param name="path"></param>
-    public void WriteJson(string path)
-        => PolarsWrapper.WriteJson(Handle, path);
+    /// <param name="path">Output file path.</param>
+    /// <param name="format">JSON format (Json Array or JsonLines). Defaults to Json.</param>
+    public void WriteJson(string path, JsonFormat format = JsonFormat.Json)
+    {
+        PolarsWrapper.WriteJson(Handle, path, format.ToNative());
+    }
+
+    /// <summary>
+    /// Alias for WriteJson with format=JsonLines.
+    /// </summary>
+    public void WriteNdJson(string path) => WriteJson(path, JsonFormat.JsonLines);
     // ---------------------------------------------------------
     // Write Excel (Native)
     // ---------------------------------------------------------

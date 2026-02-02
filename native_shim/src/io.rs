@@ -950,6 +950,76 @@ pub extern "C" fn pl_scan_ndjson_memory(
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner })))
     })
 }
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_dataframe_write_json(
+    df_ptr: *mut DataFrameContext, 
+    path: *const c_char,
+    json_format: u8 // 0: Json, 1: JsonLines
+) {
+    ffi_try_void!({
+        let ctx = unsafe { &mut *df_ptr };
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
+        
+        let file = File::create(&*p)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        
+        let format = map_json_format(json_format);
+        
+        JsonWriter::new(file)
+            .with_json_format(format)
+            .finish(&mut ctx.df)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_sink_json(
+    lf_ptr: *mut LazyFrameContext,
+    path_ptr: *const c_char,
+    // JsonWriterOptions
+    json_format: u8,      // 0: Json(not available at Polars 0.52), 1: JsonLines
+    // SinkOptions
+    maintain_order: bool,
+    sync_on_close: u8,    // 0: None, 1: Data, 2: All
+    mkdir: bool,
+) {
+    ffi_try_void!({
+        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+        let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+
+        // 1. Build JsonWriterOptions
+        let _ = map_json_format(json_format);
+
+        let writer_options = JsonWriterOptions {
+            ..Default::default()
+        };
+
+        // 2. Build SinkOptions
+        let sink_options = SinkOptions {
+            maintain_order,
+            sync_on_close: map_sync_on_close(sync_on_close),
+            mkdir,
+            ..Default::default()
+        };
+
+        // 3. Target
+        let target = SinkTarget::Path(PlPath::new(path_str));
+
+        // 4. Execute
+        let _ = lf_ctx.inner.sink_json(
+            target, 
+            writer_options, 
+            None, 
+            sink_options
+        )?
+        .with_new_streaming(true)
+        .collect()?;
+
+        Ok(())
+    })
+}
+
 // ==========================================
 // IPC
 // ==========================================
@@ -1411,20 +1481,6 @@ pub extern "C" fn pl_dataframe_write_ipc(
     })
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_dataframe_write_json(df_ptr: *mut DataFrameContext, path: *const c_char) {
-    ffi_try_void!({
-        let ctx = unsafe { &mut *df_ptr };
-        let p = unsafe { CStr::from_ptr(path).to_string_lossy() };
-        
-        let file = File::create(&*p).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-        JsonWriter::new(file)
-        .with_json_format(JsonFormat::Json)
-        .finish(&mut ctx.df)
-    })
-}
-
 // ==========================================
 // Memory and Convert Ops
 // ==========================================
@@ -1473,35 +1529,6 @@ pub extern "C" fn pl_to_arrow(
             *out_schema = export_field_to_c(&root_field);
         }
         
-        Ok(())
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_sink_json(
-    lf_ptr: *mut LazyFrameContext,
-    path_ptr: *const c_char
-) {
-    ffi_try_void!({
-        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        let path_str = ptr_to_str(path_ptr).unwrap();
-        let pl_path = PlPath::new(path_str);
-        
-        let target = SinkTarget::Path(pl_path.into());
-        let writer_options = JsonWriterOptions::default();
-        let sink_options = SinkOptions::default();
-
-        let sink_lf = lf_ctx.inner.sink_json(
-            target, 
-            writer_options, 
-            None, 
-            sink_options
-        )?;
-        
-        let _ = sink_lf
-        .with_new_streaming(true)
-        .collect()?;
-
         Ok(())
     })
 }

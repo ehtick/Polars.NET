@@ -1787,12 +1787,18 @@ and DataFrame(handle: DataFrameHandle) =
         let compatLevel = defaultArg compatLevel -1
         
         PolarsWrapper.WriteIpc(this.Handle, path, compression.ToNative(), parallelOn, compatLevel)
-    /// <summary>
-    /// Write DataFrame to a JSON file (standard array format).
+    /// <summary>   
+    /// Write DataFrame to a JSON file.
     /// </summary>
-    member this.WriteJson(path: string) =
-        PolarsWrapper.WriteJson(this.Handle, path)
-        this 
+    member this.WriteJson(path: string, ?format: JsonFormat) =
+        let format = defaultArg format JsonFormat.Json
+        PolarsWrapper.WriteJson(this.Handle, path, format.ToNative())
+
+    /// <summary>
+    /// Write DataFrame to a NDJSON (JsonLines) file.
+    /// </summary>
+    member this.WriteNdJson(path: string) =
+        this.WriteJson(path, JsonFormat.JsonLines)
     // ---------------------------------------------------------
     // Write Excel (Export)
     // ---------------------------------------------------------
@@ -3262,9 +3268,90 @@ and LazyFrame(handle: LazyFrameHandle) =
                 scope.Dispose()
         }
 
-    /// <summary> Write LazyFrame execution result to Parquet (Streaming). </summary>
-    member this.SinkParquet (path: string) : unit =
-        PolarsWrapper.SinkParquet(this.CloneHandle(), path)
+    /// <summary>   
+    /// Write LazyFrame execution result to Parquet (Streaming). 
+    /// </summary>
+    /// <param name="path">Output file path.</param>
+    /// <param name="compression">Compression method. Defaults to Snappy.</param>
+    /// <param name="compressionLevel">Compression level for Gzip/Brotli/Zstd. -1 means default. Defaults to -1.</param>
+    /// <param name="statistics">Compute and write column statistics. Defaults to false.</param>
+    /// <param name="rowGroupSize">Number of rows per row group. 0 means use default.</param>
+    /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
+    /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
+    /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
+    member this.SinkParquet(
+        path: string,
+        ?compression: ParquetCompression,
+        ?compressionLevel: int,
+        ?statistics: bool,
+        ?rowGroupSize: int,
+        ?dataPageSize: int,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool
+    ) : unit =
+        let compression = defaultArg compression ParquetCompression.Snappy
+        let compressionLevel = defaultArg compressionLevel -1
+        let statistics = defaultArg statistics false
+        let rowGroupSize = defaultArg rowGroupSize 0
+        let dataPageSize = defaultArg dataPageSize 0
+        let maintainOrder = defaultArg maintainOrder true
+        let syncOnClose = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkdir = defaultArg mkdir false
+
+        PolarsWrapper.SinkParquet(
+            this.CloneHandle(), 
+            path,
+            compression.ToNative(),
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir
+        )
+    /// <summary>
+    /// Sink the LazyFrame to a JSON file.
+    /// </summary>
+    member this.SinkJson(
+        path: string,
+        ?format: JsonFormat,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool
+    ) =
+        let format = defaultArg format JsonFormat.Json
+        let maintainOrder = defaultArg maintainOrder true
+        let syncOnClose = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkdir = defaultArg mkdir false
+
+        PolarsWrapper.SinkJson(
+            this.CloneHandle(), 
+            path,
+            format.ToNative(),
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir
+        )
+
+    /// <summary>
+    /// Sink the LazyFrame to a NDJSON (JsonLines) file.
+    /// </summary>
+    member this.SinkNdJson(
+        path: string,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool
+    ) =
+        this.SinkJson(
+            path, 
+            format = JsonFormat.JsonLines, 
+            ?maintainOrder = maintainOrder, 
+            ?syncOnClose = syncOnClose, 
+            ?mkdir = mkdir
+        )
     /// <summary>
     /// Sink the LazyFrame to an IPC (Arrow) file.
     /// </summary>
