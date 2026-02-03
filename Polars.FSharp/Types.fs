@@ -4567,7 +4567,7 @@ and LazyFrame(handle: LazyFrameHandle) =
                 new LazyFrame(handle)
 
     /// <summary>
-    /// [Lazy] Scan a database query lazily.
+    /// Scan a database query lazily.
     /// Requires a factory function to create new IDataReaders for potential multi-pass scans.
     /// </summary>
     static member scanDb(readerFactory: unit -> IDataReader, ?batchSize: int, ?useBuffered: bool) : LazyFrame =

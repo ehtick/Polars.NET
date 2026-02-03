@@ -122,13 +122,13 @@ module pl =
     
     /// <summary>
     /// Combine a Date expression and a Time expression into a Datetime expression.
-    /// Usage: pl.col("date") |> pl.combine (pl.col("time"))
+    /// Usage: pl.col("date") |> pl.combineDateAndTime (pl.col("time"))
     /// </summary>
     let combineDateAndTime (time: Expr) (date: Expr) = date.Dt.Combine time
 
     /// <summary>
     /// Combine a Date expression and a Time expression with a specific TimeUnit.
-    /// Usage: pl.col("date") |> pl.combineUnit (pl.col("time")) TimeUnit.Milliseconds
+    /// Usage: pl.col("date") |> pl.combineDateAndTimeUnit (pl.col("time")) TimeUnit.Milliseconds
     /// </summary>
     let combineDateAndTimeUnit (time: Expr) (tu: TimeUnit) (date: Expr) = date.Dt.Combine(time, tu)
     /// <summary> Count the number of elements in an expression. </summary>

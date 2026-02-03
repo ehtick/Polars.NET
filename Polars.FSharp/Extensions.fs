@@ -119,15 +119,3 @@ module Serialization =
                 )
 
             pl.concat rowFrames
-
-        /// <summary>
-        /// Get a value from the DataFrame using a generic type argument.
-        /// Eliminates the need for unbox, but throws if type mismatches.
-        /// </summary>
-        member this.Cell<'T>(colName: string ,rowIndex: int) : 'T =
-            let s = this.Column colName
-            s.GetValue<'T>(int64 rowIndex)
-
-        member this.Cell<'T>(rowIndex: int,colName: string ) : 'T =
-            let s = this.Column colName
-            s.GetValue<'T>(int64 rowIndex)
