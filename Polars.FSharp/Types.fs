@@ -26,7 +26,6 @@ type Series(handle: SeriesHandle) =
     member _.Name = PolarsWrapper.SeriesName handle
     member _.Length = PolarsWrapper.SeriesLen handle
     member _.Len = PolarsWrapper.SeriesLen handle
-    member _.Count = PolarsWrapper.SeriesLen handle
     member _.NullCount : int64 = PolarsWrapper.SeriesNullCount handle
 
     // ==========================================
@@ -120,12 +119,29 @@ type Series(handle: SeriesHandle) =
         let multi = defaultArg multithreaded true
 
         new Series(PolarsWrapper.SeriesSort(handle, desc, nLast, multi, stable))
-
     /// <summary>
     /// Sort this Series in ascending order.
     /// </summary>
     member this.Sort() =
         this.Sort false
+    /// <summary>
+    /// Explode a list column into multiple rows.
+    /// The resulting Series will be longer than the original.
+    /// </summary>
+    member this.Explode() =
+        this.ApplyExpr(Expr.Col(this.Name).Explode())
+    /// <summary>
+    /// Aggregate values into a list.
+    /// Result is a Series with 1 row containing a List of all values.
+    /// </summary>
+    member this.Implode() =
+        this.ApplyExpr(Expr.Col(this.Name).Implode())
+    /// <summary>
+    /// Unnest a Struct column into a DataFrame.
+    /// Shortcut for <see cref="SeriesStructOps.Unnest"/>.
+    /// </summary>
+    member this.Unnest() =
+        this.Struct.Unnest()
     /// <summary>
     /// Get the string representation of the Series Data Type (e.g., "Int64", "String").
     /// </summary>
@@ -225,7 +241,7 @@ type Series(handle: SeriesHandle) =
     /// <summary> Check if floating point values are infinite. </summary>
     member this.IsInfinite() = new Series(PolarsWrapper.SeriesIsInfinite handle)
     // ==========================================
-    // Uniqueness
+    // Uniqueness & Boolean Masl
     // ==========================================
 
     /// <summary>
@@ -261,6 +277,16 @@ type Series(handle: SeriesHandle) =
     member this.IsDuplicated() =
         let expr = Expr.Col(this.Name).IsDuplicated()
         this.ApplyExpr expr
+    /// <summary>
+    /// Check if values are between lower and upper bounds.
+    /// </summary>
+    member this.IsBetween(lower:Expr, upper:Expr) = 
+        this.ApplyExpr(Expr.Col(this.Name).IsBetween(lower,upper))
+    /// <summary>
+    /// Check if the value is in given collection.
+    /// </summary>
+    member this.IsIn(other:Expr, ?nullsEqual:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).IsIn(other=other,?nullsEqual=nullsEqual))
     // ==========================================
     // UDF / Map (Apply Custom C# / F# Functions)
     // ==========================================
@@ -482,40 +508,1028 @@ type Series(handle: SeriesHandle) =
     // Rolling Window Functions
     // ==========================================
 
-    // --- Rolling Min ---
-    member this.RollingMin(windowSize: string, ?minPeriod: int) =
-        this.ApplyExpr(Expr.Col(this.Name).RollingMin(windowSize, ?minPeriod=minPeriod))
-    
-    member this.RollingMin(windowSize: TimeSpan, ?minPeriod: int) =
-        this.ApplyExpr(Expr.Col(this.Name).RollingMin(windowSize, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling min (moving min) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling minimum.</returns>
+    member this.RollingMin(windowSize: string, ?minPeriod: int,?weights: float[], ?center: bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMin(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling min (moving min) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling minimum.</returns>
+    member this.RollingMin(windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMin(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
 
-    // --- Rolling Max ---
-    member this.RollingMax(windowSize: string, ?minPeriod: int) =
-        this.ApplyExpr(Expr.Col(this.Name).RollingMax(windowSize, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling max (moving max) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling maximum.</returns>
+    member this.RollingMax(windowSize: string, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMax(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling max (moving max) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling maximum.</returns>
+    member this.RollingMax(windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMax(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
 
-    member this.RollingMax(windowSize: TimeSpan, ?minPeriod: int) =
-        this.ApplyExpr(Expr.Col(this.Name).RollingMax(windowSize, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling average (moving average) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling average.</returns>
+    member this.RollingMean(windowSize: string, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMean(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling average (moving average) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling average.</returns>
+    member this.RollingMean(windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMean(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
 
-    // --- Rolling Mean ---
-    member this.RollingMean(windowSize: string, ?minPeriod: int) =
-        this.ApplyExpr(Expr.Col(this.Name).RollingMean(windowSize, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling sum (moving sum) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling sum.</returns>
+    member this.RollingSum(windowSize: string, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingSum(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling sum (moving sum) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling sum.</returns>
+    member this.RollingSum(windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingSum(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
 
-    member this.RollingMean(windowSize: TimeSpan, ?minPeriod: int) =
-        this.ApplyExpr(Expr.Col(this.Name).RollingMean(windowSize, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling median (moving median) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling median.</returns>
+    member this.RollingMedian(windowSize: string, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMedian(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling median (moving median) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling median.</returns>
+    member this.RollingMedian(windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMedian(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling standard deviation (moving standard deviation) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling standard deviation.</returns>
+    member this.RollingStd(windowSize: string, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingStd(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
 
-    // --- Rolling Sum ---
-    member this.RollingSum(windowSize: string, ?minPeriod: int) =
-        this.ApplyExpr(Expr.Col(this.Name).RollingSum(windowSize, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling standard deviation (moving standard deviation) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling standard deviation.</returns>
+    member this.RollingStd(windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingStd(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling variance (moving variance) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling variance.</returns>
+    member this.RollingVar(windowSize: string, ?minPeriod: int,?weights: float[], ?center:bool,?ddof:uint8) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingVar(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center,?ddof=ddof))
+    /// <summary>
+    /// Apply a rolling variance (moving variance) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <param name="ddof">
+    /// “Delta Degrees of Freedom”: the divisor used in the calculation is N - ddof, where N represents the number of elements. 
+    /// <para>By default ddof is 1.</para>
+    /// </param>
+    /// <returns>A new <see cref="Series"/> with the rolling variance.</returns>
+    member this.RollingVar(windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool,?ddof:uint8) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingVar(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center,?ddof=ddof))
+    /// <summary>
+    /// Apply a rolling skew (moving skew) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <param name="bias">If False, the calculations are corrected for statistical bias.</param>
+    /// <returns>A new <see cref="Series"/> with the rolling skew.</returns>
+    member this.RollingSkew(windowSize: string, ?minPeriod: int,?weights: float[], ?center:bool,?bias:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingSkew(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center,?bias=bias))
+    /// <summary>
+    /// Apply a rolling skew (moving skew) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <param name="bias">If False, the calculations are corrected for statistical bias.</param>
+    /// <returns>A new <see cref="Series"/> with the rolling skew.</returns>
+    member this.RollingSkew(windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool,?bias:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingSkew(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center,?bias=bias))
+    /// <summary>
+    /// Apply a rolling skew (moving skew) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the window formatted as a string duration.
+    /// <para>Examples: <c>"3i"</c> (3 index rows), <c>"1d"</c> (1 day), <c>"1h"</c> (1 hour).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <param name="fisher">If True, Fisher’s definition is used (normal ==> 0.0). If False, Pearson’s definition is used (normal ==> 3.0).</param>
+    /// <param name="bias">If False, the calculations are corrected for statistical bias.</param>
+    /// <returns>A new <see cref="Series"/> with the rolling skew.</returns>
+    member this.RollingKurtosis(windowSize: string, ?minPeriod: int,?weights: float[], ?center:bool,?fisher:bool,?bias:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingKurtosis(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center,?fisher=fisher,?bias=bias))
+    /// <summary>
+    /// Apply a rolling skew (moving skew) over a window.
+    /// </summary>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <param name="fisher">If True, Fisher’s definition is used (normal ==> 0.0). If False, Pearson’s definition is used (normal ==> 3.0).</param>
+    /// <param name="bias">If False, the calculations are corrected for statistical bias.</param>
+    /// <returns>A new <see cref="Series"/> with the rolling skew.</returns>
+    member this.RollingKurtosis(windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool,?fisher:bool,?bias:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingKurtosis(windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center,?fisher=fisher,?bias=bias))
+    /// <summary>
+    /// Apply a rolling rank (moving rank) over a window.
+    /// </summary>
+    /// <param name="method">
+    /// The method used to assign ranks to tied elements. See <see cref="RankMethod"/> for details.
+    /// Default is <see cref="RankMethod.Average"/>.</param>
+    /// <param name="seed">If method="random", use this as seed.
+    /// </param>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    member this.RollingRank(windowSize: string, ?minPeriod: int,?method:RankMethod,?seed:uint64,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingRank(windowSize, ?minPeriod=minPeriod,?method=method,?seed=seed,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling rank (moving rank) over a window.
+    /// </summary>
+    /// <param name="method">
+    /// The method used to assign ranks to tied elements. See <see cref="RankMethod"/> for details.
+    /// Default is <see cref="RankMethod.Average"/>.</param>
+    /// <param name="seed">If method="random", use this as seed.
+    /// </param>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights to apply to the window.
+    /// <para>The length of the array should match the window size (if using fixed row windows).</para>
+    /// <para>Default is <c>null</c> (unweighted).</para>
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    member this.RollingRank(windowSize: TimeSpan, ?minPeriod: int,?method:RankMethod,?seed:uint64,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingRank(windowSize, ?minPeriod=minPeriod,?method=method,?seed=seed,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling quantile over a fixed window.
+    /// </summary>
+    /// <param name="quantile">Quantile between 0.0 and 1.0 (e.g., 0.5 for median).</param>
+    /// <param name="method">Interpolation method when the quantile lies between two data points.</param>
+    /// <param name="windowSize">
+    /// The size of the window. 
+    /// <para>Format: <c>"3i"</c> (3 rows) or just a number string <c>"3"</c>.</para>
+    /// <para>For time-based windows (e.g. "2h"), use <see cref="RollingQuantileBy(double,QuantileMethod,string,Expr,int,ClosedWindow)"/> instead.</para>
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights for the window. The length must match the parsed window size.
+    /// <para>If <c>null</c>, equal weights are used.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new series representing the rolling quantile.</returns>
+    member this.RollingQuantile(quantile:float,method:QuantileMethod,windowSize: string, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingQuantile(quantile,method,windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
+    /// <summary>
+    /// Apply a rolling quantile over a fixed window.
+    /// </summary>
+    /// <param name="quantile">Quantile between 0.0 and 1.0 (e.g., 0.5 for median).</param>
+    /// <param name="method">Interpolation method when the quantile lies between two data points.</param>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="weights">
+    /// Optional weights for the window. The length must match the parsed window size.
+    /// <para>If <c>null</c>, equal weights are used.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a value (otherwise <c>null</c>).
+    /// </param>
+    /// <param name="center">
+    /// If <c>true</c>, the window is centered on the current observation.
+    /// <para>Default is <c>false</c> (right-aligned window, <c>[i-window, i]</c>).</para>
+    /// </param>
+    /// <returns>A new series representing the rolling quantile.</returns>
+    member this.RollingQuantile(quantile:float,method:QuantileMethod,windowSize: TimeSpan, ?minPeriod: int,?weights: float[], ?center:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingQuantile(quantile,method,windowSize, ?minPeriod=minPeriod,?weights=weights,?center=center))
+    // ==========================================
+    // Rolling ... By
+    // ==========================================
 
-    member this.RollingSum(windowSize: TimeSpan, ?minPeriod: int) =
-        this.ApplyExpr(Expr.Col(this.Name).RollingSum(windowSize, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling mean (moving average) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the dynamic window.
+    /// <para>Supported duration strings: <c>"1d"</c>, <c>"2h"</c>, <c>"10s"</c>, <c>"500ms"</c>, etc.</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling mean.</returns>
+    member this.RollingMeanBy(windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMeanBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling mean (moving average) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling mean.</returns>
+    member this.RollingMeanBy(windowSize: TimeSpan, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMeanBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+
+    /// <summary>
+    /// Apply a rolling sum (moving sum) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the dynamic window.
+    /// <para>Supported duration strings: <c>"1d"</c>, <c>"2h"</c>, <c>"10s"</c>, <c>"500ms"</c>, etc.</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling sum.</returns>
+    member this.RollingSumBy(windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingSumBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling sum (moving sum) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling sum.</returns>
+    member this.RollingSumBy(windowSize: TimeSpan, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingSumBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+
+    /// <summary>
+    /// Apply a rolling min (moving min) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the dynamic window.
+    /// <para>Supported duration strings: <c>"1d"</c>, <c>"2h"</c>, <c>"10s"</c>, <c>"500ms"</c>, etc.</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling min.</returns>
+    member this.RollingMinBy(windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMinBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling min (moving min) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling min.</returns>
+    member this.RollingMinBy(windowSize: TimeSpan, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMinBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+
+    /// <summary>
+    /// Apply a rolling max (moving max) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the dynamic window.
+    /// <para>Supported duration strings: <c>"1d"</c>, <c>"2h"</c>, <c>"10s"</c>, <c>"500ms"</c>, etc.</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling max.</returns>
+    member this.RollingMaxBy(windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMaxBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling median (moving median) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling median.</returns>
+    member this.RollingMedianBy(windowSize: TimeSpan, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMedianBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling median (moving median) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the dynamic window.
+    /// <para>Supported duration strings: <c>"1d"</c>, <c>"2h"</c>, <c>"10s"</c>, <c>"500ms"</c>, etc.</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling max.</returns>
+    member this.RollingMedianBy(windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMedianBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling max (moving max) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling max.</returns>
+    member this.RollingMaxBy(windowSize: TimeSpan, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingMaxBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling standard deviation (moving standard deviation) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the dynamic window.
+    /// <para>Supported duration strings: <c>"1d"</c>, <c>"2h"</c>, <c>"10s"</c>, <c>"500ms"</c>, etc.</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling standard deviation.</returns>
+    member this.RollingStdBy(windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingStdBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling standard deviation (moving standard deviation) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling standard deviation.</returns>
+    member this.RollingStdBy(windowSize: TimeSpan, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingStdBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling variance (moving variance) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the dynamic window.
+    /// <para>Supported duration strings: <c>"1d"</c>, <c>"2h"</c>, <c>"10s"</c>, <c>"500ms"</c>, etc.</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <param name="ddof">
+    /// “Delta Degrees of Freedom”: the divisor used in the calculation is N - ddof, where N represents the number of elements. 
+    /// <para>By default ddof is 1.</para>
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling variance.</returns>
+    member this.RollingVarBy(windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int,?ddof:uint8) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingVarBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod,?ddof=ddof))
+    /// <summary>
+    /// Apply a rolling variance (moving variance) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <param name="ddof">
+    /// “Delta Degrees of Freedom”: the divisor used in the calculation is N - ddof, where N represents the number of elements. 
+    /// <para>By default ddof is 1.</para>
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling variance.</returns>
+    member this.RollingVarBy(windowSize: TimeSpan, by: Expr, ?closed: ClosedWindow, ?minPeriod: int,?ddof:uint8) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingVarBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod,?ddof=ddof))
+    /// <summary>
+    /// Apply a rolling rank (moving rank) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the dynamic window.
+    /// <para>Supported duration strings: <c>"1d"</c>, <c>"2h"</c>, <c>"10s"</c>, <c>"500ms"</c>, etc.</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="method">The method used to assign ranks to tied elements.
+    /// </param>
+    /// <param name="seed">Seed for the random method (only relevant when method is Random).
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling rank.</returns>
+    member this.RollingRankBy(windowSize: string, by: Expr, ?method:RollingRankMethod,?seed:uint64,?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingRankBy(windowSize, by,?method=method,?seed=seed, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling rank (moving rank) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="method">The method used to assign ranks to tied elements.
+    /// </param>
+    /// <param name="seed">Seed for the random method (only relevant when method is Random).
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling rank.</returns>
+    member this.RollingRankBy(windowSize: TimeSpan, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingRankBy(windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling quantile (moving quantile) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="quantile">Quantile between 0.0 and 1.0 (e.g., 0.5 for median).
+    /// </param>
+    /// <param name="method">Interpolation method when the quantile lies between two data points.
+    /// </param>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling quantile.</returns>
+    member this.RollingQuantileBy(quantile: float, method: QuantileMethod, windowSize: string, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingQuantileBy(quantile, method, windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
+    /// <summary>
+    /// Apply a rolling quantile (moving quantile) over a dynamic window defined by the values in the <paramref name="by"/> column.
+    /// <para>
+    /// Unlike standard fixed-size rolling windows (which operate on row counts), this operates on values (typically time).
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// The <paramref name="by"/> column must be sorted in ascending order.
+    /// </remarks>
+    /// <param name="quantile">Quantile between 0.0 and 1.0 (e.g., 0.5 for median).
+    /// </param>
+    /// <param name="method">Interpolation method when the quantile lies between two data points.
+    /// </param>
+    /// <param name="windowSize">
+    /// The size of the time window as a <see cref="TimeSpan"/>.
+    /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
+    /// </param>
+    /// <param name="by">
+    /// The column used to define the window (the "time" axis). 
+    /// <para>Typically a <c>Date</c> or <c>DateTime</c> column, but can also be monotonic integers.</para>
+    /// </param>
+    /// <param name="minPeriods">
+    /// The minimum number of observations in the window required to have a non-null result.</param>
+    /// <param name="closed">
+    /// Defines how the window interval is closed. 
+    /// Default is <see cref="ClosedWindow.Left"/> <c>[t - window, t)</c>.
+    /// </param>
+    /// <returns>A new series representing the dynamic rolling quantile.</returns>
+    member this.RollingQuantileBy(quantile: float, method: QuantileMethod, windowSize: TimeSpan, by: Expr, ?closed: ClosedWindow, ?minPeriod: int) =
+        this.ApplyExpr(Expr.Col(this.Name).RollingQuantileBy(quantile, method, windowSize, by, ?closed=closed, ?minPeriod=minPeriod))
     // ==========================================
     // TopK / BottomK
     // ==========================================
-
+    /// <summary>
+    /// Get the k largest elements.
+    /// Result is sorted descending.
+    /// </summary>
     member this.TopK(k: int) = 
         this.ApplyExpr(Expr.Col(this.Name).TopK k)
-
+    /// <summary>
+    /// Get the k smallest elements.
+    /// Result is sorted ascending.
+    /// </summary>
     member this.BottomK(k: int) = 
         this.ApplyExpr(Expr.Col(this.Name).BottomK k)
 
@@ -525,6 +1539,15 @@ type Series(handle: SeriesHandle) =
     member this.TopKBy(k: int, by: Series, ?reverse: bool) =
         let r = defaultArg reverse false
         this.ApplyBinaryExpr(by, fun me other -> me.TopKBy(k, other, r))
+    /// <summary>
+    /// Get top k elements of this Series, sorted by another Expr.
+    /// </summary>
+    member this.TopKBy(k: int, by: Expr, ?reverse: bool) =
+        let r = defaultArg reverse false
+        this.ApplyExpr(Expr.Col(this.Name).TopKBy(k, by, r))
+
+    member this.TopKBy(k: int, by: seq<#IColumnExpr>, ?reverse: seq<bool>) =
+        this.ApplyExpr(Expr.Col(this.Name).TopKBy(k, by, ?reverse=reverse))
 
     /// <summary>
     /// Get bottom k elements of this Series, sorted by another Series.
@@ -532,6 +1555,14 @@ type Series(handle: SeriesHandle) =
     member this.BottomKBy(k: int, by: Series, ?reverse: bool) =
         let r = defaultArg reverse false
         this.ApplyBinaryExpr(by, fun me other -> me.BottomKBy(k, other, r))
+    /// <summary>
+    /// Get bottom k elements of this Series, sorted by another Expr.
+    /// </summary>
+    member this.BottomKBy(k: int, by: Expr, ?reverse: bool) =
+        let r = defaultArg reverse false
+        this.ApplyExpr(Expr.Col(this.Name).BottomKBy(k, by, r))
+    member this.BottomKBy(k: int, by: seq<#IColumnExpr>, ?reverse: seq<bool>) =
+        this.ApplyExpr(Expr.Col(this.Name).BottomKBy(k, by, ?reverse=reverse))
     // ==========================================
     // Static Constructors
     // ==========================================
@@ -621,30 +1652,59 @@ type Series(handle: SeriesHandle) =
     member _.Duration(index: int) : TimeSpan option = 
         PolarsWrapper.SeriesGetDuration(handle, int64 index) |> Option.ofNullable
     // --- Aggregations (Returning Series of len 1) ---
+    member this.First() = this.ApplyExpr(Expr.Col(this.Name).First())
+    member this.Last() = this.ApplyExpr(Expr.Col(this.Name).Last())
     member this.Sum() = new Series(PolarsWrapper.SeriesSum handle)
     member this.Mean() = new Series(PolarsWrapper.SeriesMean handle)
     member this.Min() = new Series(PolarsWrapper.SeriesMin handle)
     member this.Max() = new Series(PolarsWrapper.SeriesMax handle)
+    member this.Product() = this.ApplyExpr(Expr.Col(this.Name).Product())
+    // ==========================================
+    // Statistical Ops
+    // ==========================================
+    member this.Count() = this.ApplyExpr(Expr.Col(this.Name).Count())
     /// <summary>
     /// Get the standard deviation.
     /// </summary>
     /// <param name="ddof">Delta Degrees of Freedom. Default is 1.</param>
+    /// <returns>A new <see cref="Series"/> containing the Std (length 1).</returns>
     member this.Std(?ddof: int) = 
-        this.ApplyExpr(Expr.Col(this.Name).Std(?ddof=ddof))
+        let d = defaultArg ddof 1
+        this.ApplyExpr(Expr.Col(this.Name).Std d)
 
     /// <summary>
     /// Get the variance.
     /// </summary>
     /// <param name="ddof">Delta Degrees of Freedom. Default is 1.</param>
+    /// <returns>A new <see cref="Series"/> containing the Var (length 1).</returns>
     member this.Var(?ddof: int) = 
-        this.ApplyExpr(Expr.Col(this.Name).Var(?ddof=ddof))
+        let d = defaultArg ddof 1
+        this.ApplyExpr(Expr.Col(this.Name).Var d)
 
     /// <summary>
     /// Get the median.
     /// </summary>
+    /// <returns>A new <see cref="Series"/> containing the Median (length 1).</returns>
     member this.Median() = 
         this.ApplyExpr(Expr.Col(this.Name).Median())
-
+    /// <summary>
+    /// Get the Skew.
+    /// </summary>
+    /// <param name="bias">If False, the calculations are corrected for statistical bias.</param>
+    /// <returns>A new <see cref="Series"/> containing the Skew (length 1).</returns>
+    member this.Skew(?bias:bool) = 
+        let b = defaultArg bias true
+        this.ApplyExpr(Expr.Col(this.Name).Skew b)
+    /// <summary>
+    /// Get the Kurtosis.
+    /// </summary>
+    /// <param name="fisher">If True, Fisher’s definition is used (normal ==> 0.0). If False, Pearson’s definition is used (normal ==> 3.0).</param>
+    /// <param name="bias">If False, the calculations are corrected for statistical bias.</param>
+    /// <returns>A new <see cref="Series"/> containing the Skew (length 1).</returns>
+    member this.Kurtosis(?fisher:bool,?bias:bool) = 
+        let b = defaultArg bias true
+        let f = defaultArg fisher true
+        this.ApplyExpr(Expr.Col(this.Name).Kurtosis(f,b))
     /// <summary>
     /// Get the quantile.
     /// </summary>
@@ -652,6 +1712,27 @@ type Series(handle: SeriesHandle) =
     /// <param name="interpolation">Interpolation method ("nearest", "higher", "lower", "midpoint", "linear"). Default "linear".</param>
     member this.Quantile(q: float, ?interpolation: QuantileMethod) =
         this.ApplyExpr(Expr.Col(this.Name).Quantile(q, ?interpolation=interpolation))
+    /// <summary>
+    /// Computes percentage change between values. 
+    /// Percentage change (as fraction) between current element and most-recent non-null element at least n period(s) before the current element. 
+    /// Computes the change from the previous row by default.
+    /// </summary>
+    /// <param name="n">Periods to shift for forming percent change.Default:1</param>
+    /// <returns>A new <see cref="Series"/> containing the Var (length 1).</returns>
+    member this.PctChange(?n: int) = 
+        let nd = defaultArg n 1
+        this.ApplyExpr(Expr.Col(this.Name).PctChange nd)
+    /// <summary>
+    /// Assign ranks to data, dealing with ties appropriately.
+    /// </summary>
+    /// <param name="method">
+    /// The method used to assign ranks to tied elements. See <see cref="RankMethod"/> for details.
+    /// Default is <see cref="RankMethod.Average"/>.</param>
+    /// <param name="descending">Rank in descending order.</param>
+    /// <param name="seed">If method="random", use this as seed.</param>
+    /// <returns></returns>
+    member this.Rank(?method: RankMethod, ?descending: bool, ?seed: uint64) = 
+        this.ApplyExpr(Expr.Col(this.Name).Rank(?method=method, ?descending=descending, ?seed=seed))
     /// <summary>
     /// Count the occurrences of unique values.
     /// Similar to SQL `GROUP BY val COUNT(*)`.
@@ -668,8 +1749,138 @@ type Series(handle: SeriesHandle) =
         
         let dfHandle = PolarsWrapper.SeriesValueCounts(this.Handle, sort, paralleling, name, normalize)
         new DataFrame(dfHandle)
+    // ==========================================
+    // Cumulative Functions
+    // ==========================================
+    /// <summary>
+    /// Get an array with the cumulative sum computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    member this.CumSum(?reverse:bool) = 
+        this.ApplyExpr(Expr.Col(this.Name).CumSum(?reverse=reverse))
+    /// <summary>
+    /// Get an array with the cumulative min computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    member this.CumMin(?reverse:bool) = 
+        this.ApplyExpr(Expr.Col(this.Name).CumMin(?reverse=reverse))
+    /// <summary>
+    /// Get an array with the cumulative max computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    member this.CumMax(?reverse:bool) = 
+        this.ApplyExpr(Expr.Col(this.Name).CumMax(?reverse=reverse))
+    /// <summary>
+    /// Get an array with the cumulative prod computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    member this.CumProd(?reverse:bool) = 
+        this.ApplyExpr(Expr.Col(this.Name).CumProd(?reverse=reverse))    
+    /// <summary>
+    /// Get an array with the cumulative count computed at every element.
+    /// </summary>
+    /// <param name="reverse">Reverse the operation.</param>
+    /// <returns></returns>
+    member this.CumCount(?reverse:bool) = 
+        this.ApplyExpr(Expr.Col(this.Name).CumCount(?reverse=reverse)) 
+    // ==========================================
+    // EWM Functions
+    // ==========================================
+    /// <summary>
+    /// Compute exponentially-weighted moving average.
+    /// </summary>
+    /// <param name="alpha">
+    /// Specify smoothing factor alpha directly. 
+    /// <para>Constraint: <c>0 &lt; alpha &lt;= 1</c></para>
+    /// </param>
+    /// <param name="adjust">
+    /// If <c>true</c>, divide by decaying adjustment factor in beginning periods to account for imbalance in relative weightings (viewing data as finite history). 
+    /// If <c>false</c>, assume infinite history.
+    /// </param>
+    /// <param name="bias">
+    /// If <c>true</c>, use a biased estimator (Standard deviation uses <c>N</c> in denominator). 
+    /// If <c>false</c>, use an unbiased estimator (Standard deviation uses <c>N-1</c>).
+    /// <para>Note: This is primarily relevant for Variance/StdDev. For Mean, it typically defaults to true.</para>
+    /// </param>
+    /// <param name="minPeriods">Minimum number of observations in window required to have a value (otherwise result is null).</param>
+    /// <param name="ignoreNulls">Ignore missing values when calculating weights.</param>
+    /// <returns>A new expression representing the EWM mean.</returns>
+    member this.EwmMean(alpha:float,?adjust:bool,?bias:bool,?minPeriods:int,?ignoreNulls:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).EwmMean(alpha=alpha,?adjust=adjust,?bias=bias,?minPeriods=minPeriods,?ignoreNulls=ignoreNulls))
+    /// <summary>
+    /// Compute exponentially-weighted moving standard deviation.
+    /// </summary>
+    /// <param name="alpha">
+    /// Specify smoothing factor alpha directly. 
+    /// <para>Constraint: <c>0 &lt; alpha &lt;= 1</c></para>
+    /// </param>
+    /// <param name="adjust">
+    /// If <c>true</c>, divide by decaying adjustment factor in beginning periods to account for imbalance in relative weightings (viewing data as finite history). 
+    /// If <c>false</c>, assume infinite history.
+    /// </param>
+    /// <param name="bias">
+    /// If <c>true</c>, use a biased estimator (Standard deviation uses <c>N</c> in denominator). 
+    /// If <c>false</c>, use an unbiased estimator (Standard deviation uses <c>N-1</c>).
+    /// <para>Note: This is primarily relevant for Variance/StdDev. For Mean, it typically defaults to true.</para>
+    /// </param>
+    /// <param name="minPeriods">Minimum number of observations in window required to have a value (otherwise result is null).</param>
+    /// <param name="ignoreNulls">Ignore missing values when calculating weights.</param>
+    /// <returns>A new expression representing the EWM standard deviation.</returns>
+    member this.EwmStd(alpha:float,?adjust:bool,?bias:bool,?minPeriods:int,?ignoreNulls:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).EwmStd(alpha=alpha,?adjust=adjust,?bias=bias,?minPeriods=minPeriods,?ignoreNulls=ignoreNulls))
+    /// <summary>
+    /// Compute exponentially-weighted moving variance.
+    /// </summary>
+    /// <param name="alpha">
+    /// Specify smoothing factor alpha directly. 
+    /// <para>Constraint: <c>0 &lt; alpha &lt;= 1</c></para>
+    /// </param>
+    /// <param name="adjust">
+    /// If <c>true</c>, divide by decaying adjustment factor in beginning periods to account for imbalance in relative weightings (viewing data as finite history). 
+    /// If <c>false</c>, assume infinite history.
+    /// </param>
+    /// <param name="bias">
+    /// If <c>true</c>, use a biased estimator (Standard deviation uses <c>N</c> in denominator). 
+    /// If <c>false</c>, use an unbiased estimator (Standard deviation uses <c>N-1</c>).
+    /// <para>Note: This is primarily relevant for Variance/StdDev. For Mean, it typically defaults to true.</para>
+    /// </param>
+    /// <param name="minPeriods">Minimum number of observations in window required to have a value (otherwise result is null).</param>
+    /// <param name="ignoreNulls">Ignore missing values when calculating weights.</param>
+    /// <returns>A new expression representing the EWM variance.</returns>
+    member this.EwmVar(alpha:float,?adjust:bool,?bias:bool,?minPeriods:int,?ignoreNulls:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).EwmVar(alpha=alpha,?adjust=adjust,?bias=bias,?minPeriods=minPeriods,?ignoreNulls=ignoreNulls))
+    /// <summary>
+    /// Compute exponentially-weighted moving average based on a temporal or index column.
+    /// </summary>
+    /// <param name="by">
+    /// The column used to determine the distance between observations.
+    /// <para>Supported data types: <c>Date</c>, <c>DateTime</c>, <c>UInt64</c>, <c>UInt32</c>, <c>Int64</c>, or <c>Int32</c>.</para>
+    /// </param>
+    /// <param name="halfLife">
+    /// The unit over which an observation decays to half its value.
+    /// <para>Supported string formats:</para>
+    /// <list type="bullet">
+    ///     <item><term>Time units</term><description><c>ns</c> (nanosecond), <c>us</c> (microsecond), <c>ms</c> (millisecond), <c>s</c> (second), <c>m</c> (minute), <c>h</c> (hour), <c>d</c> (day), <c>w</c> (week).</description></item>
+    ///     <item><term>Index units</term><description><c>i</c> (index count). Example: <c>"2i"</c> means decay by half every 2 index steps.</description></item>
+    ///     <item><term>Compound</term><description>Example: <c>"3d12h4m25s"</c>.</description></item>
+    /// </list>
+    /// <para>
+    /// <b>Warning:</b> <paramref name="halfLife"/> is treated as a constant duration. 
+    /// Calendar durations such as months (<c>mo</c>) or years (<c>y</c>) are <b>NOT</b> supported because they vary in length. 
+    /// Please express such durations in hours (e.g. use <c>'730h'</c> instead of <c>'1mo'</c>).
+    /// </para>
+    /// </param>
+    /// <returns>A new expression representing the time/index-based EWM mean.</returns>
+    member this.EwmMeanBy(by:Expr,halfLife:string) =
+        this.ApplyExpr(Expr.Col(this.Name).EwmMeanBy(by=by,halfLife=halfLife))
 
-    // --- Operators (Arithmetic) ---
+    // ==========================================
+    // Operators (Arithmetic) 
+    // ==========================================
 
     static member (+) (lhs: Series, rhs: Series) = new Series(PolarsWrapper.SeriesAdd(lhs.Handle, rhs.Handle))
     static member (-) (lhs: Series, rhs: Series) = new Series(PolarsWrapper.SeriesSub(lhs.Handle, rhs.Handle))
@@ -877,12 +2088,13 @@ type Series(handle: SeriesHandle) =
         new Series(newHandle)
     member this.ToArrow() : IArrowArray =
         PolarsWrapper.SeriesToArrow handle
+    member this.FromArrow(name:string,arrowArray:IArrowArray) : Series = 
+        new Series(ArrowFfiBridge.ImportSeries(name,arrowArray))
     member this.ToArray<'T>() =
         let col = this.ToArrow()
         ArrowReader.ReadColumn<'T> col
     member this.Show() =
         this.ToFrame().Show()
-
 
 and SeriesDtNameSpace(parent: Series) =
     
@@ -935,6 +2147,7 @@ and SeriesDtNameSpace(parent: Series) =
 
     member _.TimestampMicros() = apply (fun e -> e.Dt.TimestampMicros())
     member _.TimestampMillis() = apply (fun e -> e.Dt.TimestampMillis())
+    member _.Combine(time:Expr,timeUnit:TimeUnit) = apply (fun e -> e.Dt.Combine(time,timeUnit))
 
     // --- TimeZone ---
 
@@ -1086,7 +2299,6 @@ and SeriesArrayNameSpace(parent: Series) =
         parent.ApplyExpr expr
 
     // --- Aggregations ---
-
     member _.Sum() = apply (fun e -> e.Array.Sum())
     member _.Min() = apply (fun e -> e.Array.Min())
     member _.Max() = apply (fun e -> e.Array.Max())
@@ -1160,7 +2372,7 @@ and SeriesStructNameSpace(parent: Series) =
     
     let apply (op: Expr -> Expr) =
         let expr = Expr.Col parent.Name |> op
-        parent.ApplyExpr(expr)
+        parent.ApplyExpr expr
 
     /// <summary> Retrieve a field from the struct by name. </summary>
     member _.Field(name: string) = 
@@ -1177,6 +2389,13 @@ and SeriesStructNameSpace(parent: Series) =
     /// <summary> Convert struct to JSON string. </summary>
     member _.JsonEncode() = 
         apply (fun e -> e.Struct.JsonEncode())
+    /// <summary>
+    /// Unnest the struct column into a DataFrame.
+    /// Each field of the struct becomes a separate column.
+    /// </summary>
+    member _.Unnest() =
+        let dfHandle = PolarsWrapper.SeriesStructUnnest parent.Handle
+        new DataFrame(dfHandle)
 // --- Frames ---
 
 /// <summary>
@@ -1236,8 +2455,8 @@ and DataFrame(handle: DataFrameHandle) =
             ?schema: PolarsSchema,
             ?hasHeader: bool,
             ?separator: char,
-            ?quoteChar: char,          // [NEW]
-            ?eolChar: char,            // [NEW]
+            ?quoteChar: char,          
+            ?eolChar: char,            
             ?ignoreErrors: bool,
             ?tryParseDates: bool,
             ?lowMemory: bool,
@@ -1245,13 +2464,13 @@ and DataFrame(handle: DataFrameHandle) =
             ?nRows: int64,
             ?inferSchemaLength: int64,
             ?encoding: CsvEncoding,    
-            ?nullValues: string list,  // [NEW]
-            ?missingIsNull: bool,      // [NEW]
-            ?commentPrefix: string,    // [NEW]
-            ?decimalComma: bool,       // [NEW]
-            ?truncateRaggedLines: bool,// [NEW]
-            ?rowIndexName: string,     // [NEW]
-            ?rowIndexOffset: uint64    // [NEW]
+            ?nullValues: string list,  
+            ?missingIsNull: bool,      
+            ?commentPrefix: string,    
+            ?decimalComma: bool,       
+            ?truncateRaggedLines: bool,
+            ?rowIndexName: string,     
+            ?rowIndexOffset: uint64    
         ) : DataFrame =
         
         // 1. Defaults

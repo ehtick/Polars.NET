@@ -49,6 +49,7 @@ type LitMechanism = LitMechanism with
     static member ($) (LitMechanism, v: int option list)    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: float option list)  = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: string option list) = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+
     
 /// <summary>
 /// The main entry point for Polars.NET F# API.
@@ -81,7 +82,7 @@ module pl =
 
     /// <summary>
     /// Create a literal expression from a value.
-    /// <para>Supported types: int, float, bool, string, DateTime.</para>
+    /// <para>Supported types: int, float, bool, string, DateTime,decimal,list,option list,array.</para>
     /// </summary>
     /// <example>
     /// <code>
@@ -90,6 +91,12 @@ module pl =
     /// </example>
     let inline lit (value: ^T) : Expr = 
         ((^T or LitMechanism) : (static member ($) : LitMechanism * ^T -> Expr) (LitMechanism, value))
+    /// <summary>
+    /// Create a literal expression from a Series.
+    /// </summary>
+    let litSeries (series: Series) = 
+        let h = PolarsWrapper.CloneSeries series.Handle 
+        new Expr(PolarsWrapper.Lit h)
     // --- Expr Helpers ---
     /// <summary> Cast an expression to a different data type. </summary>
     let cast (dtype: DataType) (e: Expr) = e.Cast dtype
@@ -111,9 +118,21 @@ module pl =
     let timeSpan = DataType.Duration
     /// <summary> Time data type (no date). </summary>
     let time = DataType.Time
+    // [Temporal]
+    
+    /// <summary>
+    /// Combine a Date expression and a Time expression into a Datetime expression.
+    /// Usage: pl.col("date") |> pl.combine (pl.col("time"))
+    /// </summary>
+    let combineDateAndTime (time: Expr) (date: Expr) = date.Dt.Combine time
 
+    /// <summary>
+    /// Combine a Date expression and a Time expression with a specific TimeUnit.
+    /// Usage: pl.col("date") |> pl.combineUnit (pl.col("time")) TimeUnit.Milliseconds
+    /// </summary>
+    let combineDateAndTimeUnit (time: Expr) (tu: TimeUnit) (date: Expr) = date.Dt.Combine(time, tu)
     /// <summary> Count the number of elements in an expression. </summary>
-    let count () = new Expr(PolarsWrapper.Len())
+    let count() = new Expr(PolarsWrapper.Len())
     /// Alias for count
     let len = count
     /// <summary> Alias an expression with a new name. </summary>

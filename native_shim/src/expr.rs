@@ -1,6 +1,6 @@
 use polars::prelude::*;
 use std::{ffi::CStr, os::raw::c_char};
-use crate::types::{ExprContext,DataTypeContext, SeriesContext};
+use crate::{datatypes::parse_timeunit, types::{DataTypeContext, ExprContext, SeriesContext}};
 use std::ops::{Add, Sub, Mul, Div, Rem};
 use crate::utils::{consume_exprs_array, ptr_to_str};
 use polars_arrow::array::PrimitiveArray;
@@ -401,6 +401,20 @@ gen_rolling_by_op!(pl_expr_rolling_max_by, rolling_max_by);
 gen_rolling_by_op!(pl_expr_rolling_std_by, rolling_std_by);
 gen_rolling_by_op!(pl_expr_rolling_median_by, rolling_median_by);
 
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_dt_combine(
+    expr_ptr: *mut ExprContext, 
+    time_ptr: *mut ExprContext, 
+    tu: u8
+) -> *mut ExprContext {
+    let expr = unsafe { Box::from_raw(expr_ptr)};
+    let time = unsafe {Box::from_raw(time_ptr)};
+    let time_unit = parse_timeunit(tu);
+
+    let new_expr = expr.inner.dt().combine(time.inner, time_unit);
+
+    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_alias(expr_ptr: *mut ExprContext, name_ptr: *const c_char) -> *mut ExprContext {
@@ -829,16 +843,10 @@ pub extern "C" fn pl_expr_dt_offset_by(expr_ptr: *mut ExprContext, by_ptr: *mut 
 // Timestamp (to Int64)
 // unit: 0=ns, 1=us, 2=ms
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_dt_timestamp(expr_ptr: *mut ExprContext, unit_code: i32) -> *mut ExprContext {
+pub extern "C" fn pl_expr_dt_timestamp(expr_ptr: *mut ExprContext, unit_code: u8) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
-        let unit = match unit_code {
-            0 => TimeUnit::Nanoseconds,
-            1 => TimeUnit::Microseconds,
-            2 => TimeUnit::Milliseconds,
-            _ => TimeUnit::Microseconds,
-        };
-        
+        let unit = parse_timeunit(unit_code);
         let new_expr = ctx.inner.dt().timestamp(unit);
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })

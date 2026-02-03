@@ -318,10 +318,19 @@ public static partial class PolarsWrapper
         => BinaryOp(NativeBindings.pl_expr_dt_offset_by, e, by);
 
     // Timestamp (Expr + Int)
-    public static ExprHandle DtTimestamp(ExprHandle e, int unitCode)
+    public static ExprHandle DtTimestamp(ExprHandle e, PlTimeUnit unitCode)
     {
         var h = NativeBindings.pl_expr_dt_timestamp(e, unitCode);
         e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle DtCombine(ExprHandle expr, ExprHandle time, PlTimeUnit tu)
+    {
+        var h = NativeBindings.pl_expr_dt_combine(expr, time, tu);
+        
+        expr.TransferOwnership();
+        time.TransferOwnership();
+        
         return ErrorHelper.Check(h);
     }
     // TimeZone

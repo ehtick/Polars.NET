@@ -1,6 +1,6 @@
 #pragma warning disable CS1591
+#pragma warning disable CS1573
 using Apache.Arrow;
-using Microsoft.FSharp.Core;
 using Polars.NET.Core;
 using Polars.NET.Core.Helpers;
 
@@ -61,7 +61,11 @@ public class Expr : IDisposable
             _ => throw new NotSupportedException($"Unsupported literal type: {val.GetType().Name}")
         };
     }
-    private ExprHandle CloneHandle() => PolarsWrapper.CloneExpr(Handle);
+    /// <summary>
+    /// Clone Expr
+    /// </summary>
+    /// <returns></returns>
+    internal ExprHandle CloneHandle() => PolarsWrapper.CloneExpr(Handle);
 
     public static implicit operator Expr(int value) => Polars.Lit(value);
 
@@ -1253,15 +1257,15 @@ public class Expr : IDisposable
     /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
     /// </param>
     /// 
-    /// /// <param name="minPeriods">
+    /// <param name="minPeriods">
     /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='minPeriods']/node()"/>
     /// </param>
     /// 
-    /// /// <param name="weights">
+    /// <param name="weights">
     /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='weights']/node()"/>
     /// </param>
     /// 
-    /// /// <param name="center">
+    /// <param name="center">
     /// <inheritdoc cref="RollingMean(string, int, double[], bool)" path="/param[@name='center']/node()"/>
     /// </param>
     /// 
@@ -1348,8 +1352,8 @@ public class Expr : IDisposable
     /// Apply a rolling median (moving median) over a window.
     /// </summary>
     /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
-    public Expr RollingMedian(TimeSpan windowSize, int minPeriods = 1)
-        => RollingMedian(DurationFormatter.ToPolarsString(windowSize), minPeriods);
+    public Expr RollingMedian(TimeSpan windowSize, int minPeriods = 1,double[]? weights = null,bool center=false)
+        => RollingMedian(DurationFormatter.ToPolarsString(windowSize), minPeriods,weights,center);
     /// <summary>
     /// Apply a rolling skew (moving skew) over a window.
     /// </summary>
@@ -1378,12 +1382,20 @@ public class Expr : IDisposable
     /// Apply a rolling rank (moving rank) over a window.
     /// </summary>
     /// <inheritdoc cref="RollingMean(string,int,double[],bool)"/>
+    /// <param name="method">
+    /// The method used to assign ranks to tied elements. See <see cref="RankMethod"/> for details.
+    /// Default is <see cref="RankMethod.Average"/>.</param>
+    /// <param name="seed">If method="random", use this as seed.</param>
     public Expr RollingRank(string windowSize, int minPeriods = 1,RankMethod method=RankMethod.Average, ulong? seed=null,double[]? weights = null,bool center=false)
         => new(PolarsWrapper.RollingRank(CloneHandle(), windowSize, minPeriods,method.ToNative(),seed,weights, center));
     /// <summary>
     /// Apply a rolling rank (moving rank) over a window.
     /// </summary>
     /// <inheritdoc cref="RollingMean(TimeSpan,int,double[],bool)"/>
+    /// <param name="method">
+    /// The method used to assign ranks to tied elements. See <see cref="RankMethod"/> for details.
+    /// Default is <see cref="RankMethod.Average"/>.</param>
+    /// <param name="seed">If method="random", use this as seed.</param>
     public Expr RollingRank(TimeSpan windowSize,int minPeriods = 1,RankMethod method=RankMethod.Average, ulong? seed=null,double[]? weights = null, bool center= false)
         => RollingRank(DurationFormatter.ToPolarsString(windowSize), minPeriods, method,seed,weights, center);
     /// <summary>
@@ -1755,23 +1767,23 @@ public class Expr : IDisposable
     /// Compute the rolling rank over a dynamic window defined by the values in the <paramref name="by"/> column.
     /// </summary>
     /// 
-    /// /// <param name="windowSize">
+    /// <param name="windowSize">
     /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='windowSize']/node()"/>
     /// </param>
     /// 
-    /// /// <param name="by">
+    /// <param name="by">
     /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='by']/node()"/>
     /// </param>
     /// 
-    /// /// <param name="method">The method used to assign ranks to tied elements.</param>
+    /// <param name="method">The method used to assign ranks to tied elements.</param>
     /// 
-    /// /// <param name="seed">Seed for the random method (only relevant when method is Random).</param>
+    /// <param name="seed">Seed for the random method (only relevant when method is Random).</param>
     /// 
-    /// /// <param name="minPeriods">
+    /// <param name="minPeriods">
     /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='minPeriods']/node()"/>
     /// </param>
     /// 
-    /// /// <param name="closed">
+    /// <param name="closed">
     /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='closed']/node()"/>
     /// </param>
     /// 
@@ -1803,23 +1815,23 @@ public class Expr : IDisposable
     /// <para>This will be automatically converted to a Polars duration string (e.g., <c>01:30:00</c> -> <c>"1h30m"</c>).</para>
     /// </param>
     /// 
-    /// /// <param name="by">
+    /// <param name="by">
     /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='by']/node()"/>
     /// </param>
     /// 
-    /// /// <param name="method">
+    /// <param name="method">
     /// <inheritdoc cref="RollingRankBy(string, Expr, RollingRankMethod, ulong?, int, ClosedWindow)" path="/param[@name='method']/node()"/>
     /// </param>
     /// 
-    /// /// <param name="seed">
+    /// <param name="seed">
     /// <inheritdoc cref="RollingRankBy(string, Expr, RollingRankMethod, ulong?, int, ClosedWindow)" path="/param[@name='seed']/node()"/>
     /// </param>
     /// 
-    /// /// <param name="minPeriods">
+    /// <param name="minPeriods">
     /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='minPeriods']/node()"/>
     /// </param>
     /// 
-    /// /// <param name="closed">
+    /// <param name="closed">
     /// <inheritdoc cref="RollingMeanBy(string, Expr, int, ClosedWindow)" path="/param[@name='closed']/node()"/>
     /// </param>
     /// 
@@ -2229,12 +2241,32 @@ public class DtOps
     /// <summary>
     /// Convert the datetime to an integer timestamp (Unix epoch).
     /// </summary>
-    public Expr Timestamp(TimeUnit unit = TimeUnit.Microseconds)
+    /// <param name="timeUnit">
+    /// The desired TimeUnit for the resulting Datetime.
+    /// <para><b>Note:</b> Only sub-second units (<see cref="TimeUnit.Nanoseconds"/>, <see cref="TimeUnit.Microseconds"/>, <see cref="TimeUnit.Milliseconds"/>) are supported.</para>
+    /// </param>
+    public Expr Timestamp(TimeUnit timeUnit = TimeUnit.Microseconds)
     {
         var h = PolarsWrapper.CloneExpr(_expr.Handle);
-        return new Expr(PolarsWrapper.DtTimestamp(h, (int)unit));
+        return new Expr(PolarsWrapper.DtTimestamp(h, timeUnit.ToNative()));
     }
+    /// <summary>
+    /// Combine the date from the underlying date/datetime with the time from another expression.
+    /// <para>The resulting Series will have the specified TimeUnit.</para>
+    /// </summary>
+    /// <param name="time">An expression yielding the Time component.</param>
+    /// <param name="timeUnit">
+    /// The desired TimeUnit for the resulting Datetime.
+    /// <para><b>Note:</b> Only sub-second units (<see cref="TimeUnit.Nanoseconds"/>, <see cref="TimeUnit.Microseconds"/>, <see cref="TimeUnit.Milliseconds"/>) are supported.</para>
+    /// </param>
+    public Expr Combine(Expr time, TimeUnit timeUnit = TimeUnit.Microseconds)
+    {
 
+        var hExpr = PolarsWrapper.CloneExpr(_expr.Handle);
+        var hTime = PolarsWrapper.CloneExpr(time.Handle);
+        
+        return new Expr(PolarsWrapper.DtCombine(hExpr, hTime, timeUnit.ToNative()));
+    }
     // ==========================================
     // TimeZone
     // ==========================================
@@ -2632,7 +2664,7 @@ public class StringOps
     }
 
     // ==========================================
-    // Temporal Parsing (日期转换)
+    // Temporal Parsing
     // ==========================================
 
     /// <summary>       

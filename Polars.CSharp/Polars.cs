@@ -56,11 +56,14 @@ public static class Polars
     public static Expr Lit(decimal value) => new(PolarsWrapper.Lit(value));
     public static Expr LitNull() => new(PolarsWrapper.LitNull());
     /// <summary>
-    /// Convert Series into Literal Expr。
-    /// <para>Series will be invalid after this conversion.</para>
+    /// Convert Series into Literal Expr.
+    /// <para>The Series is cloned implicitly, so the original Series remains valid.</para>
     /// </summary>
     public static Expr Lit(Series series)
-        => new(PolarsWrapper.Lit(series.Handle));
+    {
+        var clonedHandle = PolarsWrapper.CloneSeries(series.Handle);
+        return new Expr(PolarsWrapper.Lit(clonedHandle));
+    }
     // -------------------------------------------------------------------------
     // Struct Literals
     // -------------------------------------------------------------------------
@@ -222,4 +225,38 @@ public static class Polars
     /// Create a new SQL Context.
     /// </summary>
     public static SqlContext Sql() => new();
+
+    // ==========================================
+    // Temporal
+    // ==========================================
+
+    /// <summary>
+    /// Combine a Date expression and a Time expression into a Datetime expression.
+    /// <para>
+    /// Useful for combining a Date column with a Time column, or combining literal arrays.
+    /// </para>
+    /// <para>
+    /// <b>Note:</b> Only sub-second units (<see cref="TimeUnit.Nanoseconds"/>, <see cref="TimeUnit.Microseconds"/>, <see cref="TimeUnit.Milliseconds"/>) are supported.
+    /// </para>
+    /// </summary>
+    /// <param name="date">Expression for the Date component (can be a Column, Literal, or calculation).</param>
+    /// <param name="time">Expression for the Time component.</param>
+    /// <param name="tu">The desired TimeUnit for the resulting Datetime (default: Microseconds).</param>
+    /// <returns>A new expression evaluating to Datetime.</returns>
+    /// <example>
+    /// <code>
+    /// // 1. Combine Columns
+    /// df.Select(Polars.Combine(Col("date_col"), Col("time_col")));
+    /// 
+    /// // 2. Combine Arrays (Literals)
+    /// var dates = new[] { new DateOnly(2024, 1, 1), new DateOnly(2024, 1, 2) };
+    /// var times = new[] { new TimeOnly(10, 0), new TimeOnly(11, 0) };
+    /// 
+    /// df.Select(
+    ///     Polars.Combine(Polars.Lit(dates), Polars.Lit(times)).Alias("combined")
+    /// );
+    /// </code>
+    /// </example>
+    public static Expr CombineDateAndTime(Expr date, Expr time, TimeUnit tu = TimeUnit.Microseconds)
+        => date.Dt.Combine(time, tu);
 }

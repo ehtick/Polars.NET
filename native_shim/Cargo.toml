@@ -1,6 +1,6 @@
 [package]
 name = "native_shim"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
@@ -10,7 +10,6 @@ polars = { version = "0.52.0", features = ["lazy", "csv","dtype-date","parquet",
 "json","ipc","asof_join","diagonal_concat","top_k","rank","moment","pct_change","ewma","ewma_by","product",
 "dtype-categorical","serde","dynamic_group_by","business","dtype-u8","dtype-u16","dtype-i8","dtype-i16","dtype-i128","dtype-u128"] }
 polars-core = { version = "0.52.0" }
-polars-ops = { version = "0.52.0", features = ["pivot"] }
 polars-arrow = { version = "0.52.0" }
 polars-io = { version = "0.52.0", features = ["parquet","cloud"] }
 polars-utils = { version = "0.52.0" }
@@ -19,20 +18,21 @@ serde_json = "1.0.145"
 calamine = { version = "0.32", features = ["dates","chrono"] }
 chrono = "0.4.43"
 rust_xlsxwriter = { version = "0.93", features = ["chrono"] }
+openssl = { version ="0.10", features=["vendored"]}
 [lib]
 crate-type = ["cdylib"]
 
-# 开发模式配置：极速编译，无调试信息
+# Debug
 [profile.dev]
 debug = 0            
 strip = "debuginfo"  
 opt-level = 0        
 panic = "abort"      
 
-# 发布模式：追求极致体积和性能 (NuGet 发布用)
+# Release:
 [profile.release]
-strip = true        # 自动去除符号表 (Strip symbols)
-opt-level = 0       # 最高优化等级3
-# lto = true          # 开启链接时优化 (关键！体积减小约 30-50%)
-codegen-units = 16   # 牺牲并行编译速度，换取更优的二进制布局
-panic = "abort"     # Panic 直接中止，不展开堆栈，进一步减小体积
+strip = true        #  Strip symbols
+opt-level = 3       # Max :3
+lto = true          # Link time optimize
+codegen-units = 1   # set 1 for better binary layout
+panic = "abort"     

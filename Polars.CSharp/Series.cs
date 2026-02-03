@@ -267,6 +267,7 @@ public partial class Series : IDisposable
 
                     // Complex Types
                     DataTypeKind.List => GetValue<object>(index), 
+                    DataTypeKind.Categorical => GetValue<object>(index), 
                     DataTypeKind.Struct => GetValue<object>(index),
                     DataTypeKind.Array => GetValue<object>(index),
                 
@@ -565,7 +566,18 @@ public partial class Series : IDisposable
     /// </summary>
     /// <returns></returns>
     public Series Product() => ApplyExpr(Polars.Col(Name).Product());
-
+    /// <summary>
+    /// First series element into scalar
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    /// <returns></returns>
+    public T? First<T>() => First().GetValue<T>(0);
+    /// <summary>
+    /// Last series into scalar
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    /// <returns></returns>
+    public T? Last<T>() => Last().GetValue<T>(0);
     /// <summary>
     /// Sum series into scalar
     /// </summary>
@@ -823,6 +835,16 @@ public partial class Series : IDisposable
     /// <returns>A new <see cref="Series"/> containing the bottom k elements.</returns>
     public Series BottomKBy(int k, Expr by, bool reverse = false)
         => BottomKBy(k, [by], [reverse]);
+    /// <summary>
+    /// Get the top k values sorted by another Series.
+    /// </summary>
+    public Series TopKBy(int k, Series by, bool reverse = false)
+        => ApplyExpr(Polars.Col(Name).TopKBy(k, Polars.Lit(by), reverse));
+    /// <summary>
+    /// Get the bottom k values sorted by another Series.
+    /// </summary>
+    public Series BottomKBy(int k, Series by, bool reverse = false)
+        => ApplyExpr(Polars.Col(Name).BottomKBy(k, Polars.Lit(by), reverse));
 
     // ==========================================
     // Statistical Ops
@@ -882,7 +904,6 @@ public partial class Series : IDisposable
     /// <inheritdoc cref="Expr.PctChange(int)" path="/param"/>
     /// <returns>A new <see cref="Series"/> with the percentage change.</returns>
     public Series PctChange(int n = 1) => ApplyExpr(Polars.Col(Name).PctChange(n));
-
     /// <summary>
     /// <inheritdoc cref="Expr.Rank(RankMethod, bool, ulong?)" path="/summary"/>
     /// </summary>
@@ -995,7 +1016,7 @@ public partial class Series : IDisposable
     /// <returns></returns>
     public Series IsInfinite() => new(PolarsWrapper.SeriesIsInfinite(Handle));
     // ==========================================
-    // Unique Ops 
+    // Unique Ops and Boolean Mask
     // ==========================================
     /// <summary>
     /// Count the number of unique values in this Series.
@@ -1022,6 +1043,21 @@ public partial class Series : IDisposable
     /// <para>Implemented via DataFrame expression composition.</para>
     /// </summary>
     public Series IsDuplicated() => ApplyExpr(Polars.Col(Name).IsDuplicated());
+    /// <summary>
+    /// Check if values are between lower and upper bounds.
+    /// </summary>
+    public Series IsBetween(object lower, object upper) 
+        => ApplyExpr(Polars.Col(Name).IsBetween(Expr.MakeLit(lower), Expr.MakeLit(upper)));
+    /// <summary>
+    /// Check if values are between lower and upper bounds.
+    /// </summary>
+    public Series IsBetween(Expr lower, Expr upper) 
+        => ApplyExpr(Polars.Col(Name).IsBetween(lower, upper));
+    /// <summary>
+    /// Check if the value is in given collection.
+    /// </summary>
+    public Series IsIn(Expr other, bool nullsEqual = false)
+        => ApplyExpr(Polars.Col(Name).IsIn(other,nullsEqual));
     // ==========================================
     // Common Ops 
     // ==========================================
@@ -1129,11 +1165,6 @@ public partial class Series : IDisposable
     /// </summary>
     public Series Shift(long n = 1) => ApplyExpr(Polars.Col(Name).Shift(n));
 
-    /// <summary>
-    /// Check if values are between lower and upper bounds.
-    /// </summary>
-    public Series IsBetween(object lower, object upper) 
-        => ApplyExpr(Polars.Col(Name).IsBetween(Expr.MakeLit(lower), Expr.MakeLit(upper)));
     /// <summary>  
     /// <inheritdoc cref="Expr.RollingMin(string, int, double[], bool)" path="/summary"/>
     /// </summary>
@@ -1231,9 +1262,9 @@ public partial class Series : IDisposable
         => ApplyExpr(Polars.Col(Name).RollingMedian(windowSize, minPeriods, weights, center));
 
     /// <summary>
-    /// <inheritdoc cref="Expr.RollingMedian(TimeSpan, int)" path="/summary"/>
+    /// <inheritdoc cref="Expr.RollingMedian(TimeSpan, int,double[], bool)" path="/summary"/>
     /// </summary>
-    /// <inheritdoc cref="Expr.RollingMedian(TimeSpan, int)" path="/param"/>
+    /// <inheritdoc cref="Expr.RollingMedian(TimeSpan, int,double[], bool)" path="/param"/>
     /// <returns>A new <see cref="Series"/> with the rolling median.</returns>
     public Series RollingMedian(TimeSpan windowSize, int minPeriods = 1)
         => ApplyExpr(Polars.Col(Name).RollingMedian(windowSize, minPeriods));
@@ -1612,7 +1643,21 @@ public class SeriesDtOps
     /// <summary>
     /// Convert the datetime to an integer timestamp (Unix epoch).
     /// </summary>
-    public Series Timestamp(TimeUnit unit = TimeUnit.Microseconds) => Apply(e => e.Dt.Timestamp(unit));
+    /// <param name="timeUnit">
+    /// The desired TimeUnit for the resulting Datetime.
+    /// <para><b>Note:</b> Only sub-second units (<see cref="TimeUnit.Nanoseconds"/>, <see cref="TimeUnit.Microseconds"/>, <see cref="TimeUnit.Milliseconds"/>) are supported.</para>
+    /// </param>
+    public Series Timestamp(TimeUnit timeUnit = TimeUnit.Microseconds) => Apply(e => e.Dt.Timestamp(timeUnit));
+    /// <summary>
+    /// Combine the date from the underlying date/datetime with the time from another expression.
+    /// <para>The resulting Series will have the specified TimeUnit.</para>
+    /// </summary>
+    /// <param name="time">An expression yielding the Time component.</param>
+    /// <param name="timeUnit">
+    /// The desired TimeUnit for the resulting Datetime.
+    /// <para><b>Note:</b> Only sub-second units (<see cref="TimeUnit.Nanoseconds"/>, <see cref="TimeUnit.Microseconds"/>, <see cref="TimeUnit.Milliseconds"/>) are supported.</para>
+    /// </param>
+    public Series Combine(Expr time,TimeUnit timeUnit) => Apply(e => e.Dt.Combine(time,timeUnit));
 
     // ==========================================
     // TimeZone

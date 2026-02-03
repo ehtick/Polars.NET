@@ -309,7 +309,7 @@ pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
         };
 
         let options = DynamicGroupOptions {
-            index_column: PlSmallStr::from_str(index_col_str), // 初始化一下
+            index_column: PlSmallStr::from_str(index_col_str), 
             every: Duration::parse(every_str),
             period: Duration::parse(period_str),
             offset: Duration::parse(offset_str),

@@ -221,9 +221,10 @@ unsafe internal partial class NativeBindings
 
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_dt_offset_by(ExprHandle e, ExprHandle by);
-
     [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_dt_timestamp(ExprHandle e, int unitCode);
+    public static partial ExprHandle pl_expr_dt_combine(ExprHandle e, ExprHandle time,PlTimeUnit timeUnit);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_dt_timestamp(ExprHandle e, PlTimeUnit unitCode);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial ExprHandle pl_expr_dt_convert_time_zone(ExprHandle e, string timeZone);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]

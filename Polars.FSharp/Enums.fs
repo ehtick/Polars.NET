@@ -6,6 +6,11 @@ type TimeUnit =
     | Nanoseconds
     | Microseconds
     | Milliseconds
+    member internal this.ToNative() =
+        match this with
+        | Nanoseconds -> PlTimeUnit.Nanoseconds
+        | Microseconds -> PlTimeUnit.Microseconds
+        | Milliseconds -> PlTimeUnit.Milliseconds
 
 type Field = { Name: string; DataType: DataType }
 
@@ -364,6 +369,20 @@ type RankMethod =
         | Dense -> PlRankMethod.Dense
         | Ordinal -> PlRankMethod.Ordinal
         | Random -> PlRankMethod.Random
+
+type RollingRankMethod =
+    | Average 
+    | Min
+    | Max
+    | Dense
+    | Random
+    member internal this.ToNative() =
+        match this with
+        | Average -> PlRollingRankMethod.Average
+        | Min -> PlRollingRankMethod.Min
+        | Max -> PlRollingRankMethod.Max
+        | Dense -> PlRollingRankMethod.Dense
+        | Random -> PlRollingRankMethod.Random
 
 type JoinValidation =
     | ManyToMany
