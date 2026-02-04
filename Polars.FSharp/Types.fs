@@ -1599,7 +1599,40 @@ type Series(handle: SeriesHandle) =
     // ========================================================================
     // Unified Entry Points (Delegating to SeriesFactory)
     // ========================================================================
+    /// <summary>
+    /// High-performance creation from any sequence. 
+    /// Supports nested lists, structs, and F# Options.
+    /// </summary>
+    static member ofSeq<'T>(name: string, data: seq<'T>) : Series =
+        let arrowArray = ArrowConverter.Build data
+        
+        let handle = ArrowFfiBridge.ImportSeries(name, arrowArray)
+        
+        new Series(handle)
 
+    /// <summary>
+    /// Convert Series to a typed sequence of Options.
+    /// Uses high-performance Arrow reader (Zero-Copy).
+    /// Supports: Primitives, String, DateTime, DateOnly, TimeOnly, List, Struct.
+    /// </summary>
+    member this.AsSeq<'T>() : seq<'T option> =
+        seq {
+            use cArray = PolarsWrapper.SeriesToArrow this.Handle
+            
+            let accessor = ArrowReader.GetSeriesAccessor<'T> cArray
+            let len = cArray.Length
+
+            for i in 0 .. len - 1 do
+                let valObj = accessor.Invoke i
+                if isNull valObj then 
+                    None 
+                else 
+                    Some(unbox<'T> valObj)
+        }
+    /// <summary>
+    /// Get values as a list (forces evaluation).
+    /// </summary>
+    member this.ToList<'T>() = this.AsSeq<'T>() |> Seq.toList
     /// <summary>
     /// Create a Series from a sequence of Options (F# style nullables).
     /// Automatically handles all supported types (int, float, string, datetime, etc.)
@@ -2095,7 +2128,6 @@ type Series(handle: SeriesHandle) =
         ArrowReader.ReadColumn<'T> col
     member this.Show() =
         this.ToFrame().Show()
-
 and SeriesDtNameSpace(parent: Series) =
     
     // Helper: col("Name").Dt.Op(...)
@@ -2641,7 +2673,6 @@ and DataFrame(handle: DataFrameHandle) =
         
         let nRowsNullable = Option.toNullable nRows
         
-        // 3. 直接调用 Core 里的 Wrapper
         let h = PolarsWrapper.ReadParquet(
             path, 
             cols, 
@@ -2825,7 +2856,7 @@ and DataFrame(handle: DataFrameHandle) =
                           ?rechunk: bool) : DataFrame =
         
         use ms = new MemoryStream()
-        stream.CopyTo(ms)
+        stream.CopyTo ms
         let bytes = ms.ToArray()
 
         DataFrame.ReadIpc(
@@ -3885,6 +3916,20 @@ and DataFrame(handle: DataFrameHandle) =
     member this.Item (rowIndex: int, columnIndex: int) : obj =
         let series = this.Column columnIndex
         series.[rowIndex]
+    /// <summary>
+    /// Get a value from the DataFrame using a generic type argument.
+    /// Eliminates the need for unbox, but throws if type mismatches.
+    /// </summary>
+    member this.Cell<'T>(colName: string ,rowIndex: int) : 'T =
+        let s = this.Column colName
+        s.GetValue<'T>(int64 rowIndex)
+    /// <summary>
+    /// Get a value from the DataFrame using a generic type argument.
+    /// Eliminates the need for unbox, but throws if type mismatches.
+    /// </summary>
+    member this.Cell<'T>(rowIndex: int,colName: string ) : 'T =
+        let s = this.Column colName
+        s.GetValue<'T>(int64 rowIndex)
 
     // ==========================================
     // Row Access

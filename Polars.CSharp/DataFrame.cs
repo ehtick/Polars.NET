@@ -1595,6 +1595,18 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
         );
     }
+
+    private static DataFrame ConcatInternal(IEnumerable<DataFrame> dfs, PlConcatType how, bool checkDuplicates)
+    {
+        var dfList = dfs.ToList();
+        if (dfList.Count == 0) return new DataFrame();
+
+
+        var handles = dfList.Select(df => df.Clone().Handle).ToArray();
+
+        var h = PolarsWrapper.Concat(handles, how, checkDuplicates);
+        return new DataFrame(h);
+    }
     /// <summary>
     /// Concatenate multiple DataFrames either vertically (union) or horizontally.
     /// </summary>
@@ -1648,20 +1660,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    private static DataFrame ConcatInternal(IEnumerable<DataFrame> dfs, PlConcatType how, bool checkDuplicates)
-    {
-        var dfList = dfs.ToList();
-        if (dfList.Count == 0) return new DataFrame(); // 或者抛错
-
-
-        var handles = dfList.Select(df => df.Clone().Handle).ToArray();
-
-        var h = PolarsWrapper.Concat(handles, how, checkDuplicates);
-        return new DataFrame(h);
-    }
-    /// <summary>
-    /// Vertical concatenation of DataFrames.
-    /// </summary>
     public static DataFrame Concat(IEnumerable<DataFrame> dfs)
     {
         return ConcatInternal(dfs, PlConcatType.Vertical, true);
