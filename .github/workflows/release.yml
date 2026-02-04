@@ -37,6 +37,7 @@ jobs:
             rid: linux-musl-x64
             artifact_name: libnative_shim.so
             use_cross: true 
+            rustflags: "-C target-feature=-crt-static"
             
           # --- Linux ARM64 glibc---
           - os: ubuntu-latest
@@ -51,6 +52,7 @@ jobs:
             rid: linux-musl-arm64
             artifact_name: libnative_shim.so
             use_cross: true
+            rustflags: "-C target-feature=-crt-static"
           
           # Windows x64
           - os: windows-latest
@@ -93,6 +95,8 @@ jobs:
       # 这里的 native_shim 是你的 Rust 目录名，如果改了名字记得调整
       - name: Build Native Shim
         shell: bash
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
           CARGO_CMD="cargo"
           if [[ "${{ matrix.use_cross }}" == "true" ]]; then
@@ -100,6 +104,7 @@ jobs:
           fi
           
           echo "Building for ${{ matrix.target }} using $CARGO_CMD..."
+          echo "👉 RUSTFLAGS: $RUSTFLAGS"
           
           cd native_shim
           $CARGO_CMD build --release --target ${{ matrix.target }}
