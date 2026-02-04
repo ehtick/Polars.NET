@@ -1,6 +1,6 @@
 #pragma warning disable CS1591
 using Polars.NET.Core;
-
+using Polars.NET.Core.Helpers;
 namespace Polars.CSharp;
 
 /// <summary>
@@ -14,18 +14,14 @@ public static class Polars
     /// <param name="name"></param>
     /// <returns></returns>
     public static Expr Col(string name)
-    {
-        return new Expr(PolarsWrapper.Col(name));
-    }
+        => new(PolarsWrapper.Col(name));
     /// <summary>
     /// Column Exprs (name: string)
     /// </summary>
     /// <param name="names"></param>
     /// <returns></returns>
     public static Expr Col(params string[] names)
-    {
-        return new Expr(PolarsWrapper.Cols(names));
-    }
+        => new(PolarsWrapper.Cols(names));
     /// <summary>
     /// Return the lines count of current context.
     /// </summary>
@@ -40,53 +36,75 @@ public static class Polars
         }
         return new Expr(PolarsWrapper.Lit(value));
     }
+    public static Expr Lit(sbyte value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(byte value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(short value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(ushort value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(int value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(uint value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(long value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(ulong value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(Int128 value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(double value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(DateTime value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(DateTimeOffset value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(DateOnly value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(TimeOnly value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(TimeSpan value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(bool value) => new(PolarsWrapper.Lit(value));
-    public static Expr Lit(long value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(float value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(decimal value) => new(PolarsWrapper.Lit(value));
     public static Expr LitNull() => new(PolarsWrapper.LitNull());
+    /// <summary>
+    /// Convert Series into Literal Expr.
+    /// <para>The Series is cloned implicitly, so the original Series remains valid.</para>
+    /// </summary>
+    public static Expr Lit(Series series)
+    {
+        var clonedHandle = PolarsWrapper.CloneSeries(series.Handle);
+        return new Expr(PolarsWrapper.Lit(clonedHandle));
+    }
+    // -------------------------------------------------------------------------
+    // Struct Literals
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Create a Struct Expression from a single anonymous object or class instance.
+    /// <para>Example: <c>LitStruct(new { A = 1, B = "hi" })</c></para>
+    /// </summary>
+    public static Expr LitStruct<T>(T value) where T : class
+        => LitStruct([value]);
+
+    /// <summary>
+    /// Create a Struct Expression from an array of objects.
+    /// <para>The properties of the objects become the fields of the struct.</para>
+    /// </summary>
+    public static Expr LitStruct<T>(T[] values)
+    {
+        SeriesHandle sHandle = StructPacker.Pack("literal", values);
+        ExprHandle eHandle = PolarsWrapper.Lit(sHandle);
+        return new Expr(eHandle);
+    }
+    // =========================================================================
+    // The "Magic" Lit
+    // =========================================================================
+
+    public static Expr Lit<T>(T[] values)
+    {
+        using var s = Series.From("", values);
+        
+        return Lit(s);
+    }
+    
+    public static Expr Lit<T>(IEnumerable<T> values)
+    {
+        if (values is T[] arr) return Lit(arr);
+        return Lit(values.ToArray());
+    }
     
     // ---------------------------------------------------------
     // Selectors Entry Points
     // ---------------------------------------------------------
-
-    /// <summary>
-    /// Select all columns.
-    /// </summary>
-    public static Selector All() 
-        => new(PolarsWrapper.SelectorAll());
-
-    /// <summary>
-    /// Select all numeric columns (Int, Float, etc.).
-    /// </summary>
-    public static Selector Numeric() 
-        => new(PolarsWrapper.SelectorNumeric());
-
-    /// <summary>
-    /// Select all string/utf8 columns.
-    /// </summary>
-    public static Selector String() 
-        => new(PolarsWrapper.SelectorByDtype(PlDataType.String));
-
-    /// <summary>
-    /// Select all date columns.
-    /// </summary>
-    public static Selector Date() 
-        => new(PolarsWrapper.SelectorByDtype(PlDataType.Date));
-
-    /// <summary>
-    /// Select all datetime columns (any precision/timezone).
-    /// </summary>
-    public static Selector Datetime() 
-        => new(PolarsWrapper.SelectorByDtype(PlDataType.Datetime));
-
-    /// <summary>
-    /// Select columns by specific PlDataType.
-    /// </summary>
-    public static Selector DType(PlDataType type) 
-        => new(PolarsWrapper.SelectorByDtype(type));
 
     /// <summary>
     /// String matching selectors namespace.
@@ -94,6 +112,44 @@ public static class Polars
     /// </summary>
     public static class Selectors
     {
+        /// <summary>
+        /// Select all columns.
+        /// </summary>
+        public static Selector All() 
+            => new(PolarsWrapper.SelectorAll());
+
+        /// <summary>
+        /// Select all numeric columns (Int, Float, etc.).
+        /// </summary>
+        public static Selector Numeric() 
+            => new(PolarsWrapper.SelectorNumeric());
+
+        /// <summary>
+        /// Select all string/utf8 columns.
+        /// </summary>
+        public static Selector String() 
+            => new(PolarsWrapper.SelectorByDtype(PlDataType.String));
+
+        /// <summary>
+        /// Select all date columns.
+        /// </summary>
+        public static Selector Date() 
+            => new(PolarsWrapper.SelectorByDtype(PlDataType.Date));
+
+        /// <summary>
+        /// Select all datetime columns (any precision/timezone).
+        /// </summary>
+        public static Selector Datetime() 
+            => new(PolarsWrapper.SelectorByDtype(PlDataType.Datetime));
+
+        /// <summary>
+        /// Select columns by specific DataType.
+        /// </summary>
+        public static Selector DType(DataType type) 
+        {
+            var typeKind = type.Kind;
+            return new(PolarsWrapper.SelectorByDtype(typeKind.ToNative()));
+        }
         /// <summary>
         /// Select column whose name starts with given prefix.
         /// </summary>
@@ -169,4 +225,38 @@ public static class Polars
     /// Create a new SQL Context.
     /// </summary>
     public static SqlContext Sql() => new();
+
+    // ==========================================
+    // Temporal
+    // ==========================================
+
+    /// <summary>
+    /// Combine a Date expression and a Time expression into a Datetime expression.
+    /// <para>
+    /// Useful for combining a Date column with a Time column, or combining literal arrays.
+    /// </para>
+    /// <para>
+    /// <b>Note:</b> Only sub-second units (<see cref="TimeUnit.Nanoseconds"/>, <see cref="TimeUnit.Microseconds"/>, <see cref="TimeUnit.Milliseconds"/>) are supported.
+    /// </para>
+    /// </summary>
+    /// <param name="date">Expression for the Date component (can be a Column, Literal, or calculation).</param>
+    /// <param name="time">Expression for the Time component.</param>
+    /// <param name="tu">The desired TimeUnit for the resulting Datetime (default: Microseconds).</param>
+    /// <returns>A new expression evaluating to Datetime.</returns>
+    /// <example>
+    /// <code>
+    /// // 1. Combine Columns
+    /// df.Select(Polars.Combine(Col("date_col"), Col("time_col")));
+    /// 
+    /// // 2. Combine Arrays (Literals)
+    /// var dates = new[] { new DateOnly(2024, 1, 1), new DateOnly(2024, 1, 2) };
+    /// var times = new[] { new TimeOnly(10, 0), new TimeOnly(11, 0) };
+    /// 
+    /// df.Select(
+    ///     Polars.Combine(Polars.Lit(dates), Polars.Lit(times)).Alias("combined")
+    /// );
+    /// </code>
+    /// </example>
+    public static Expr CombineDateAndTime(Expr date, Expr time, TimeUnit tu = TimeUnit.Microseconds)
+        => date.Dt.Combine(time, tu);
 }

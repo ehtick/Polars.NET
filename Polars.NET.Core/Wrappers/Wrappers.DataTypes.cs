@@ -1,18 +1,18 @@
+using Polars.NET.Core.Native;
+
 namespace Polars.NET.Core;
+
 public static partial class PolarsWrapper
 {
-    public static DataTypeHandle CloneHandle(DataTypeHandle handle)
-    {
-         return ErrorHelper.Check(NativeBindings.pl_datatype_clone(handle));
-    }
+    public static DataTypeHandle CloneHandle(DataTypeHandle handle) => ErrorHelper.Check(NativeBindings.pl_datatype_clone(handle));
     public static DataTypeHandle NewPrimitiveType(int code) => ErrorHelper.Check(NativeBindings.pl_datatype_new_primitive(code));
     public static DataTypeHandle NewDecimalType(int precision, int scale) => ErrorHelper.Check(NativeBindings.pl_datatype_new_decimal((UIntPtr)precision, (UIntPtr)scale));
     public static DataTypeHandle NewCategoricalType() => ErrorHelper.Check(NativeBindings.pl_datatype_new_categorical());
     public static DataTypeHandle NewListType(DataTypeHandle innerType)
        => ErrorHelper.Check(NativeBindings.pl_datatype_new_list(innerType));
-    public static DataTypeHandle NewDateTimeType(int unit, string? timezone)
+    public static DataTypeHandle NewDateTimeType(byte unit, string? timezone)
         => ErrorHelper.Check(NativeBindings.pl_datatype_new_datetime(unit,timezone));
-    public static DataTypeHandle NewDurationType(int unit) 
+    public static DataTypeHandle NewDurationType(byte unit) 
         => ErrorHelper.Check(NativeBindings.pl_datatype_new_duration(unit));
     public static DataTypeHandle NewArrayType(DataTypeHandle inner, ulong width)
     {

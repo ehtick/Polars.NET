@@ -3,7 +3,7 @@ use std::ffi::{CStr, c_char};
 use polars::prelude::*;
 use crate::types::*;
 use polars::lazy::dsl::UnpivotArgsDSL;
-use crate::utils::{consume_exprs_array, map_jointype, ptr_to_str};
+use crate::utils::{consume_exprs_array, map_jointype,map_validation, map_coalesce, map_maintain_order, parse_keep_strategy,map_asof_strategy, ptr_to_str};
 
 // ==========================================
 // Macro Definition
@@ -89,6 +89,24 @@ gen_lazy_single_expr_op!(pl_lazy_filter, filter);
 // --- Limit ---
 gen_lazy_scalar_op!(pl_lazy_limit, limit, u32);
 gen_lazy_scalar_op!(pl_lazy_tail, tail, u32);
+
+// ==========================================
+// Slice
+// ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_slice(
+    lf_ptr: *mut LazyFrameContext,
+    offset: i64,
+    len: IdxSize, 
+) -> *mut LazyFrame {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(lf_ptr) };
+        
+        let new_lf = ctx.inner.slice(offset, len);
+
+        Ok(Box::into_raw(Box::new(new_lf)))
+    })
+}
 
 // ==========================================
 // Sort
@@ -291,7 +309,7 @@ pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
         };
 
         let options = DynamicGroupOptions {
-            index_column: PlSmallStr::from_str(index_col_str), // 初始化一下
+            index_column: PlSmallStr::from_str(index_col_str), 
             every: Duration::parse(every_str),
             period: Duration::parse(period_str),
             offset: Duration::parse(offset_str),
@@ -320,31 +338,13 @@ pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_explode(
     lf_ptr: *mut LazyFrameContext,
-    exprs_ptr: *const *mut ExprContext,
-    len: usize
+    selector_ptr: *mut SelectorContext,
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        let exprs = unsafe { consume_exprs_array(exprs_ptr, len) };
+        let sel_ctx = unsafe { Box::from_raw(selector_ptr) };
 
-        if exprs.is_empty() {
-            return Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf_ctx.inner })));
-        }
-
-        let mut iter = exprs.into_iter();
-        
-        let first_expr = iter.next().unwrap();
-        let mut final_selector = first_expr.into_selector()
-            .ok_or_else(|| PolarsError::ComputeError("Expr cannot be converted to Selector".into()))?;
-
-        for e in iter {
-            let s = e.into_selector()
-                .ok_or_else(|| PolarsError::ComputeError("Expr cannot be converted to Selector".into()))?;
-            
-            final_selector = final_selector | s; // Union
-        }
-
-        let new_lf = lf_ctx.inner.explode(final_selector);
+        let new_lf = lf_ctx.inner.explode(sel_ctx.inner);
         
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
     })
@@ -404,36 +404,19 @@ pub extern "C" fn pl_lazy_collect_streaming(lf_ptr: *mut LazyFrameContext) -> *m
 // ==========================================
 // Unpivot
 // ==========================================
+
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_unpivot(
+pub extern "C" fn pl_lazyframe_unpivot(
     lf_ptr: *mut LazyFrameContext,
-    id_vars_ptr: *const *const c_char, id_len: usize,
-    val_vars_ptr: *const *const c_char, val_len: usize,
+    index_ptr: *mut SelectorContext,
+    on_ptr: *mut SelectorContext,
     variable_name_ptr: *const c_char,
     value_name_ptr: *const c_char
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        
-        let to_pl_strs = |ptr, len| unsafe {
-            let mut v = Vec::with_capacity(len);
-            for &p in std::slice::from_raw_parts(ptr, len) {
-                let s = ptr_to_str(p).unwrap();
-                v.push(PlSmallStr::from_str(s));
-            }
-            v
-        };
-
-        let index_names = to_pl_strs(id_vars_ptr, id_len);
-        let on_names = to_pl_strs(val_vars_ptr, val_len);
-
-        let index_selector = cols(index_names.clone()); 
-
-        let on_selector = if on_names.is_empty() {
-            all().exclude_cols(index_names) 
-        } else {
-            cols(on_names)
-        };
+        let index_ctx = unsafe { Box::from_raw(index_ptr) };
+        let on_ctx = unsafe { Box::from_raw(on_ptr) };
 
         let variable_name = if variable_name_ptr.is_null() { 
             None 
@@ -448,8 +431,8 @@ pub extern "C" fn pl_lazy_unpivot(
         };
 
         let args = UnpivotArgsDSL {
-            index: index_selector, 
-            on: on_selector,       
+            index: index_ctx.inner, 
+            on: on_ctx.inner,       
             variable_name,
             value_name,
         };
@@ -509,27 +492,66 @@ pub extern "C" fn pl_lazy_concat(
 // ==========================================
 // Join & Join As of
 // ==========================================
+
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_join(
+pub extern "C" fn pl_lazyframe_join(
     left_ptr: *mut LazyFrameContext,
     right_ptr: *mut LazyFrameContext,
     left_on_ptr: *const *mut ExprContext, left_on_len: usize,
     right_on_ptr: *const *mut ExprContext, right_on_len: usize,
-    how_code: i32 
+    how_code: u8,
+    suffix_ptr: *const c_char,
+    validation_code: u8,
+    coalesce_code: u8,
+    maintain_order_code: u8,
+    nulls_equal: bool,
+    slice_offset_ptr: *const i64, // Nullable pointer for Slice Offset
+    slice_len: usize              // Slice Length
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let left_ctx = unsafe { Box::from_raw(left_ptr) };
-        let right_ctx = unsafe { Box::from_raw(right_ptr) };
+        let right_ctx = unsafe { Box::from_raw(right_ptr)};
+
+        let how = map_jointype(how_code);
 
         let left_on = unsafe { consume_exprs_array(left_on_ptr, left_on_len) };
         let right_on = unsafe { consume_exprs_array(right_on_ptr, right_on_len) };
 
-        let how = map_jointype(how_code);
-        let args = JoinArgs::new(how);
+        // 1. Map Suffix
+        let suffix = if suffix_ptr.is_null() {
+            None
+        } else {
+            let s_str = ptr_to_str(suffix_ptr)
+                .map_err(|e| PolarsError::ComputeError(format!("Invalid suffix string: {}", e).into()))?;
+            Some(PlSmallStr::from_str(s_str))
+        };
 
-        let new_lf = left_ctx.inner.join(right_ctx.inner, left_on, right_on, args);
+        // 2. Map Enums
+        let validation = map_validation(validation_code);
+        let coalesce = map_coalesce(coalesce_code);
+        let maintain_order = map_maintain_order(maintain_order_code);
 
-        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
+        // 3. Map Slice (Option<(i64, usize)>)
+        let slice = if slice_offset_ptr.is_null() {
+            None
+        } else {
+            Some((unsafe { *slice_offset_ptr }, slice_len))
+        };
+
+        // 4. Construct JoinArgs
+        let args = JoinArgs {
+            how,
+            validation,
+            suffix,
+            slice,
+            nulls_equal,
+            coalesce,
+            maintain_order,
+        };
+        
+        let res_lf = left_ctx.inner.join(right_ctx.inner, left_on, right_on, args);
+
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: res_lf })))
     })
 }
 fn exprs_to_names(exprs: &[Expr]) -> PolarsResult<Vec<PlSmallStr>> {
@@ -542,67 +564,106 @@ fn exprs_to_names(exprs: &[Expr]) -> PolarsResult<Vec<PlSmallStr>> {
     }
     Ok(names)
 }
+
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_join_asof(
+pub extern "C" fn pl_lazyframe_join_asof(
     left_ptr: *mut LazyFrameContext,
     right_ptr: *mut LazyFrameContext,
-    left_on_ptr: *mut ExprContext,
-    right_on_ptr: *mut ExprContext,
-    by_left_ptr: *const *mut ExprContext, by_left_len: usize,
-    by_right_ptr: *const *mut ExprContext, by_right_len: usize,
-    strategy_ptr: *const c_char,
-    tolerance_ptr: *const c_char 
+    left_on_ptr: *const *mut ExprContext, left_on_len: usize,
+    right_on_ptr: *const *mut ExprContext, right_on_len: usize,
+    
+    // --- AsOf Args ---
+    left_by_ptr: *const *mut ExprContext, left_by_len: usize,
+    right_by_ptr: *const *mut ExprContext, right_by_len: usize,
+    strategy_code: u8,
+    
+    // --- Tolerance ---
+    tolerance_str_ptr: *const c_char, // Duration String (e.g. "2h")
+    tolerance_i64_ptr: *const i64,    // Int Scalar (e.g. Timestamp, Int)
+    tolerance_f64_ptr: *const f64,    // Float Scalar (e.g. Float)
+    
+    allow_eq: bool,
+    check_sorted: bool,
+    
+    // --- JoinArgs ---
+    suffix_ptr: *const c_char,
+    validation_code: u8,
+    coalesce_code: u8,
+    maintain_order_code: u8,
+    nulls_equal: bool,
+    slice_offset_ptr: *const i64,     // Slice Offset
+    slice_len: usize                  // Slice Len
 ) -> *mut LazyFrameContext {
     ffi_try!({
-        let left = unsafe { Box::from_raw(left_ptr) };
-        let right = unsafe { Box::from_raw(right_ptr) };
-        let left_on = unsafe { Box::from_raw(left_on_ptr) };
-        let right_on = unsafe { Box::from_raw(right_on_ptr) };
+        let left_ctx = unsafe { Box::from_raw(left_ptr) };
+        let right_ctx = unsafe { Box::from_raw(right_ptr) };
+
+        let left_on = unsafe { consume_exprs_array(left_on_ptr, left_on_len) };
+        let right_on = unsafe { consume_exprs_array(right_on_ptr, right_on_len) };
         
-        let by_left_exprs = unsafe { consume_exprs_array(by_left_ptr, by_left_len) };
-        let by_right_exprs = unsafe { consume_exprs_array(by_right_ptr, by_right_len) };
+        let by_left_exprs = unsafe { consume_exprs_array(left_by_ptr, left_by_len) };
+        let by_right_exprs = unsafe { consume_exprs_array(right_by_ptr, right_by_len) };
 
         let left_by_names = if by_left_exprs.is_empty() { None } else { Some(exprs_to_names(&by_left_exprs)?) };
         let right_by_names = if by_right_exprs.is_empty() { None } else { Some(exprs_to_names(&by_right_exprs)?) };
 
-        let strategy_str = ptr_to_str(strategy_ptr).unwrap_or("backward");
-        let strategy = match strategy_str {
-            "forward" => AsofStrategy::Forward,
-            "nearest" => AsofStrategy::Nearest,
-            _ => AsofStrategy::Backward,
-        };
+        // 1. Strategy
+        let strategy = map_asof_strategy(strategy_code);
 
-        let tol_str = if tolerance_ptr.is_null() { "" } else { ptr_to_str(tolerance_ptr).unwrap() };
-        
-        let (tolerance, tolerance_str_val) = if tol_str.is_empty() {
-            (None, None)
-        } else if let Ok(v) = tol_str.parse::<i64>() {
-            // Pure Interger -> Scalar(Int64)
-            (Some(Scalar::new(DataType::Int64, AnyValue::Int64(v))), None)
-        } else if let Ok(v) = tol_str.parse::<f64>() {
-            // Float -> Scalar(Float64)
-            (Some(Scalar::new(DataType::Float64, AnyValue::Float64(v))), None)
-        } else {
-            (None, Some(PlSmallStr::from_str(tol_str)))
-        };
+        // 2. Tolerance Logic (Priority: Str > I64 > F64)
+        let mut tolerance: Option<Scalar> = None;
+        let mut tolerance_str: Option<PlSmallStr> = None;
 
-        // Build Options
-        let options = AsOfOptions {
+        if !tolerance_str_ptr.is_null() {
+            let s = ptr_to_str(tolerance_str_ptr).unwrap();
+            tolerance_str = Some(PlSmallStr::from_str(s));
+        } else if !tolerance_i64_ptr.is_null() {
+             let v = unsafe { *tolerance_i64_ptr };
+             tolerance = Some(Scalar::new(DataType::Int64, AnyValue::Int64(v)));
+        } else if !tolerance_f64_ptr.is_null() {
+             let v = unsafe { *tolerance_f64_ptr };
+             tolerance = Some(Scalar::new(DataType::Float64, AnyValue::Float64(v)));
+        }
+
+        let asof_options = AsOfOptions {
             strategy,
-            tolerance,      // Option<Scalar>
-            tolerance_str: tolerance_str_val, // Option<PlSmallStr>
+            tolerance,
+            tolerance_str,
             left_by: left_by_names,
             right_by: right_by_names,
-            allow_eq: true, 
-            check_sortedness: true, 
+            allow_eq,
+            check_sortedness: check_sorted,
         };
 
-        let new_lf = left.inner.join_builder()
-            .with(right.inner)
-            .left_on([left_on.inner])
-            .right_on([right_on.inner])
-            .how(JoinType::AsOf(Box::new(options)))
-            .finish();
+        // 3. JoinArgs Common
+        let suffix = if suffix_ptr.is_null() {
+            None
+        } else {
+            let s = ptr_to_str(suffix_ptr).unwrap();
+            Some(PlSmallStr::from_str(s))
+        };
+        
+        let validation = map_validation(validation_code);
+        let coalesce = map_coalesce(coalesce_code);
+        let maintain_order = map_maintain_order(maintain_order_code);
+
+        let slice = if slice_offset_ptr.is_null() {
+            None
+        } else {
+            Some((unsafe { *slice_offset_ptr }, slice_len))
+        };
+
+        let args = JoinArgs {
+            how: JoinType::AsOf(Box::new(asof_options)),
+            validation,
+            suffix,
+            slice,
+            nulls_equal,
+            coalesce,
+            maintain_order,
+        };
+
+        let new_lf = left_ctx.inner.join(right_ctx.inner, left_on, right_on, args);
 
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
     })
@@ -611,22 +672,56 @@ pub extern "C" fn pl_lazy_join_asof(
 // Ops
 // ==========================================
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_schema(lf_ptr: *mut LazyFrameContext) -> *mut c_char {
+pub extern "C" fn pl_lazyframe_drop(lf_ptr: *mut LazyFrameContext, sel_ptr: *mut SelectorContext,) -> *mut LazyFrameContext {
     ffi_try!({
-        let ctx = unsafe { &mut *lf_ptr };
+        let ctx = unsafe { Box::from_raw(lf_ptr) };
+        let sel_ctx = unsafe {  Box::from_raw(sel_ptr) }; 
         
-        let schema = ctx.inner.collect_schema()?;
+        let new_lf = ctx.inner.drop(sel_ctx.inner);
         
-        let mut json_parts = Vec::new();
-        for (name, dtype) in schema.iter() {
-            let dtype_str = dtype.to_string();
-            json_parts.push(format!("\"{}\": \"{}\"", name, dtype_str));
-        }
-        let json = format!("{{ {} }}", json_parts.join(", "));
-        
-        Ok(std::ffi::CString::new(json).unwrap().into_raw())
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
     })
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_unique_stable(
+    lf_ptr: *mut LazyFrameContext,
+    selector: *mut SelectorContext, 
+    keep_strategy: u8,
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        let lf = unsafe { Box::from_raw(lf_ptr).inner };
+
+        let subset = if selector.is_null() {
+            None
+        } else {
+            let sel_ctx = unsafe { Box::from_raw(selector) };
+            Some(sel_ctx.inner) 
+        };
+    
+        let keep = parse_keep_strategy(keep_strategy);
+
+        let new_lf = lf.unique_stable(subset, keep);
+
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pl_lazyframe_get_schema(lf_ptr: *mut LazyFrameContext) -> *mut SchemaContext {
+    ffi_try!({
+        if lf_ptr.is_null() {
+            return Ok(std::ptr::null_mut());
+        }
+        
+        let ctx = unsafe { &mut *lf_ptr };
+        
+        let schema_ref = ctx.inner.collect_schema().map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        
+        Ok(Box::into_raw(Box::new(SchemaContext { schema: schema_ref })))
+    })
+}
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazy_explain(lf_ptr: *mut LazyFrameContext, optimized: bool) -> *mut c_char {

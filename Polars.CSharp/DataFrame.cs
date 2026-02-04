@@ -1,3 +1,5 @@
+#pragma warning disable CS1573
+
 using Polars.NET.Core;
 using Polars.NET.Core.Arrow;
 using Apache.Arrow;
@@ -6,6 +8,9 @@ using Polars.NET.Core.Data;
 using System.Collections.Concurrent;
 using System.Collections;
 using System.Text;
+using Apache.Arrow.Types;
+using System.Reflection;
+using Polars.NET.Core.Helpers;
 
 namespace Polars.CSharp;
 
@@ -26,80 +31,105 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
 
     /// <summary>
-    /// Get the schema of the DataFrame as a dictionary (Column Name -> Data Type String).
+    /// Gets the Schema of the DataFrame.
+    /// Returns a disposable PolarsSchema object (Zero-Copy wrapper).
     /// </summary>
-    public Dictionary<string, DataType> Schema
+    public PolarsSchema Schema
     {
         get
         {
-            int width = (int)PolarsWrapper.DataFrameWidth(Handle);
-            var schema = new Dictionary<string, DataType>(width);
-
-            for (int i = 0; i < width; i++)
-            {
-                // Get Series
-                using var seriesHandle = PolarsWrapper.DataFrameGetColumnAt(Handle, i);
-                
-                // Get Column Name
-                string name = PolarsWrapper.SeriesName(seriesHandle);
-
-                // Get DataType
-                var dtHandle = PolarsWrapper.GetSeriesDataType(seriesHandle);
-                
-                // 4. Build DataType object
-                schema[name] = new DataType(dtHandle);
-            }
-
-            return schema;
+            var handle = PolarsWrapper.GetDataFrameSchema(Handle);
+            return new PolarsSchema(handle);
         }
     }
+
     /// <summary>
-    /// Prints the schema to the console in a tree format.
-    /// Useful for debugging column names and data types.
+    /// Prints the schema to the console.
     /// </summary>
     public void PrintSchema()
     {
-        var schema = Schema; 
+        using var schema = Schema;
         
         Console.WriteLine("root");
-        foreach (var kvp in schema)
+        
+        foreach (var name in schema.ColumnNames)
         {
-            Console.WriteLine($" |-- {kvp.Key}: {kvp.Value}");
+            var type = schema[name]; 
+            Console.WriteLine($" |-- {name}: {type.Kind}");
         }
     }
     // ==========================================
     // Static IO Read
     // ==========================================
     /// <summary>
-    /// Reads a CSV file into a DataFrame.
+    /// Read a DataFrame from a CSV file.
     /// </summary>
     /// <param name="path">Path to the CSV file.</param>
-    /// <param name="schema">Optional schema dictionary.</param>
-    /// <param name="hasHeader">Whether the CSV has a header row.</param>
-    /// <param name="separator">Character used as separator.</param>
-    /// <param name="skipRows">Choose how many rows should be skipped.</param>
-    /// <param name="tryParseDates">Whether to automatically try parsing dates/datetimes. Default is true.</param>
-    /// <returns>A new DataFrame.</returns>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <param name="hasHeader">Whether the CSV file has a header. Defaults to true.</param>
+    /// <param name="separator">Character used as separator. Defaults to ','.</param>
+    /// <param name="quoteChar">Character used for quoting. Defaults to '"'. Set to '\0' to disable.</param>
+    /// <param name="eolChar">Character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Try to keep reading lines if some are invalid. Defaults to false.</param>
+    /// <param name="tryParseDates">Try to automatically parse dates. Defaults to true.</param>
+    /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default.</param>
+    /// <param name="schema">Provide a schema to ignore schema inference.</param>
+    /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
+    /// <param name="nullValues">List of strings to consider as null values.</param>
+    /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    /// <param name="decimalComma">Use comma as decimal separator. Defaults to false.</param>
+    /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
+    /// <param name="rowIndexName">If provided, add a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
     public static DataFrame ReadCsv(
-        string path, 
-        Dictionary<string, DataType>? schema = null,
-        bool hasHeader = true, 
+        string path,
+        string[]? columns = null,
+        bool hasHeader = true,
         char separator = ',',
-        ulong skipRows = 0,
-        bool tryParseDates = true) 
+        char quoteChar = '"',
+        char eolChar = '\n',
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
+        int skipRows = 0,
+        int? nRows = null,
+        int? inferSchemaLength = null,
+        PolarsSchema? schema = null,
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,
+        bool missingIsNull = true,
+        string? commentPrefix = null,
+        bool decimalComma = false,
+        bool truncateRaggedLines = false,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0)
     {
-        var schemaHandles = schema?.ToDictionary(
-            kv => kv.Key, 
-            kv => kv.Value.Handle
-        );
-
         var handle = PolarsWrapper.ReadCsv(
-            path, 
-            schemaHandles, 
-            hasHeader, 
-            separator, 
-            skipRows,
-            tryParseDates
+            path,
+            columns,
+            hasHeader,
+            (byte)separator,
+            (byte)quoteChar,
+            (byte)eolChar,
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
+            (nuint)skipRows,
+            nRows.HasValue ? (nuint)nRows.Value : null,
+            inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
+            schema?.Handle,
+            encoding.ToNative(),
+            nullValues,
+            missingIsNull,
+            commentPrefix,
+            decimalComma,
+            truncateRaggedLines,
+            rowIndexName,
+            (nuint)rowIndexOffset
         );
 
         return new DataFrame(handle);
@@ -107,33 +137,326 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <summary>
     /// Read Parquet File
     /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static DataFrame ReadParquet(string path)
+    public static DataFrame ReadParquet(
+        string path,
+        string[]? columns = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
     {
-        //
-        return new DataFrame(PolarsWrapper.ReadParquet(path));
-    }
-    /// <summary>
-    /// Read JSON File
-    /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static DataFrame ReadJson(string path)
-    {
-        //
-        return new DataFrame(PolarsWrapper.ReadJson(path));
-    }
-    /// <summary>
-    /// Read IPC File
-    /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static DataFrame ReadIpc(string path)
-    {
-        return new DataFrame(PolarsWrapper.ReadIpc(path));
+        var h = PolarsWrapper.ReadParquet(
+            path,
+            columns ?? [],
+            nRows, 
+            parallel.ToNative(),
+            lowMemory,
+            rowIndexName,
+            rowIndexOffset
+        );
+
+        return new DataFrame(h);
     }
 
+    /// <summary>
+    /// Read Parquet from a byte array (Memory).
+    /// </summary>
+    public static DataFrame ReadParquet(
+        byte[] buffer,
+        string[]? columns = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
+    {
+        var h = PolarsWrapper.ReadParquet(
+            buffer,
+            columns ?? [],
+            nRows,
+            parallel.ToNative(),
+            lowMemory,
+            rowIndexName,
+            rowIndexOffset
+        );
+
+        return new DataFrame(h);
+    }
+    /// <summary>
+    /// Read Parquet from a Stream.
+    /// </summary>
+    public static DataFrame ReadParquet(
+        Stream stream,
+        string[]? columns = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        return ReadParquet(ms.ToArray(), columns, nRows, parallel, lowMemory, rowIndexName, rowIndexOffset);
+    }
+
+    /// <summary>
+    /// Read a JSON file into a DataFrame.
+    /// </summary>
+    /// <param name="path">Path to the JSON file.</param>
+    /// <param name="columns">Select specific columns to read.</param>
+    /// <param name="schema">Manually specify the schema (recommended for stability).</param>
+    /// <param name="inferSchemaLen">Number of rows to scan for schema inference (default: scan all).</param>
+    /// <param name="batchSize">Batch size for reading (optimization).</param>
+    /// <param name="ignoreErrors">Ignore parsing errors (skip malformed lines).</param>
+    /// <param name="jsonFormat">Format: Json Array or Json Lines (NDJSON).</param>
+    public static DataFrame ReadJson(
+        string path,
+        string[]? columns = null,
+        PolarsSchema? schema = null,
+        ulong? inferSchemaLen = null,
+        ulong? batchSize = null,
+        bool ignoreErrors = false,
+        JsonFormat jsonFormat = JsonFormat.Json)
+    {
+        if (!File.Exists(path)) 
+            throw new FileNotFoundException($"JSON file not found: {path}");
+
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ReadJson(
+            path,
+            columns,
+            schemaHandle,
+            inferSchemaLen,
+            batchSize,
+            ignoreErrors,
+            jsonFormat.ToNative()
+        );
+
+        return new DataFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Read JSON (Memory / Bytes)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read JSON from an in-memory byte array.
+    /// </summary>
+    public static DataFrame ReadJson(
+        byte[] buffer,
+        string[]? columns = null,
+        PolarsSchema? schema = null,
+        ulong? inferSchemaLen = null,
+        ulong? batchSize = null,
+        bool ignoreErrors = false,
+        JsonFormat jsonFormat = JsonFormat.Json)
+    {
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ReadJson(
+            buffer,
+            columns,
+            schemaHandle,
+            inferSchemaLen,
+            batchSize,
+            ignoreErrors,
+            jsonFormat.ToNative()
+        );
+
+        return new DataFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Read JSON (Stream)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read JSON from a Stream.
+    /// </summary>
+    public static DataFrame ReadJson(
+        Stream stream,
+        string[]? columns = null,
+        PolarsSchema? schema = null,
+        ulong? inferSchemaLen = null,
+        ulong? batchSize = null,
+        bool ignoreErrors = false,
+        JsonFormat jsonFormat = JsonFormat.Json)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        
+        return ReadJson(
+            ms.ToArray(), 
+            columns, 
+            schema, 
+            inferSchemaLen, 
+            batchSize, 
+            ignoreErrors, 
+            jsonFormat
+        );
+    }
+
+    // ---------------------------------------------------------
+    // Read IPC (File)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read an Arrow IPC (Feather v2) file into a DataFrame.
+    /// </summary>
+    /// <param name="path">Path to the IPC file.</param>
+    /// <param name="columns">Columns to select (projection).</param>
+    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
+    /// <param name="rechunk">Make sure the DataFrame is contiguous in memory (default: false).</param>
+    /// <param name="memoryMap">
+    /// Use memory mapping for zero-copy reading. 
+    /// Highly recommended for large, uncompressed files (default: false).
+    /// <br/>
+    /// <b>Warning:</b> This MUST be set to <c>false</c> if the IPC file is compressed (e.g. LZ4, ZSTD).
+    /// Attempting to memory map a compressed file will result in a runtime exception.
+    /// </param>
+    /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    public static DataFrame ReadIpc(
+        string path,
+        string[]? columns = null,
+        ulong? nRows = null,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool rechunk = false,
+        bool memoryMap = false, 
+        string? includePathColumn = null)
+    {
+        if (!File.Exists(path)) 
+            throw new FileNotFoundException($"IPC file not found: {path}");
+
+        var h = PolarsWrapper.ReadIpc(
+            path,
+            columns,
+            nRows,
+            rowIndexName,
+            rowIndexOffset,
+            rechunk,
+            memoryMap,
+            includePathColumn
+        );
+
+        return new DataFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Read IPC (Memory / Bytes)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read Arrow IPC (Feather v2) from in-memory bytes.
+    /// </summary>
+    public static DataFrame ReadIpc(
+        byte[] buffer,
+        string[]? columns = null,
+        ulong? nRows = null,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool rechunk = false)
+    {
+
+        var h = PolarsWrapper.ReadIpc(
+            buffer,
+            columns,
+            nRows,
+            rowIndexName,
+            rowIndexOffset,
+            rechunk,
+            null
+        );
+
+        return new DataFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Read IPC (Stream)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read Arrow IPC (Feather v2) from a Stream.
+    /// </summary>
+    public static DataFrame ReadIpc(
+        Stream stream,
+        string[]? columns = null,
+        ulong? nRows = null,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool rechunk = false)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        
+        return ReadIpc(
+            ms.ToArray(),
+            columns,
+            nRows,
+            rowIndexName,
+            rowIndexOffset,
+            rechunk
+        );
+    }
+    // ---------------------------------------------------------
+    // Read Excel (Native Rust Engine)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read an Excel file (.xlsx) into a DataFrame.
+    /// <para>
+    /// This uses the high-performance native Rust 'calamine' engine. 
+    /// It is significantly faster and more memory-efficient than traditional .NET Excel libraries.
+    /// </para>
+    /// </summary>
+    /// <param name="path">Path to the .xlsx file.</param>
+    /// <param name="sheetName">Name of the sheet to read. If provided, it takes precedence over <paramref name="sheetIndex"/>.</param>
+    /// <param name="sheetIndex">Index of the sheet to read (0-based). Default is 0 (the first sheet).</param>
+    /// <param name="schema">
+    /// Optional schema overrides. 
+    /// Provide this to strictly enforce specific column types (e.g., forcing a numeric column to be read as String).
+    /// </param>
+    /// <param name="hasHeader">Indicates if the first row contains header names. Default is true.</param>
+    /// <param name="inferSchemaLen">
+    /// Number of rows to use for schema inference. 
+    /// (Note: The underlying engine scans implicitly, but this is kept for API alignment).
+    /// </param>
+    /// <param name="dropEmptyRows">If true, rows where all cells are empty or null will be skipped. Default is true.</param>
+    /// <param name="raiseIfEmpty">If true, throws an exception if the sheet is empty or contains no data. Default is true.</param>
+    /// <returns>A new DataFrame containing the Excel data.</returns>
+    /// <exception cref="FileNotFoundException">Thrown if the file does not exist.</exception>
+    public static DataFrame ReadExcel(
+        string path,
+        string? sheetName = null,
+        ulong sheetIndex = 0,
+        PolarsSchema? schema = null,
+        bool hasHeader = true,
+        ulong inferSchemaLen = 100,
+        bool dropEmptyRows = true,
+        bool raiseIfEmpty = true)
+    {
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"Excel file not found: {path}");
+
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ReadExcel(
+            path,
+            sheetName,
+            sheetIndex,
+            schemaHandle,
+            hasHeader,
+            inferSchemaLen,
+            dropEmptyRows,
+            raiseIfEmpty
+        );
+
+        return new DataFrame(h);
+    }
     /// <summary>
     /// Create DataFrame from Apache Arrow RecordBatch.
     /// </summary>
@@ -147,32 +470,55 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     /// <returns></returns>
     public RecordBatch ToArrow()
-    {
-        return ArrowFfiBridge.ExportDataFrame(Handle);
-    }
+        => ArrowFfiBridge.ExportDataFrame(Handle);
     /// <summary>
     /// Asynchronously reads a CSV file into a DataFrame.
     /// </summary>
     public static async Task<DataFrame> ReadCsvAsync(
         string path,
-        Dictionary<string, DataType>? schema = null,
+        string[]? columns = null,
         bool hasHeader = true,
         char separator = ',',
-        ulong skipRows = 0,
-        bool tryParseDates = true) 
+        char quoteChar = '"',
+        char eolChar = '\n',
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
+        int skipRows = 0,
+        int? nRows = null,
+        int? inferSchemaLength = null,
+        PolarsSchema? schema = null,
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,
+        bool missingIsNull = true,
+        string? commentPrefix = null,
+        bool decimalComma = false,
+        bool truncateRaggedLines = false,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0)
     {
-        var schemaHandles = schema?.ToDictionary(
-            kv => kv.Key, 
-            kv => kv.Value.Handle
-        );
-
         var handle = await PolarsWrapper.ReadCsvAsync(
             path, 
-            schemaHandles, 
-            hasHeader, 
-            separator, 
-            skipRows,
-            tryParseDates 
+            columns,
+            hasHeader,
+            (byte)separator, 
+            (byte)quoteChar,
+            (byte)eolChar, 
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
+            (nuint)skipRows,
+            nRows.HasValue ? (nuint)nRows.Value : null,
+            inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
+            schema?.Handle,
+            encoding.ToNative(),
+            nullValues,
+            missingIsNull,
+            commentPrefix,
+            decimalComma,
+            truncateRaggedLines,
+            rowIndexName,
+            (nuint)rowIndexOffset
         );
 
         return new DataFrame(handle);
@@ -180,18 +526,66 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <summary>
     /// Read a Parquet file asynchronously.
     /// </summary>
-    public static async Task<DataFrame> ReadParquetAsync(string path)
+    public static async Task<DataFrame> ReadParquetAsync(
+        string path,
+        string[]? columns = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
     {
-        var handle = await PolarsWrapper.ReadParquetAsync(path);
+        var handle = await PolarsWrapper.ReadParquetAsync(
+            path,
+            columns ?? [],
+            nRows, 
+            parallel.ToNative(),
+            lowMemory,
+            rowIndexName,
+            rowIndexOffset);
         return new DataFrame(handle);
     }
 
     /// <summary>
-    /// Create a DataFrame directly from a DbDataReader.
-    /// Supports basic types, Arrays (as List), and POCOs (as Struct).
+    /// Create a DataFrame directly from a <see cref="IDataReader"/>.
+    /// <para>
+    /// This method streams data from the reader into Arrow batches, allowing for memory-efficient 
+    /// loading of large datasets from databases (e.g., SQL Server, PostgreSQL, SQLite).
+    /// </para>
+    /// <para>
+    /// It automatically maps C# types to Polars types (e.g., <see cref="decimal"/> to Decimal128, <see cref="DateTime"/> to Timestamp).
+    /// </para>
     /// </summary>
-    /// <param name="reader">The open data reader.</param>
-    /// <param name="batchSize">Number of rows per Arrow batch.</param>
+    /// <param name="reader">The open IDataReader instance.</param>
+    /// <param name="batchSize">The number of rows to process per Arrow batch. Default is 50,000.</param>
+    /// <returns>A new DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// // Mocking a DataTable as a data source
+    /// var table = new System.Data.DataTable();
+    /// table.Columns.Add("Product", typeof(string));
+    /// table.Columns.Add("Price", typeof(decimal)); // Correctly maps to Polars Decimal128
+    /// 
+    /// table.Rows.Add("Laptop", 1234.56m);
+    /// table.Rows.Add("Mouse", 99.99m);
+    /// 
+    /// using IDataReader reader = table.CreateDataReader();
+    /// 
+    /// var df = DataFrame.ReadDatabase(reader);
+    /// df.Show();
+    /// /* Output:
+    /// shape: (2, 2)
+    /// ┌─────────┬─────────────────────────┐
+    /// │ Product ┆ Price                   │
+    /// │ ---     ┆ ---                     │
+    /// │ str     ┆ decimal[38,18]          │
+    /// ╞═════════╪═════════════════════════╡
+    /// │ Laptop  ┆ 1234.560000000000000000 │
+    /// │ Mouse   ┆ 99.990000000000000000   │
+    /// └─────────┴─────────────────────────┘
+    /// */
+    /// </code>
+    /// </example>
     public static DataFrame ReadDatabase(IDataReader reader, int batchSize = 50_000)
     {
         // Get Schema 
@@ -199,20 +593,14 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
         // Get ArrowStream
         var batchEnumerable = reader.ToArrowBatches(batchSize);
-        
-        // Get Enumberator
-        var enumerator = batchEnumerable.GetEnumerator();
 
-        try 
+        var handle = ArrowStreamInterop.ImportEager(batchEnumerable, schema);
+        if (handle.IsInvalid)
         {
-            var handle = ArrowStreamInterop.ImportEager(enumerator, schema);
-            return new DataFrame(handle);
+            var emptyBatch = new RecordBatch(schema, System.Array.Empty<IArrowArray>(), 0);
+            return new DataFrame(ArrowFfiBridge.ImportDataFrame(emptyBatch));
         }
-        catch
-        {
-            enumerator.Dispose();
-            throw;
-        }
+        return new DataFrame(handle);
     }
     // ==========================================
     // Properties
@@ -229,6 +617,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// Return DataFrame Width
     /// </summary>
     public long Width => PolarsWrapper.DataFrameWidth(Handle);  
+    /// <summary>
+    /// Return DataFrame Shape(Len,Width)
+    /// </summary>
+    public (long Len, long Width) Shape => (Len,Width);
     /// <summary>
     /// Return DataFrame Columns' Name
     /// </summary>
@@ -295,28 +687,100 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // DataFrame Operations
     // ==========================================
     /// <summary>
-    /// Select columns
+    /// Select columns from the DataFrame and apply expressions to them.
+    /// <para>
+    /// This is the primary way to project data, rename columns, or compute new columns based on existing ones.
+    /// The result will only contain the columns specified in the expression list.
+    /// </para>
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
+    /// <param name="exprs">A list of expressions defining the columns to select or compute.</param>
+    /// <returns>A new DataFrame containing only the selected/computed columns.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     foo = new[] { 1, 2, 3 },
+    ///     bar = new[] { 6, 7, 8 },
+    ///     ham = new[] { "a", "b", "c" }
+    /// });
+    /// 
+    /// // Select "foo" column and compute a new column "bar_x_2"
+    /// var selected = df.Select(
+    ///     Col("foo"),
+    ///     (Col("bar") * 2).Alias("bar_x_2")
+    /// );
+    /// 
+    /// selected.Show();
+    /// /* Output:
+    /// shape: (3, 2)
+    /// ┌─────┬─────────┐
+    /// │ foo ┆ bar_x_2 │
+    /// │ --- ┆ ---     │
+    /// │ i32 ┆ i32     │
+    /// ╞═════╪═════════╡
+    /// │ 1   ┆ 12      │
+    /// │ 2   ┆ 14      │
+    /// │ 3   ┆ 16      │
+    /// └─────┴─────────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Select(params Expr[] exprs)
     {
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         return new DataFrame(PolarsWrapper.Select(Handle, handles));
     }
     /// <summary>
-    /// Select columns by name.
+    /// Select columns by name (convenience overload).
+    /// <para>
+    /// This is a shortcut for creating <see cref="Polars.Col(string)"/> expressions for each column name.
+    /// </para>
     /// </summary>
+    /// <param name="columns">The names of the columns to select.</param>
+    /// <returns>A new DataFrame containing only the selected columns.</returns>
+    /// <remarks>
+    /// For more advanced selections (renaming, calculations), use <see cref="Select(Expr[])"/>.
+    /// </remarks>
+    /// <seealso cref="Select(Expr[])"/>
     public DataFrame Select(params string[] columns)
     {
         var exprs = columns.Select(Polars.Col).ToArray();
         return Select(exprs);
     }
     /// <summary>
-    /// Filter rows based on a boolean expression. 
+    /// Filter rows based on a boolean expression (predicate).
+    /// <para>
+    /// Retains only the rows where the expression evaluates to true.
+    /// </para>
     /// </summary>
-    /// <param name="expr"></param>
-    /// <returns></returns>
+    /// <param name="expr">A boolean expression to filter by (e.g., Col("a") > 5).</param>
+    /// <returns>A new DataFrame containing only the matching rows.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     foo = new[] { 1, 2, 3 },
+    ///     bar = new[] { 6, 7, 8 },
+    ///     ham = new[] { "a", "b", "c" }
+    /// });
+    /// 
+    /// // Keep rows where "foo" is greater than 1
+    /// var filtered = df.Filter(Col("foo") > 1);
+    /// 
+    /// filtered.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌─────┬─────┬─────┐
+    /// │ foo ┆ bar ┆ ham │
+    /// │ --- ┆ --- ┆ --- │
+    /// │ i32 ┆ i32 ┆ str │
+    /// ╞═════╪═════╪═════╡
+    /// │ 2   ┆ 7   ┆ b   │
+    /// │ 3   ┆ 8   ┆ c   │
+    /// └─────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Filter(Expr expr)
     {
         var h = PolarsWrapper.CloneExpr(expr.Handle);
@@ -324,10 +788,43 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return new DataFrame(PolarsWrapper.Filter(Handle, h));
     }
     /// <summary>
-    /// Filter rows based on a boolean expression. 
+    /// Add new columns to the DataFrame or replace existing ones using expressions.
+    /// <para>
+    /// Unlike <see cref="Select(Expr[])"/>, this method keeps all original columns in the DataFrame 
+    /// and appends the new ones (or replaces them if the names match).
+    /// </para>
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
+    /// <param name="exprs">Expressions defining the new columns to add.</param>
+    /// <returns>A new DataFrame with the original columns plus the new/modified columns.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     foo = new[] { 1, 2, 3 },
+    ///     bar = new[] { 6, 7, 8 },
+    ///     ham = new[] { "a", "b", "c" }
+    /// });
+    /// 
+    /// // Add a "sum" column (foo + bar) while keeping others
+    /// var withCols = df.WithColumns(
+    ///     (Col("foo") + Col("bar")).Alias("sum")
+    /// );
+    /// 
+    /// withCols.Show();
+    /// /* Output:
+    /// shape: (3, 4)
+    /// ┌─────┬─────┬─────┬─────┐
+    /// │ foo ┆ bar ┆ ham ┆ sum │
+    /// │ --- ┆ --- ┆ --- ┆ --- │
+    /// │ i32 ┆ i32 ┆ str ┆ i32 │
+    /// ╞═════╪═════╪═════╪═════╡
+    /// │ 1   ┆ 6   ┆ a   ┆ 7   │
+    /// │ 2   ┆ 7   ┆ b   ┆ 9   │
+    /// │ 3   ┆ 8   ┆ c   ┆ 11  │
+    /// └─────┴─────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame WithColumns(params Expr[] exprs)
     {
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
@@ -385,8 +882,48 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     }
 
     /// <summary>
-    /// Sort the DataFrame by multiple columns with specific sort orders.
+    /// Sort the DataFrame by multiple columns with specific sort orders for each column.
+    /// <para>
+    /// This allows for complex sorting, such as sorting by Category (Ascending) and then by Price (Descending).
+    /// </para>
     /// </summary>
+    /// <param name="columns">Names of the columns to sort by.</param>
+    /// <param name="descending">Array of booleans indicating sort order for each column (false=Ascending, true=Descending).</param>
+    /// <param name="nullsLast">Array of booleans indicating whether nulls should be placed at the end for each column.</param>
+    /// <param name="maintainOrder">Whether to maintain the relative order of rows with equal keys (stable sort). Expensive.</param>
+    /// <returns>A new sorted DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     group = new[] { "A", "A", "B", "B", "A" },
+    ///     val = new[] { 10, 5, 20, 15, 8 }
+    /// });
+    /// 
+    /// // Sort by "group" (Ascending) then by "val" (Descending)
+    /// var sorted = df.Sort(
+    ///     columns: new[] { "group", "val" }, 
+    ///     descending: new[] { false, true }, // false=Asc, true=Desc
+    ///     nullsLast: new[] { false, false }
+    /// );
+    /// 
+    /// sorted.Show();
+    /// /* Output:
+    /// shape: (5, 2)
+    /// ┌───────┬─────┐
+    /// │ group ┆ val │
+    /// │ ---   ┆ --- │
+    /// │ str   ┆ i32 │
+    /// ╞═══════╪═════╡
+    /// │ A     ┆ 10  │
+    /// │ A     ┆ 8   │
+    /// │ A     ┆ 5   │
+    /// │ B     ┆ 20  │
+    /// │ B     ┆ 15  │
+    /// └───────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Sort(
         string[] columns, 
         bool[] descending, 
@@ -487,28 +1024,131 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <returns></returns>
     public DataFrame Tail(int n = 5) => new(PolarsWrapper.Tail(Handle, (uint)n));
     /// <summary>
-    /// Explode a list or structure in a Column
+    /// Explode list/array columns into multiple rows.
+    /// <para>
+    /// This un-nests list columns. If multiple columns are provided, they are exploded in parallel.
+    /// Note: The list columns being exploded must have the same length for each row.
+    /// </para>
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
-    public DataFrame Explode(params Expr[] exprs)
+    /// <param name="columns">Expressions selecting the columns to explode.</param>
+    /// <returns>A new DataFrame where list elements are expanded into rows.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     id = new[] { 1, 2 },
+    ///     tags = new[] { new[] { "apple", "orange" }, new[] { "banana" } },
+    ///     scores = new[] { new[] { 10, 20 }, new[] { 30 } }
+    /// });
+    /// 
+    /// // Explode "tags" and "scores" columns simultaneously
+    /// var exploded = df.Explode(["tags","scores"]);
+    /// 
+    /// exploded.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────┬────────┬────────┐
+    /// │ id  ┆ tags   ┆ scores │
+    /// │ --- ┆ ---    ┆ ---    │
+    /// │ i32 ┆ str    ┆ i32    │
+    /// ╞═════╪════════╪════════╡
+    /// │ 1   ┆ apple  ┆ 10     │
+    /// │ 1   ┆ orange ┆ 20     │
+    /// │ 2   ┆ banana ┆ 30     │
+    /// └─────┴────────┴────────┘
+    /// */
+    /// </code>
+    /// </example>
+    public DataFrame Explode(params string[] columns)
     {
-        var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
-        return new DataFrame(PolarsWrapper.Explode(Handle, handles));
+        using var sel = Selector.Cols(columns);
+        return Explode(sel);
+    }
+    /// <summary>
+    /// Explode list/array columns into multiple rows using selector.
+    /// </summary>
+    /// <param name="selector"></param>
+    /// <returns></returns>
+    public DataFrame Explode(Selector selector)
+    {
+        var sh = selector.CloneHandle();
+        return new DataFrame(PolarsWrapper.Explode(Handle, sh));
     }
     /// <summary>
     /// Decompose a struct column into multiple columns.
+    /// <para>
+    /// This is useful for flattening nested JSON-like data.
+    /// </para>
     /// </summary>
-    /// <param name="columns">The struct columns to unnest.</param>
-    /// <param name="separator">Optional separator between struct column name and field name.</param>
+    /// <param name="columns">The names of the struct columns to unnest.</param>
+    /// <param name="separator">
+    /// Optional separator to append to the struct field names (e.g., "struct_col.field"). 
+    /// If null, the field names replace the struct column name directly.
+    /// </param>
+    /// <returns>A new DataFrame with the struct columns expanded.</returns>
+    /// <example>
+    /// <code>
+    /// var data = new[] { new { User = new { Name = "Alice", Age = 30 } } };
+    /// var df = DataFrame.From(data);
+    /// 
+    /// // Unnest with a separator to avoid name collisions
+    /// // Result columns: "User_Name", "User_Age"
+    /// var unnested = df.Unnest(new[] { "User" }, separator: "_");
+    /// unnested.Show();
+    /// /* Output:
+    /// shape: (1, 2)
+    /// ┌───────────┬──────────┐
+    /// │ User_Name ┆ User_Age │
+    /// │ ---       ┆ ---      │
+    /// │ str       ┆ i32      │
+    /// ╞═══════════╪══════════╡
+    /// │ Alice     ┆ 30       │
+    /// └───────────┴──────────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Unnest(string[] columns,string? separator=null)
     {
         var newHandle = PolarsWrapper.Unnest(Handle, columns,separator);
         return new DataFrame(newHandle);
     }
     /// <summary>
-    /// Decompose a struct column into multiple columns (Default separator).
+    /// Decompose a struct column into multiple columns (one for each field in the struct).
+    /// <para>
+    /// This is useful for flattening nested JSON-like data or composite types.
+    /// The original struct column is replaced by its fields.
+    /// </para>
     /// </summary>
+    /// <param name="columns">The names of the struct columns to unnest.</param>
+    /// <returns>A new DataFrame with the struct columns expanded.</returns>
+    /// <example>
+    /// <code>
+    /// // Create a DataFrame with a nested structure (simulating JSON)
+    /// var nestedData = new[] 
+    /// {
+    ///     new { Id = 1, User = new { Name = "Alice", City = "NY" } },
+    ///     new { Id = 2, User = new { Name = "Bob",   City = "LA" } }
+    /// };
+    /// 
+    /// var df = DataFrame.From(nestedData);
+    /// 
+    /// // Unnest the "User" column into "Name" and "City"
+    /// var unnested = df.Unnest("User");
+    /// 
+    /// unnested.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌─────┬───────┬──────┐
+    /// │ Id  ┆ Name  ┆ City │
+    /// │ --- ┆ ---   ┆ ---  │
+    /// │ i32 ┆ str   ┆ str  │
+    /// ╞═════╪═══════╪══════╡
+    /// │ 1   ┆ Alice ┆ NY   │
+    /// │ 2   ┆ Bob   ┆ LA   │
+    /// └─────┴───────┴──────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Unnest(params string[] columns) => Unnest(columns, separator: null);
     // ==========================================
     // Data Cleaning / Structure Ops
@@ -529,6 +1169,46 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     /// <param name="subset">Column names to consider. If null/empty, checks all columns.</param>
     public DataFrame DropNulls(params string[]? subset) => new(PolarsWrapper.DropNulls(Handle, subset));
+    /// <summary>
+    /// Get unique rows of this DataFrame maintaining the original order.
+    /// </summary>
+    /// <param name="subset">Columns to consider. If null, use all columns.</param>
+    /// <param name="keep">Strategy to keep duplicates.</param>
+    /// <returns>New DataFrame with unique rows.</returns>
+    public DataFrame Unique(string[]? subset = null, UniqueKeepStrategy keep = UniqueKeepStrategy.First)
+    {
+        var h = PolarsWrapper.DataFrameUniqueStable(Handle, subset, keep.ToNative(), null);
+        return new DataFrame(h);
+    }
+
+    /// <summary>
+    /// Get unique rows with slicing support.
+    /// </summary>
+    public DataFrame Unique(
+        string[]? subset, 
+        UniqueKeepStrategy keep, 
+        long offset, 
+        ulong len)
+    {
+        var h = PolarsWrapper.DataFrameUniqueStable(Handle, subset, keep.ToNative(), (offset, len));
+        return new DataFrame(h);
+    }
+    /// <summary>
+    /// Slice the DataFrame along the rows.
+    /// </summary>
+    /// <param name="offset">Start index. Negative values work as expected (counting from the end).</param>
+    /// <param name="length">Length of the slice.</param>
+    /// <returns>A new sliced DataFrame.</returns>
+    public DataFrame Slice(long offset, ulong length)
+        => new(PolarsWrapper.Slice(Handle, offset, length));
+    /// <summary>
+    /// Slice the DataFrame along the rows (Convenience overload for int).
+    /// </summary>
+    public DataFrame Slice(int offset, int length)
+    {
+        if (length < 0) throw new ArgumentOutOfRangeException(nameof(length), "Length must be non-negative.");
+        return Slice((long)offset, (ulong)length);
+    }
 
     // ==========================================
     // Sampling
@@ -550,127 +1230,605 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // Combining DataFrames
     // ==========================================
     /// <summary>
-    /// Join with another DataFrame
+    /// Join with another DataFrame using expression expressions.
     /// </summary>
-    /// <param name="other"></param>
-    /// <param name="leftOn"></param>
-    /// <param name="rightOn"></param>
-    /// <param name="how"></param>
-    /// <returns></returns>
-    public DataFrame Join(DataFrame other, Expr[] leftOn, Expr[] rightOn, JoinType how = JoinType.Inner)
+    /// <param name="other">DataFrame to join with.</param>
+    /// <param name="leftOn">Left keys.</param>
+    /// <param name="rightOn">Right keys.</param>
+    /// <param name="how">Join type (Inner, Left, etc.).</param>
+    /// <param name="suffix">Suffix to append to columns with same name in right DataFrame. Default "_right".</param>
+    /// <param name="validation">Check if join keys are unique.</param>
+    /// <param name="coalesce">How to coalesce the join keys.</param>
+    /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="nullsEqual">Consider nulls as equal.</param>
+    /// <param name="sliceOffset">Slice the result starting at this offset.</param>
+    /// <param name="sliceLen">Length of the slice.</param>
+    public DataFrame Join(
+        DataFrame other, 
+        Expr[] leftOn, 
+        Expr[] rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
+        // 1. Clone Expression Handles
         var lHandles = leftOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         var rHandles = rightOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
 
-    return new DataFrame(PolarsWrapper.Join(
+        // 2. Call Wrapper with all arguments
+        var dfHandle = PolarsWrapper.Join(
             Handle, 
             other.Handle, 
             lHandles, 
             rHandles, 
-            how.ToNative()
-        ));
+            how.ToNative(),
+            suffix,
+            validation.ToNative(),
+            coalesce.ToNative(),
+            maintainOrder.ToNative(),
+            nullsEqual,
+            sliceOffset,
+            sliceLen
+        );
+
+        return new DataFrame(dfHandle);
     }
     /// <summary>
     /// Join with another DataFrame using column names.
     /// </summary>
-    public DataFrame Join(DataFrame other, string[] leftOn, string[] rightOn, JoinType how = JoinType.Inner)
+    /// <param name="other">The right DataFrame to join with.</param>
+    /// <param name="leftOn">Column names in the left DataFrame to join on.</param>
+    /// <param name="rightOn">Column names in the right DataFrame to join on.</param>
+    /// <param name="how">Type of join (Inner, Left, Outer, Cross, etc.). Default is Inner.</param>
+    /// <param name="suffix">Suffix to append to columns with same name in right DataFrame. Default "_right".</param>
+    /// <param name="validation">Check if join keys are unique.</param>
+    /// <param name="coalesce">How to coalesce the join keys.</param>
+    /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="nullsEqual">Consider nulls as equal.</param>
+    /// <param name="sliceOffset">Slice the result starting at this offset.</param>
+    /// <param name="sliceLen">Length of the slice.</param>
+    /// <returns>A new DataFrame resulting from the join.</returns>
+    /// <example>
+    /// <code>
+    /// var dfCustomers = DataFrame.FromColumns(new
+    /// {
+    ///     id = new[] { 1, 2, 3 },
+    ///     name = new[] { "Alice", "Bob", "Charlie" }
+    /// });
+    /// 
+    /// var dfOrders = DataFrame.FromColumns(new
+    /// {
+    ///     id = new[] { 1, 2, 4 },
+    ///     amount = new[] { 100, 200, 500 }
+    /// });
+    /// 
+    /// // Perform an Inner Join on the "id" column
+    /// var joined = dfCustomers.Join(
+    ///     dfOrders, 
+    ///     leftOn: new[] { "id" }, 
+    ///     rightOn: new[] { "id" }, 
+    ///     how: JoinType.Inner
+    /// );
+    /// 
+    /// joined.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌─────┬───────┬────────┐
+    /// │ id  ┆ name  ┆ amount │
+    /// │ --- ┆ ---   ┆ ---    │
+    /// │ i32 ┆ str   ┆ i32    │
+    /// ╞═════╪═══════╪════════╡
+    /// │ 1   ┆ Alice ┆ 100    │
+    /// │ 2   ┆ Bob   ┆ 200    │
+    /// └─────┴───────┴────────┘
+    /// */
+    /// </code>
+    /// </example>
+    public DataFrame Join(
+        DataFrame other, 
+        string[] leftOn, 
+        string[] rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
-        var lExprs = leftOn.Select(c => Polars.Col(c)).ToArray();
-        var rExprs = rightOn.Select(c => Polars.Col(c)).ToArray();
-
-        return Join(other, lExprs, rExprs, how);
+        var lExprs = leftOn.Select(Polars.Col).ToArray();
+        var rExprs = rightOn.Select(Polars.Col).ToArray();
+        return Join(
+            other, 
+            lExprs, 
+            rExprs, 
+            how, 
+            suffix, 
+            validation, 
+            coalesce, 
+            maintainOrder, 
+            nullsEqual, 
+            sliceOffset, 
+            sliceLen
+        );
     }
 
     /// <summary>
-    /// Join with another DataFrame using a single column pair.
+    /// Join with another DataFrame using a single column pair (Convenience overload).
     /// </summary>
-    public DataFrame Join(DataFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
-        => Join(other, [leftOn], [rightOn], how);
-    /// <summary>
-    /// Perform an As-Of Join (time-series join).
-    /// <para>
-    /// This is an Eager operation that executes via the Lazy engine.
-    /// The keys must be sorted.
-    /// </para>
-    /// </summary>
+    /// <param name="other">The right DataFrame to join with.</param>
+    /// <param name="leftOn">The column name in the left DataFrame.</param>
+    /// <param name="rightOn">The column name in the right DataFrame.</param>
+    /// <param name="how">Type of join. Default is Inner.</param>
+    /// <param name="suffix">Suffix to append to columns with same name in right DataFrame. Default "_right".</param>
+    /// <param name="validation">Check if join keys are unique.</param>
+    /// <param name="coalesce">How to coalesce the join keys.</param>
+    /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="nullsEqual">Consider nulls as equal.</param>
+    /// <param name="sliceOffset">Slice the result starting at this offset.</param>
+    /// <param name="sliceLen">Length of the slice.</param>
+    /// <seealso cref="Join(DataFrame, string[], string[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,bool,long?,ulong)"/>
+    public DataFrame Join(
+        DataFrame other, 
+        string leftOn, 
+        string rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
+    {
+        return Join(
+            other, 
+            [leftOn], 
+            [rightOn], 
+            how, 
+            suffix, 
+            validation, 
+            coalesce, 
+            maintainOrder, 
+            nullsEqual, 
+            sliceOffset, 
+            sliceLen
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <example>
+    /// <code>
+    /// // Trades: Events happening at specific times
+    /// var trades = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] { 10, 20, 30 },
+    ///     stock = new[] { "A", "A", "A" }
+    /// });
+    /// 
+    /// // Quotes: Price updates (irregular intervals)
+    /// // 9->100, 15->101, 25->102, 40->103
+    /// var quotes = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] { 9, 15, 25, 40 },
+    ///     bid = new[] { 100, 101, 102, 103 }
+    /// });
+    /// 
+    /// // Find the latest quote BEFORE or AT the trade time
+    /// var asof = trades.JoinAsOf(
+    ///     quotes, 
+    ///     leftOn: Col("time"), 
+    ///     rightOn: Col("time"),
+    ///     strategy: AsofStrategy.Backward
+    /// );
+    /// 
+    /// asof.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌──────┬───────┬─────┐
+    /// │ time ┆ stock ┆ bid │
+    /// │ ---  ┆ ---   ┆ --- │
+    /// │ i32  ┆ str   ┆ i32 │
+    /// ╞══════╪═══════╪═════╡
+    /// │ 10   ┆ A     ┆ 100 │ // Matches time 9
+    /// │ 20   ┆ A     ┆ 101 │ // Matches time 15
+    /// │ 30   ┆ A     ┆ 102 │ // Matches time 25
+    /// └──────┴───────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
+    internal DataFrame JoinAsOf(
+        DataFrame other, 
+        Expr leftOn, Expr rightOn, 
+        string? toleranceStr = null,
+        long? toleranceInt = null,
+        double? toleranceFloat = null,
+        AsofStrategy strategy = AsofStrategy.Backward,
+        Expr[]? leftBy = null,
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
+    {
+        return this.Lazy().JoinAsOf(
+            other.Lazy(),
+            leftOn, rightOn,
+            toleranceStr,
+            toleranceInt,
+            toleranceFloat,
+            strategy,
+            leftBy,
+            rightBy,
+            allowEq,
+            checkSorted,
+            suffix,
+            validation,
+            coalesce,
+            maintainOrder,
+            nullsEqual,
+            sliceOffset,
+            sliceLen
+        ).Collect();
+    }
+
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
-        string? tolerance = null,
-        string strategy = "backward",
+        string tolerance,
+        AsofStrategy strategy = AsofStrategy.Backward,
         Expr[]? leftBy = null,
-        Expr[]? rightBy = null)
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
-        return this.Lazy()
-            .JoinAsOf(
-                other.Lazy(), 
-                leftOn, 
-                rightOn, 
-                tolerance, 
-                strategy, 
-                leftBy, 
-                rightBy
-            )
-            .Collect();
+        return JoinAsOf(
+            other,
+            leftOn,
+            rightOn,
+            tolerance,
+            null,null,
+            strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
+            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+        );
     }
 
-    /// <summary>
-    /// Perform an As-Of Join with tolerance as timespan (time-series join).
-    /// </summary>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
         TimeSpan tolerance,
-        string strategy = "backward",
+        AsofStrategy strategy = AsofStrategy.Backward,
         Expr[]? leftBy = null,
-        Expr[]? rightBy = null)
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
         return JoinAsOf(
             other,
             leftOn,
             rightOn,
             DurationFormatter.ToPolarsString(tolerance),
-            strategy,
-            leftBy,
-            rightBy
+            null,null,
+            strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
+            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
         );
     }
-    /// <summary>
-    /// Concatenate multiple DataFrames
-    /// </summary>
-    /// <param name="dfs"></param>
-    /// <param name="how"></param>
-    /// <returns></returns>
-    public static DataFrame Concat(IEnumerable<DataFrame> dfs, ConcatType how = ConcatType.Vertical)
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    public DataFrame JoinAsOf(
+        DataFrame other, 
+        Expr leftOn, Expr rightOn, 
+        int tolerance,
+        AsofStrategy strategy = AsofStrategy.Backward,
+        Expr[]? leftBy = null,
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
-        var handles = dfs.Select(d => PolarsWrapper.CloneDataFrame(d.Handle)).ToArray();
-        
-        return new DataFrame(PolarsWrapper.Concat(handles, how.ToNative()));
+        return JoinAsOf(
+            other,
+            leftOn,
+            rightOn,
+            null,
+            tolerance,null,
+            strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
+            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+        );
     }
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    public DataFrame JoinAsOf(
+        DataFrame other, 
+        Expr leftOn, Expr rightOn, 
+        double tolerance,
+        AsofStrategy strategy = AsofStrategy.Backward,
+        Expr[]? leftBy = null,
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
+    {
+        return JoinAsOf(
+            other,
+            leftOn,
+            rightOn,
+            null,
+            null,tolerance,
+            strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
+            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+        );
+    }
+
+    private static DataFrame ConcatInternal(IEnumerable<DataFrame> dfs, PlConcatType how, bool checkDuplicates)
+    {
+        var dfList = dfs.ToList();
+        if (dfList.Count == 0) return new DataFrame();
+
+
+        var handles = dfList.Select(df => df.Clone().Handle).ToArray();
+
+        var h = PolarsWrapper.Concat(handles, how, checkDuplicates);
+        return new DataFrame(h);
+    }
+    /// <summary>
+    /// Concatenate multiple DataFrames either vertically (union) or horizontally.
+    /// </summary>
+    /// <param name="dfs">A collection of DataFrames to concatenate.</param>
+    /// <returns>A new combined DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// var df1 = DataFrame.FromColumns(new
+    /// {
+    ///     a = new[] { 1, 2 },
+    ///     b = new[] { 10, 20 }
+    /// });
+    /// 
+    /// var df2 = DataFrame.FromColumns(new
+    /// {
+    ///     a = new[] { 3, 4 },
+    ///     b = new[] { 30, 40 }
+    /// });
+    /// 
+    /// // Vertical Concat (Union rows)
+    /// var catVertical = DataFrame.ConcatVertical(new[] { df1, df2 });
+    /// catVertical.Show();
+    /// /* Output:
+    /// shape: (4, 2)
+    /// ┌─────┬─────┐
+    /// │ a   ┆ b   │
+    /// │ --- ┆ --- │
+    /// │ i32 ┆ i32 │
+    /// ╞═════╪═════╡
+    /// │ 1   ┆ 10  │
+    /// │ 2   ┆ 20  │
+    /// │ 3   ┆ 30  │
+    /// │ 4   ┆ 40  │
+    /// └─────┴─────┘
+    /// */
+    /// 
+    /// // Horizontal Concat (Append columns)
+    /// var df3 = DataFrame.FromColumns(new { c = new[] { "x", "y" } });
+    /// var catHorizontal = DataFrame.ConcatHorizontal(new[] { df1, df3 });
+    /// catHorizontal.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌─────┬─────┬─────┐
+    /// │ a   ┆ b   ┆ c   │
+    /// │ --- ┆ --- ┆ --- │
+    /// │ i32 ┆ i32 ┆ str │
+    /// ╞═════╪═════╪═════╡
+    /// │ 1   ┆ 10  ┆ x   │
+    /// │ 2   ┆ 20  ┆ y   │
+    /// └─────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
+    public static DataFrame Concat(IEnumerable<DataFrame> dfs)
+    {
+        return ConcatInternal(dfs, PlConcatType.Vertical, true);
+    }
+    /// <summary>
+    /// Horizontal concatenation of DataFrames.
+    /// </summary>
+    /// <param name="dfs">DataFrames to concat.</param>
+    /// <param name="checkDuplicates">
+    /// If true, check that the column names are unique. 
+    /// If multiple columns have the same name, they will be dropped.
+    /// </param>
+    public static DataFrame ConcatHorizontal(IEnumerable<DataFrame> dfs, bool checkDuplicates = true)
+    {
+        return ConcatInternal(dfs, PlConcatType.Horizontal, checkDuplicates);
+    }
+    /// <summary>
+    /// Diagonal concatenation of DataFrames.
+    /// </summary>
+    public static DataFrame ConcatDiagonal(IEnumerable<DataFrame> dfs)
+    {
+        return ConcatInternal(dfs, PlConcatType.Diagonal, true);
+    }
+
+    // ==========================================
+    // Stack Ops
+    // ==========================================
+
+    /// <summary>
+    /// Horizontally stack columns to the DataFrame.
+    /// Returns a new DataFrame with the new columns appended.
+    /// </summary>
+    /// <param name="columns">The series to stack.</param>
+    public DataFrame HStack(IEnumerable<Series> columns)
+    {
+        var colsArray = columns as Series[] ?? columns.ToArray();
+        var handles = colsArray.Select(s => s.Handle).ToArray();
+        
+        return new DataFrame(PolarsWrapper.HStack(Handle, handles));
+    }
+
+    /// <summary>
+    /// Horizontally stack columns to the DataFrame.
+    /// </summary>
+    public DataFrame HStack(params Series[] columns) => HStack((IEnumerable<Series>)columns);
+
+    /// <summary>
+    /// Vertically stack another DataFrame to this one.
+    /// Checks that the schema matches.
+    /// </summary>
+    /// <param name="other">The DataFrame to stack vertically.</param>
+    public DataFrame VStack(DataFrame other)
+        => new(PolarsWrapper.VStack(Handle, other.Handle));
 
     // ==========================================
     // GroupBy
     // ==========================================
     /// <summary>
-    /// Group by keys and apply aggregations.
+    /// Start a GroupBy operation to perform aggregations on groups of data.
+    /// <para>
+    /// This returns a <see cref="GroupByBuilder"/> which allows you to specify the aggregation functions 
+    /// (like Sum, Min, Max, Count) using the <c>.Agg()</c> method.
+    /// </para>
     /// </summary>
-    /// <param name="by"></param>
-    /// <returns></returns>
+    /// <param name="by">Expressions defining the columns to group by.</param>
+    /// <returns>A builder object to define aggregations.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     group = new[] { "A", "A", "B", "B", "B" },
+    ///     val1 = new[] { 1, 2, 3, 4, 5 },
+    ///     val2 = new[] { 10, 20, 10, 20, 30 }
+    /// });
+    /// 
+    /// // Group by "group" and calculate:
+    /// // 1. Sum of val1
+    /// // 2. Max of val2 (aliased to "max_val2")
+    /// // 3. Count of elements in the group
+    /// var grouped = df.GroupBy(Col("group")).Agg(
+    ///     Col("val1").Sum(),
+    ///     Col("val2").Max().Alias("max_val2"),
+    ///     Col("val1").Count().Alias("count")
+    /// );
+    /// 
+    /// grouped.Sort("group").Show();
+    /// /* Output:
+    /// shape: (2, 4)
+    /// ┌───────┬──────┬──────────┬───────┐
+    /// │ group ┆ val1 ┆ max_val2 ┆ count │
+    /// │ ---   ┆ ---  ┆ ---      ┆ ---   │
+    /// │ str   ┆ i32  ┆ i32      ┆ u32   │
+    /// ╞═══════╪══════╪══════════╪═══════╡
+    /// │ A     ┆ 3    ┆ 20       ┆ 2     │
+    /// │ B     ┆ 12   ┆ 30       ┆ 3     │
+    /// └───────┴──────┴──────────┴───────┘
+    /// */
+    /// </code>
+    /// </example>
     public GroupByBuilder GroupBy(params Expr[] by) => new (this, by);
     /// <summary>
-    /// Group by column names.
+    /// Start a GroupBy operation using column names (convenience overload).
     /// </summary>
+    /// <param name="columns">Names of the columns to group by.</param>
+    /// <returns>A builder object to define aggregations.</returns>
+    /// <remarks>
+    /// For more complex grouping logic (expressions), use <see cref="GroupBy(Expr[])"/>.
+    /// </remarks>
+    /// <seealso cref="GroupBy(Expr[])"/>
     public GroupByBuilder GroupBy(params string[] columns)
     {
         var exprs = columns.Select(Polars.Col).ToArray();
         return GroupBy(exprs);
     }
     /// <summary>
-    /// Group by dynamic windows based on a time index.
+    /// Group based on a time index using dynamic windows (Rolling/Resampling).
     /// <para>
-    /// This is an Eager operation that executes via the Lazy engine for performance.
+    /// This is essential for time-series analysis, allowing you to downsample data (e.g., 1-minute data to 1-hour bars).
     /// </para>
     /// </summary>
+    /// <param name="indexColumn">The column containing time/date data (must be sorted).</param>
+    /// <param name="every">The interval at which to start a new window (e.g., "1h", "1d"). Also known as the step size.</param>
+    /// <param name="period">The duration of each window. If null, defaults to <paramref name="every"/>.</param>
+    /// <param name="offset">Offset to shift the window start times.</param>
+    /// <param name="by">Optional extra columns to group by (e.g., group by "stock_symbol" AND time window).</param>
+    /// <param name="label">Which label to use for the window (Left boundary, Right boundary, or Datapoint).</param>
+    /// <param name="includeBoundaries">Whether to include the window boundaries in the output.</param>
+    /// <param name="closedWindow">Which side of the window interval is closed (inclusive).</param>
+    /// <param name="startBy">Strategy to determine the start of the first window.</param>
+    /// <returns>A <see cref="DynamicGroupBy"/> object to define aggregations.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] 
+    ///     { 
+    ///         new DateTime(2024, 1, 1, 10, 0, 0),
+    ///         new DateTime(2024, 1, 1, 10, 30, 0), // Inside 10:00-11:00 window
+    ///         new DateTime(2024, 1, 1, 11, 0, 0), // Start of next window
+    ///         new DateTime(2024, 1, 1, 11, 15, 0),
+    ///         new DateTime(2024, 1, 2, 09, 0, 0)
+    ///     },
+    ///     val = new[] { 1, 2, 3, 4, 5 }
+    /// });
+    /// 
+    /// // Group into 1-hour windows based on "time"
+    /// var dynamicGrouped = df.GroupByDynamic(
+    ///     indexColumn: "time", 
+    ///     every: TimeSpan.FromHours(1)
+    /// ).Agg(
+    ///     Col("val").Sum().Alias("total_val"),
+    ///     Col("val").Count().Alias("count")
+    /// );
+    /// 
+    /// dynamicGrouped.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────────────────────┬───────────┬───────┐
+    /// │ time                ┆ total_val ┆ count │
+    /// │ ---                 ┆ ---       ┆ ---   │
+    /// │ datetime[μs]        ┆ i32       ┆ u32   │
+    /// ╞═════════════════════╪═══════════╪═══════╡
+    /// │ 2024-01-01 10:00:00 ┆ 3         ┆ 2     │ // 10:00 + 10:30
+    /// │ 2024-01-01 11:00:00 ┆ 7         ┆ 2     │ // 11:00 + 11:15
+    /// │ 2024-01-02 09:00:00 ┆ 5         ┆ 1     │
+    /// └─────────────────────┴───────────┴───────┘
+    /// */
+    /// </code>
+    /// </example>
     public DynamicGroupBy GroupByDynamic(
         string indexColumn,
         TimeSpan every,
@@ -702,24 +1860,136 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     /// <summary>
     /// Pivot the DataFrame from long to wide format.
+    /// <para>
+    /// This creates a new column for each unique value in the <paramref name="columns"/> argument.
+    /// The values in the new columns come from the <paramref name="values"/> column.
+    /// </para>
     /// </summary>
-    /// <param name="index"></param>
-    /// <param name="columns"></param>
-    /// <param name="values"></param>
-    /// <param name="agg"></param>
-    /// <returns></returns>
-    public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg agg = PivotAgg.First)
-        => new(PolarsWrapper.Pivot(Handle, index, columns, values, agg.ToNative()));
+    /// <param name="index">Column names to use as the index (the rows).</param>
+    /// <param name="columns">Column names to use for the new column headers.</param>
+    /// <param name="values">Column names to use for the values in the cells.</param>
+    /// <param name="aggregateFunction">Aggregation function to use if multiple values exist for an index/column pair. Default is First.</param>
+    /// <param name="sortColumns">Sort the transposed columns by name. Default is by order of discovery.</param>
+    /// <param name="separator">Used as separator/delimiter in generated column names in case of multiple values columns.</param>
+    /// <returns>A wide-format DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// var dfLong = DataFrame.FromColumns(new
+    /// {
+    ///     date = new[] { "2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02" },
+    ///     country = new[] { "US", "CN", "US", "CN" },
+    ///     sales = new[] { 100, 200, 110, 220 }
+    /// });
+    /// 
+    /// // Pivot: rows=date, cols=country, values=sales
+    /// var pivoted = dfLong.Pivot(
+    ///     index: new[] { "date" }, 
+    ///     columns: new[] { "country" }, 
+    ///     values: new[] { "sales" }
+    /// );
+    /// 
+    /// pivoted.Show();
+    /// /* Output:
+    /// shape: (2, 3)
+    /// ┌────────────┬─────┬─────┐
+    /// │ date       ┆ US  ┆ CN  │
+    /// │ ---        ┆ --- ┆ --- │
+    /// │ str        ┆ i32 ┆ i32 │
+    /// ╞════════════╪═════╪═════╡
+    /// │ 2024-01-01 ┆ 100 ┆ 200 │
+    /// │ 2024-01-02 ┆ 110 ┆ 220 │
+    /// └────────────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
+    public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg aggregateFunction = PivotAgg.First,bool sortColumns =false,string? separator=null)
+        => new(PolarsWrapper.Pivot(Handle, index, columns, values,null, aggregateFunction.ToNative(),sortColumns,separator));
+    /// <summary>
+    /// Pivot a DataFrame with a custom aggregation expression.
+    /// </summary>
+    /// <param name="index">Column names to use as index.</param>
+    /// <param name="columns">Column names to use as columns.</param>
+    /// <param name="values">Column names to use as values.</param>
+    /// <param name="aggregateExpr">
+    /// A custom expression to aggregate the values (e.g., <c>pl.Col("val").Sum() * 100</c>).
+    /// </param>
+    /// <param name="sortColumns">
+    /// Sort the transposed columns.
+    /// </param>
+    /// <param name="separator">
+    /// Separator used to combine column names when multiple value columns are selected.
+    /// </param>
+    /// <returns>Pivoted DataFrame.</returns>
+    public DataFrame Pivot(
+        string[] index,
+        string[] columns,
+        string[] values,
+        Expr aggregateExpr,
+        bool sortColumns = false,
+        string? separator = null)
+    {
+        var exprHandle = PolarsWrapper.CloneExpr(aggregateExpr.Handle);
+
+        var h = PolarsWrapper.Pivot(
+            Handle,
+            index,
+            columns,
+            values,
+            exprHandle,
+            (PlPivotAgg)0, // Dummy value, ignored by Rust when Expr is present
+            sortColumns,
+            separator
+        );
+
+        return new DataFrame(h);
+    }
     /// <summary>
     /// Unpivot (Melt) the DataFrame from wide to long format.
+    /// <para>
+    /// This is the reverse of <see cref="Pivot(string[], string[], string[], PivotAgg, bool, string?)"/>. It collapses multiple columns into key-value pairs.
+    /// </para>
     /// </summary>
-    /// <param name="index"></param>
-    /// <param name="on"></param>
-    /// <param name="variableName"></param>
-    /// <param name="valueName"></param>
-    /// <returns></returns>
+    /// <param name="index">Column names to keep as identifiers (id_vars).</param>
+    /// <param name="on">Column names to unpivot/melt (value_vars).</param>
+    /// <param name="variableName">Name for the new variable column (default "variable").</param>
+    /// <param name="valueName">Name for the new value column (default "value").</param>
+    /// <returns>A long-format DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// // Using the 'pivoted' DataFrame from the Pivot example
+    /// // shape: (2, 3) [date, US, CN]
+    /// 
+    /// // Unpivot back to long format
+    /// var melted = pivoted.Unpivot(
+    ///     index: new[] { "date" },
+    ///     on: new[] { "CN", "US" },
+    ///     variableName: "country",
+    ///     valueName: "sales"
+    /// );
+    /// 
+    /// melted.Sort(new[] { "date", "country" }).Show();
+    /// /* Output:
+    /// shape: (4, 3)
+    /// ┌────────────┬─────────┬───────┐
+    /// │ date       ┆ country ┆ sales │
+    /// │ ---        ┆ ---     ┆ ---   │
+    /// │ str        ┆ str     ┆ i32   │
+    /// ╞════════════╪═════════╪═══════╡
+    /// │ 2024-01-01 ┆ CN      ┆ 200   │
+    /// │ 2024-01-01 ┆ US      ┆ 100   │
+    /// │ 2024-01-02 ┆ CN      ┆ 220   │
+    /// │ 2024-01-02 ┆ US      ┆ 110   │
+    /// └────────────┴─────────┴───────┘
+    /// */
+    /// </code>
+    /// </example>
     public DataFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
-        => new(PolarsWrapper.Unpivot(Handle, index, on, variableName, valueName));
+    {
+        using var sIndex = Selector.Cols(index);
+        using var sOn = Selector.Cols(on);
+
+        return Unpivot(sIndex, sOn, variableName, valueName);
+    }
     /// <summary>
     /// Unpivot (Melt) the DataFrame from wide to long format.
     /// </summary>
@@ -728,6 +1998,16 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="variableName"></param>
     /// <param name="valueName"></param>
     /// <returns></returns>
+    public DataFrame Unpivot(Selector index, Selector on, string variableName = "variable", string valueName = "value")
+    {
+        var indexClone = index.CloneHandle();
+        var onClone = on.CloneHandle();
+        return new DataFrame(PolarsWrapper.Unpivot(Handle, indexClone, onClone, variableName, valueName));
+    }
+    /// <summary>
+    /// Alias for <see cref="Unpivot(string[], string[], string, string)"/>. Melts the DataFrame from wide to long format.
+    /// </summary>
+    /// <seealso cref="Unpivot(string[], string[], string, string)"/>
     public DataFrame Melt(string[] index, string[] on, string variableName = "variable", string valueName = "value") 
         => Unpivot(index, on, variableName, valueName);
 
@@ -735,29 +2015,163 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // IO Write
     // ==========================================
     /// <summary>
-    /// Write DataFrame to CSV File
+    /// Write DataFrame to a comma-separated values (CSV) file.
     /// </summary>
-    /// <param name="path"></param>
-    public void WriteCsv(string path)
-        => PolarsWrapper.WriteCsv(Handle, path);
+    /// <param name="path">The output file path.</param>
+    /// <param name="hasHeader">Whether to include the header row. Defaults to true.</param>
+    /// <param name="useBom">Whether to include the UTF-8 Byte Order Mark (BOM). Useful for Excel compatibility. Defaults to false.</param>
+    /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
+    /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'.</param>
+    /// <param name="quoteStyle">The quoting style to use. Defaults to <see cref="QuoteStyle.Necessary"/>.</param>
+    /// <param name="nullValue">The string representation for null values. Defaults to empty string.</param>
+    /// <param name="lineTerminator">The character sequence used to terminate lines. Defaults to "\n".</param>
+    /// <param name="floatScientific">
+    /// Whether to always use scientific notation for floats. 
+    /// If null (default), formatting is automatic.
+    /// </param>
+    /// <param name="floatPrecision">
+    /// The number of decimal places to write for floats. 
+    /// If null (default), uses full precision.
+    /// </param>
+    /// <param name="decimalComma">Whether to use a comma ',' as the decimal separator (European style). Defaults to false.</param>
+    /// <param name="dateFormat">Format string for Date columns. If null, uses ISO 8601.</param>
+    /// <param name="timeFormat">Format string for Time columns. If null, uses ISO 8601.</param>
+    /// <param name="datetimeFormat">Format string for Datetime columns. If null, uses ISO 8601.</param>
+    /// <param name="batchSize">
+    /// The batch size for writing rows. 
+    /// Larger values may improve performance but consume more memory. 
+    /// 0 means use the Polars default.
+    /// </param>
+    public void WriteCsv(
+        string path,
+        bool hasHeader = true,
+        bool useBom = false,
+        char separator = ',',
+        char quoteChar = '"',
+        QuoteStyle quoteStyle = QuoteStyle.Necessary,
+        string? nullValue = null,
+        string? lineTerminator = "\n",
+        bool? floatScientific = null,
+        int? floatPrecision = null,
+        bool decimalComma = false,
+        string? dateFormat = null,
+        string? timeFormat = null,
+        string? datetimeFormat = null,
+        int batchSize = 0)
+    {
+        PolarsWrapper.WriteCsv(
+            Handle, 
+            path, 
+            hasHeader, 
+            useBom, 
+            batchSize,
+            separator, 
+            quoteChar, 
+            quoteStyle.ToNative(),
+            nullValue, 
+            lineTerminator,
+            dateFormat, 
+            timeFormat, 
+            datetimeFormat,
+            floatScientific, 
+            floatPrecision, 
+            decimalComma
+        );
+    }
     /// <summary>
-    /// Write DataFrame to Parquet File
+    /// Write DataFrame to Parquet file.
     /// </summary>
-    /// <param name="path"></param>
-    public void WriteParquet(string path)
-        => PolarsWrapper.WriteParquet(Handle, path);
+    /// <param name="path">Output file path.</param>
+    /// <param name="compression">Compression method. Defaults to Snappy (common standard) or Uncompressed depending on preference. Let's default to Snappy.</param>
+    /// <param name="compressionLevel">Compression level for Gzip/Brotli/Zstd. -1 means default.</param>
+    /// <param name="statistics">Compute and write column statistics. Defaults to false (faster).</param>
+    /// <param name="rowGroupSize">Number of rows per row group. 0 means use default.</param>
+    /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
+    /// <param name="parallel">Write in parallel. Defaults to true.</param>
+    public void WriteParquet(
+        string path,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = false,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        bool parallel = true)
+    {
+        PolarsWrapper.WriteParquet(
+            Handle,
+            path,
+            compression.ToNative(),
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            parallel
+        );
+    }
     /// <summary>
-    /// Write DataFrame to IPC File    
+    /// Write DataFrame to IPC (Arrow) file with compression and parallel options.
     /// </summary>
-    /// <param name="path"></param>
-    public void WriteIpc(string path)
-        => PolarsWrapper.WriteIpc(Handle, path);
+    /// <param name="path">The file path to write to.</param>
+    /// <param name="compression">Compression method (None, LZ4, ZSTD). Defaults to None.</param>
+    /// <param name="parallel">Whether to use parallel writing. Defaults to true.</param>
+    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    public void WriteIpc(
+        string path, 
+        IpcCompression compression = IpcCompression.None, 
+        bool parallel = true, 
+        int compatLevel = -1)
+            => PolarsWrapper.WriteIpc(Handle, path, compression.ToNative(), parallel, compatLevel);
+
     /// <summary>
-    /// Write DataFrame to JSON File
+    /// Write DataFrame to a JSON file.
     /// </summary>
-    /// <param name="path"></param>
-    public void WriteJson(string path)
-        => PolarsWrapper.WriteJson(Handle, path);
+    /// <param name="path">Output file path.</param>
+    /// <param name="format">JSON format (Json Array or JsonLines). Defaults to Json.</param>
+    public void WriteJson(string path, JsonFormat format = JsonFormat.Json)
+    {
+        PolarsWrapper.WriteJson(Handle, path, format.ToNative());
+    }
+
+    /// <summary>
+    /// Alias for WriteJson with format=JsonLines.
+    /// </summary>
+    public void WriteNdJson(string path) => WriteJson(path, JsonFormat.JsonLines);
+    // ---------------------------------------------------------
+    // Write Excel (Native)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Writes the DataFrame to an Excel file (.xlsx) using the native high-performance engine.
+    /// <para>
+    /// <b>Performance:</b> Uses columnar writing strategies for maximum speed (via <c>rust_xlsxwriter</c>).
+    /// </para>
+    /// <para>
+    /// <b>Data Integrity:</b> 
+    /// <br/>- <c>UInt64</c>, <c>Int128</c>, <c>UInt128</c> will be automatically written as <b>Text</b> to prevent Excel's 53-bit floating-point precision loss.
+    /// <br/>- <c>Date</c> and <c>Datetime</c> are written as native Excel date objects with specified formatting.
+    /// </para>
+    /// </summary>
+    /// <param name="path">The file path to save the .xlsx file.</param>
+    /// <param name="sheetName">Name of the worksheet. Defaults to "Sheet1" if null.</param>
+    /// <param name="dateFormat">
+    /// Excel format string for <c>Date</c> columns (e.g., "yyyy-mm-dd"). 
+    /// If null, defaults to "yyyy-mm-dd".
+    /// </param>
+    /// <param name="datetimeFormat">
+    /// Excel format string for <c>Datetime</c> columns (e.g., "yyyy-mm-dd hh:mm:ss"). 
+    /// If null, defaults to "yyyy-mm-dd hh:mm:ss".
+    /// </param>
+    public void WriteExcel(
+        string path, 
+        string? sheetName = null,
+        string? dateFormat = null, 
+        string? datetimeFormat = null)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            throw new ArgumentException("File path cannot be empty.", nameof(path));
+
+        PolarsWrapper.WriteExcel(Handle, path, sheetName, dateFormat, datetimeFormat);
+    }
     /// <summary>
     /// Export DataFrame to Record Batch
     /// </summary>
@@ -797,17 +2211,25 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public DataFrame Describe()
     {
-        // 1. Select Numeric Column
-        var schema = Schema;
-        var numericCols = schema
-            .Where(kv => kv.Value.IsNumeric)
-            .Select(kv => kv.Key)
-            .ToList();
+        using var schema = Schema;
+        
+        var numericCols = new List<string>();
+
+        foreach (var name in schema.ColumnNames)
+        {
+            using var dtype = schema[name];
+            
+            if (dtype.IsNumeric)
+            {
+                numericCols.Add(name);
+            }
+        }
 
         if (numericCols.Count == 0)
             throw new InvalidOperationException("No numeric columns to describe.");
 
-        // 2. Define stastistical metrics
+        // 2. Define statistical metrics
+        // (这部分逻辑保持不变，依然非常优雅)
         var metrics = new List<(string Name, Func<string, Expr> Op)>
         {
             ("count",      c => Polars.Col(c).Count().Cast(DataType.Float64)),
@@ -815,9 +2237,9 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             ("mean",       c => Polars.Col(c).Mean()),
             ("std",        c => Polars.Col(c).Std()),
             ("min",        c => Polars.Col(c).Min().Cast(DataType.Float64)),
-            ("25%",        c => Polars.Col(c).Quantile(0.25, "nearest").Cast(DataType.Float64)),
+            ("25%",        c => Polars.Col(c).Quantile(0.25, QuantileMethod.Nearest).Cast(DataType.Float64)),
             ("50%",        c => Polars.Col(c).Median().Cast(DataType.Float64)),
-            ("75%",        c => Polars.Col(c).Quantile(0.75, "nearest").Cast(DataType.Float64)),
+            ("75%",        c => Polars.Col(c).Quantile(0.75, QuantileMethod.Nearest).Cast(DataType.Float64)),
             ("max",        c => Polars.Col(c).Max().Cast(DataType.Float64))
         };
 
@@ -884,18 +2306,109 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     // Object Mapping (From Records)
     // ==========================================
-
     /// <summary>
-    /// Create a DataFrame from a collection of objects (POCOs).
-    /// High-performance implementation using Arrow Struct conversion.
+    /// Create a DataFrame from a collection of strongly-typed objects (POCOs).
+    /// <para>
+    /// This method uses reflection to inspect the properties of the class <typeparamref name="T"/> 
+    /// and maps them to DataFrame columns.
+    /// </para>
     /// </summary>
-    public static DataFrame From<T>(IEnumerable<T> data)
+    /// <typeparam name="T">The class type of the records.</typeparam>
+    /// <param name="data">The collection of objects to load.</param>
+    /// <returns>A new DataFrame.</returns>
+    /// <example>
+    /// <code>
+    /// public class Student
+    /// {
+    ///     public string Name { get; set; }
+    ///     public int Age { get; set; }
+    ///     public double GPA { get; set; }
+    /// }
+    /// 
+    /// var students = new List&lt;Student&gt;
+    /// {
+    ///     new Student { Name = "Alice", Age = 20, GPA = 3.5 },
+    ///     new Student { Name = "Bob", Age = 22, GPA = 3.8 },
+    ///     new Student { Name = "Charlie", Age = 19, GPA = 3.2 }
+    /// };
+    /// 
+    /// var df = DataFrame.From(students);
+    /// df.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────────┬─────┬─────┐
+    /// │ Name    ┆ Age ┆ GPA │
+    /// │ ---     ┆ --- ┆ --- │
+    /// │ str     ┆ i32 ┆ f64 │
+    /// ╞═════════╪═════╪═════╡
+    /// │ Alice   ┆ 20  ┆ 3.5 │
+    /// │ Bob     ┆ 22  ┆ 3.8 │
+    /// │ Charlie ┆ 19  ┆ 3.2 │
+    /// └─────────┴─────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
+   public static DataFrame From<T>(IEnumerable<T> data)
     {
-        using var structSeries = Series.From("data", data);
-        
-        using var tmpDf = new DataFrame(structSeries);
-        
-        return tmpDf.Unnest("data");
+        if (data == null) return new DataFrame();
+        Type type = typeof(T);
+
+        // =========================================================
+        // 1. Primitive Types (Single Column)
+        // =========================================================
+        if (IsSimpleType(type))
+        {
+            var s = Series.From("value", data);
+            return new DataFrame(s);
+        }
+
+        // =========================================================
+        // 2. Complex Type: Pivot (Row -> Column)
+        // =========================================================
+        return FromPocoManual(data, type);
+    }
+    
+    private static DataFrame FromPocoManual<T>(IEnumerable<T> data, Type type)
+    {
+        var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        if (props.Length == 0) return new DataFrame();
+
+        int capacity = data is ICollection<T> c ? c.Count : 16;
+        var buffers = new IColumnBuffer[props.Length];
+
+        for (int i = 0; i < props.Length; i++)
+        {
+            buffers[i] = ColumnBufferFactory.Create(props[i].PropertyType, capacity);
+        }
+
+        foreach (var item in data)
+        {
+            for (int i = 0; i < props.Length; i++)
+            {
+                buffers[i].Add(props[i].GetValue(item));
+            }
+        }
+
+        var seriesList = new Series[props.Length];
+        for (int i = 0; i < props.Length; i++)
+        {
+            seriesList[i] = buffers[i].ToSeries(props[i].Name);
+        }
+
+        return new DataFrame(seriesList);
+    }
+
+    private static bool IsSimpleType(Type type)
+    {
+        return type.IsPrimitive || 
+               type == typeof(string) || 
+               type == typeof(DateOnly) || 
+               type == typeof(decimal) || 
+               type == typeof(DateTime) || 
+               type == typeof(TimeSpan) ||
+               type == typeof(TimeOnly) || 
+               type == typeof(DateTimeOffset) || 
+               (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>) && IsSimpleType(Nullable.GetUnderlyingType(type)!));
     }
     /// <summary>
     /// Create a DataFrame from an object where properties represent columns (Arrays/Lists).
@@ -909,15 +2422,106 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </example>
     public static DataFrame FromColumns(object columns)
     {
-        var rawColumns = ArrowConverter.BuildColumnsFromObject(columns);
+        ArgumentNullException.ThrowIfNull(columns);
 
-        var seriesList = new List<Series>(rawColumns.Count);
-        foreach (var (name, array) in rawColumns)
+        var properties = columns.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        
+        var cols = new (string, object)[properties.Length];
+
+        for (int i = 0; i < properties.Length; i++)
         {
-            seriesList.Add(Series.FromArrow(name, array));
+            var p = properties[i];
+            var val = p.GetValue(columns) ?? throw new ArgumentNullException($"Property '{p.Name}' cannot be null.");
+            cols[i] = (p.Name, val);
+        }
+
+        return FromColumns(cols);
+    }
+    /// <summary>
+    /// [AOT Safe] Create DataFrame from explicitly named columns.
+    /// No reflection used. Best performance.
+    /// </summary>
+    public static DataFrame FromColumns(params (string Name, object Data)[] columns)
+    {
+        if (columns == null || columns.Length == 0)
+            return new DataFrame(); // Return empty DF
+
+        var seriesList = new List<Series>(columns.Length);
+
+        foreach (var (name, val) in columns.AsSpan())
+        {
+            if (val == null)
+                throw new ArgumentNullException($"Column '{name}' data cannot be null.");
+            
+            try 
+            {
+                
+                if (val is System.Array arr)
+                {
+                    var handle = SeriesFactory.Create(name, arr);
+                    seriesList.Add(new Series(handle));
+                }
+                else 
+                {
+                    seriesList.Add(Series.From(name, (dynamic)val));
+                }
+            }
+            catch (Exception ex)
+            {
+                 throw new NotSupportedException($"Column '{name}' has unsupported data type: {val.GetType().Name}.", ex);
+            }
         }
 
         return new DataFrame(seriesList.ToArray());
+    }
+    // =========================================================
+    // Internal Column Buffers
+    // =========================================================
+
+    private interface IColumnBuffer
+    {
+        void Add(object? val);
+        Series ToSeries(string name);
+    }
+
+    /// <summary>
+    /// Strong Type Column Buffer 
+    /// </summary>
+    /// <typeparam name="TCol">Column Type(Example: int, string, DateTime?)</typeparam>
+    private sealed class ColumnBuffer<TCol> : IColumnBuffer
+    {
+        private readonly List<TCol?> _data; 
+
+        public ColumnBuffer(int capacity)
+        {
+            _data = new List<TCol?>(capacity);
+        }
+
+        public void Add(object? val)
+        {
+            _data.Add((TCol?)val);
+        }
+
+        public Series ToSeries(string name)
+            => Series.From(name, _data.ToArray());
+        
+    }
+
+    private static class ColumnBufferFactory
+    {
+        public static IColumnBuffer Create(Type propType, int capacity)
+        {
+            
+            Type targetType = propType;
+
+            if (propType.IsValueType && Nullable.GetUnderlyingType(propType) == null)
+            {
+                targetType = typeof(Nullable<>).MakeGenericType(propType);
+            }
+
+            var bufferType = typeof(ColumnBuffer<>).MakeGenericType(targetType);
+            return (IColumnBuffer)Activator.CreateInstance(bufferType, capacity)!;
+        }
     }
     /// <summary>
     /// Create a DataFrame from a list of Series.
@@ -935,16 +2539,45 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         Handle = PolarsWrapper.DataFrameNew(handles);
     }
     /// <summary>
+    /// Create a DataFrame from a collection of Series.
+    /// <para>
+    /// This is the functional equivalent of the constructor <c>new DataFrame(series)</c>, 
+    /// provided for consistency with other <c>From...</c> factory methods.
+    /// </para>
+    /// </summary>
+    /// <param name="series">The series to combine into a DataFrame.</param>
+    /// <returns>A new DataFrame containing the provided series.</returns>
+    /// <exception cref="ArgumentException">Thrown if series have different lengths.</exception>
+    /// <example>
+    /// <code>
+    /// var s1 = new Series("id", new[] { 1, 2, 3 });
+    /// var s2 = new Series("name", new[] { "Alice", "Bob", "Charlie" });
+    /// 
+    /// var df = DataFrame.FromSeries(s1, s2);
+    /// Console.WriteLine(df);
+    /// </code>
+    /// </example>
+    public static DataFrame FromSeries(params Series[] series)
+        => new(series);
+    /// <summary>
+    /// Create a DataFrame from a collection of Series.
+    /// </summary>
+    /// <param name="series">The series to combine.</param>
+    public static DataFrame FromSeries(IEnumerable<Series> series)
+        => new(series.ToArray());
+    /// <summary>
     /// [High Performance] Stream data into Polars using Arrow C Stream Interface.
     /// This method supports datasets larger than available RAM by streaming chunks directly to Polars.
     /// </summary>
     /// <param name="data">Source data collection</param>
     /// <param name="batchSize">Rows per chunk (default 100,000)</param>
-    public static DataFrame FromArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000)
+    /// <param name="providedSchema">Stream schema provided by user</param>
+    public static DataFrame FromArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000,Apache.Arrow.Schema? providedSchema = null)
     {
+        var schema = providedSchema ?? ArrowConverter.GetSchemaFromType<T>();
         var stream = data.ToArrowBatches(batchSize);
 
-        var handle = ArrowStreamInterop.ImportEager(stream);
+        var handle = ArrowStreamInterop.ImportEager(stream,schema);
 
         if (handle.IsInvalid)
         {
@@ -1042,7 +2675,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// </summary>
     public Series this[int index] => Column(index);
     /// <summary>
-    /// Syntax Suger
+    /// Syntax Sugar
     /// </summary>
     /// <param name="rowIndex"></param>
     /// <param name="columnIndex"></param>
@@ -1090,76 +2723,93 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="limit">Max rows to display (default 10).</param>
     public string ToHtml(int limit = 10)
     {
+        int rowsToShow = (int)Math.Min(Height, limit);
+        using var previewDf = this.Head(rowsToShow);
+        
+        using var batch = ArrowFfiBridge.ExportDataFrame(previewDf.Handle);
+        var schema = batch.Schema;
+
         var sb = new StringBuilder();
         
-        // Basic Style
         sb.Append(@"
 <style>
-.pl-dataframe { font-family: sans-serif; border-collapse: collapse; width: auto; }
-.pl-dataframe th { background-color: #f0f0f0; color: #333; font-weight: bold; text-align: left; padding: 8px; border-bottom: 2px solid #ddd; }
-.pl-dataframe td { padding: 8px; border-bottom: 1px solid #ddd; text-align: left; color: #444; }
-.pl-dataframe tr:hover { background-color: #f9f9f9; }
-.pl-dtype { font-size: 0.8em; color: #888; display: block; font-weight: normal; }
-.pl-null { color: #d66; font-style: italic; }
-.pl-dim { font-size: 0.8em; color: #666; margin-top: 5px; }
+.pl-dataframe { font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; border-collapse: collapse; border: 1px solid #e0e0e0; }
+.pl-dataframe th { background-color: #f0f0f0; font-weight: bold; text-align: left; padding: 6px 12px; border-bottom: 2px solid #ccc; }
+.pl-dataframe td { padding: 6px 12px; border-bottom: 1px solid #f0f0f0; white-space: pre; color: #333; }
+.pl-dataframe tr:nth-child(even) { background-color: #f9f9f9; }
+.pl-dataframe tr:hover { background-color: #f1f1f1; }
+.pl-dtype { font-size: 10px; color: #999; display: block; margin-top: 2px; font-weight: normal; }
+.pl-null { color: #d0d0d0; font-style: italic; }
+.pl-dim { font-family: sans-serif; font-size: 12px; color: #666; margin-bottom: 8px; }
 </style>");
 
-        sb.Append("<table class='pl-dataframe'>");
-
-        // Table Header
-        sb.Append("<thead><tr>");
+        // Dimensions Info
+        sb.Append($"<div class='pl-dim'>Polars DataFrame: <b>({Height} rows, {Width} columns)</b></div>");
         
-        for (int i = 0; i < Width; i++)
+        sb.Append("<div style='overflow-x:auto'><table class='pl-dataframe'>");
+
+        // Header (From Arrow Schema)
+        sb.Append("<thead><tr>");
+        foreach (var field in schema.FieldsList)
         {
-            var col = Column(i);
-            var colName = System.Net.WebUtility.HtmlEncode(col.Name);
-            var colType = col.DataType.ToString();
+            var colName = System.Net.WebUtility.HtmlEncode(field.Name);
+            var colType = field.DataType.Name; 
             
             sb.Append($"<th>{colName}<span class='pl-dtype'>{colType}</span></th>");
         }
         sb.Append("</tr></thead>");
 
-        // Body
+        // Body (From Arrow Batch)
         sb.Append("<tbody>");
         
-        int rowsToShow = (int)Math.Min(Height, limit);
-        for (int r = 0; r < rowsToShow; r++)
+        int rowCount = batch.Length;
+        int colCount = batch.ColumnCount;
+
+        for (int r = 0; r < rowCount; r++)
         {
             sb.Append("<tr>");
-            var rowData = Row(r);
-            
-            foreach (var val in rowData)
+            for (int c = 0; c < colCount; c++)
             {
-                if (val == null || val == DBNull.Value)
+                var colArray = batch.Column(c);
+                var field = schema.GetFieldByIndex(c);
+                
+                string valStr = colArray.FormatValue(r);
+
+                if (valStr != "null")
+                {
+                    if (field.DataType.TypeId == ArrowTypeId.Double)
+                    {
+                        if (double.TryParse(valStr, out double d)) 
+                            valStr = d.ToString("G10");
+                    }
+                    else if (field.DataType.TypeId == ArrowTypeId.Float)
+                    {
+                        if (float.TryParse(valStr, out float f)) 
+                            valStr = f.ToString("G7");
+                    }
+                }
+
+                if (valStr == "null")
                 {
                     sb.Append("<td class='pl-null'>null</td>");
                 }
                 else
                 {
-                    string cellStr = val switch
-                    {
-                        DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss"),
-                        double d => d.ToString("G6"), 
-                        _ => val.ToString() ?? ""
-                    };
-                    
-                    if (cellStr.Length > 50) cellStr = cellStr[..47] + "...";
-                    
-                    sb.Append($"<td>{System.Net.WebUtility.HtmlEncode(cellStr)}</td>");
+                    if (valStr.Length > 100) valStr = valStr[..97] + "...";
+                    sb.Append($"<td>{System.Net.WebUtility.HtmlEncode(valStr)}</td>");
                 }
             }
             sb.Append("</tr>");
         }
-        sb.Append("</tbody>");
-        sb.Append("</table>");
-
-        // Shape
-        var hiddenRows = Height - rowsToShow;
-        if (hiddenRows > 0)
+        
+        // Footer for hidden rows
+        long remaining = Height - rowsToShow;
+        if (remaining > 0)
         {
-            sb.Append($"<div class='pl-dim'>... and {hiddenRows} more rows.</div>");
+             sb.Append($"<tr><td colspan='{colCount}' style='text-align:center; font-style:italic; color:#999; padding: 10px'>... {remaining} more rows ...</td></tr>");
         }
-        sb.Append($"<div class='pl-dim'>shape: ({Height}, {Width})</div>");
+
+        sb.Append("</tbody></table></div>");
 
         return sb.ToString();
     }

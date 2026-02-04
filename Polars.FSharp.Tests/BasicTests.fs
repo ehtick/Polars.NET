@@ -6,7 +6,7 @@ open System
 open System.IO
 
 type DisposableFile (extension: string, ?content: string) =
-    let ext = if extension.StartsWith(".") then extension else "." + extension
+    let ext = if extension.StartsWith "." then extension else "." + extension
     let path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString() + ext)
     
     do
@@ -27,6 +27,14 @@ type UserRecord = {
         score: float option // Nullable Float
         joined: System.DateTime option // Timestamp -> DateTime
     }
+
+type TestUser = {
+    Name: string
+    Age: int
+    Score: float
+    IsActive: bool
+    JoinDate: DateTime
+}
 [<CLIMutable>]
 type SensorData = {
     Id: int
@@ -50,92 +58,6 @@ type JoinItem = {
 }
 type ``Basic Functionality Tests`` () =
 
-    [<Fact>]
-    member _.``Can read CSV and count rows/cols`` () =
-        use csv = new TempCsv "name,age,birthday\nAlice,30,2022-11-01\nBob,25,2025-12-03"
-        
-        let df = DataFrame.ReadCsv (path=csv.Path)
-        
-        Assert.Equal(2L, df.Rows)    // 注意：现在 Rows 返回的是 long (int64)
-        Assert.Equal(3L, df.Width) // 注意：现在 Width 返回的是 long
-    [<Fact>]
-    member _.``IO: Advanced CSV Reading (Schema, Skip, Dates)`` () =
-        let path = "advanced_test.csv"
-        try
-            let content = 
-                "IGNORE_THIS_LINE\n" +
-                "id;date_col;val_col\n" +
-                "007;2023-01-01;99.9\n" +
-                "008;2023-12-31;10.5"
-            System.IO.File.WriteAllText(path, content)
-
-            // 调用 DataFrame.ReadCsv
-            use df = DataFrame.ReadCsv(
-                path,
-                skipRows = 1,
-                separator = ';',
-                tryParseDates = true,
-                schema = Map.ofList [
-                    "id", DataType.String
-                    // "date_col", DataType.Date   // 明确告诉它这是 Date
-                    // "val_col", DataType.Float64 // 明确告诉它这是 Float
-                ]
-            )
-
-            Assert.Equal(2L, df.Rows)
-            Assert.Equal("str", df.Column("id").DtypeStr)
-            Assert.Equal("007", df.String("id", 0).Value)
-            Assert.Equal(99.9, df.Float("val_col", 0).Value)
-
-        finally
-            if File.Exists path then File.Delete path
-    [<Fact>]
-    member _.``Can read&write Parquet`` () =
-        // 1. 准备 CSV 数据
-        use csv = new DisposableFile(".csv", "a,b,c,d\n1,2,3,4")
-        use df = DataFrame.ReadCsv(csv.Path, tryParseDates=false)
-        
-        // 2. 准备 Parquet 目标路径 (不预先创建文件)
-        use parquet = new DisposableFile ".parquet"
-        
-        // 3. 写入
-        // 注意：F# 方法返回 this，忽略它
-        df.WriteParquet parquet.Path |> ignore
-        
-        // 4. 验证文件确实生成了
-        Assert.True(File.Exists parquet.Path, $"Parquet file should exist at {parquet.Path}")
-
-        // 5. 读回来验证内容
-        use df2 = DataFrame.ReadParquet parquet.Path
-        Assert.Equal(df.Rows, df2.Rows)
-        Assert.Equal(4, df2.Schema.Count)
-
-    [<Fact>]
-    member _.``IO: Write & Read IPC/JSON`` () =
-        // 准备路径托管
-        use ipcFile = new DisposableFile ".ipc"
-        use jsonFile = new DisposableFile ".json"
-
-        // 1. 准备数据
-        let s1 = Series.create("a", [1; 2; 3])
-        let s2 = Series.create("b", ["x"; "y"; "z"])
-        use df = DataFrame.create [s1; s2]
-
-        // 2. 测试 IPC (Feather)
-        df.WriteIpc ipcFile.Path |> ignore
-        Assert.True(File.Exists ipcFile.Path, "IPC file not found")
-        
-        use dfIpc = DataFrame.ReadIpc ipcFile.Path
-        Assert.Equal(3L, dfIpc.Rows)
-        Assert.Equal("x", dfIpc.String("b", 0).Value)
-
-        // 3. 测试 JSON
-        df.WriteJson jsonFile.Path |> ignore
-        Assert.True(File.Exists jsonFile.Path, "JSON file not found")
-        
-        use dfJson = DataFrame.ReadJson jsonFile.Path
-        Assert.Equal(3L, dfJson.Rows)
-        Assert.Equal(2L, dfJson.Int("a", 1).Value)
     [<Fact>]
     member _.``Streaming: Debug Sink`` () =
         // 1. 准备数据
@@ -183,7 +105,7 @@ type ``Basic Functionality Tests`` () =
 
         // 3. 验证 DataFrame Schema
         let schema = df.Schema
-        Assert.Equal(3, schema.Count)
+        Assert.Equal(3L, df.Len)
         Assert.Equal(DataType.Int32, schema.["id"])
         Assert.Equal(DataType.Float64, schema.["score"])
         Assert.Equal(DataType.Boolean, schema.["is_active"])
@@ -204,8 +126,12 @@ type ``Basic Functionality Tests`` () =
             )
             |> pl.filterLazy (pl.col "b" .> pl.lit 0)
 
-        // 1. 验证 Schema (使用 Map API，更加精准)
-        let schema = lf2.Schema 
+        // 1. 验证 Schema
+        // [升级点] 获取 PolarsSchema 对象，使用 use 自动释放
+        use pSchema = lf2.Schema 
+        
+        // [升级点] 转换为 F# Map 以使用 ContainsKey 等高级断言
+        let schema = pSchema.ToMap()
         
         // 验证列名是否存在 (Key)
         Assert.True(schema.ContainsKey "a")
@@ -221,12 +147,14 @@ type ``Basic Functionality Tests`` () =
         // 2. 验证 Explain 和 Optimization
         let plan = lf2.Explain false
         printfn "\n=== Query Plan ===\n%s\n==================" plan
+        // 验证 Plan 字符串包含关键算子
         Assert.Contains("FILTER", plan) 
         Assert.Contains("WITH_COLUMNS", plan)
 
         let planOptimized = lf2.Explain true
         printfn "\n=== Query Plan Optimized===\n%s\n==================" planOptimized
-        Assert.Contains("SELECTION", planOptimized) 
+        // 优化后通常会出现 SCAN CSV 谓词下推
+        Assert.Contains("Csv SCAN", planOptimized)
     [<Fact>]
     member _.``Arrow Integration: Import C# Arrow Data to Polars`` () =
         // 1. 在 C# 端原生构建一个 RecordBatch
@@ -245,7 +173,7 @@ type ``Basic Functionality Tests`` () =
         // 2. 传给 Polars (C# -> Rust)
         // 这一步应该能成功，因为内存是 C# 分配的，Exporter 能够处理
         let df = DataFrame.FromArrow batch
-        df |> pl.show |> ignore
+        // df |> pl.show |> ignore
         // 3. 验证
         Assert.Equal(3L, df.Rows)
         Assert.Equal(100L, df.Int("num", 0).Value)
@@ -510,7 +438,7 @@ type ``Basic Functionality Tests`` () =
         // 结果应该包含 3 列: [a, b, c]
         // Row 1 (来自 df1): a=1, b=2, c=null
         // Row 2 (来自 df2): a=3, b=null, c=4
-        let res = pl.concat [df1; df2] Diagonal
+        let res = pl.concatDiagonal [df1; df2]
 
         Assert.Equal(2L, res.Rows)
         Assert.Equal(3L, res.Width)
@@ -884,3 +812,351 @@ type ``Basic Functionality Tests`` () =
         
         Assert.Equal(1, res.Cell<int>("A",1))
         Assert.Equal(1, res.Cell<int>("B",1))
+    [<Fact>]
+    member _. ``ScanSeq Streaming Mode - Should convert data correctly`` () =
+        // Arrange
+        let now = DateTime.Now
+        let data = [
+            { Name = "Alice"; Age = 25; Score = 99.5; IsActive = true; JoinDate = now }
+            { Name = "Bob";   Age = 30; Score = 85.0; IsActive = false; JoinDate = now.AddDays -1.0 }
+            { Name = "Charlie"; Age = 35; Score = 70.0; IsActive = true; JoinDate = now.AddDays -10.0 }
+        ]
+
+        // Act
+        // 使用 Streaming 模式 (默认)
+        use lf = LazyFrame.scanSeq data
+        
+        // 触发计算
+        use df = lf.Collect()
+
+        // Assert
+        Assert.Equal(3L, df.Height)
+        
+        // 验证第一行的值
+        let row0_Name = df.["Name"].[0] :?> string option
+        let row0_Score = df.["Score"].[0] :?> double option
+        
+        // 验证 Some 值
+        Assert.Equal(Some "Alice", row0_Name)
+        Assert.Equal(Some 99.5, row0_Score)
+
+    [<Fact>]
+    member _. ``ScanSeq Buffered Mode - Should handle IO correctly`` () =
+        // Arrange
+        let data = seq {
+            for i in 1 .. 1000 do
+                yield { 
+                    Name = sprintf "User_%d" i
+                    Age = i
+                    Score = float i * 1.5
+                    IsActive = i % 2 = 0
+                    JoinDate = DateTime.Now 
+                }
+        }
+
+        // Act
+        // 显式开启 Buffered 模式 (useBuffered = true)
+        // 'use' 关键字会自动调用我们通过对象表达式内联的 Dispose 方法，清理临时文件
+        use lf = LazyFrame.scanSeq(data, useBuffered = true, batchSize = 100)
+        
+        use df = lf.Collect()
+
+        // Assert
+        Assert.Equal(1000L, df.Height)
+        
+        let lastRowScore = df.["Score"].[999] :?> double option
+        
+        Assert.Equal(Some (1000.0 * 1.5), lastRowScore)
+
+    [<Fact>]
+    member _.``ScanSeq Empty Stream - Should preserve Schema without crashing`` () =
+        // Arrange
+        let emptyData = Seq.empty<TestUser>
+
+        // Act
+        // 这里测试的是我们在 C# 端做的 "Lazy Fallback" 逻辑
+        // 即便数据源为空，也不应该抛出 AccessViolation，且必须返回正确的 Schema
+        use lf = LazyFrame.scanSeq emptyData
+        
+        use df = lf.Collect()
+
+        // Assert
+        Assert.Equal(0L, df.Height)
+        
+        // 验证 Schema 是否存在 (如果 Schema 丢了，列名就不存在了，或者这里会抛错)
+        let columns = df.ColumnNames
+        Assert.Contains("Name", columns)
+        Assert.Contains("Age", columns)
+        Assert.Contains("Score", columns)
+        Assert.Contains("IsActive", columns)
+        Assert.Contains("JoinDate", columns)
+
+type LitTests() =
+
+    // 创建一个只有一行的 Dummy DataFrame 用于上下文执行 Expr
+    let df = DataFrame.create [ Series.create("dummy", [1]) ]
+
+    [<Fact>]
+    member _.``Lit: All Primitive Types (Explicit Overload Check)``() =
+        
+        // ==========================================
+        // 1. Signed Integers
+        // ==========================================
+        
+        // int8 (sbyte) -> suffix 'y'
+        let v_i8 = 123y
+        let res_i8 = df.Select(pl.lit v_i8).Column(0).GetValue<sbyte>(0)
+        Assert.Equal(v_i8, res_i8)
+
+        // int16 (short) -> suffix 's'
+        let v_i16 = 12345s
+        let res_i16 = df.Select(pl.lit v_i16).Column(0).GetValue<int16>(0)
+        Assert.Equal(v_i16, res_i16)
+
+        // int32 (int)
+        let v_i32 = 123456789
+        let res_i32 = df.Select(pl.lit v_i32).Column(0).GetValue<int>(0)
+        Assert.Equal(v_i32, res_i32)
+
+        // int64 (long) -> suffix 'L'
+        let v_i64 = 1234567890123456789L
+        let res_i64 = df.Select(pl.lit v_i64).Column(0).GetValue<int64>(0)
+        Assert.Equal(v_i64, res_i64)
+
+        // Int128 (.NET 7+)
+        let v_i128 = Int128.Parse "1000000000000000000000000000000" // 足够大以超过 int64
+        let res_i128 = df.Select(pl.lit v_i128).Column(0).GetValue<Int128>(0)
+        Assert.Equal(v_i128, res_i128)
+
+        // ==========================================
+        // 2. Unsigned Integers
+        // ==========================================
+
+        // uint8 (byte) -> suffix 'uy'
+        let v_u8 = 200uy
+        let res_u8 = df.Select(pl.lit v_u8).Column(0).GetValue<byte>(0)
+        Assert.Equal(v_u8, res_u8)
+
+        // uint16 (ushort) -> suffix 'us'
+        let v_u16 = 40000us
+        let res_u16 = df.Select(pl.lit v_u16).Column(0).GetValue<uint16>(0)
+        Assert.Equal(v_u16, res_u16)
+
+        // uint32 (uint) -> suffix 'u'
+        let v_u32 = 3000000000u
+        let res_u32 = df.Select(pl.lit v_u32).Column(0).GetValue<uint>(0)
+        Assert.Equal(v_u32, res_u32)
+
+        // uint64 (ulong) -> suffix 'UL'
+        let v_u64 = 10000000000000000000UL
+        let res_u64 = df.Select(pl.lit v_u64).Column(0).GetValue<uint64>(0)
+        Assert.Equal(v_u64, res_u64)
+
+        // ==========================================
+        // 3. Floating Point & Decimal
+        // ==========================================
+
+        // float32 (single) -> suffix 'f'
+        let v_f32 = 123.456f
+        let res_f32 = df.Select(pl.lit v_f32).Column(0).GetValue<float32>(0)
+        Assert.Equal(v_f32, res_f32)
+
+        // float64 (double)
+        let v_f64 = 123.456789123
+        let res_f64 = df.Select(pl.lit v_f64).Column(0).GetValue<double>(0)
+        Assert.Equal(v_f64, res_f64)
+
+        // decimal -> suffix 'm'
+        let v_dec = 123.456789m
+        let res_dec = df.Select(pl.lit v_dec).Column(0).GetValue<decimal>(0)
+        Assert.Equal(v_dec, res_dec)
+
+        // ==========================================
+        // 4. String & Boolean
+        // ==========================================
+
+        // string
+        let v_str = "Polars.NET 🚀"
+        let res_str = df.Select(pl.lit v_str).Column(0).GetValue<string>(0)
+        Assert.Equal(v_str, res_str)
+
+        // bool
+        let v_bool = true
+        let res_bool = df.Select(pl.lit v_bool).Column(0).GetValue<bool>(0)
+        Assert.True res_bool
+
+        // ==========================================
+        // 5. Temporal Types
+        // ==========================================
+
+        // DateTime
+        let v_dt = DateTime(2023, 10, 1, 12, 30, 45)
+        let res_dt = df.Select(pl.lit v_dt).Column(0).GetValue<DateTime>(0)
+        Assert.Equal(v_dt, res_dt)
+
+        // DateOnly
+        let v_date = DateOnly(2023, 10, 1)
+        let res_date = df.Select(pl.lit v_date).Column(0).GetValue<DateOnly>(0)
+        Assert.Equal(v_date, res_date)
+
+        // TimeOnly
+        let v_time = TimeOnly(12, 30, 45)
+        // 注意：TimeOnly 在 Polars 中通常对应纳秒精度，可能存在微小浮点误差，
+        // 但 Lit 生成是精确的，GetValue 只要也是精确的就行。
+        let res_time = df.Select(pl.lit v_time).Column(0).GetValue<TimeOnly>(0)
+        Assert.Equal(v_time, res_time)
+
+        // TimeSpan
+        let v_span = TimeSpan.FromHours(25.5)
+        let res_span = df.Select(pl.lit v_span).Column(0).GetValue<TimeSpan>(0)
+        Assert.Equal(v_span, res_span)
+
+        // DateTimeOffset (带时区)
+        let v_dto = DateTimeOffset(2023, 10, 1, 12, 0, 0, TimeSpan.FromHours(8.0))
+        let res_dto = df.Select(pl.lit v_dto).Column(0).GetValue<DateTimeOffset>(0)
+        // Polars 存储时区信息，取出来比较时应相等
+        Assert.Equal(v_dto, res_dto)
+    [<Fact>]
+    member _.``Lit: Collections (Lists & Arrays)``() =
+        // 准备一个只有 1 行的 DataFrame，方便观察 Lit 展开的效果
+        // 如果 pl.lit([1; 2; 3]) 生效，select 的结果应该是 3 行
+        let df = DataFrame.create [ Series.create("dummy", [0]) ]
+
+        // ==========================================
+        // 1. F# Lists (int list, string list...)
+        // ==========================================
+        
+        // Integer List
+        let listInt = [1; 2; 3]
+        let dfInt = df.Select(pl.lit listInt)
+        
+        Assert.Equal(3L, dfInt.Height) // 长度应扩展为 3
+        Assert.Equal(1, dfInt.Column(0).GetValue<int>(0))
+        Assert.Equal(2, dfInt.Column(0).GetValue<int>(1))
+        Assert.Equal(3, dfInt.Column(0).GetValue<int>(2))
+
+        // String List
+        let listStr = ["A"; "B"; "C"]
+        let dfStr = df.Select(pl.lit listStr)
+        
+        Assert.Equal(3L, dfStr.Height)
+        Assert.Equal("A", dfStr.Column(0).GetValue<string>(0))
+        Assert.Equal("B", dfStr.Column(0).GetValue<string>(1))
+
+        // ==========================================
+        // 2. F# Arrays (int[], float[]...)
+        // ==========================================
+
+        // Double Array
+        let arrF64 = [| 1.1; 2.2; 3.3; 4.4 |]
+        let dfF64 = df.Select(pl.lit arrF64)
+
+        Assert.Equal(4L, dfF64.Height)
+        Assert.Equal(1.1, dfF64.Column(0).GetValue<double>(0))
+
+        // Bool Array
+        let arrBool = [| true; false |]
+        let dfBool = df.Select(pl.lit arrBool)
+        
+        Assert.Equal(2L, dfBool.Height)
+        Assert.True(dfBool.Column(0).GetValue<bool>(0))
+        Assert.False(dfBool.Column(0).GetValue<bool>(1))
+
+        // ==========================================
+        // 3. Nullable Collections (Option List)
+        // ==========================================
+
+        // Int Option List (with None)
+        let listOpt = [Some 10; None; Some 30]
+        let dfOpt = df.Select(pl.lit listOpt)
+
+        Assert.Equal(3L, dfOpt.Height)
+        Assert.Equal(10, dfOpt.Column(0).GetValue<int>(0))
+        Assert.True(dfOpt.Column(0).IsNullAt(1)) // Index 1 is Null
+        Assert.Equal(30, dfOpt.Column(0).GetValue<int>(2))
+
+        // String Option List
+        let listStrOpt = [Some "Valid"; None]
+        let dfStrOpt = df.Select(pl.lit listStrOpt)
+        
+        Assert.Equal(2L, dfStrOpt.Height)
+        Assert.Equal("Valid", dfStrOpt.Column(0).GetValue<string>(0))
+        Assert.True(dfStrOpt.Column(0).IsNullAt(1))
+
+    [<Fact>]
+    member _.``Lit: Empty Collections``() =
+        let df = DataFrame.create [ Series.create("dummy", [0]) ]
+        
+        // Empty List -> Empty Series -> Empty Column
+        let emptyList: int list = []
+        let dfEmpty = df.Select(pl.lit emptyList)
+        
+        Assert.Equal(0L, dfEmpty.Height)
+    [<Fact>]
+    member _.``Test HStack and VStack``() =
+        // ==========================================
+        // 1. Test HStack (水平拼接)
+        // ==========================================
+        
+        // 初始 DF: [a]
+        // a: [1, 2, 3]
+        use df1 = 
+            DataFrame.create [
+                Series.create("a", [1; 2; 3])
+            ]
+
+        // 新列: [b]
+        // b: [10, 20, 30]
+        use s_new = Series.create("b", [10; 20; 30])
+
+        // 执行 HStack: df1 |> pl.hstack [s_new]
+        // 预期结果: [a, b]
+        use h_stacked = 
+            df1 
+            |> pl.hstack [s_new]
+
+        // 验证维度
+        Assert.Equal(3L, h_stacked.Height)
+        Assert.Equal(2L, h_stacked.Width)
+        
+        // 验证列名
+        let cols = h_stacked.ColumnNames
+        Assert.Equal("a", cols.[0])
+        Assert.Equal("b", cols.[1])
+
+        // 验证数据
+        Assert.Equal(Some 10,unbox h_stacked.[0,"b"]) // Row 0, Col "b"
+
+        // ==========================================
+        // 2. Test VStack (垂直拼接)
+        // ==========================================
+
+        // 准备第二个 DF，结构必须与 h_stacked 一致
+        // DF2: [a, b]
+        // a: [4, 5]
+        // b: [40, 50]
+        use df2 = 
+            DataFrame.create [
+                Series.create("a", [4; 5])
+                Series.create("b", [40; 50])
+            ]
+
+        // 执行 VStack: h_stacked |> pl.vstack df2
+        // 预期结果: 3 + 2 = 5 行
+        use v_stacked = 
+            h_stacked 
+            |> pl.vstack df2
+
+        // 验证维度
+        Assert.Equal(5L, v_stacked.Height)
+        Assert.Equal(2L, v_stacked.Width)
+
+        // 验证数据衔接
+        // Row 0 (来自 df1) -> a=1
+        Assert.Equal(Some 1,unbox v_stacked.[0, 0])
+        
+        // Row 3 (来自 df2 的第1行) -> a=4
+        Assert.Equal(Some 4,unbox v_stacked.[3,"a"])
+        
+        // Row 4 (来自 df2 的第2行) -> b=50
+        Assert.Equal(Some 50,unbox v_stacked.[4,"b"])

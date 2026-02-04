@@ -19,7 +19,7 @@ public class ScalarTests
 
         // 2. 创建 DF
         // 直接在构造函数里 new Series，防止外部变量 Dispose 导致的所有权问题
-        using var df = new DataFrame([
+        using var df = DataFrame.FromSeries([
             new Series("i", new int[]{100}),
             new Series("f", new double[]{1.23}),
             new Series("s", new string[]{"hello"}),

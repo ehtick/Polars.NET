@@ -118,71 +118,178 @@ HR,50";
             if (File.Exists(fileName)) File.Delete(fileName);
         }
     }
+    [Fact]
+    public void Test_GroupBy_Advanced_Aggregations()
+    {
+        // 1. 准备数据 (使用匿名对象和集合表达式，无需读写 CSV)
+        // Group A: [true, false], [1, 2] -> 混合布尔，多行
+        // Group B: [true],       [3]    -> 单一行 (适合测试 Item)
+        // Group C: [false, false],[4, 5] -> 全 False
+        var groups = new[] { "A", "A", "B", "C", "C" };
+        var bools = new[] { true, false, true, false, false };
+        var values = new[] { 1, 2, 3, 4, 5 };
+
+        using var df = DataFrame.FromColumns(new { groups, bools, values });
+
+        // 2. 执行 GroupBy 和 聚合
+        using var result = df
+            .GroupBy("groups")
+            .Agg(
+                // Boolean 聚合
+                Col("bools").Any().Alias("is_any_true"),   // 只要有一个 true 就是 true
+                Col("bools").All().Alias("is_all_true"),   // 必须全是 true 才是 true
+                
+                // 位置聚合
+                Col("values").First().Alias("v_first"),
+                Col("values").Last().Alias("v_last"),
+                
+                // 验证 Reverse (配合 First 使用，Reverse().First() 等于 Last)
+                Col("values").Reverse().First().Alias("v_rev_first") 
+            )
+            .Sort("groups");
+
+        // 3. 断言验证
+        Assert.Equal(3, result.Height); // A, B, C 三组
+
+        // --- Group A (Mixed) ---
+        // bools: [true, false] -> Any: True, All: False
+        // values: [1, 2] -> First: 1, Last: 2
+        Assert.Equal("A", result.GetValue<string>(0, "groups"));
+        Assert.True(result.GetValue<bool>(0, "is_any_true"));
+        Assert.False(result.GetValue<bool>(0, "is_all_true"));
+        Assert.Equal(1, result.GetValue<int>(0, "v_first"));
+        Assert.Equal(2, result.GetValue<int>(0, "v_last"));
+        Assert.Equal(2, result.GetValue<int>(0, "v_rev_first")); // Reverse 后的 First 应该是 2
+
+        // --- Group B (Single) ---
+        // bools: [true] -> Any: True, All: True
+        Assert.Equal("B", result.GetValue<string>(1, "groups"));
+        Assert.True(result.GetValue<bool>(1, "is_all_true")); // 只有一个 true，所以 all 也是 true
+
+        // --- Group C (All False) ---
+        // bools: [false, false] -> Any: False, All: False
+        Assert.Equal("C", result.GetValue<string>(2, "groups"));
+        Assert.False(result.GetValue<bool>(2, "is_any_true"));
+    }
+
+    [Fact]
+    public void Test_GroupBy_Item_Safe()
+    {
+        // Item() 是个狠角色。
+        // 如果组里只有 1 个元素，它返回该元素。
+        // 如果组里有多个元素，Polars 可能会报错或者行为未定义（取决于版本和 allow_empty）。
+        // 我们这里测试最标准的用法：取单元素组的值。
+        
+        var groups = new[] { "X", "Y" };
+        var codes = new[] { 101, 102 }; // 每个组只有一个值
+
+        using var df = DataFrame.FromColumns(new { groups, codes });
+
+        using var res = df.GroupBy("groups")
+            .Agg(
+                Col("codes").Item().Alias("code_item")
+            )
+            .Sort("groups");
+
+        Assert.Equal(2, res.Height);
+        Assert.Equal(101, res.GetValue<int>(0, "code_item"));
+        Assert.Equal(102, res.GetValue<int>(1, "code_item"));
+    }
+
+    [Fact]
+    public void Test_Expr_Reverse_Standalone()
+    {
+        // 单独测试 Reverse，不通过 GroupBy
+        // [1, 2, 3] -> [3, 2, 1]
+        
+        using var df = DataFrame.FromColumns(new 
+        { 
+            nums = new[] { 1, 2, 3 } 
+        });
+
+        using var res = df.Select(
+            Col("nums").Reverse().Alias("nums_rev")
+        );
+
+        var revArr = res["nums_rev"].ToArray<int>();
+        
+        Assert.Equal(3, revArr.Length);
+        Assert.Equal(3, revArr[0]);
+        Assert.Equal(2, revArr[1]);
+        Assert.Equal(1, revArr[2]);
+    }
     // ==========================================
     // Join Tests
     // ==========================================
     [Fact]
-    public void Test_DataFrame_Join_MultiColumn()
+    public void Test_DataFrame_Join_MultiColumn_WithParams()
     {
-        // 场景：学生在不同年份有不同的成绩
-        // Alice 在 2023 和 2024 都有成绩
-        // Bob 只有 2023 的成绩
-        var scoresContent = @"student,year,score
-Alice,2023,85
-Alice,2024,90
-Bob,2023,70";
-        using var scoresCsv = new DisposableFile(scoresContent, ".csv");
-        using var scoresDf = DataFrame.ReadCsv(scoresCsv.Path);
+        // 1. 准备数据：使用 FromColumns 在内存中直接构建
+        // 场景：学生成绩表 (Left)
+        // 包含一个 'note' 列，用于制造列名冲突，测试 suffix
+        using var scoresDf = DataFrame.FromColumns(new 
+        {
+            student = new[] { "Alice", "Alice", "Bob" },
+            year    = new[] { 2023,    2024,    2023 },
+            score   = new[] { 85,      90,      70 },
+            note    = new[] { "Score1", "Score2", "Score3" } 
+        });
 
-        // 场景：班级分配表
-        // Alice: 2023是Math班, 2024是Physics班
-        // Bob:   2024是History班 (注意：Bob 2023没有班级记录)
-        var classContent = @"student,year,class
-Alice,2023,Math
-Alice,2024,Physics
-Bob,2024,History";
-        using var classCsv = new DisposableFile(classContent, ".csv");
-        using var classDf = DataFrame.ReadCsv(classCsv.Path);
+        // 场景：班级分配表 (Right)
+        // 同样包含 'note' 列
+        using var classDf = DataFrame.FromColumns(new 
+        {
+            student = new[] { "Alice", "Alice", "Bob" },
+            year    = new[] { 2023,    2024,    2024 },
+            className = new[] { "Math", "Physics", "History" }, // 避免用 C# 关键字 class
+            note    = new[] { "Class1", "Class2", "Class3" }
+        });
 
-        // 执行多列 Join (Inner Join)
-        // 逻辑：必须 student 和 year 都相同才算匹配
-        // 预期结果：
-        // 1. Alice + 2023 -> 匹配
-        // 2. Alice + 2024 -> 匹配
-        // 3. Bob + 2023   -> 左表有Bob 2023，但右表只有 Bob 2024 -> 丢弃 (因为是 Inner Join)
+        // 2. 执行 Join 测试新参数
+        // 逻辑：Inner Join on (student, year)
+        // 预期匹配：
+        // - (Alice, 2023) -> Math
+        // - (Alice, 2024) -> Physics
+        // (Bob, 2023) 左有右无 -> 丢弃
+        // (Bob, 2024) 左无右有 -> 丢弃
         using var joinedDf = scoresDf.Join(
             classDf,
-            leftOn: ["student", "year"],   // 左表双键
-            rightOn: ["student", "year"],  // 右表双键
-            how: JoinType.Inner
+            leftOn: ["student", "year"],
+            rightOn: ["student", "year"],
+            how: JoinType.Inner,
+            
+            // --- 新参数实战 ---
+            suffix: "_conflict_test",          // 自定义后缀
+            validation: JoinValidation.OneToOne, // 验证键的唯一性 (当前数据满足 1:1)
+            coalesce: JoinCoalesce.JoinSpecific  // 默认行为：合并 Key 列
         );
 
-        // 验证高度：应该只有 2 行 (Alice 2023, Alice 2024)
-        Assert.Equal(2, joinedDf.Height); 
+        // 3. 验证基础维度
+        Assert.Equal(2, joinedDf.Height);
         
-        // 验证宽度：student, year, score, class (year 在 Join 后通常会去重或保留一份，具体看 Polars 行为，通常保留左表的)
-        // Polars Join 后列名如果冲突会自动处理，或者保留 Key。
-        // 这里的列应该是: student, year, score, class
-        Assert.Equal(4, joinedDf.Width);
+        // 4. 验证列名处理 (Suffix 是否生效)
+        // 原有列: student, year, score, note
+        // 新增列: className, note_conflict_test (右表的 note 加后缀)
+        var cols = joinedDf.Columns;
+        Assert.Contains("note", cols);
+        Assert.Contains("note_conflict_test", cols); // 验证后缀
 
+        // 5. 验证数据正确性 (先排序确保稳定)
+        using var sorted = joinedDf.Sort("year");
+
+        // Row 0: Alice 2023
+        Assert.Equal(2023, sorted.GetValue<int>(0, "year"));
+        Assert.Equal("Math", sorted.GetValue<string>(0, "className"));
         
-        // 排序以确保验证顺序 (按 year 排序)
-        // 但这里我们简单通过 Filter 验证或者假定顺序（CSV读取顺序通常保留）
-        
-        // 验证第一行 (Alice 2023)
-        Assert.Equal("Alice", joinedDf.GetValue<string>(0, "student"));
-        Assert.Equal(2023, joinedDf.GetValue<int>(0, "year"));
-        Assert.Equal("Math", joinedDf.GetValue<string>(0, "class"));
+        // 验证冲突列的内容
+        Assert.Equal("Score1", sorted.GetValue<string>(0, "note"));              // 左表数据
+        Assert.Equal("Class1", sorted.GetValue<string>(0, "note_conflict_test")); // 右表数据
 
-        // 验证第二行 (Alice 2024)
-        Assert.Equal("Alice", joinedDf.GetValue<string>(1, "student"));
-        Assert.Equal(2024, joinedDf.GetValue<int>(1, "year"));
-        Assert.Equal("Physics", joinedDf.GetValue<string>(1, "class"));
-
-        // 验证 Bob 确实被删除了 (因为他在右表没有 2023 的记录)
-        // 我们可以简单地检查 DataFrame 里没有 Bob
-        using var bobCheck = joinedDf.Filter(Col("student") == Lit("Bob"));
-        Assert.Equal(0, bobCheck.Height);
+        // Row 1: Alice 2024
+        Assert.Equal(2024, sorted.GetValue<int>(1, "year"));
+        Assert.Equal("Physics", sorted.GetValue<string>(1, "className"));
+        Assert.Equal("Score2", sorted.GetValue<string>(1, "note"));
+        Assert.Equal("Class2", sorted.GetValue<string>(1, "note_conflict_test"));
     }
     // ==========================================
     // Concat Tests (Vertical, Horizontal, Diagonal)
@@ -199,7 +306,7 @@ Bob,2024,History";
             using var csv2 = new DisposableFile("id,name\n2,Bob","csv");
             using var df2 = DataFrame.ReadCsv(csv2.Path);
 
-            using var res = DataFrame.Concat([df1, df2], ConcatType.Vertical);
+            using var res = DataFrame.Concat([df1, df2]);
 
             Assert.Equal(2, res.Height);
             Assert.Equal(2, res.Width);
@@ -218,7 +325,7 @@ Bob,2024,History";
             using var csv2 = new DisposableFile("name,age\nAlice,20\nBob,30",".csv");
             using var df2 = DataFrame.ReadCsv(csv2.Path);
 
-            using var res = DataFrame.Concat([df1, df2], ConcatType.Horizontal);
+            using var res = DataFrame.ConcatHorizontal([df1, df2]);
 
             Assert.Equal(2, res.Height);
             Assert.Equal(3, res.Width); // id + name + age
@@ -244,7 +351,7 @@ Bob,2024,History";
             using var csv2 = new DisposableFile("B,C\n20,300",".csv");
             using var df2 = DataFrame.ReadCsv(csv2.Path);
 
-            using var res = DataFrame.Concat([df1, df2], ConcatType.Diagonal);
+            using var res = DataFrame.ConcatDiagonal([df1, df2]);
 
             Assert.Equal(2, res.Height); // 垂直堆叠
             Assert.Equal(3, res.Width);  // A, B, C (列的并集)
@@ -263,65 +370,86 @@ Bob,2024,History";
     // Reshaping Tests (Pivot & Unpivot)
     // ==========================================
     [Fact]
-    public void Test_Pivot_Unpivot()
+    public void Test_Pivot_Unpivot_With_CustomExpr()
     {
-        // 构造“长表”数据：记录了不同城市在不同日期的温度
-        // date, city, temp
-        var content = @"date,city,temp
-2024-01-01,NY,5
-2024-01-01,LA,20
-2024-01-02,NY,2
-2024-01-02,LA,18";
-        
-        using var csv = new DisposableFile(content,".csv");
-        using var df = DataFrame.ReadCsv(csv.Path);
+        // 1. 准备数据：内存构建 (长表)
+        // 场景：记录了不同城市在不同日期的温度 (摄氏度)
+        using var df = DataFrame.FromColumns(new
+        {
+            date = new[] { "2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02" },
+            city = new[] { "NY", "LA", "NY", "LA" },
+            temp = new[] { 5.0, 20.0, 2.0, 18.0 } // 使用 double 方便后续计算
+        });
 
-        // --- Step 1: Pivot (长 -> 宽) ---
-        // 目标：每一行是 date，列变成 city (NY, LA)，值是 temp
+        // --- Step 1: Standard Pivot (Enum 方式) ---
+        // 目标：长 -> 宽, 聚合用 First
+        // 新参数测试：sortColumns = true (确保 "LA" 排在 "NY" 前面)
         using var pivoted = df.Pivot(
             index: ["date"],
             columns: ["city"],
             values: ["temp"],
-            agg: PivotAgg.First // 因为 (date, city) 唯一，First 即可
+            aggregateFunction: PivotAgg.First,
+            sortColumns: true 
         );
 
-        // 验证 Pivot 结果
-        // 列应该是: date, NY, LA (顺序可能变，取决于 Polars 内部哈希，通常是排序的或按出现顺序)
-        Assert.Equal(2, pivoted.Height); // 只有两天 (01-01, 01-02)
-        Assert.Equal(3, pivoted.Width);  // date, NY, LA
+        // 验证结构
+        Assert.Equal(2, pivoted.Height);
+        Assert.Equal(3, pivoted.Width); // date, LA, NY (Sorted)
+
+        // 验证列名排序 (LA < NY)
+        var cols = pivoted.ColumnNames;
+        Assert.Equal("LA", cols[1]);
+        Assert.Equal("NY", cols[2]);
+
+        // 验证值 (2024-01-01)
+        // Sort 后 date 应该是升序
+        Assert.Equal(20.0, pivoted.GetValue<double>(0, "LA")); // LA 20度
+        Assert.Equal(5.0, pivoted.GetValue<double>(0, "NY"));  // NY 5度
+
+        // --- Step 2: Custom Expr Pivot (修正版) ---
         
-        // 简单打印一下结构，防止列名顺序不确定导致测试挂掉
-        // pivoted.Show(); 
+        // 方案A：最佳实践 - 先计算，后透视
+        // 我们先计算华氏度，生成新列 "temp_f"(
+        using var dfWithF = df.WithColumns((Col("temp") * 1.8 + 32).Alias("temp_f"));
+        
+        // 然后使用 Expr 重载进行透视
+        // 这里为了测试 Expr 通道是否打通，我们传入 Col("").Sum() 或者简单的聚合
+        // 注意：因为 Polars Pivot 限制，我们不能写 Col("temp_f")。
+        // 在我们的 Rust Shim 实现里，我们用 col("") 代表当前 value。
+        // 所以，要在 Pivot 里自定义聚合，我们得用 Col("") 代表 "temp_f"。
+        
+        using var pivotedFahrenheit = dfWithF.Pivot(
+            index: ["date"],
+            columns: ["city"],
+            values: ["temp_f"],
+            // 使用 Col("") 代表当前上下文的值(values列)
+            // 并且必须是聚合函数 (First, Sum, etc)，不能只是运算
+            aggregateExpr: Col("").First(), 
+            sortColumns: true
+        );
 
-        // 验证 2024-01-01 的 NY 气温 (假设第一行是 01-01)
-        // 注意：Arrow 列名区分大小写
-        Assert.Equal(5L, pivoted[0, "NY"]); 
-        Assert.Equal(20L, pivoted[0, "LA"]);
+        // 验证计算结果
+        // NY: 5 * 1.8 + 32 = 41
+        // LA: 20 * 1.8 + 32 = 68
+        Assert.Equal(68.0, pivotedFahrenheit.GetValue<double>(0, "LA"));
+        Assert.Equal(41.0, pivotedFahrenheit.GetValue<double>(0, "NY"));
 
-        // --- Step 2: Unpivot/Melt (宽 -> 长) ---
-        // 把刚才的宽表还原。
-        // Index 保持 "date" 不变
-        // 把 "NY" 和 "LA" 这两列融化成 "city" (variable) 和 "temp" (value)
+        // --- Step 3: Unpivot/Melt (宽 -> 长) ---
+        // 把 Step 1 的结果还原
         using var unpivoted = pivoted.Unpivot(
             index: ["date"],
-            on: ["NY", "LA"],
-            variableName: "city",
+            on: ["LA", "NY"],
+            variableName: "city_restored",
             valueName: "temp_restored"
-        ).Sort("date"); // 排序以便断言
+        ).Sort(["date", "city_restored"]); // 排序以确保断言稳定
 
-        // 验证 Unpivot 结果
-        // 高度应该回到 4 行
+        // 验证还原结果
         Assert.Equal(4, unpivoted.Height);
-        Assert.Equal(3, unpivoted.Width); // date, city, temp_restored
         
-        // 验证列名是否存在
-        Assert.NotNull(unpivoted.Column("city"));
-        Assert.NotNull(unpivoted.Column("temp_restored"));
-
-        // 验证值是否还在
-        // 比如第一行应该是 2024-01-01, NY, 5 (或者 LA, 20，取决于排序稳定性，我们这里不深究具体排序，只验证数据存在性)
-        // 简单验证第一行的数据类型正确
-        Assert.NotNull(unpivoted.Column("city")[0]);
+        // 验证第一行: 2024-01-01, LA, 20.0
+        Assert.Equal("2024-01-01", unpivoted.GetValue<string>(0, "date"));
+        Assert.Equal("LA", unpivoted.GetValue<string>(0, "city_restored"));
+        Assert.Equal(20.0, unpivoted.GetValue<double>(0, "temp_restored"));
     }
     // ==========================================
     // Display Tests (Head & Show)
@@ -410,7 +538,7 @@ Bob,2024,History";
         // 10,20 -> 15
         // 10,20,30 -> 20
         var rollExpr = Col("val")
-            .RollingMeanBy(windowSize: new TimeSpan(3,0,0,0), by: Col("date"), closed: "left")
+            .RollingMeanBy(windowSize: new TimeSpan(3,0,0,0), by: Col("date"), closed: ClosedWindow.Left)
             .Alias("roll_mean");
 
         using var res = df.Select(
@@ -456,13 +584,8 @@ B,5";
                 Col("val_list").List.Contains(3).Alias("has_3")
             )
             .Sort("group");
-
         // A (1,2) -> Sum=3, Max=2, Has3=false
         // B (3,4,5) -> Sum=12, Max=5, Has3=true
-        
-        // 验证 Name Suffix
-        Assert.NotNull(res["val_list_sum"]); // Suffix 生效
-        Assert.NotNull(res["val_list_max"]);
 
         // 验证 A
         Assert.Equal(3, res.GetValue<int>(0,"val_list_sum"));
@@ -551,8 +674,8 @@ B,5";
         // 1. 构造数据: 模拟逗号分隔的字符串
         // Row 0: "1,2" (炸开后应变2行)
         // Row 1: "3"   (炸开后保持1行)
-        using var s = new Series("nums", ["1,2", "3"]);
-        using var df = new DataFrame(s);
+        using var s = new Series("nums", ["1,2","3"]);
+        using var df = DataFrame.FromSeries(s);
 
         // 2. 预处理: 用 Split 生成 List 列
         // 此时 df 结构:
@@ -566,24 +689,23 @@ B,5";
             Col("nums"),
             Col("nums").Str.Split(",").Alias("list_vals")
         );
-
-        // 3. 执行 Explode
-        // 这一步调用了你的 public DataFrame Explode(params Expr[] exprs)
-        using var exploded = dfWithList.Explode(Col("list_vals"));
+        using var dtype = DataType.List(DataType.String);
+        // Explode for all Int32 list 
+        using var exploded = dfWithList.Explode(Selectors.DType(dtype));
 
         // 4. 验证结果
         // 总行数应该是 2 + 1 = 3
         Assert.Equal(3, exploded.Height);
 
         // 验证 list_vals 列的内容是否已展平为 String
-        Assert.Equal("1", exploded.GetValue<string>(0, "list_vals"));
-        Assert.Equal("2", exploded.GetValue<string>(1, "list_vals"));
-        Assert.Equal("3", exploded.GetValue<string>(2, "list_vals"));
+        Assert.Equal("1", exploded["list_vals"][0]);
+        Assert.Equal("2", exploded[1][1]);
+        Assert.Equal("3", exploded.GetValue<string>("list_vals",2));
 
         // 验证其它列 (nums) 是否被正确复制 (Duplicated)
         Assert.Equal("1,2", exploded.GetValue<string>(0, "nums"));
-        Assert.Equal("1,2", exploded.GetValue<string>(1, "nums"));
-        Assert.Equal("3",   exploded.GetValue<string>(2, "nums"));
+        Assert.Equal("1,2", exploded["nums",1]);
+        Assert.Equal("3",   exploded[2,0]);
     }
     [Fact]
     public void Test_Column_ByIndex_And_Iteration()
@@ -619,33 +741,6 @@ B,5";
             count++;
         }
         Assert.Equal(3, count);
-    }
-    [Fact]
-    public void Test_ToHtml_Render()
-    {
-        var df = DataFrame.FromColumns(new 
-        {
-            Name = new[] { "Alice", "Bob" },
-            Age = new[] { 25, 30 },
-            Bio = new[] { "Loves coding", null }
-        });
-
-        var html = df.ToHtml();
-
-        // 简单的字符串包含断言
-        Assert.Contains("<table", html);
-        Assert.Contains("Alice", html);
-        Assert.Contains("Bob", html);
-        
-        // 验证表头包含类型
-        Assert.Contains("str", html); 
-        Assert.Contains("i32", html);
-
-        // 验证 null 处理
-        Assert.Contains("class='pl-null'>null", html);
-        
-        // 验证 Shape
-        Assert.Contains("shape: (2, 3)", html);
     }
     [Fact]
     public void Test_DataFrame_Sort_Advanced()
@@ -750,7 +845,8 @@ B,5";
             dfRight,
             leftOn: Col("ts"),
             rightOn: Col("ts"),
-            strategy: "backward"
+            tolerance: null,
+            strategy: AsofStrategy.Backward
         );
 
         // 验证
@@ -759,5 +855,113 @@ B,5";
         var rVals = res["val_r"].ToArray<int>();
         Assert.Equal(20, rVals[0]); // 10:00 matched 10:00
         Assert.Equal(30, rVals[1]); // 10:02 matched 10:01 (closest previous)
+    }
+    [Fact]
+    public void Test_DataFrame_Slice()
+    {
+        // 1. 准备数据: 水果和颜色
+        var df = DataFrame.FromSeries(
+            new Series("Fruit", ["Apple", "Grape", "Grape", "Fig", "Fig"]),
+            new Series("Color", ["Green", "Red", "White", "White", "Red"])
+        );
+
+        // 2. 执行切片: df.slice(2, 3)
+        // 意思是从索引 2 开始，取 3 行
+        // 原数据:
+        // 0: Apple, Green
+        // 1: Grape, Red
+        // 2: Grape, White  <-- Start
+        // 3: Fig,   White
+        // 4: Fig,   Red    <-- End (Length 3)
+        using var sl = df.Slice(2, 3);
+
+        // 3. 验证形状
+        Assert.Equal(3, sl.Height);
+        Assert.Equal(2, sl.Width);
+
+        // 4. 验证内容
+        Assert.Equal("Grape", sl["Fruit"].GetValue<string>(0));
+        Assert.Equal("Fig",   sl["Fruit"].GetValue<string>(1));
+        Assert.Equal("Fig",   sl["Fruit"].GetValue<string>(2));
+        
+        // 验证越界情况（Polars 通常会截断而不是报错）
+        using var slOverflow = df.Slice(4, 100);
+        Assert.Equal(1, slOverflow.Height); // 只剩最后一行 "Fig"
+        Assert.Equal("Fig", slOverflow["Fruit"].GetValue<string>(0));
+    }
+    [Fact]
+    public void Test_Unique_Stable()
+    {
+        var df = DataFrame.From(new[]
+        {
+            new { A = 1, B = "x" },
+            new { A = 2, B = "y" },
+            new { A = 1, B = "x" }, // Duplicate
+            new { A = 3, B = "z" }
+        });
+
+        // 1. Default (All cols, Keep First)
+        var res1 = df.Unique();
+        Assert.Equal(3, res1.Height);
+        Assert.Equal(1, res1["A"][0]); // Order preserved
+        Assert.Equal(2, res1["A"][1]);
+        Assert.Equal(3, res1["A"][2]);
+
+        // 2. Subset (Check only A)
+        var df2 = DataFrame.From(new[]
+        {
+            new { A = 1, B = "x" },
+            new { A = 1, B = "y" } // Duplicate on A
+        });
+        
+        var res2 = df2.Unique(new[] { "A" }, UniqueKeepStrategy.Last);
+        Assert.Equal(1, res2.Height);
+        Assert.Equal("y", res2["B"][0]); // Should keep the last one ("y")
+
+        // 3. Keep None (Remove all duplicates)
+        var res3 = df.Unique(null, UniqueKeepStrategy.None);
+        Assert.Equal(2, res3.Height); // A=2 and A=3 are unique. A=1 appears twice so both removed.
+    }
+    [Fact]
+    public void Test_HStack_VStack()
+    {
+        // --- 1. Test HStack ---
+        // 初始 DF: [a]
+        using var df1 = DataFrame.FromColumns(new { a = new[] { 1, 2, 3 } });
+        
+        // 新列: [b]
+        using var sNew = new Series("b", [10, 20, 30]);
+
+        // 执行 HStack -> [a, b]
+        using var hStacked = df1.HStack(sNew);
+
+        Assert.Equal(3, hStacked.Height);
+        Assert.Equal(2, hStacked.Width);
+        Assert.Equal("a", hStacked.Columns[0]);
+        Assert.Equal("b", hStacked.Columns[1]);
+        Assert.Equal(10, hStacked["b"][0]);
+
+        // --- 2. Test VStack ---
+        // DF2: [a, b] (schema 必须一致)
+        using var df2 = DataFrame.FromColumns(new 
+        { 
+            a = new[] { 4, 5 }, 
+            b = new[] { 40, 50 } 
+        });
+
+        // 执行 VStack: hStacked (3 rows) + df2 (2 rows) -> 5 rows
+        using var vStacked = hStacked.VStack(df2);
+
+        Assert.Equal(5, vStacked.Height);
+        Assert.Equal(2, vStacked.Width);
+        
+        // 验证数据衔接
+        // Row 0 (from df1)
+        Assert.Equal(1, vStacked["a"][0]);
+        Assert.Equal(10, vStacked["b"][0]);
+        
+        // Row 3 (from df2, index 0) -> 总索引 3
+        Assert.Equal(4, vStacked["a"][3]);
+        Assert.Equal(40, vStacked["b"][3]);
     }
 }

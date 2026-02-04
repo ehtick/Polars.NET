@@ -2,6 +2,7 @@
 using Apache.Arrow;
 using Apache.Arrow.C;
 using Apache.Arrow.Types;
+using Polars.NET.Core.Native;
 
 namespace Polars.NET.Core.Arrow
 {
@@ -102,7 +103,7 @@ namespace Polars.NET.Core.Arrow
             var structType = (StructType)structArray.Data.DataType;
             
             // Build Schema
-            var schema = new Apache.Arrow.Schema(structType.Fields, null); // null for metadata
+            var schema = new Schema(structType.Fields, null); // null for metadata
 
             // Build RecordBatch
             return new RecordBatch(schema, structArray.Fields, structArray.Length);

@@ -1,21 +1,6 @@
-use crate::types::{DataTypeContext, LazyFrameContext, SchemaContext};
+use crate::{types::{DataTypeContext, SchemaContext}, utils::ptr_to_str};
 use std::{ffi::{CStr, CString}, os::raw::c_char};
 use polars_core::prelude::*;
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pl_lazy_frame_get_schema(lf_ptr: *mut LazyFrameContext) -> *mut SchemaContext {
-    ffi_try!({
-        if lf_ptr.is_null() {
-            return Ok(std::ptr::null_mut());
-        }
-        
-        let ctx = unsafe { &mut *lf_ptr };
-        
-        let schema_ref = ctx.inner.collect_schema().map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-        Ok(Box::into_raw(Box::new(SchemaContext { schema: schema_ref })))
-    })
-}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_schema_len(ptr: *mut SchemaContext) -> usize {
@@ -63,6 +48,40 @@ pub extern "C" fn pl_schema_new(
     }
     Box::into_raw(Box::new(SchemaContext { schema:schema.into() }))
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_schema_add_field(
+    schema_ptr: *mut SchemaContext,
+    name_ptr: *const c_char,
+    dtype_ptr: *mut DataTypeContext
+) {
+    ffi_try_void!({
+        if schema_ptr.is_null() {
+            return Err(PolarsError::ComputeError("Schema handle is null".into()));
+        }
+        if name_ptr.is_null() {
+            return Err(PolarsError::ComputeError("Name pointer is null".into()));
+        }
+        if dtype_ptr.is_null() {
+            return Err(PolarsError::ComputeError("DataType handle is null".into()));
+        }
+
+        let name = ptr_to_str(name_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+
+        let schema_ctx = unsafe { &mut *schema_ptr };
+
+        let dtype_ctx = unsafe { &*dtype_ptr };
+        let dtype = dtype_ctx.dtype.clone();
+
+        let schema_map = std::sync::Arc::make_mut(&mut schema_ctx.schema);
+        
+        schema_map.insert(name.into(), dtype);
+
+        Ok(())
+    })
+}
+
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_schema_free(ptr: *mut SchemaContext) {

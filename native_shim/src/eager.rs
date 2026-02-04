@@ -9,7 +9,7 @@ use crate::types::*;
 use polars::lazy::dsl::UnpivotArgsDSL;
 use polars::functions::{concat_df_horizontal,concat_df_diagonal};
 use polars::prelude::{Field as PolarsField};
-use crate::utils::{consume_exprs_array, map_jointype, ptr_to_str};
+use crate::utils::{consume_exprs_array, map_jointype, map_validation, map_coalesce, map_maintain_order,parse_keep_strategy, ptr_to_str};
 
 // ==========================================
 // 0. Memory Safety
@@ -85,6 +85,24 @@ gen_eager_op_vec!(pl_select, select);
 gen_eager_op_vec!(pl_with_columns, with_columns);
 
 // ==========================================
+// Slice
+// ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_dataframe_slice(
+    df: *mut DataFrame,
+    offset: i64,
+    length: usize,
+) -> *mut DataFrame {
+    ffi_try!({
+        let df = unsafe { &*df };
+        let result_df = df.slice(offset, length);
+
+        Ok(Box::into_raw(Box::new(result_df)))
+    })
+}
+
+
+// ==========================================
 // GroupBy
 // ==========================================
 
@@ -119,7 +137,14 @@ pub extern "C" fn pl_join(
     right_ptr: *mut DataFrameContext,
     left_on_ptr: *const *mut ExprContext, left_on_len: usize,
     right_on_ptr: *const *mut ExprContext, right_on_len: usize,
-    how_code: i32
+    how_code: u8,
+    suffix_ptr: *const c_char,
+    validation_code: u8,
+    coalesce_code: u8,
+    maintain_order_code: u8,
+    nulls_equal: bool,
+    slice_offset_ptr: *const i64, // Nullable pointer for Slice Offset
+    slice_len: usize              // Slice Length
 ) -> *mut DataFrameContext {
     ffi_try!({
         let left_ctx = unsafe { &*left_ptr };
@@ -130,7 +155,37 @@ pub extern "C" fn pl_join(
         let left_on = unsafe { consume_exprs_array(left_on_ptr, left_on_len) };
         let right_on = unsafe { consume_exprs_array(right_on_ptr, right_on_len) };
 
-        let args = JoinArgs::new(how);
+        // 1. Map Suffix
+        let suffix = if suffix_ptr.is_null() {
+            None
+        } else {
+            let s_str = ptr_to_str(suffix_ptr)
+                .map_err(|e| PolarsError::ComputeError(format!("Invalid suffix string: {}", e).into()))?;
+            Some(PlSmallStr::from_str(s_str))
+        };
+
+        // 2. Map Enums
+        let validation = map_validation(validation_code);
+        let coalesce = map_coalesce(coalesce_code);
+        let maintain_order = map_maintain_order(maintain_order_code);
+
+        // 3. Map Slice (Option<(i64, usize)>)
+        let slice = if slice_offset_ptr.is_null() {
+            None
+        } else {
+            Some((unsafe { *slice_offset_ptr }, slice_len))
+        };
+
+        // 4. Construct JoinArgs
+        let args = JoinArgs {
+            how,
+            validation,
+            suffix,
+            slice,
+            nulls_equal,
+            coalesce,
+            maintain_order,
+        };
         
         let res_df = left_ctx.df.clone().lazy()
             .join(right_ctx.df.clone().lazy(), left_on, right_on, args)
@@ -223,17 +278,16 @@ pub extern "C" fn pl_dataframe_get_column_name(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_dataframe_schema(df_ptr: *mut DataFrameContext) -> *mut c_char {
-    let ctx = unsafe { &*df_ptr };
-    let schema = ctx.df.schema();
-      
-    let map: std::collections::HashMap<String, String> = schema.iter_names_and_dtypes()
-        .map(|(name, dtype)| (name.to_string(), dtype.to_string()))
-        .collect();
+pub extern "C" fn pl_dataframe_get_schema(
+    df_ptr: *mut DataFrameContext,
+) -> *mut SchemaContext {
+    let _df = unsafe { &*df_ptr };
 
-    let json = serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string());
+    let schema = unsafe { &*df_ptr }.df.schema();
     
-    CString::new(json).unwrap().into_raw()
+    Box::into_raw(Box::new(SchemaContext { 
+        schema: schema.to_owned() 
+    }))
 }
 
 // --- Convenience Ops ---
@@ -279,9 +333,61 @@ pub extern "C" fn pl_dataframe_drop_nulls(df_ptr: *mut DataFrameContext, subset:
                 .collect();
             ctx.df.drop_nulls(Some(&cols))?
         };
-
         Ok(Box::into_raw(Box::new(DataFrameContext { df: new_df })))
     })
+}
+
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_df_unique_stable(
+    df: *mut DataFrame,
+    subset: *const *const c_char, // String array ptr
+    subset_len: usize,            // Array length
+    keep_strategy: u8, // "first", "last", "any", "none"
+    slice_offset: i64,
+    slice_len: usize,
+    slice_valid: u8,              // 1 = use slice, 0 = ignore slice
+) -> *mut DataFrame {
+    let df = unsafe { &*df };
+
+    // 1. Parse Subset (Option<&[String]>)
+    let subset_vec: Option<Vec<String>> = if subset.is_null() || subset_len == 0 {
+        None
+    } else {
+        let slice = unsafe { std::slice::from_raw_parts(subset, subset_len) };
+        let vec = slice
+            .iter()
+            .map(|&p| unsafe { CStr::from_ptr(p).to_string_lossy().to_string() })
+            .collect();
+        Some(vec)
+    };
+
+    // 2. Parse Keep Strategy
+    let keep = parse_keep_strategy(keep_strategy);
+
+    // 3. Parse Slice
+    let slice = if slice_valid != 0 {
+        Some((slice_offset, slice_len))
+    } else {
+        None
+    };
+
+    // 4. Call Polars
+    let res = df.unique_stable(
+        subset_vec.as_deref(),
+        keep, 
+        slice
+    );
+
+    match res {
+        Ok(d) => Box::into_raw(Box::new(d)),
+        Err(e) => {
+            // Error handling machinery (assuming you have one, or just panic for now)
+            eprintln!("Polars Error: {}", e);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -453,34 +559,15 @@ pub extern "C" fn pl_tail(df_ptr: *mut DataFrameContext, n: usize) -> *mut DataF
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_explode(
     df_ptr: *mut DataFrameContext,
-    exprs_ptr: *const *mut ExprContext,
-    len: usize
+    selector_ptr: *mut SelectorContext,
 ) -> *mut DataFrameContext {
     ffi_try!({
         let ctx = unsafe { &*df_ptr };
-        let exprs = unsafe { consume_exprs_array(exprs_ptr, len) };
-
-        if exprs.is_empty() {
-             let res_df = ctx.df.clone();
-             return Ok(Box::into_raw(Box::new(DataFrameContext { df: res_df })));
-        }
-
-        let mut iter = exprs.into_iter();
-        
-        let first_expr = iter.next().unwrap();
-        let mut final_selector = first_expr.into_selector()
-            .ok_or_else(|| PolarsError::ComputeError("Expr cannot be converted to Selector".into()))?;
-
-        for e in iter {
-            let s = e.into_selector()
-                .ok_or_else(|| PolarsError::ComputeError("Expr cannot be converted to Selector".into()))?;
-                
-            final_selector = final_selector | s;
-        }
+        let selector_ctx = unsafe { Box::from_raw(selector_ptr) };
 
         let res_df = ctx.df.clone()
             .lazy()
-            .explode(final_selector)
+            .explode(selector_ctx.inner)
             .collect()?;
 
         Ok(Box::into_raw(Box::new(DataFrameContext { df: res_df })))
@@ -495,7 +582,10 @@ pub extern "C" fn pl_pivot(
     values_ptr: *const *const c_char, values_len: usize,
     index_ptr: *const *const c_char, index_len: usize,
     columns_ptr: *const *const c_char, columns_len: usize,
-    agg_code: i32
+    agg_code: u8,
+    agg_expr_ptr: *mut ExprContext,
+    sort_columns: bool,
+    separator_ptr: *const c_char
 ) -> *mut DataFrameContext {
     ffi_try!({
         let ctx = unsafe { &*df_ptr };
@@ -503,7 +593,7 @@ pub extern "C" fn pl_pivot(
         let to_strs = |ptr, len| unsafe {
             let mut v = Vec::with_capacity(len);
             for &p in std::slice::from_raw_parts(ptr, len) {
-                v.push(ptr_to_str(p).unwrap()); // 返回 &str
+                v.push(ptr_to_str(p).unwrap());
             }
             v
         };
@@ -511,18 +601,30 @@ pub extern "C" fn pl_pivot(
         let values = to_strs(values_ptr, values_len);
         let index = to_strs(index_ptr, index_len);
         let columns = to_strs(columns_ptr, columns_len);
+
+        // parse separator (Option<&str>)
+        let separator = if separator_ptr.is_null() {
+            None
+        } else {
+            ptr_to_str(separator_ptr).ok()
+        };
         
-        let el = col(""); 
-        let agg_expr = match agg_code {
-            1 => el.sum(),    // Sum
-            2 => el.min(),    // Min
-            3 => el.max(),    // Max
-            4 => el.mean(),   // Mean
-            5 => el.median(), // Median
-            6 => len(),       // Count
-            7 => len(),       // Len
-            8 => el.last(),   // Last
-            0 | _ => el.first(), // First (Default)
+        let agg_expr = if !agg_expr_ptr.is_null() {
+            let e_ctx = unsafe { Box::from_raw(agg_expr_ptr) };
+            e_ctx.inner
+        } else {
+            let el = col(""); 
+            match agg_code {
+                1 => el.sum(),
+                2 => el.min(),
+                3 => el.max(),
+                4 => el.mean(),
+                5 => el.median(),
+                6 => len(),
+                7 => len(),
+                8 => el.last(),
+                0 | _ => el.first(),
+            }
         };
 
         let res_df = pivot_stable(
@@ -530,9 +632,9 @@ pub extern "C" fn pl_pivot(
             columns,          // I0
             Some(index),  // Option<I1>
             Some(values),   // Option<I2>
-            false,          // sort_columns
+            sort_columns,          // sort_columns
             Some(agg_expr), // Option<Expr>
-            None            // separator
+            separator            // separator
         )?;
 
         Ok(Box::into_raw(Box::new(DataFrameContext { df: res_df })))
@@ -542,40 +644,22 @@ pub extern "C" fn pl_pivot(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_unpivot(
     df_ptr: *mut DataFrameContext,
-    id_vars_ptr: *const *const c_char, id_len: usize,
-    val_vars_ptr: *const *const c_char, val_len: usize,
+    index_selector: *mut SelectorContext,
+    on_selector: *mut SelectorContext,
     variable_name_ptr: *const c_char,
     value_name_ptr: *const c_char
 ) -> *mut DataFrameContext {
     ffi_try!({
         let ctx = unsafe { &*df_ptr };
-        
-        let to_pl_strs = |ptr, len| unsafe {
-            let mut v = Vec::with_capacity(len);
-            for &p in std::slice::from_raw_parts(ptr, len) {
-                let s = ptr_to_str(p).unwrap();
-                v.push(PlSmallStr::from_str(s));
-            }
-            v
-        };
-
-        let index_names = to_pl_strs(id_vars_ptr, id_len);
-        let on_names = to_pl_strs(val_vars_ptr, val_len);
-
-        let index_selector = cols(index_names.clone());
-
-        let on_selector = if on_names.is_empty() {
-            all().exclude_cols(index_names)
-        } else {
-            cols(on_names)
-        };
+        let index_ctx = unsafe { Box::from_raw(index_selector) };
+        let on_ctx = unsafe { Box::from_raw(on_selector) };
 
         let variable_name = if variable_name_ptr.is_null() { None } else { Some(PlSmallStr::from_str(ptr_to_str(variable_name_ptr).unwrap())) };
         let value_name = if value_name_ptr.is_null() { None } else { Some(PlSmallStr::from_str(ptr_to_str(value_name_ptr).unwrap())) };
 
         let args = UnpivotArgsDSL {
-            index: index_selector,
-            on: on_selector,
+            index: index_ctx.inner,
+            on: on_ctx.inner,
             variable_name,
             value_name,
         };
@@ -595,7 +679,8 @@ pub extern "C" fn pl_unpivot(
 pub extern "C" fn pl_concat(
     dfs_ptr: *const *mut DataFrameContext,
     len: usize,
-    how: i32 // 0=Vertical, 1=Horizontal, 2=Diagonal
+    how: u8, // 0=Vertical, 1=Horizontal, 2=Diagonal
+    check_duplicates: bool
 ) -> *mut DataFrameContext {
     ffi_try!({
         if len == 0 {
@@ -613,7 +698,7 @@ pub extern "C" fn pl_concat(
         let out_df = match how {
             0 => concat_df(&dfs)?,
             
-            1 => concat_df_horizontal(&dfs,true)?,
+            1 => concat_df_horizontal(&dfs,check_duplicates)?,
             
             2 => concat_df_diagonal(&dfs)?,
             
@@ -623,6 +708,57 @@ pub extern "C" fn pl_concat(
         Ok(Box::into_raw(Box::new(DataFrameContext { df: out_df })))
     })
 }
+
+// ==========================================
+// Vstack & Hstack
+// ==========================================
+
+/// Horizontal stack: Appends columns to the DataFrame.
+/// Returns a new DataFrame.
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_hstack(
+    df_ptr: *mut DataFrameContext,
+    cols_ptr: *const *mut SeriesContext,
+    len: usize,
+) -> *mut DataFrameContext {
+    ffi_try!({
+        let ctx = unsafe { &*df_ptr };
+        
+        let slice = unsafe { std::slice::from_raw_parts(cols_ptr, len) };
+        let mut columns = Vec::with_capacity(len);
+
+        for &p in slice {
+            if !p.is_null() {
+                let s_ctx = unsafe { &*p };
+                // Clone the series to ensure we don't steal ownership from the caller
+                columns.push(s_ctx.series.clone().into());
+            }
+        }
+
+        let res_df = ctx.df.hstack(&columns)?;
+        
+        Ok(Box::into_raw(Box::new(DataFrameContext { df: res_df })))
+    })
+}
+
+/// Vertical stack: Appends rows from another DataFrame to this one.
+/// Returns a new DataFrame (polars::vstack clones internally).
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_vstack(
+    df_ptr: *mut DataFrameContext,
+    other_ptr: *mut DataFrameContext,
+) -> *mut DataFrameContext {
+    ffi_try!({
+        let ctx = unsafe { &*df_ptr };
+        let other_ctx = unsafe { &*other_ptr };
+
+        // vstack in polars-core returns a PolarsResult<DataFrame> (it clones self internally)
+        let res_df = ctx.df.vstack(&other_ctx.df)?;
+
+        Ok(Box::into_raw(Box::new(DataFrameContext { df: res_df })))
+    })
+}
+
 // ==========================================
 // Unnest
 // ==========================================

@@ -1,3 +1,5 @@
+using Polars.NET.Core.Native;
+
 namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
@@ -20,11 +22,8 @@ public static partial class PolarsWrapper
         }
         return names;
     }
-    public static string GetDataFrameSchemaString(DataFrameHandle h)
-    {
-        var ptr = NativeBindings.pl_dataframe_schema(h);
-        return ErrorHelper.CheckString(ptr);
-    }
+    public static SchemaHandle GetDataFrameSchema(DataFrameHandle handle)
+        =>ErrorHelper.Check(NativeBindings.pl_dataframe_get_schema(handle));
     public static DataFrameHandle CloneDataFrame(DataFrameHandle df)
     {
         return ErrorHelper.Check(NativeBindings.pl_dataframe_clone(df));
@@ -65,8 +64,40 @@ public static partial class PolarsWrapper
 
     public static DataFrameHandle Tail(DataFrameHandle df, uint n)
         => ErrorHelper.Check(NativeBindings.pl_tail(df, n));
+    public static DataFrameHandle Slice(DataFrameHandle df, long offset,ulong length)
+        => ErrorHelper.Check(NativeBindings.pl_dataframe_slice(df,offset,(UIntPtr)length));
     public static DataFrameHandle Drop(DataFrameHandle df, string name)
         => ErrorHelper.Check(NativeBindings.pl_dataframe_drop(df, name));
+    public static DataFrameHandle DataFrameUniqueStable(
+        DataFrameHandle dfHandle, 
+        string[]? subset, 
+        PlUniqueKeepStrategy keep,
+        (long offset, ulong len)? slice)
+    {
+        // Slice handling
+        byte sliceValid = 0;
+        long offset = 0;
+        ulong len = 0;
+
+        if (slice.HasValue)
+        {
+            sliceValid = 1;
+            offset = slice.Value.offset;
+            len = slice.Value.len;
+        }
+
+        UIntPtr subLen = subset == null ? UIntPtr.Zero : (UIntPtr)subset.Length;
+
+        return NativeBindings.pl_df_unique_stable(
+            dfHandle,
+            subset,
+            subLen,
+            keep, 
+            offset,
+            (UIntPtr)len,
+            sliceValid
+        );
+    }
 
     public static DataFrameHandle Rename(DataFrameHandle df, string oldName, string newName)
         => ErrorHelper.Check(NativeBindings.pl_dataframe_rename(df, oldName, newName));
@@ -109,11 +140,43 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(NativeBindings.pl_select(df, rawExprs, (UIntPtr)rawExprs.Length));
     }
 
-    public static DataFrameHandle Join(DataFrameHandle left, DataFrameHandle right, ExprHandle[] leftOn, ExprHandle[] rightOn, PlJoinType how)
+    public static DataFrameHandle Join(
+        DataFrameHandle left, 
+        DataFrameHandle right, 
+        ExprHandle[] leftOn, 
+        ExprHandle[] rightOn, 
+        PlJoinType how,
+        string? suffix,
+        PlJoinValidation validation,
+        PlJoinCoalesce coalesce,
+        PlJoinMaintainOrder maintainOrder,
+        bool nullsEqual,
+        long? sliceOffset,
+        ulong sliceLen)
     {
         var lPtrs = HandlesToPtrs(leftOn);
         var rPtrs = HandlesToPtrs(rightOn);
-        return ErrorHelper.Check(NativeBindings.pl_join(left, right, lPtrs, (UIntPtr)lPtrs.Length, rPtrs, (UIntPtr)rPtrs.Length, how));
+
+        unsafe 
+        {
+            long offsetVal = sliceOffset.GetValueOrDefault();
+            IntPtr offsetPtr = sliceOffset.HasValue ? (IntPtr)(&offsetVal) : IntPtr.Zero;
+
+            return ErrorHelper.Check(NativeBindings.pl_join(
+                left, 
+                right, 
+                lPtrs, (UIntPtr)lPtrs.Length, 
+                rPtrs, (UIntPtr)rPtrs.Length, 
+                how,
+                suffix,         
+                validation,
+                coalesce,
+                maintainOrder,
+                nullsEqual,
+                offsetPtr,      
+                (UIntPtr)sliceLen
+            ));
+        }
     }
     public static DataFrameHandle DataFrameSort(
         DataFrameHandle df, 
@@ -148,11 +211,12 @@ public static partial class PolarsWrapper
             }
         }
     }
-    public static DataFrameHandle Explode(DataFrameHandle df, ExprHandle[] exprs)
+    public static DataFrameHandle Explode(DataFrameHandle df, SelectorHandle selector)
     {
-        var raw = HandlesToPtrs(exprs);
-        return ErrorHelper.Check(NativeBindings.pl_explode(df, raw, (UIntPtr)raw.Length));
-    }
+       var h = NativeBindings.pl_explode(df,selector);
+       selector.TransferOwnership();
+       return ErrorHelper.Check(h);
+    } 
     public static DataFrameHandle Unnest(DataFrameHandle df, string[] columns,string? separator)
         => ErrorHelper.Check(NativeBindings.pl_dataframe_unnest(df, columns, (UIntPtr)columns.Length,separator));
     // GroupBy
@@ -167,18 +231,24 @@ public static partial class PolarsWrapper
         ));
     }
     // Pivot (Eager)
-    public static DataFrameHandle Pivot(DataFrameHandle df, string[] index, string[] columns, string[] values, PlPivotAgg aggFn)
+    public static DataFrameHandle Pivot(DataFrameHandle df, string[] index, string[] columns, string[] values,ExprHandle? aggExpr, PlPivotAgg aggFn,bool sortColumns,
+        string? separator)
     {
-        return UseUtf8StringArray(index, iPtrs =>
-            UseUtf8StringArray(columns, cPtrs =>
-                UseUtf8StringArray(values, vPtrs =>
+        IntPtr aggExprPtr = aggExpr?.TransferOwnership() ?? IntPtr.Zero;
+
+        return UseUtf8StringArray(values, vPtrs =>
+            UseUtf8StringArray(index, iPtrs =>
+                UseUtf8StringArray(columns, cPtrs =>
                 {
                     return ErrorHelper.Check(NativeBindings.pl_pivot(
                         df,
-                        vPtrs, (UIntPtr)vPtrs.Length,
-                        iPtrs, (UIntPtr)iPtrs.Length,
-                        cPtrs, (UIntPtr)cPtrs.Length,
-                        aggFn
+                        vPtrs, (UIntPtr)vPtrs.Length, // values
+                        iPtrs, (UIntPtr)iPtrs.Length, // index
+                        cPtrs, (UIntPtr)cPtrs.Length, // columns
+                        aggFn,                   
+                        aggExprPtr,                  
+                        sortColumns,
+                        separator
                     ));
                 })
             )
@@ -186,26 +256,19 @@ public static partial class PolarsWrapper
     }
 
     // Unpivot (Eager)
-    public static DataFrameHandle Unpivot(DataFrameHandle df, string[] index, string[] on, string? variableName, string? valueName)
+    public static DataFrameHandle Unpivot(DataFrameHandle df, SelectorHandle index, SelectorHandle on, string? variableName, string? valueName)
     {
-        return UseUtf8StringArray(index, iPtrs =>
-            UseUtf8StringArray(on, oPtrs =>
-            {
-                return ErrorHelper.Check(NativeBindings.pl_unpivot(
-                    df,
-                    iPtrs, (UIntPtr)iPtrs.Length,
-                    oPtrs, (UIntPtr)oPtrs.Length,
-                    variableName,
-                    valueName
-                ));
-            })
-        );
+
+        var h = NativeBindings.pl_unpivot(df,index,on,variableName,valueName);
+        index.TransferOwnership();
+        on.TransferOwnership();
+        return ErrorHelper.Check(h);
     }
-    public static DataFrameHandle Concat(DataFrameHandle[] handles, PlConcatType how)
+    public static DataFrameHandle Concat(DataFrameHandle[] handles, PlConcatType how, bool checkDuplicates)
     {
         var ptrs = HandlesToPtrs(handles);
         
-        var h = NativeBindings.pl_concat(ptrs, (UIntPtr)ptrs.Length, how);
+        var h = NativeBindings.pl_concat(ptrs, (UIntPtr)ptrs.Length, how,checkDuplicates);
 
         foreach (var handle in handles)
         {
@@ -214,6 +277,31 @@ public static partial class PolarsWrapper
 
         return ErrorHelper.Check(h);
     }
+    // ==========================================
+    // Stack Ops
+    // ==========================================
+
+    public static DataFrameHandle HStack(DataFrameHandle df, SeriesHandle[] columns)
+    {
+        if (columns == null || columns.Length == 0)
+        {
+            // If no columns are provided, effectively return a clone of the original
+            return CloneDataFrame(df);
+        }
+
+        using var locker = new SafeHandleLock<SeriesHandle>(columns);
+        
+        return ErrorHelper.Check(NativeBindings.pl_hstack(
+            df, 
+            locker.Pointers, 
+            (UIntPtr)columns.Length
+        ));
+    }
+
+    public static DataFrameHandle VStack(DataFrameHandle df, DataFrameHandle other)
+        => ErrorHelper.Check(NativeBindings.pl_vstack(df, other));
+
+
     public static SeriesHandle DataFrameGetColumn(DataFrameHandle h, string name)
     {
         var sh = NativeBindings.pl_dataframe_get_column(h, name);

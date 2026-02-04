@@ -18,7 +18,7 @@
 Thumbs.db
 
 # --- Test Data ---
-# 不提交测试生成的临时文件，但保留原始测试文件（如果有的话）
+
 *.csv
 *.parquet
 !test.csv
@@ -27,3 +27,10 @@ Thumbs.db
 !dates.csv
 
 .fake
+
+# --- DocFx Data ---
+docs/_site/
+docs/obj/
+docs/api/csharp/
+docs/api/fsharp/
+docs/api/fsharp_generated/

@@ -1,4 +1,5 @@
 using Apache.Arrow;
+using Polars.NET.Core;
 using static Polars.CSharp.Polars; // 方便使用 Col, Lit
 
 namespace Polars.CSharp.Tests;
@@ -197,7 +198,7 @@ public class UdfTests
         Func<IArrowArray, IArrowArray> udf = UdfLogic.AlwaysFail;
 
         // 2. 断言会抛出异常
-        var ex = Assert.Throws<Exception>(() => 
+        var ex = Assert.Throws<PolarsException>(() => 
         {
             lf.Select(
                 Col("num").Map(udf, DataType.SameAsInput)
@@ -309,5 +310,42 @@ public class UdfTests
         
         Assert.Equal("Value:10", res.Column("status").GetValue<string>(0));
         Assert.Equal("FoundNull", res.Column("status").GetValue<string>(1)); // 成功捕获了 Null 输入！
+    }
+    [Fact]
+    public void Test_GroupBy_Agg_With_HighLevel_Lambda()
+    {
+        // 1. 准备数据
+        using var df = DataFrame.FromSeries(
+            new Series("key", ["A", "A", "B", "B"]),
+            new Series("val", [1L, 2L, 3L, 4L]) // 用 long 以防万一
+        );
+
+        // 2. 定义高层 Lambda
+        // 逻辑：输入是一个数组 (long[])，输出是最大值 + 10 (long)
+        // 这里的 TIn 是 long[]，因为我们用了 Implode()
+        Func<long[], long> myGroupLogic = (nums) => 
+        {
+            // 这里的 nums 就是 A组的 [1, 2] 或者 B组的 [3, 4]
+            if (nums == null || nums.Length == 0) return 0;
+            return nums.Max() + 10;
+        };
+
+        // 3. 执行 GroupBy Agg
+        // 关键组合拳：.Implode().Map(...)
+        var res = df.GroupBy("key")
+                    .Agg(
+                        Col("val")
+                        .Implode() // <--- 关键！把该组数据打包成一个 array 传给 UDF
+                        .Map(myGroupLogic, DataType.Int64) 
+                        .Alias("custom_agg")
+                    )
+                    .Sort("key");
+
+        // 4. 验证
+        // A组: [1, 2] -> Max 2 -> +10 = 12
+        Assert.Equal(12, res["custom_agg"].GetValue<long>(0));
+        
+        // B组: [3, 4] -> Max 4 -> +10 = 14
+        Assert.Equal(14, res["custom_agg"].GetValue<long>(1));
     }
 }

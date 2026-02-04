@@ -5,12 +5,12 @@ using Apache.Arrow.Types;
 using Polars.NET.Core.Arrow;
 
 namespace Polars.NET.Core.Data;
-internal static class DbToArrowStream
+public static class DbToArrowStream
 {
-    internal static IEnumerable<RecordBatch> ToArrowBatches(this IDataReader reader, int batchSize = 50_000)
+    public static IEnumerable<RecordBatch> ToArrowBatches(IDataReader reader, int batchSize = 50_000)
     {
         // 1. Schema
-        var schema = GetArrowSchema(reader);
+        var schema = ArrowTypeResolver.GetSchemaFromDataReader(reader);
         var colCount = reader.FieldCount;
 
         // 2. Buffer Pool
@@ -80,86 +80,6 @@ internal static class DbToArrowStream
             buffer.Clear();
         }
         return new RecordBatch(schema, arrays, length);
-    }
-
-    // Get Schema 
-    internal static Schema GetArrowSchema(IDataReader reader)
-    {
-        {
-            var fields = new List<Field>();
-            for (int i = 0; i < reader.FieldCount; i++)
-            {
-                var name = reader.GetName(i);
-                var type = reader.GetFieldType(i); 
-                
-                IArrowType arrowType = GetArrowType(type);
-                
-                fields.Add(new Field(name, arrowType, true));
-            }
-            return new Schema(fields, null);
-        }
-    }
-    private static IArrowType GetArrowType(Type t)
-    {
-        // For Nullable<T>，like int?, shoule be recongized as int
-        Type checkType = Nullable.GetUnderlyingType(t) ?? t;
-
-        if (checkType == typeof(int)) return Int32Type.Default;
-        if (checkType == typeof(long)) return Int64Type.Default;
-        if (checkType == typeof(float)) return FloatType.Default;
-        if (checkType == typeof(double)) return DoubleType.Default;
-        if (checkType == typeof(decimal)) return DoubleType.Default;
-        if (checkType == typeof(bool)) return BooleanType.Default;
-        if (checkType == typeof(string)) return StringViewType.Default;
-        if (checkType == typeof(DateTime)) return new TimestampType(TimeUnit.Microsecond, (string)null!);
-        if (checkType == typeof(TimeSpan)) return DurationType.FromTimeUnit(TimeUnit.Microsecond);
-        if (checkType == typeof(DateOnly)) return Date32Type.Default;
-        if (checkType == typeof(TimeOnly)) return Time64Type.Default;
-
-        if (checkType != typeof(string) && typeof(IEnumerable).IsAssignableFrom(checkType))
-        {
-            var elemType = GetEnumerableElementType(checkType);
-            var childArrowType = GetArrowType(elemType);
-            return new LargeListType(new Field("item", childArrowType, true));
-        }
-
-        if (checkType.IsClass || (checkType.IsValueType && !checkType.IsPrimitive && !checkType.IsEnum))
-        {
-            return ReflectStructSchema(checkType);
-        }
-
-        return StringViewType.Default;
-    }
-
-    // Recurring reflectiing Struct Schema
-    private static StructType ReflectStructSchema(Type t)
-    {
-        var properties = t.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-            .Where(p => p.GetIndexParameters().Length == 0)
-            .Where(p => !p.PropertyType.IsInterface && !p.PropertyType.IsAbstract)
-            .Where(p => p.PropertyType != typeof(IntPtr) && p.PropertyType != typeof(UIntPtr));
-
-        var fields = new List<Field>();
-        foreach (var prop in properties)
-        {
-            var childType = GetArrowType(prop.PropertyType);
-            
-            fields.Add(new Field(prop.Name, childType, true));
-        }
-
-        return new StructType(fields);
-    }
-
-    // Reflection Helper
-    private static Type GetEnumerableElementType(Type type)
-    {
-        if (type.IsArray) return type.GetElementType()!;
-        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
-            return type.GetGenericArguments()[0];
-        foreach (var i in type.GetInterfaces())
-            if (i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>))
-                return i.GetGenericArguments()[0];
-        return typeof(object);
     }
 }
 

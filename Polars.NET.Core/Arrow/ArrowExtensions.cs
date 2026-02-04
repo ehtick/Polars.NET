@@ -6,7 +6,7 @@ namespace Polars.NET.Core.Arrow;
 /// Extension methods for handling Apache Arrow Arrays.
 /// Provides formatting and safe value extraction.
 /// </summary>
-public static class ArrowExtensions
+public static partial class ArrowExtensions
 {
     // ==========================================
     // 1. FormatValue
@@ -23,7 +23,7 @@ public static class ArrowExtensions
 
         return array switch
         {
-            // 基础数值
+            // Basic types
             Int8Array arr   => arr.GetValue(index).ToString()!,
             Int16Array arr  => arr.GetValue(index).ToString()!,
             Int32Array arr  => arr.GetValue(index).ToString()!,
@@ -35,27 +35,33 @@ public static class ArrowExtensions
             HalfFloatArray arr => arr.GetValue(index).ToString()!,
             FloatArray arr  => arr.GetValue(index).ToString()!,
             DoubleArray arr => arr.GetValue(index).ToString()!,
+            Decimal128Array arr => arr.GetValue(index).ToString()!,
+            Decimal256Array arr => arr.GetValue(index).ToString()!,
             DictionaryArray dictArr => $"\"{dictArr.GetStringValue(index)}\"",
+
+            // Int128Array arr  => arr.GetValue(index).ToString()!,
+            // UInt128Array arr  => arr.GetValue(index).ToString()!,
+
             // Strings
             StringArray sa      => $"\"{sa.GetString(index)}\"",
             LargeStringArray lsa => $"\"{lsa.GetString(index)}\"",
             StringViewArray sva  => $"\"{sva.GetString(index)}\"",
 
-            // 布尔
+            // Bool
             BooleanArray arr => arr.GetValue(index).ToString()!.ToLower(),
 
             // Binary
             BinaryArray arr      => FormatBinary(arr.GetBytes(index)),
             LargeBinaryArray arr => FormatBinary(arr.GetBytes(index)),
 
-            // 时间类型
+            // Datetime
             Date32Array arr => FormatDate32(arr, index),
             TimestampArray arr => FormatTimestamp(arr, index),
             Time32Array arr => FormatTime32(arr, index),
             Time64Array arr => FormatTime64(arr, index),
             DurationArray arr => FormatDuration(arr, index),
 
-            // 嵌套类型
+            // nested types
             ListArray arr      => FormatList(arr, index),
             LargeListArray arr => FormatLargeList(arr, index),
             FixedSizeListArray arr => FormatFixedSizeList(arr, index),
@@ -99,6 +105,19 @@ public static class ArrowExtensions
             _ => null
         };
     }
+    // public static Int128? GetInt128Value(this IArrowArray array, int index)
+    // {
+    //     if (array.IsNull(index)) return null;
+    //     return array switch
+    //     {
+    //         // Signed Integes
+    //         Int128Array  i128  => i128.GetValue(index),   // Polars Month/Day/Weekday is Int8
+    //         // Unsigned Integers
+    //         UInt128Array  u128  => u128.GetValue(index),
+
+    //         _ => null
+    //     };
+    // }
     /// <summary>
     /// Deal with Double Values
     /// </summary>
@@ -133,6 +152,29 @@ public static class ArrowExtensions
             LargeStringArray lsa => lsa.GetString(index),
             StringViewArray sva  => sva.GetString(index),
             DictionaryArray dictArr => UnpackDictionary(dictArr, index),
+            _ => null
+        };
+    }
+    /// <summary>
+    /// Get Decimal value. 
+    /// Note: Arrow Decimal128 is converted to C# decimal. 
+    /// Use with caution if precision > 28.
+    /// </summary>
+    public static decimal? GetDecimalValue(this IArrowArray array, int index)
+    {
+        if (array.IsNull(index)) return null;
+
+        return array switch
+        {
+            // Native Decimal (128-bit)
+            Decimal128Array d128 => d128.GetValue(index),
+
+            // Fallback: Cast other numerics to decimal
+            DoubleArray d   => (decimal)d.GetValue(index)!,
+            FloatArray f    => (decimal)f.GetValue(index)!,
+            Int64Array i64  => (decimal)i64.GetValue(index)!,
+            Int32Array i32  => (decimal)i32.GetValue(index)!,
+            
             _ => null
         };
     }
@@ -361,70 +403,6 @@ public static class ArrowExtensions
 
         return null;
     }
-
-    public static DateTimeOffset? GetDateTimeOffset(this IArrowArray array, int index)
-        {
-            // 1. TimestampArray 
-            if (array is TimestampArray tsArr)
-            {
-                long? v = tsArr.GetValue(index);
-                if (!v.HasValue) return null;
-
-                var type = tsArr.Data.DataType as TimestampType;
-                var unit = type?.Unit;
-                var timezoneId = type?.Timezone; // Get TimeZone ID (e.g., "Asia/Shanghai")
-
-                // A. Calculate UTC Ticks
-                long ticks = unit switch
-                {
-                    TimeUnit.Nanosecond => v.Value / 100L,
-                    TimeUnit.Microsecond => v.Value * 10L,
-                    TimeUnit.Millisecond => v.Value * 10000L,
-                    TimeUnit.Second => v.Value * 10000000L,
-                    _ => v.Value
-                };
-                long utcTicks = DateTime.UnixEpoch.Ticks + ticks;
-
-                // B. Calculate Offset
-                TimeSpan offset = TimeSpan.Zero;
-                
-                if (!string.IsNullOrEmpty(timezoneId))
-                {
-                    try
-                    {
-                        // Get IANA TimeZone ID
-                        var tzi = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
-                        
-                        // Calculate Offset
-                        offset = tzi.GetUtcOffset(new DateTime(utcTicks, DateTimeKind.Utc));
-                    }
-                    catch (TimeZoneNotFoundException)
-                    {
-                        Console.WriteLine($"Warning: TimeZone '{timezoneId}' not found on this system.");
-                    }
-                }
-
-                return new DateTimeOffset(utcTicks, TimeSpan.Zero).ToOffset(offset);
-            }
-            
-            // 2. Date32
-            if (array is Date32Array d32)
-            {
-                int? days = d32.GetValue(index);
-                if (!days.HasValue) return null;
-                return new DateTimeOffset(new DateTime(1970, 1, 1).AddDays(days.Value), TimeSpan.Zero);
-            }
-            
-            // 3. Date64
-            if (array is Date64Array d64)
-            {
-                long? ms = d64.GetValue(index);
-                if (!ms.HasValue) return null;
-                return new DateTimeOffset(new DateTime(1970, 1, 1).AddMilliseconds(ms.Value), TimeSpan.Zero);
-            }
-                
-            return null;
-        }
         /// <summary>
         /// Use Pre-Set TimeZoneInfo
         /// </summary>

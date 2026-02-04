@@ -34,6 +34,7 @@ unsafe impl Sync for CSharpUdf {}
 
 impl CSharpUdf {
     fn call(&self, s: Series) -> PolarsResult<Option<Series>> {
+        let s = s.rechunk();
         let array = s.to_arrow(0, CompatLevel::newest());
         
         let field = ArrowField::new("".into(), array.dtype().clone(), true);

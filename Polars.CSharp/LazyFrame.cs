@@ -1,9 +1,12 @@
+#pragma warning disable CS1573
+
 using System.Collections.Concurrent;
 using System.Data;
 using Apache.Arrow;
 using Polars.NET.Core;
 using Polars.NET.Core.Arrow;
 using Polars.NET.Core.Data;
+using Polars.NET.Core.Helpers;
 
 namespace Polars.CSharp;
 
@@ -24,96 +27,569 @@ public class LazyFrame : IDisposable
     // ==========================================
     // Scan IO
     // ==========================================
-    /// <summary>
-    /// Scans a CSV file lazily.
+ /// <summary>
+    /// Lazily scans a CSV file into a LazyFrame.
+    /// <para>
+    /// This allows for query optimization (predicate pushdown, projection pushdown) 
+    /// and streaming processing of datasets larger than memory.
+    /// </para>
     /// </summary>
+    /// <param name="path">Path to the CSV file.</param>
+    /// <param name="schema">Optional PolarsSchema to specify column types or overwrite inference.</param>
+    /// <param name="hasHeader">Whether the CSV file has a header row. Defaults to true.</param>
+    /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
+    /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'. Set to '\0' to disable quoting.</param>
+    /// <param name="eolChar">The character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Whether to ignore parsing errors (skip bad rows). Defaults to false.</param>
+    /// <param name="tryParseDates">Whether to automatically try parsing dates/datetimes. Defaults to true.</param>
+    /// <param name="lowMemory">Reduce memory usage at the cost of performance. Defaults to false.</param>
+    /// <param name="cache">Cache the result after reading. Defaults to true.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks after reading. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip at the start of the file. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, reads the entire file.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. Defaults to 100. Set to 0 to disable inference (requires schema).</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row index using this name.</param>
+    /// <param name="rowIndexOffset">Offset to start the row index from. Defaults to 0.</param>
+    /// <param name="encoding">File encoding (UTF8 or LossyUTF8). Defaults to UTF8.</param>
+    /// <param name="nullValues">List of strings to consider as null values. E.g., ["NA", "null"].</param>
+    /// <param name="missingIsNull">Treat missing fields (empty strings between delimiters) as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored. E.g., "#".</param>
+    /// <param name="decimalComma">Use comma ',' as the decimal separator (European style). Defaults to false.</param>
+    /// <returns>A new LazyFrame.</returns>
     public static LazyFrame ScanCsv(
         string path,
-        Dictionary<string, DataType>? schema = null,
+        PolarsSchema? schema = null,
         bool hasHeader = true,
         char separator = ',',
+        char quoteChar = '"',           
+        char eolChar = '\n',            
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
+        bool cache = true,
+        bool rechunk = false,
         ulong skipRows = 0,
-        bool tryParseDates = true) 
+        ulong? nRows = null,
+        ulong? inferSchemaLength = 100,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0,
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,    
+        bool missingIsNull = true,      
+        string? commentPrefix = null,   
+        bool decimalComma = false)      
     {
-        var schemaHandles = schema?.ToDictionary(
-            kv => kv.Key, 
-            kv => kv.Value.Handle
-        );
-
         var handle = PolarsWrapper.ScanCsv(
-            path, 
-            schemaHandles, 
-            hasHeader, 
-            separator, 
+            path,
+            schema?.Handle,
+            hasHeader,
+            separator,
+            quoteChar,
+            eolChar,
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
+            cache,
+            rechunk,
             skipRows,
-            tryParseDates
+            nRows,
+            inferSchemaLength,
+            rowIndexName,
+            rowIndexOffset,
+            encoding.ToNative(),
+            nullValues,
+            missingIsNull,
+            commentPrefix,
+            decimalComma
         );
 
         return new LazyFrame(handle);
     }
-    /// <summary>
-    /// Read a Parquet file as a LazyFrame.
-    /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static LazyFrame ScanParquet(string path)
-        =>  new(PolarsWrapper.ScanParquet(path));
-    /// <summary>
-    /// Read an IPC (Feather) file as a LazyFrame.
-    /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static LazyFrame ScanIpc(string path)
-        => new(PolarsWrapper.ScanIpc(path));
-    /// <summary>
-    /// Read a NDJSON file as a LazyFrame.
-    /// </summary>
-    /// <param name="path"></param>
-    /// <returns></returns>
-    public static LazyFrame ScanNdjson(string path) 
-        => new(PolarsWrapper.ScanNdjson(path));
-    /// <summary>
-    /// Scan Arrow Stream As LazyFrame
-    /// </summary>
-    /// <typeparam name="T"></typeparam>
-    /// <param name="data"></param>
-    /// <param name="batchSize"></param>
-    /// <returns></returns>
-    public static LazyFrame ScanArrowStream<T>(IEnumerable<T> data, int batchSize = 100_000)
-    {
-        IEnumerable<RecordBatch> StreamGenerator() => data.ToArrowBatches(batchSize);
 
-        using var probeEnumerator = StreamGenerator().GetEnumerator();
+    /// <summary>
+    /// Lazily scans a CSV from an in-memory byte array.
+    /// <para>
+    /// Useful for processing data from Web APIs, S3, or embedded resources without writing to disk.
+    /// </para>
+    /// </summary>
+    /// <param name="buffer">The byte array containing CSV data.</param>
+    /// <param name="schema">Optional PolarsSchema to specify column types or overwrite inference.</param>
+    /// <param name="hasHeader">Whether the CSV data has a header row. Defaults to true.</param>
+    /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
+    /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'. Set to '\0' to disable.</param>
+    /// <param name="eolChar">The character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Whether to ignore parsing errors. Defaults to false.</param>
+    /// <param name="tryParseDates">Whether to automatically try parsing dates. Defaults to true.</param>
+    /// <param name="lowMemory">Reduce memory usage at the cost of performance. Defaults to false.</param>
+    /// <param name="cache">Cache the result after reading. Defaults to true.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks after reading. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip at the start. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, reads all data.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. Defaults to 100.</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row index using this name.</param>
+    /// <param name="rowIndexOffset">Offset to start the row index from. Defaults to 0.</param>
+    /// <param name="encoding">Data encoding (UTF8 or LossyUTF8). Defaults to UTF8.</param>
+    /// <param name="nullValues">List of strings to consider as null values.</param>
+    /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    /// <param name="decimalComma">Use comma ',' as the decimal separator. Defaults to false.</param>
+    /// <returns>A new LazyFrame.</returns>
+    public static LazyFrame ScanCsv(
+        byte[] buffer,
+        PolarsSchema? schema = null,
+        bool hasHeader = true,
+        char separator = ',',
+        char quoteChar = '"',          
+        char eolChar = '\n',           
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
+        bool cache = true,
+        bool rechunk = false,
+        ulong skipRows = 0,
+        ulong? nRows = null,
+        ulong? inferSchemaLength = 100,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0,
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,   
+        bool missingIsNull = true,     
+        string? commentPrefix = null,  
+        bool decimalComma = false)     
+    {
+        var handle = PolarsWrapper.ScanCsv(
+            buffer,
+            schema?.Handle,
+            hasHeader,
+            separator,
+            quoteChar,
+            eolChar,
+            ignoreErrors,
+            tryParseDates,
+            lowMemory,
+            cache,
+            rechunk,
+            skipRows,
+            nRows,
+            inferSchemaLength,
+            rowIndexName,
+            rowIndexOffset,
+            encoding.ToNative(),
+            nullValues,
+            missingIsNull,
+            commentPrefix,
+            decimalComma
+        );
+
+        return new LazyFrame(handle);
+    }
+
+    /// <summary>
+    /// Lazily read from a parquet file or multiple files via glob patterns.
+    /// </summary>
+    /// <param name="path">Path to file or glob pattern (e.g. "data/*.parquet").</param>
+    /// <param name="nRows">Limit number of rows to read (optimization).</param>
+    /// <param name="parallel">Parallel strategy.</param>
+    /// <param name="lowMemory">Reduce memory usage at the expense of performance.</param>
+    /// <param name="useStatistics">Use parquet statistics to optimize the query plan.</param>
+    /// <param name="glob">Expand glob patterns (default: true).</param>
+    /// <param name="allowMissingColumns">Allow missing columns when reading multiple files.</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row number.</param>
+    /// <param name="rowIndexOffset">Offset for the row index.</param>
+    /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    /// <param name="schema">
+    /// Manually specify the schema of the file(s). 
+    /// Useful if the file footer is missing or to avoid I/O overhead of reading the schema.
+    /// </param>
+    /// <param name="hivePartitionSchema">
+    /// Manually specify the schema for Hive partitioning columns.
+    /// Use this to ensure specific types for partition keys (e.g. string instead of int).
+    /// </param>
+    /// <param name="tryParseHiveDates">
+    /// Whether to try parsing dates in Hive partitioning paths (default: true).
+    /// </param>
+    public static LazyFrame ScanParquet(
+        string path,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        bool useStatistics = true,
+        bool glob = true,
+        bool allowMissingColumns = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
+    {
+        var schemaHandle = schema?.Handle;
+        var hiveSchemaHandle = hivePartitionSchema?.Handle;
+
+        var h = PolarsWrapper.ScanParquet(
+            path,
+            nRows,
+            parallel.ToNative(),
+            lowMemory,
+            useStatistics,
+            glob,
+            allowMissingColumns,
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schemaHandle,     
+            hiveSchemaHandle, 
+            tryParseHiveDates
+        );
+
+        return new LazyFrame(h);
+    }
+    /// <summary>
+    /// Lazily read parquet from an in-memory byte array.
+    /// </summary>
+    public static LazyFrame ScanParquet(
+        byte[] buffer,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        bool useStatistics = true,
+        bool allowMissingColumns = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
+    {
+        var schemaHandle = schema?.Handle;
+        var hiveSchemaHandle = hivePartitionSchema?.Handle;
+
+        var h = PolarsWrapper.ScanParquet(
+            buffer,
+            nRows,
+            parallel.ToNative(),
+            lowMemory,
+            useStatistics,
+            false, // glob = false for memory
+            allowMissingColumns,
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schemaHandle,
+            hiveSchemaHandle,
+            tryParseHiveDates
+        );
+
+        return new LazyFrame(h);
+    }
+    // ---------------------------------------------------------
+    // Scan IPC (File)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Lazily read an Arrow IPC (Feather v2) file.
+    /// </summary>
+    /// <param name="path">Path to the IPC file.</param>
+    /// <param name="schema">
+    /// Optional schema to enforce. If not provided, the schema is inferred from the file footer.
+    /// </param>
+    /// <param name="nRows">
+    /// Limit the number of rows to scan. 
+    /// Note: In Lazy mode, this acts as a 'Pre-Slice' pushdown.
+    /// </param>
+    /// <param name="rechunk">Rechunk the memory to be contiguous (default: false).</param>
+    /// <param name="cache">Cache the result of the scan (default: true).</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
+    /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    /// <param name="hivePartitioning">Enable Hive partitioning inference (default: false).</param>
+    public static LazyFrame ScanIpc(
+        string path,
+        PolarsSchema? schema = null,
+        ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        bool hivePartitioning = false)
+    {
+        if (!File.Exists(path)) 
+            throw new FileNotFoundException($"IPC file not found: {path}");
+
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ScanIpc(
+            path,
+            schemaHandle,
+            nRows,
+            rechunk,
+            cache,
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            hivePartitioning
+        );
+
+        return new LazyFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Scan IPC (Memory / Bytes)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Lazily read Arrow IPC (Feather v2) from in-memory bytes.
+    /// </summary>
+    public static LazyFrame ScanIpc(
+        byte[] buffer,
+        PolarsSchema? schema = null,
+        ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool hivePartitioning = false)
+    {
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ScanIpc(
+            buffer,
+            schemaHandle,
+            nRows,
+            rechunk,
+            cache,
+            rowIndexName,
+            rowIndexOffset,
+            hivePartitioning
+        );
+
+        return new LazyFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Scan IPC (Stream)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Lazily read Arrow IPC (Feather v2) from a Stream.
+    /// </summary>
+    /// <remarks>
+    /// This reads the stream fully into memory to construct the Lazy execution plan.
+    /// </remarks>
+    public static LazyFrame ScanIpc(
+        Stream stream,
+        PolarsSchema? schema = null,
+        ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        bool hivePartitioning = false)
+    {
+        // 必须读入内存，因为 ScanSources 需要持有数据所有权
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
         
-        if (!probeEnumerator.MoveNext()) 
+        return ScanIpc(
+            ms.ToArray(),
+            schema,
+            nRows,
+            rechunk,
+            cache,
+            rowIndexName,
+            rowIndexOffset,
+            hivePartitioning
+        );
+    }
+    // ---------------------------------------------------------
+    // Scan NDJSON (File)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Lazily read a newline delimited JSON file (NDJSON).
+    /// </summary>
+    /// <param name="path">Path to the NDJSON file.</param>
+    /// <param name="schema">
+    /// Manually specify schema for specific columns (Overwrite semantics).
+    /// Columns not specified will be inferred.
+    /// </param>
+    /// <param name="inferSchemaLength">
+    /// Number of rows to scan for schema inference. 
+    /// If null, uses Polars default (usually 100).
+    /// </param>
+    /// <param name="batchSize">Batch size for reading (optimization).</param>
+    /// <param name="nRows">Limit the number of rows to read.</param>
+    /// <param name="lowMemory">Reduce memory usage at the expense of performance.</param>
+    /// <param name="rechunk">Rechunk the output to have contiguous memory (default: false).</param>
+    /// <param name="ignoreErrors">Ignore parsing errors (skip malformed lines).</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
+    /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    public static LazyFrame ScanNdjson(
+        string path,
+        PolarsSchema? schema = null,
+        ulong? inferSchemaLength = null,
+        ulong? batchSize = null,
+        ulong? nRows = null,
+        bool lowMemory = false,
+        bool rechunk = false,
+        bool ignoreErrors = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null)
+    {
+        if (!File.Exists(path)) 
+            throw new FileNotFoundException($"NDJSON file not found: {path}");
+
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ScanNdjson(
+            path,
+            schemaHandle,
+            batchSize,
+            inferSchemaLength,
+            nRows,
+            lowMemory,
+            rechunk,
+            ignoreErrors,
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn
+        );
+
+        return new LazyFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Scan NDJSON (Memory / Bytes)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Lazily read NDJSON from an in-memory byte array.
+    /// </summary>
+    public static LazyFrame ScanNdjson(
+        byte[] buffer,
+        PolarsSchema? schema = null,
+        ulong? inferSchemaLength = null,
+        ulong? batchSize = null,
+        ulong? nRows = null,
+        bool lowMemory = false,
+        bool rechunk = false,
+        bool ignoreErrors = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
+    {
+        var schemaHandle = schema?.Handle;
+
+        var h = PolarsWrapper.ScanNdjson(
+            buffer,
+            schemaHandle,
+            batchSize,
+            inferSchemaLength,
+            nRows,
+            lowMemory,
+            rechunk,
+            ignoreErrors,
+            rowIndexName,
+            rowIndexOffset,
+            null // includePathColumn
+        );
+
+        return new LazyFrame(h);
+    }
+
+    // ---------------------------------------------------------
+    // Scan NDJSON (Stream)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Lazily read NDJSON from a Stream.
+    /// </summary>
+    public static LazyFrame ScanNdjson(
+        Stream stream,
+        PolarsSchema? schema = null,
+        ulong? inferSchemaLength = null,
+        ulong? batchSize = null,
+        ulong? nRows = null,
+        bool lowMemory = false,
+        bool rechunk = false,
+        bool ignoreErrors = false,
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        
+        return ScanNdjson(
+            ms.ToArray(),
+            schema,
+            inferSchemaLength,
+            batchSize,
+            nRows,
+            lowMemory,
+            rechunk,
+            ignoreErrors,
+            rowIndexName,
+            rowIndexOffset
+        );
+    }
+
+    private static IEnumerable<RecordBatch> EnsureStreamSafety(IEnumerable<RecordBatch> source)
+    {
+        using var enumerator = source.GetEnumerator();
+
+        while (enumerator.MoveNext())
         {
-            return DataFrame.From(Enumerable.Empty<T>()).Lazy();
+            var batch = enumerator.Current;
+            yield return batch;
+            batch.Dispose();
         }
-        
-        var schema = probeEnumerator.Current.Schema;
-
-        var handle = ArrowStreamInterop.ScanStream(
-            () => StreamGenerator().GetEnumerator(), 
-            schema
-        );
-        
-        return new LazyFrame(handle);
     }
 
     /// <summary>
-    /// Scan Arrow Stream As LazyFrame with schema input
+    /// Scan Enumberable As LazyFrame
     /// </summary>
-    /// <typeparam name="T"></typeparam>
-    /// <param name="data"></param>
-    /// <param name="schema"></param>
-    /// <param name="batchSize"></param>
     /// <returns></returns>
-    public static LazyFrame ScanArrowStream<T>(IEnumerable<T> data, Schema schema, int batchSize = 100_000)
+    public static LazyFrame ScanEnumerable<T>(
+        IEnumerable<T> data, 
+        Apache.Arrow.Schema? schema = null, 
+        int batchSize = 100_000,
+        bool useBuffered = false)
     {
+        // 1. Get Schema (Cached)
+        schema ??= ArrowConverter.GetSchemaFromType<T>();
+
+        // 2. Buffered Mode
+        if (useBuffered)
+        {
+            var scope = new IpcStreamService.TempIpcScope<T>(data, batchSize); 
+            var handleBuffered = ScanIpc(scope.FilePath!).Handle;
+            return new ScopedLazyFrame(handleBuffered, scope);
+        }
+
+        // 3. Streaming Mode (Memory Pointer)
+        IEnumerable<RecordBatch> SafeGenerator()
+        {
+            bool hasYielded = false;
+
+            foreach (var batch in data.ToArrowBatches(batchSize))
+            {
+                hasYielded = true;
+                yield return batch;
+            }
+
+            if (!hasYielded)
+            {
+                yield return ArrowConverter.GetEmptyBatch<T>();
+            }
+        }
+
         var handle = ArrowStreamInterop.ScanStream(
-            () => data.ToArrowBatches(batchSize).GetEnumerator(),
+            () => EnsureStreamSafety(SafeGenerator()), 
             schema
         );
+        
         return new LazyFrame(handle);
     }
 
@@ -121,25 +597,16 @@ public class LazyFrame : IDisposable
     /// Scan RecordBatch Stream
     /// If schema is provied, first batch won't be consumed for getting schema.
     /// </summary>
-    public static LazyFrame ScanRecordBatches(IEnumerable<RecordBatch> stream, Schema schema = null!)
-    {
-        if (schema == null)
+    public static LazyFrame ScanRecordBatches(IEnumerable<RecordBatch> stream, Apache.Arrow.Schema schema)
         {
-            using var enumerator = stream.GetEnumerator();
-            
-            if (!enumerator.MoveNext())
-                throw new InvalidOperationException("Cannot scan empty stream without schema. Please provide a schema explicitly.");
-            
-            schema = enumerator.Current.Schema;
+            if (schema == null) throw new ArgumentNullException(nameof(schema));
+
+            var handle = ArrowStreamInterop.ScanStream(
+                () => EnsureStreamSafety(stream),
+                schema
+            );
+            return new LazyFrame(handle);
         }
-
-        var handle = ArrowStreamInterop.ScanStream(
-            stream.GetEnumerator, 
-            schema
-        );
-
-        return new LazyFrame(handle);
-    }
     /// <summary>
     /// Scan Database to LazyFrame
     /// </summary>
@@ -155,86 +622,183 @@ public class LazyFrame : IDisposable
         return ScanRecordBatches(stream, schema);
     }
     /// <summary>
-    /// Lazy scan from a database using a factory.
-    /// Recommended for scenarios where the query might be executed multiple times.
+    /// Create a LazyFrame from a database query using a reader factory.
+    /// <para>
+    /// <b>Recommended:</b> This is the preferred method for interacting with databases in a Lazy context.
+    /// </para>
+    /// <para>
+    /// It accepts a factory function that creates a NEW <see cref="IDataReader"/> on demand.
+    /// This allows Polars to:
+    /// <list type="bullet">
+    /// <item>Inspect the schema upfront (using a probe reader).</item>
+    /// <item>Re-execute the query if the execution plan requires multiple passes.</item>
+    /// <item>Allow you to call <see cref="Collect"/> multiple times on the same LazyFrame.</item>
+    /// </list>
+    /// </para>
     /// </summary>
-    /// <param name="readerFactory">A function that creates a NEW IDataReader instance each time.</param>
-    /// <param name="batchSize">Define the size of the batch</param>
+    /// <param name="readerFactory">A function that returns a new, open <see cref="IDataReader"/> instance each time it is called.</param>
+    /// <param name="batchSize">The size of the Arrow record batch (rows). Larger values reduce overhead.</param>
+    /// <returns>A new LazyFrame linked to the database stream.</returns>
+    /// <example>
+    /// <code>
+    /// // Define a factory that returns a new Reader for the query
+    /// Func&lt;IDataReader&gt; factory = () =>
+    /// {
+    ///     var cmd = connection.CreateCommand();
+    ///     cmd.CommandText = """
+    ///         SELECT name, score
+    ///         FROM User
+    ///         WHERE score > $min_score OR score IS NULL
+    ///     """;
+    ///     cmd.Parameters.AddWithValue("$min_score", 60.0);
+    ///     return cmd.ExecuteReader();
+    /// };
+    /// 
+    /// // Scan and apply transformations lazily
+    /// var lf = LazyFrame.ScanDatabase(factory);
+    /// 
+    /// var result = lf
+    ///     .WithColumns(
+    ///         Col("score").FillNull(0.0).Alias("clean_score")
+    ///     )
+    ///     .Collect();
+    ///     
+    /// result.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────────┬───────┬─────────────┐
+    /// │ name    ┆ score ┆ clean_score │
+    /// │ ---     ┆ ---   ┆ ---         │
+    /// │ str     ┆ f64   ┆ f64         │
+    /// ╞═════════╪═══════╪═════════════╡
+    /// │ Alice   ┆ 99.5  ┆ 99.5        │
+    /// │ Bob     ┆ 85.0  ┆ 85.0        │
+    /// │ Charlie ┆ null  ┆ 0.0         │
+    /// └─────────┴───────┴─────────────┘
+    /// */
+    /// </code>
+    /// </example>
     public static LazyFrame ScanDatabase(Func<IDataReader> readerFactory, int batchSize = 50_000)
-    {
-        Schema schema;
-        using (var probeReader = readerFactory())
         {
-            schema = probeReader.GetArrowSchema();
-        }
-
-        IEnumerable<RecordBatch> ReplayableStream()
-        {
-            using var reader = readerFactory();
-            
-            foreach (var batch in reader.ToArrowBatches(batchSize))
+            Apache.Arrow.Schema schema;
+            // Probe schema
+            using (var probe = readerFactory())
             {
-                yield return batch;
+                schema = probe.GetArrowSchema();
             }
-            
-        }
 
-        return ScanRecordBatches(ReplayableStream(), schema);
+            // Replayable stream
+            IEnumerable<RecordBatch> StreamFactory()
+            {
+                using var reader = readerFactory();
+                foreach (var batch in reader.ToArrowBatches(batchSize))
+                    yield return batch;
+            }
+
+            var handle = ArrowStreamInterop.ScanStream(
+                () => EnsureStreamSafety(StreamFactory()),
+                schema
+            );
+            return new LazyFrame(handle);
+        }
+    /// <summary>
+    /// A LazyFrame with resource scope which needs to be disposed.
+    /// </summary>
+    public class ScopedLazyFrame : LazyFrame
+    {
+        private readonly IDisposable? _resource;
+
+        internal ScopedLazyFrame(LazyFrameHandle handle, IDisposable? resource) 
+            : base(handle) 
+        {
+            _resource = resource;
+        }
+        /// <summary>
+        /// Dispose temp file and lazyframe
+        /// </summary>
+        public new void Dispose()
+        {
+            base.Dispose();
+            
+            _resource?.Dispose();
+        }
+    }
+    /// <summary>
+    /// [Buffered] Create a LazyFrame from an existing DataReader.
+    /// <para><b>Note:</b> This consumes the reader IMMEDIATELY and writes to a temp file.</para>
+    /// <para>Returns a <see cref="ScopedLazyFrame"/> which must be disposed to delete the temp file.</para>
+    /// </summary>
+    public static ScopedLazyFrame ScanDatabaseBuffered(IDataReader reader, int batchSize = 50_000)
+    {
+        // DataReader cannot be reset, so we must buffer it to disk immediately
+        var scope = new IpcStreamService.TempIpcScopeReader(reader, batchSize);
+        
+        var handle = ScanIpc(scope.FilePath!).Handle;
+        
+        return new ScopedLazyFrame(handle, scope);
     }
     // ==========================================
     // Meta / Inspection
     // ==========================================
 
     /// <summary>
-    /// Fetch the schema as a dictionary of column names and their data types.
-    /// </summary>
-    /// <summary>
     /// Gets the Schema of the LazyFrame.
+    /// Note: The returned PolarsSchema object is IDisposable. 
+    /// Usage in 'using' block is recommended if accessed frequently.
+    /// </summary>
+    public PolarsSchema Schema
+    {
+        get
+        {
+            var handle = PolarsWrapper.GetLazySchema(Handle);
+            
+            return new PolarsSchema(handle);
+        }
+    }
+
+    /// <summary>
+    /// Prints the schema to the console.
+    /// </summary>
+    public void PrintSchema()
+    {
+        using var schema = Schema;
+        
+        Console.WriteLine("root");
+        
+        foreach (var name in schema.ColumnNames)
+        {
+            var type = schema[name]; 
+            Console.WriteLine($" |-- {name}: {type.Kind}");
+        }
+    }
+
+    /// <summary>
+    /// Get an explanation of the optimized query plan.
     /// <para>
-    /// This operation triggers type inference on the query plan.
-    /// The returned DataTypes are strongly typed and backed by native handles.
+    /// Returns a string representation of the logical plan after Polars optimizers 
+    /// (predicate pushdown, projection pushdown, etc.) have run.
     /// </para>
     /// </summary>
-    public Dictionary<string, DataType> Schema
-    {
-        get
-        {
-            using var schemaHandle = PolarsWrapper.GetLazySchema(Handle);
-            
-            ulong len = PolarsWrapper.GetSchemaLen(schemaHandle);
-            
-            var result = new Dictionary<string, DataType>((int)len);
-
-            for (ulong i = 0; i < len; i++)
-            {
-                PolarsWrapper.GetSchemaFieldAt(schemaHandle, i, out string name, out DataTypeHandle dtHandle);
-                
-                result[name] = new DataType(dtHandle);
-            }
-
-            return result;
-        }
-    }
-
-    /// <summary>
-    /// Get Schema description string
-    /// </summary>
-    public string SchemaString
-    {
-        get
-        {
-            var schema = this.Schema;
-
-            // Format: {"a": i32, "b": list[str], "c": datetime[ms]}
-            var parts = schema.Select(kv => $"\"{kv.Key}\": {kv.Value}");
-            
-            return "{" + string.Join(", ", parts) + "}";
-        }
-    }
-
-    /// <summary>
-    /// Get an explanation of the query plan.
-    /// </summary>
+    /// <param name="optimized">If true, show the optimized plan. If false, show the logical plan as built.</param>
+    /// <returns>The plan as a string.</returns>
+    /// <example>
+    /// <code>
+    /// var q = df.Lazy()
+    ///     .Filter(Col("group") != "C")
+    ///     .WithColumns((Col("val") * 2).Alias("val_x_2"))
+    ///     .Select("group", "val_x_2");
+    /// 
+    /// Console.WriteLine(q.Explain());
+    /// /* Output (Optimized Plan):
+    /// simple π 2/2 ["group", "val_x_2"]
+    ///    WITH_COLUMNS:
+    ///    [[(col("val")) * (2)].alias("val_x_2")] 
+    ///     FILTER [(col("group")) != ("C")]
+    ///     FROM
+    ///       DF ["group", "val"]; PROJECT["group", "val"] 2/2 COLUMNS
+    /// */
+    /// </code>
+    /// </example>
     public string Explain(bool optimized = true)
     {
         return PolarsWrapper.Explain(Handle, optimized);
@@ -257,8 +821,12 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Select specific columns or expressions.
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
+    /// <example>
+    /// <code>
+    /// // Select "a" and calculate "b" * 2
+    /// lf.Select(Col("a"), (Col("b") * 2).Alias("b_double"));
+    /// </code>
+    /// </example>
     public LazyFrame Select(params Expr[] exprs)
     {
         var lfClone = CloneHandle();
@@ -276,9 +844,47 @@ public class LazyFrame : IDisposable
     }
     /// <summary>
     /// Filter rows based on a boolean expression.
+    /// <para>
+    /// In a LazyFrame, this operation is added to the logical plan and is optimized before execution.
+    /// Polars will attempt to push this filter down as close to the data source as possible (Predicate Pushdown).
+    /// </para>
     /// </summary>
-    /// <param name="expr"></param>
-    /// <returns></returns>
+    /// <param name="expr">A boolean expression.</param>
+    /// <returns>A new LazyFrame with the filter applied.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new
+    /// {
+    ///     group = new[] { "A", "A", "B", "B", "C" },
+    ///     val = new[] { 1, 2, 3, 4, 5 }
+    /// });
+    /// 
+    /// // Build a lazy query:
+    /// // 1. Filter out group 'C'
+    /// // 2. Multiply 'val' by 2
+    /// // 3. Select specific columns
+    /// var q = df.Lazy()
+    ///     .Filter(Col("group") != "C")
+    ///     .WithColumns((Col("val") * 2).Alias("val_x_2"))
+    ///     .Select("group", "val_x_2");
+    /// 
+    /// // Execute
+    /// q.Collect().Show();
+    /// /* Output:
+    /// shape: (4, 2)
+    /// ┌───────┬─────────┐
+    /// │ group ┆ val_x_2 │
+    /// │ ---   ┆ ---     │
+    /// │ str   ┆ i32     │
+    /// ╞═══════╪═════════╡
+    /// │ A     ┆ 2       │
+    /// │ A     ┆ 4       │
+    /// │ B     ┆ 6       │
+    /// │ B     ┆ 8       │
+    /// └───────┴─────────┘
+    /// */
+    /// </code>
+    /// </example>
     public LazyFrame Filter(Expr expr)
     {
         var lfClone = CloneHandle();
@@ -289,13 +895,36 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Add or modify columns based on expressions.
     /// </summary>
-    /// <param name="exprs"></param>
-    /// <returns></returns>
+    /// <example>
+    /// <code>
+    /// // Add a new column "c" while keeping "a" and "b"
+    /// lf.WithColumns((Col("a") + Col("b")).Alias("c"));
+    /// </code>
+    /// </example>
     public LazyFrame WithColumns(params Expr[] exprs)
     {
         var lfClone = CloneHandle();
         var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         return new LazyFrame(PolarsWrapper.LazyWithColumns(lfClone, handles));
+    }
+    /// <summary>
+    /// Slice the LazyFrame.
+    /// <para>This operation is lazy; it only affects the query plan.</para>
+    /// </summary>
+    /// <param name="offset">Start index. Negative values count from the end.</param>
+    /// <param name="length">Number of rows to return.</param>
+    public LazyFrame Slice(long offset, uint length)
+    {
+        var handle = PolarsWrapper.LazySlice(CloneHandle(), offset, length);
+        return new LazyFrame(handle);
+    }
+    /// <summary>
+    /// Slice the LazyFrame (Convenience overload).
+    /// </summary>
+    public LazyFrame Slice(long offset, int length)
+    {
+        if (length < 0) throw new ArgumentOutOfRangeException(nameof(length), "Length must be non-negative.");
+        return Slice(offset, (uint)length);
     }
     /// <summary>
     /// Sort the LazyFrame by a single column.
@@ -347,8 +976,40 @@ public class LazyFrame : IDisposable
     }
 
     /// <summary>
-    /// Sort the LazyFrame by multiple columns with specific sort orders.
+    /// Lazily sort the DataFrame by multiple columns.
+    /// <para>
+    /// This operation is added to the logical plan. 
+    /// Use <see cref="TopK(int, string, bool)"/> if you only need the top/bottom N rows, as it is more efficient.
+    /// </para>
     /// </summary>
+    /// <param name="columns">Names of the columns to sort by.</param>
+    /// <param name="descending">Sort order for each column.</param>
+    /// <param name="nullsLast">Whether nulls go last for each column.</param>
+    /// <param name="maintainOrder">Whether to maintain the relative order of rows with equal keys.</param>
+    /// <seealso cref="DataFrame.Sort(string[], bool[], bool[], bool)"/>
+    /// <example>
+    /// <code>
+    /// df.Lazy()
+    ///   .Sort(
+    ///       columns: new[] { "group", "val" }, 
+    ///       descending: new[] { false, true }, 
+    ///       nullsLast: new[] { false, false }
+    ///   )
+    ///   .Collect();
+    /// /* Output:
+    /// shape: (5, 2)
+    /// ┌───────┬─────┐
+    /// │ group ┆ val │
+    /// │ ---   ┆ --- │
+    /// │ str   ┆ i32 │
+    /// ╞═══════╪═════╡
+    /// │ A     ┆ 10  │
+    /// │ A     ┆ 8   │
+    /// │ ...   ┆ ... │
+    /// └───────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
     public LazyFrame Sort(
         string[] columns, 
         bool[] descending, 
@@ -478,10 +1139,19 @@ public class LazyFrame : IDisposable
         return new LazyFrame(PolarsWrapper.LazyLimit(lfClone, n));
     }
     /// <summary>
-    /// Unnest struct columns selected by a Selector.
+    /// Lazily unnest struct columns.
+    /// <para>
+    /// Currently uses a Selector to perform the unnesting.
+    /// </para>
     /// </summary>
-    /// <param name="selector">Columns to unnest.</param>
-    /// <param name="separator">Optional separator.</param>
+    /// <seealso cref="DataFrame.Unnest(string[], string?)"/>
+    /// <example>
+    /// <code>
+    /// df.Lazy()
+    ///   .Unnest("User")
+    ///   .Collect();
+    /// </code>
+    /// </example>
     public LazyFrame Unnest(Selector selector,string? separator = null)
     {
         var lfClone = CloneHandle();
@@ -489,7 +1159,6 @@ public class LazyFrame : IDisposable
         var h = PolarsWrapper.LazyFrameUnnest(lfClone, sClone,separator);
         return new LazyFrame(h);
     }
-
     /// <summary>
     /// Unnest specific struct columns by name.
     /// (Syntactic sugar for Unnest(Selector.Cols(...)))
@@ -500,33 +1169,114 @@ public class LazyFrame : IDisposable
         return Unnest(sel,null);
     }
     /// <summary>
-    /// Explode list-like columns into multiple rows.
+    /// Drop selected columns by selector.
     /// </summary>
-    /// <param name="exprs"></param>
+    /// <param name="selector"></param>
     /// <returns></returns>
-    public LazyFrame Explode(params Expr[] exprs)
+    public LazyFrame Drop(Selector selector)
     {
         var lfClone = CloneHandle();
-        var handles = exprs.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
+        var sClone = selector.CloneHandle();
+        var h = PolarsWrapper.LazyFrameDrop(lfClone, sClone);
+        return new LazyFrame(h);
+    }
+    /// <summary>
+    /// Drop selected columns by column names.
+    /// </summary>
+    /// <param name="columns"></param>
+    /// <returns></returns>
+    public LazyFrame Drop(params string[] columns)
+    {
+        using var sel = Selector.Cols(columns);
+        return Drop(sel);
+    }
+    /// <summary>
+    /// Keep unique rows (stable) based on a subset of columns defined by a Selector.
+    /// </summary>
+    /// <param name="subset">Selector defining the subset of columns. If null, uses all columns.</param>
+    /// <param name="keep">Strategy to keep duplicates (First, Last, Any, None).</param>
+    public LazyFrame Unique(Selector? subset = null, UniqueKeepStrategy keep = UniqueKeepStrategy.First)
+    {
+        _ = subset?.CloneHandle(); // Clone handle or pass reference depending on ownership model
 
-        return new LazyFrame(PolarsWrapper.LazyExplode(lfClone, handles));
+        var h = PolarsWrapper.LazyUniqueStable(CloneHandle(), subset?.Handle!, keep.ToNative());
+        return new LazyFrame(h);
+    }
+    /// <summary>
+    /// Keep unique rows (stable) based on specific column names.
+    /// </summary>
+    public LazyFrame Unique(UniqueKeepStrategy keep, params string[] columns)
+    {
+        using var sel = Selector.Cols(columns);
+        return Unique(sel, keep);
+    }
+    /// <summary>
+    /// Keep unique First rows (stable) based on a subset of columns defined column names.
+    /// </summary>
+    /// <param name="columns"></param>
+    /// <returns></returns>
+    public LazyFrame Unique(params string[] columns)
+    {
+        return Unique(UniqueKeepStrategy.First, columns);
+    }
+    /// <summary>
+    /// Explode list-like columns into multiple rows.
+    /// </summary>
+    /// <param name="selector"></param>
+    /// <returns></returns>
+    public LazyFrame Explode(Selector selector)
+    {
+        var lfClone = CloneHandle();
+        var sClone = selector.CloneHandle();
+        var h = PolarsWrapper.LazyExplode(lfClone, sClone);
+        return new LazyFrame(h);
+    }
+    /// <summary>
+    /// Explode list-like columns into multiple rows.
+    /// </summary>
+    /// <param name="columns"></param>
+    /// <returns></returns>
+    public LazyFrame Explode(params string[] columns)
+    {
+        using var sel = Selector.Cols(columns);
+        return Explode(sel);
     }
 
     // ==========================================
     // Reshaping
     // ==========================================
     /// <summary>
-    /// Unpivot (Melt) the DataFrame from wide to long format.
+    /// Unpivot (Melt) the LazyFrame from wide to long format.
     /// </summary>
     /// <param name="index"></param>
     /// <param name="on"></param>
     /// <param name="variableName"></param>
     /// <param name="valueName"></param>
     /// <returns></returns>
-    public LazyFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
+    public LazyFrame Unpivot(Selector index, Selector on, string variableName = "variable", string valueName = "value")
     {
         var lfClone = CloneHandle();
-        return new LazyFrame(PolarsWrapper.LazyUnpivot(lfClone, index, on, variableName, valueName));
+        var indexClone = index.CloneHandle();
+        var onClone = on.CloneHandle();
+        return new LazyFrame(PolarsWrapper.LazyUnpivot(lfClone, indexClone, onClone, variableName, valueName));
+    }
+    /// <summary>
+    /// Unpivot using column names (String Array overload).
+    /// Wraps strings into Selectors automatically.
+    /// </summary>
+    public LazyFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
+    {
+        using var sIndex = Selector.Cols(index);
+        using var sOn = Selector.Cols(on);
+
+        return Unpivot(sIndex, sOn, variableName, valueName);
+    }
+    /// <summary>
+    /// Unpivot using single column names (Convenience overload).
+    /// </summary>
+    public LazyFrame Unpivot(string index, string on, string variableName = "variable", string valueName = "value")
+    {
+        return Unpivot([index], [on], variableName, valueName);
     }
     /// <summary>
     /// Melt the DataFrame from wide to long format.
@@ -536,16 +1286,21 @@ public class LazyFrame : IDisposable
     /// <param name="variableName"></param>
     /// <param name="valueName"></param>
     /// <returns></returns>
-    public LazyFrame Melt(string[] index, string[] on, string variableName = "variable", string valueName = "value") 
+    public LazyFrame Melt(Selector index, Selector on, string variableName = "variable", string valueName = "value") 
         => Unpivot(index, on, variableName, valueName);
     /// <summary>
-    /// Concatenate multiple LazyFrames into one.
+    /// Lazily concatenate multiple LazyFrames.
+    /// <para>
+    /// This adds a concat node to the query plan. 
+    /// For vertical concatenation, schemas must align (or be capable of supertype unification).
+    /// </para>
     /// </summary>
-    /// <param name="how"></param>
-    /// <param name="lfs"></param>
-    /// <param name="rechunk"></param>
-    /// <param name="parallel"></param>
-    /// <returns></returns>
+    /// <example>
+    /// <code>
+    /// LazyFrame.Concat(new[] { lf1, lf2 }, ConcatType.Vertical)
+    ///          .Collect();
+    /// </code>
+    /// </example>
     public static LazyFrame Concat(
         IEnumerable<LazyFrame> lfs, 
         ConcatType how = ConcatType.Vertical, 
@@ -561,14 +1316,47 @@ public class LazyFrame : IDisposable
     // Join
     // ==========================================
     /// <summary>
-    /// Join with another LazyFrame on specified columns.
+    /// Lazily join with another LazyFrame.
+    /// <para>
+    /// Polars will optimize the join execution order. 
+    /// Note: Both frames must be LazyFrames.
+    /// </para>
     /// </summary>
-    /// <param name="other"></param>
-    /// <param name="leftOn"></param>
-    /// <param name="rightOn"></param>
-    /// <param name="how"></param>
-    /// <returns></returns>
-    public LazyFrame Join(LazyFrame other, Expr[] leftOn, Expr[] rightOn, JoinType how = JoinType.Inner)
+    /// <seealso cref="DataFrame.Join(DataFrame, Expr[], Expr[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,bool,long?,ulong)"/>
+    /// <example>
+    /// <code>
+    /// var lf1 = df1.Lazy();
+    /// var lf2 = df2.Lazy();
+    /// 
+    /// // Lazy Left Join
+    /// var joined = lf1.Join(lf2, Col("id"), Col("id"), JoinType.Left)
+    ///                 .Collect();
+    ///                 
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌─────┬─────────┬───────┐
+    /// │ id  ┆ name    ┆ score │
+    /// │ --- ┆ ---     ┆ ---   │
+    /// │ i32 ┆ str     ┆ i32   │
+    /// ╞═════╪═════════╪═══════╡
+    /// │ 1   ┆ Alice   ┆ 90    │
+    /// │ 2   ┆ Bob     ┆ 80    │
+    /// │ 3   ┆ Charlie ┆ null  │
+    /// └─────┴─────────┴───────┘
+    /// */
+    /// </code>
+    /// </example>
+    public LazyFrame Join(LazyFrame other,        
+        Expr[] leftOn, 
+        Expr[] rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
         var lOn = leftOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
         var rOn = rightOn.Select(e => PolarsWrapper.CloneExpr(e.Handle)).ToArray();
@@ -579,83 +1367,187 @@ public class LazyFrame : IDisposable
             otherClone, 
             lOn, 
             rOn, 
-            how.ToNative()
+            how.ToNative(),
+            suffix,
+            validation.ToNative(),
+            coalesce.ToNative(),
+            maintainOrder.ToNative(),
+            nullsEqual,
+            sliceOffset,
+            sliceLen
         ));
-    }
-    /// <summary>
-    /// Join with another LazyFrame on a single column.
-    /// </summary>
-    /// <param name="other"></param>
-    /// <param name="leftOn"></param>
-    /// <param name="rightOn"></param>
-    /// <param name="how"></param>
-    /// <returns></returns>
-    public LazyFrame Join(LazyFrame other, Expr leftOn, Expr rightOn, JoinType how = JoinType.Inner)
-    {
-        return Join(other,[leftOn], [rightOn], how);
     }
     /// <summary>
     /// Join with another LazyFrame using column names.
     /// </summary>
-    public LazyFrame Join(LazyFrame other, string[] leftOn, string[] rightOn, JoinType how = JoinType.Inner)
+    public LazyFrame Join(LazyFrame other,         
+        string[] leftOn, 
+        string[] rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
         var lExprs = leftOn.Select(Polars.Col).ToArray();
         var rExprs = rightOn.Select(Polars.Col).ToArray();
-
-        return Join(other, lExprs, rExprs, how);
+        return Join(
+            other, 
+            lExprs, 
+            rExprs, 
+            how, 
+            suffix, 
+            validation, 
+            coalesce, 
+            maintainOrder, 
+            nullsEqual, 
+            sliceOffset, 
+            sliceLen
+        );
     }
 
     /// <summary>
     /// Join with another LazyFrame using a single column pair.
     /// </summary>
-    public LazyFrame Join(LazyFrame other, string leftOn, string rightOn, JoinType how = JoinType.Inner)
-        => Join(other, [leftOn], [rightOn], how);
+    public LazyFrame Join(LazyFrame other,
+        string leftOn, 
+        string rightOn, 
+        JoinType how = JoinType.Inner,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
+    {
+        return Join(
+            other, 
+            [leftOn], 
+            [rightOn], 
+            how, 
+            suffix, 
+            validation, 
+            coalesce, 
+            maintainOrder, 
+            nullsEqual, 
+            sliceOffset, 
+            sliceLen
+        );
+    }
 
     /// <summary>
-    /// Perform an As-Of Join (time-series join).
+    /// Perform an As-of join (also known as a time-series join).
     /// <para>
-    /// This is similar to a left-join except that we match on nearest key rather than equal keys.
-    /// The keys must be sorted.
+    /// This is similar to a left join except that we match on nearest key rather than equal keys.
+    /// The join keys must be sorted.
     /// </para>
     /// </summary>
-    /// <param name="other">The LazyFrame to join with.</param>
-    /// <param name="leftOn">Join key of the left LazyFrame.</param>
-    /// <param name="rightOn">Join key of the right LazyFrame.</param>
-    /// <param name="tolerance">
-    /// Numeric tolerance (e.g. "2", "-1") or temporal tolerance (e.g. "2h", "10s").
-    /// Matches that are further away than this tolerance are discarded.
+    /// <param name="other">The right LazyFrame to join with.</param>
+    /// <param name="leftOn">Join key of the left LazyFrame. Must be sorted.</param>
+    /// <param name="rightOn">Join key of the right LazyFrame. Must be sorted.</param>
+    /// <param name="toleranceStr">
+    /// Tolerance as a time duration string (e.g., "2h", "10s", "1d"). 
+    /// Matches that are further away than this duration are discarded.
+    /// </param>
+    /// <param name="toleranceInt">
+    /// Tolerance as a numeric integer (e.g., for integer-based timestamps or simple counters).
+    /// </param>
+    /// <param name="toleranceFloat">
+    /// Tolerance as a floating point number.
     /// </param>
     /// <param name="strategy">
-    /// The strategy to determine which value is "nearest".
-    /// <list type="bullet">
-    /// <item>
-    ///     <term>backward</term>
-    ///     <description>(Default) Search for the last row in the right frame where <c>right_on &lt;= left_on</c>. 
-    ///     Equivalent to "last known value".</description>
-    /// </item>
-    /// <item>
-    ///     <term>forward</term>
-    ///     <description>Search for the first row in the right frame where <c>right_on &gt;= left_on</c>.
-    ///     Equivalent to "next available value".</description>
-    /// </item>
-    /// <item>
-    ///     <term>nearest</term>
-    ///     <description>Search for the row in the right frame where the absolute difference <c>|left_on - right_on|</c> is smallest.</description>
-    /// </item>
-    /// </list>
+    /// The strategy to determine which value is "nearest" (Backward, Forward, or Nearest).
+    /// Defaults to <see cref="AsofStrategy.Backward"/>.
     /// </param>
-    /// <param name="leftBy">Join on these columns exactly (equivalence join) before performing as-of join.</param>
-    /// <param name="rightBy">Join on these columns exactly (equivalence join) before performing as-of join.</param>
-    public LazyFrame JoinAsOf(
+    /// <param name="leftBy">
+    /// Columns to match exactly (equivalence join) before performing the as-of join. 
+    /// Useful for joining separate time-series per group (e.g., by "Symbol").
+    /// </param>
+    /// <param name="rightBy">
+    /// Columns to match exactly in the right DataFrame.
+    /// </param>
+    /// <param name="allowEq">
+    /// If true, allow exact matches to be included in the result. 
+    /// If false, a match must be strictly unequal (e.g. less than for Backward strategy) to the key.
+    /// </param>
+    /// <param name="checkSorted">
+    /// Check if the join keys are sorted. 
+    /// If false, the user must ensure keys are sorted; otherwise results are undefined (but execution is faster).
+    /// </param>
+    /// <param name="suffix">Suffix to append to columns with name conflicts. Defaults to "_right".</param>
+    /// <param name="validation">Check if join keys are unique (mostly relevant for the 'by' columns).</param>
+    /// <param name="coalesce">How to coalesce the join keys.</param>
+    /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="nullsEqual">Consider nulls as equal.</param>
+    /// <param name="sliceOffset">Slice the result starting at this offset (optimization).</param>
+    /// <param name="sliceLen">Length of the slice to keep.</param>
+    /// <example>
+    /// <code>
+    /// // Trades: Events happening at specific times
+    /// var trades = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] { 10, 20, 30 },
+    ///     stock = new[] { "A", "A", "A" }
+    /// }).Lazy();
+    /// 
+    /// // Quotes: Price updates (irregular intervals)
+    /// // 9->100, 15->101, 25->102, 40->103
+    /// var quotes = DataFrame.FromColumns(new
+    /// {
+    ///     time = new[] { 9, 15, 25, 40 },
+    ///     bid = new[] { 100, 101, 102, 103 }
+    /// }).Lazy();
+    /// 
+    /// // Find the latest quote BEFORE or AT the trade time
+    /// var asof = trades.JoinAsOf(
+    ///     quotes, 
+    ///     leftOn: Col("time"), 
+    ///     rightOn: Col("time"),
+    ///     strategy: AsofStrategy.Backward
+    /// );
+    /// 
+    /// var df = asof.Collect();
+    /// df.Show();
+    /// /* Output:
+    /// shape: (3, 3)
+    /// ┌──────┬───────┬─────┐
+    /// │ time ┆ stock ┆ bid │
+    /// │ ---  ┆ ---   ┆ --- │
+    /// │ i32  ┆ str   ┆ i32 │
+    /// ╞══════╪═══════╪═════╡
+    /// │ 10   ┆ A     ┆ 100 │ // Matches time 9
+    /// │ 20   ┆ A     ┆ 101 │ // Matches time 15
+    /// │ 30   ┆ A     ┆ 102 │ // Matches time 25
+    /// └──────┴───────┴─────┘
+    /// */
+    /// </code>
+    /// </example>
+    internal LazyFrame JoinAsOf(
         LazyFrame other, 
         Expr leftOn, Expr rightOn, 
-        string? tolerance = null,
-        string strategy = "backward",
+        string? toleranceStr = null,
+        long? toleranceInt = null,
+        double? toleranceFloat = null,
+        AsofStrategy strategy = AsofStrategy.Backward,
         Expr[]? leftBy = null,
-        Expr[]? rightBy = null)
+        Expr[]? rightBy = null,
+        bool allowEq = true,
+        bool checkSorted = true,
+        string? suffix = null,
+        JoinValidation validation = JoinValidation.ManyToMany,
+        JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
+        JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        bool nullsEqual = false,
+        long? sliceOffset = null,
+        ulong sliceLen = 0)
     {
         var lfClone = CloneHandle();
         var otherClone = other.CloneHandle();
+        
         var lOn = PolarsWrapper.CloneExpr(leftOn.Handle);
         var rOn = PolarsWrapper.CloneExpr(rightOn.Handle);
         
@@ -664,43 +1556,86 @@ public class LazyFrame : IDisposable
 
         return new LazyFrame(PolarsWrapper.JoinAsOf(
             lfClone, otherClone,
-            lOn, rOn,
+            [lOn], [rOn], // Wrap single Expr into array
             lBy, rBy,
-            strategy, tolerance
+            strategy.ToNative(),
+            toleranceStr,
+            toleranceInt,
+            toleranceFloat,
+            allowEq,
+            checkSorted,
+            suffix,
+            validation.ToNative(),
+            coalesce.ToNative(),
+            maintainOrder.ToNative(),
+            nullsEqual,
+            sliceOffset,
+            sliceLen
         ));
     }
-    /// <summary>
-    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/summary"/>
-    /// </summary>
-    /// <param name="other"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='other']"/></param>
-    /// <param name="leftOn"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='leftOn']"/></param>
-    /// <param name="rightOn"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='rightOn']"/></param>
+    // 1. String Tolerance
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
     /// <param name="tolerance">
-    /// The temporal tolerance as a <see cref="TimeSpan"/>. 
+    /// Tolerance as a time duration string (e.g., "2h", "10s", "1d"). 
     /// Matches that are further away than this duration are discarded.
     /// </param>
-    /// <param name="strategy"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='strategy']"/></param>
-    /// <param name="leftBy"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='leftBy']"/></param>
-    /// <param name="rightBy"><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/param[@name='rightBy']"/></param>
-    /// <returns><inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string, string, Expr[], Expr[])" path="/returns"/></returns>
-    public LazyFrame JoinAsOf(
-        LazyFrame other, 
-        Expr leftOn, Expr rightOn, 
-        TimeSpan tolerance,
-        string strategy = "backward",
-        Expr[]? leftBy = null,
-        Expr[]? rightBy = null)
-    {
-        return JoinAsOf(other,leftOn,rightOn,DurationFormatter.ToPolarsString(tolerance),strategy,leftBy,rightBy);
-    }
+    public LazyFrame JoinAsOf(LazyFrame other, Expr leftOn, Expr rightOn, string tolerance, AsofStrategy strategy = AsofStrategy.Backward, Expr[]? leftBy = null, Expr[]? rightBy = null)
+        => JoinAsOf(other, leftOn, rightOn, toleranceStr: tolerance, strategy: strategy, leftBy: leftBy, rightBy: rightBy);
+
+    // 2. TimeSpan Tolerance
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <param name="tolerance">
+    /// Tolerance as a <see cref="TimeSpan"/>. 
+    /// Matches that are further away than this duration are discarded.
+    /// </param>
+    public LazyFrame JoinAsOf(LazyFrame other, Expr leftOn, Expr rightOn, TimeSpan tolerance, AsofStrategy strategy = AsofStrategy.Backward, Expr[]? leftBy = null, Expr[]? rightBy = null)
+        => JoinAsOf(other, leftOn, rightOn, toleranceStr: DurationFormatter.ToPolarsString(tolerance), strategy: strategy, leftBy: leftBy, rightBy: rightBy);
+
+    // 3. Int Tolerance (e.g. integer timestamps)
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <param name="tolerance">
+    /// Tolerance as a numeric integer (e.g., for integer-based timestamps or simple counters).
+    /// </param>
+    public LazyFrame JoinAsOf(LazyFrame other, Expr leftOn, Expr rightOn, long tolerance, AsofStrategy strategy = AsofStrategy.Backward, Expr[]? leftBy = null, Expr[]? rightBy = null)
+        => JoinAsOf(other, leftOn, rightOn, toleranceInt: tolerance, strategy: strategy, leftBy: leftBy, rightBy: rightBy);
+
+    // 4. Double Tolerance (e.g. float keys)
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <param name="tolerance">
+    /// Tolerance as a floating point number.
+    /// </param>
+    public LazyFrame JoinAsOf(LazyFrame other, Expr leftOn, Expr rightOn, double tolerance, AsofStrategy strategy = AsofStrategy.Backward, Expr[]? leftBy = null, Expr[]? rightBy = null)
+        => JoinAsOf(other, leftOn, rightOn, toleranceFloat: tolerance, strategy: strategy, leftBy: leftBy, rightBy: rightBy);
     // ==========================================
     // GroupBy
     // ==========================================
     /// <summary>
-    /// Start a GroupBy operation on specified keys.
+    /// Start a lazy GroupBy operation.
     /// </summary>
-    /// <param name="keys"></param>
-    /// <returns></returns>
+    /// <remarks>
+    /// Unlike <see cref="DataFrame.GroupBy(Expr[])"/> which returns a <see cref="GroupByBuilder"/>,
+    /// this returns a <see cref="LazyGroupBy"/> object which allows constructing the aggregation plan.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// df.Lazy()
+    ///   .GroupBy("group")
+    ///   .Agg(Col("val").Sum().Alias("sum_val"))
+    ///   .Collect();
+    ///   
+    /// /* Output:
+    /// shape: (2, 2)
+    /// ┌───────┬─────────┐
+    /// │ group ┆ sum_val │
+    /// │ ---   ┆ ---     │
+    /// │ str   ┆ i32     │
+    /// ╞═══════╪═════════╡
+    /// │ A     ┆ 3       │
+    /// │ B     ┆ 7       │
+    /// └───────┴─────────┘
+    /// */
+    /// </code>
+    /// </example>
     public LazyGroupBy GroupBy(params Expr[] keys)
     {
         var lfClone = CloneHandle();
@@ -728,8 +1663,20 @@ public class LazyFrame : IDisposable
         return GroupBy(exprs);
     }
     /// <summary>
-    /// Group by dynamic windows based on a time index.
+    /// Lazily group based on a time index using dynamic windows.
+    /// <para>
+    /// This defines a dynamic groupby in the query plan.
+    /// </para>
     /// </summary>
+    /// <seealso cref="DataFrame.GroupByDynamic"/>
+    /// <example>
+    /// <code>
+    /// df.Lazy()
+    ///   .GroupByDynamic("time", every: TimeSpan.FromHours(1))
+    ///   .Agg(Col("val").Sum().Alias("total"))
+    ///   .Collect();
+    /// </code>
+    /// </example>
     public LazyDynamicGroupBy GroupByDynamic(
         string indexColumn,
         TimeSpan every,
@@ -789,27 +1736,174 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Sink the LazyFrame to a Parquet file.
     /// </summary>
-    /// <param name="path"></param>
-    public void SinkParquet(string path)
-        => PolarsWrapper.SinkParquet(Handle, path);
+    public void SinkParquet(
+        string path,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = false,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false)
+    {
+        PolarsWrapper.SinkParquet(
+            Handle,
+            path,
+            compression.ToNative(),
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir
+        );
+    }
     /// <summary>
-    /// Sink the LazyFrame to a CSV file.
+    /// Sink the LazyFrame to an IPC (Arrow) file.
+    /// <br/>
+    /// This allows writing datasets larger than memory by streaming the results to disk.
     /// </summary>
-    /// <param name="path"></param>
-    public void SinkIpc(string path)
-       => PolarsWrapper.SinkIpc(Handle, path);
+    /// <param name="path">The output file path.</param>
+    /// <param name="compression">Compression method (None, LZ4, ZSTD). Defaults to None.</param>
+    /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
+    /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
+    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    public void SinkIpc(
+        string path,
+        IpcCompression compression = IpcCompression.None,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        int compatLevel = -1)
+    {
+        PolarsWrapper.SinkIpc(
+            Handle, 
+            path, 
+            compression.ToNative(), 
+            compatLevel, 
+            maintainOrder, 
+            syncOnClose.ToNative(), 
+            mkdir
+        );
+    }
     /// <summary>
-    /// Sink the LazyFrame to JSON file.
+    /// Sink the LazyFrame to a JSON file.
     /// </summary>
-    /// <param name="path"></param>
-    public void SinkJson(string path)
-        => PolarsWrapper.SinkJson(Handle, path);
+    /// <param name="path">Output file path.</param>
+    /// <param name="format">JSON format (Json Array or JsonLines). Defaults to Json.</param>
+    /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
+    /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
+    public void SinkJson(
+        string path,
+        JsonFormat format = JsonFormat.Json,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false)
+    {
+        PolarsWrapper.SinkJson(
+            Handle,
+            path,
+            format.ToNative(),
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir
+        );
+    }
+
     /// <summary>
-    /// Sink the LazyFrame to CSV file.
+    /// Alias for SinkJson with format=JsonLines.
     /// </summary>
-    /// <param name="path"></param>
-    public void SinkCsv(string path)
-        => PolarsWrapper.SinkCsv(Handle, path);
+    public void SinkNdJson(
+        string path,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false)
+    {
+        SinkJson(path, JsonFormat.JsonLines, maintainOrder, syncOnClose, mkdir);
+    }
+    /// <summary>
+    /// Execute the LazyFrame and sink the result to a CSV file.
+    /// <para>
+    /// This operation allows processing datasets larger than memory by streaming results 
+    /// directly to the file system.
+    /// </para>
+    /// </summary>
+    /// <param name="path">The output file path.</param>
+    /// <param name="includeHeader">Whether to include the header row. Defaults to true.</param>
+    /// <param name="includeBom">Whether to include the UTF-8 Byte Order Mark (BOM). Defaults to false.</param>
+    /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
+    /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'.</param>
+    /// <param name="quoteStyle">The quoting style to use. Defaults to <see cref="QuoteStyle.Necessary"/>.</param>
+    /// <param name="nullValue">The string representation for null values. Defaults to empty string.</param>
+    /// <param name="lineTerminator">The character sequence used to terminate lines. Defaults to "\n".</param>
+    /// <param name="floatScientific">
+    /// Whether to always use scientific notation for floats. 
+    /// If null (default), formatting is automatic.
+    /// </param>
+    /// <param name="floatPrecision">
+    /// The number of decimal places to write for floats. 
+    /// If null (default), uses full precision.
+    /// </param>
+    /// <param name="decimalComma">Whether to use a comma ',' as the decimal separator. Defaults to false.</param>
+    /// <param name="dateFormat">Format string for Date columns. If null, uses ISO 8601.</param>
+    /// <param name="timeFormat">Format string for Time columns. If null, uses ISO 8601.</param>
+    /// <param name="datetimeFormat">Format string for Datetime columns. If null, uses ISO 8601.</param>
+    /// <param name="maintainOrder">
+    /// Whether to maintain the order of the data. 
+    /// Setting this to false can improve performance in streaming mode. Defaults to true.
+    /// </param>
+    /// <param name="syncOnClose">File synchronization behavior on close (e.g., flush to disk). Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the output directory if it does not exist. Defaults to false.</param>
+    /// <param name="batchSize">
+    /// The batch size for writing rows. 
+    /// 0 means use the Polars default.
+    /// </param>
+    public void SinkCsv(
+        string path,
+        bool includeHeader = true,
+        bool includeBom = false,
+        char separator = ',',
+        char quoteChar = '"',
+        QuoteStyle quoteStyle = QuoteStyle.Necessary,
+        string? nullValue = null,
+        string? lineTerminator = "\n",
+        bool? floatScientific = null,
+        int? floatPrecision = null,
+        bool decimalComma = false,
+        string? dateFormat = null,
+        string? timeFormat = null,
+        string? datetimeFormat = null,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        int batchSize = 0)
+    {
+        PolarsWrapper.SinkCsv(
+            Handle,
+            path,
+            includeHeader,
+            includeBom,
+            batchSize,
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir,
+            separator,
+            quoteChar,
+            quoteStyle.ToNative(),
+            nullValue,
+            lineTerminator,
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            floatScientific, 
+            floatPrecision,  
+            decimalComma
+        );
+    }
     /// <summary>
     /// Streaming Sink to Batchs
     /// </summary>
@@ -821,13 +1915,53 @@ public class LazyFrame : IDisposable
         using var _ = lfRes.CollectStreaming(); 
     }
     /// <summary>
-    /// Generic streaming Sink interface: Streamingly convert LazyFrame calculation results to IDataReader 
-    /// and hand it over to writerAction for processing.
-    /// Users can utilize tools like SqlBulkCopy, NpgsqlBinaryImporter, etc. within writerAction.
+    /// Stream the result of the LazyFrame calculation into an <see cref="IDataReader"/>.
+    /// <para>
+    /// This allows processing huge datasets that don't fit in memory by handling them in chunks (RecordBatches).
+    /// </para>
+    /// <para>
+    /// Common use cases:
+    /// <list type="bullet">
+    /// <item>Bulk inserting data into SQL Databases (using SqlBulkCopy or NpgsqlBinaryImporter).</item>
+    /// <item>Streaming data to other .NET libraries that consume IDataReader.</item>
+    /// </list>
+    /// </para>
     /// </summary>
-    /// <param name="writerAction">Callback that receives IDataReader (executed in a separate thread)</param>
-    /// <param name="bufferSize">Buffer size (number of Batches)</param>
-    /// <param name="typeOverrides">Target Schema</param>
+    /// <param name="writerAction">
+    /// A callback that receives the <see cref="IDataReader"/>. 
+    /// This action executes on a separate thread (Consumer) while the Polars engine (Producer) pumps data.
+    /// </param>
+    /// <param name="bufferSize">
+    /// The number of RecordBatches to buffer in memory. 
+    /// If the buffer is full, the Polars engine will pause until the consumer reads more data (Backpressure).
+    /// </param>
+    /// <param name="typeOverrides">Optional schema overrides to guide the type mapping.</param>
+    /// <example>
+    /// <code>
+    /// // Simulate a large lazy computation
+    /// var lf = DataFrame.FromColumns(new { id = new[] { 0, 1, 2, 3, 4 } }).Lazy();
+    /// 
+    /// // Stream result to a database writer (simulated here)
+    /// lf.SinkTo(reader => 
+    /// {
+    ///     Console.WriteLine("[DB Writer] Started receiving data...");
+    ///     while (reader.Read())
+    ///     {
+    ///         var val = reader.GetValue(0);
+    ///         Console.WriteLine($"[DB Writer] Insert row: {val}");
+    ///     }
+    ///     Console.WriteLine("[DB Writer] Done.");
+    /// }, bufferSize: 2);
+    /// 
+    /// /* Output:
+    /// [DB Writer] Started receiving data...
+    /// [DB Writer] Insert row: 0
+    /// [DB Writer] Insert row: 1
+    /// ...
+    /// [DB Writer] Done.
+    /// */
+    /// </code>
+    /// </example>
     public void SinkTo(Action<IDataReader> writerAction, int bufferSize = 5,Dictionary<string, Type>? typeOverrides = null)
     {
         // 1. Producer-Consumer buffer

@@ -5,14 +5,14 @@ namespace Polars.CSharp;
 /// <summary>
 /// Enums of JoinTypes
 /// </summary>
-public enum JoinType
+public enum JoinType: byte
 {
-    Inner,Left, Outer,Cross,Semi,Anti
+    Inner,Left, Outer,Cross,Semi,Anti,IEJoin
 }
 /// <summary>
 /// Specifies the aggregation function for pivot operations.
 /// </summary>
-public enum PivotAgg
+public enum PivotAgg : byte
 {
     First,Sum,Min,Max, Mean,Median,Count,Len,Last
 }
@@ -59,6 +59,8 @@ public enum DataTypeKind
     Struct=19,List=20,Categorical=21,
     Decimal=22,
     Array=23,
+    Int128 = 24,
+    UInt128=25,
     Unknown = 0,
     SameAsInput=0
 }
@@ -121,8 +123,219 @@ public enum Roll
     Backward
 }
 
+public enum QuantileMethod : byte
+{
+    Nearest = 0,
+    Higher = 1,
+    Lower = 2,
+    Midpoint = 3,
+    Linear = 4 // Default
+}
+
+public enum RankMethod : byte
+{
+    /// <summary>
+    ///  The average of the ranks that would have been assigned to all the tied values is assigned to each value.
+    /// </summary>
+    Average = 0, // Default
+    /// <summary>
+    /// The minimum of the ranks that would have been assigned to all the tied values is assigned to each value. (This is also referred to as “competition” ranking.)
+    /// </summary>
+    Min = 1,
+    /// <summary>
+    /// The maximum of the ranks that would have been assigned to all the tied values is assigned to each value.
+    /// </summary>
+    Max = 2,
+    /// <summary>
+    /// Like ‘min’, but the rank of the next highest element is assigned the rank immediately after those assigned to the tied elements.
+    /// </summary>
+    Dense = 3,
+    /// <summary>
+    /// All values are given a distinct rank, corresponding to the order that the values occur in the Series.
+    /// </summary>
+    Ordinal = 4,
+    /// <summary>
+    /// Like ‘ordinal’, but the rank for ties is not dependent on the order that the values occur in the Series.
+    /// </summary>
+    Random = 5
+}
+
+public enum RollingRankMethod : byte
+{
+    /// <summary>
+    ///  The average of the ranks that would have been assigned to all the tied values is assigned to each value.
+    /// </summary>
+    Average = 0, // Default
+    /// <summary>
+    /// The minimum of the ranks that would have been assigned to all the tied values is assigned to each value. (This is also referred to as “competition” ranking.)
+    /// </summary>
+    Min = 1,
+    /// <summary>
+    /// The maximum of the ranks that would have been assigned to all the tied values is assigned to each value.
+    /// </summary>
+    Max = 2,
+    /// <summary>
+    /// Like ‘min’, but the rank of the next highest element is assigned the rank immediately after those assigned to the tied elements.
+    /// </summary>
+    Dense = 3,
+    /// <summary>
+    /// All values are given a distinct rank, corresponding to the order that the values occur in the Series.
+    /// </summary>
+    Random = 4
+}
+
+public enum UniqueKeepStrategy : byte
+{
+    First = 0,
+    Last = 1,
+    Any = 2,
+    None = 3
+}
+
+public enum JoinValidation: byte
+{
+    // Default
+    ManyToMany = 0,
+    ManyToOne = 1,
+    OneToMany = 2,
+    OneToOne = 3
+}
+
+public enum JoinCoalesce: byte
+{
+    // Default
+    JoinSpecific = 0,
+    CoalesceColumns = 1,
+    KeepColumns = 2,
+}
+
+public enum JoinMaintainOrder: byte
+{
+    // Default
+    None = 0,
+    Left = 1,
+    Right =2,
+    LeftRight =3,
+    RightLeft =4
+}
+
+public enum AsofStrategy: byte
+{
+    Backward = 0,
+    Forward = 1,
+    Nearest = 2
+}
+
+public enum ParallelStrategy: byte
+{
+    Auto = 0,
+    Columns = 1,
+    RowGroups = 2,
+    None =3
+}
+
+public enum CsvEncoding: byte
+{
+    UTF8 = 0,
+    LossyUTF8 = 1,
+}
+
+public enum JsonFormat: byte
+{
+    Json = 0,
+    JsonLines = 1,
+}
+
+public enum IpcCompression: byte
+{
+    None = 0,
+    LZ4 = 1,
+    ZSTD = 2
+}
+
+/// <summary>
+/// Controls the file synchronization behavior when closing the file.
+/// </summary>
+public enum SyncOnClose : byte
+{
+    /// <summary>
+    /// Don't call sync on close. (Default, fastest)
+    /// </summary>
+    None = 0,
+    
+    /// <summary>
+    /// Sync only the file contents.
+    /// </summary>
+    Data = 1,
+    
+    /// <summary>
+    /// Sync the file contents and the metadata. (Slowest, safest)
+    /// </summary>
+    All = 2
+}
+
+public enum ParquetCompression : byte
+{
+    Uncompressed = 0,
+    Snappy = 1,
+    Gzip = 2,
+    Brotli = 3,
+    Zstd = 4,
+    Lz4Raw = 5
+}
+
+public enum QuoteStyle : byte
+{
+    /// <summary>
+    /// Quote fields only when necessary (e.g. containing delimiter/quote). Default.
+    /// </summary>
+    Necessary = 0,
+    
+    /// <summary>
+    /// Quote every field.
+    /// </summary>
+    Always = 1,
+    
+    /// <summary>
+    /// Quote non-numeric fields.
+    /// </summary>
+    NonNumeric = 2,
+    
+    /// <summary>
+    /// Never quote fields.
+    /// </summary>
+    Never = 3
+}
 internal static class EnumExtensions
 {
+    public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
+    {
+        DataTypeKind.SameAsInput => CoreEnums.PlDataType.SameAsInput,
+        DataTypeKind.Int8 => CoreEnums.PlDataType.Int8,
+        DataTypeKind.UInt8 => CoreEnums.PlDataType.UInt8,
+        DataTypeKind.Int16 => CoreEnums.PlDataType.Int16,
+        DataTypeKind.UInt16 => CoreEnums.PlDataType.UInt16,
+        DataTypeKind.Int32=> CoreEnums.PlDataType.Int32,
+        DataTypeKind.UInt64 => CoreEnums.PlDataType.UInt64,
+        DataTypeKind.Int128 => CoreEnums.PlDataType.Int128,
+        DataTypeKind.UInt128 => CoreEnums.PlDataType.UInt128,
+        DataTypeKind.Float32 => CoreEnums.PlDataType.Float32,
+        DataTypeKind.Float64 => CoreEnums.PlDataType.Float64,
+        DataTypeKind.Datetime => CoreEnums.PlDataType.Datetime,
+        DataTypeKind.Date => CoreEnums.PlDataType.Date,
+        DataTypeKind.Time => CoreEnums.PlDataType.Time,
+        DataTypeKind.Duration => CoreEnums.PlDataType.Duration,
+        DataTypeKind.List=> CoreEnums.PlDataType.List,
+        DataTypeKind.Array => CoreEnums.PlDataType.Array,
+        DataTypeKind.Struct => CoreEnums.PlDataType.Struct,
+        DataTypeKind.Binary => CoreEnums.PlDataType.Binary,
+        DataTypeKind.Decimal => CoreEnums.PlDataType.Decimal,
+        DataTypeKind.Boolean => CoreEnums.PlDataType.Boolean,
+        DataTypeKind.Categorical => CoreEnums.PlDataType.Categorical,
+        DataTypeKind.Null => CoreEnums.PlDataType.Null,
+        DataTypeKind.String => CoreEnums.PlDataType.String, 
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
+    };
     public static CoreEnums.PlTimeUnit ToNative(this TimeUnit unit) => unit switch
     {
         TimeUnit.Nanoseconds => CoreEnums.PlTimeUnit.Nanoseconds,
@@ -144,10 +357,10 @@ internal static class EnumExtensions
         JoinType.Cross => CoreEnums.PlJoinType.Cross,
         JoinType.Semi => CoreEnums.PlJoinType.Semi,
         JoinType.Anti => CoreEnums.PlJoinType.Anti,
+        JoinType.IEJoin => CoreEnums.PlJoinType.IEJoin,
         _ => CoreEnums.PlJoinType.Inner
     };
 
-    //
     public static CoreEnums.PlPivotAgg ToNative(this PivotAgg agg) => agg switch
     {
         PivotAgg.First => CoreEnums.PlPivotAgg.First,
@@ -206,6 +419,125 @@ internal static class EnumExtensions
         Roll.Forward => CoreEnums.PlRoll.Forward,
         Roll.Raise => CoreEnums.PlRoll.Raise,
         _ => throw new ArgumentOutOfRangeException(nameof(roll), roll, null)
+    };
+    internal static CoreEnums.PlQuantileMethod ToNative(this QuantileMethod interpol) => interpol switch
+    {
+        QuantileMethod.Nearest => CoreEnums.PlQuantileMethod.Nearest,
+        QuantileMethod.Higher => CoreEnums.PlQuantileMethod.Higher,
+        QuantileMethod.Lower => CoreEnums.PlQuantileMethod.Lower,
+        QuantileMethod.Midpoint => CoreEnums.PlQuantileMethod.Midpoint,
+        QuantileMethod.Linear => CoreEnums.PlQuantileMethod.Linear,  
+        _ => throw new ArgumentOutOfRangeException(nameof(interpol), interpol, null)
+    };
+    internal static CoreEnums.PlRankMethod ToNative(this RankMethod method) => method switch
+    {
+        RankMethod.Average => CoreEnums.PlRankMethod.Average,
+        RankMethod.Min => CoreEnums.PlRankMethod.Min,
+        RankMethod.Max => CoreEnums.PlRankMethod.Max,
+        RankMethod.Dense => CoreEnums.PlRankMethod.Dense,
+        RankMethod.Ordinal => CoreEnums.PlRankMethod.Ordinal,
+        RankMethod.Random => CoreEnums.PlRankMethod.Random,
+        _ => throw new ArgumentOutOfRangeException(nameof(method), method, null)
+    };
+    internal static CoreEnums.PlRollingRankMethod ToNative(this RollingRankMethod method) => method switch
+    {
+        RollingRankMethod.Average => CoreEnums.PlRollingRankMethod.Average,
+        RollingRankMethod.Min => CoreEnums.PlRollingRankMethod.Min,
+        RollingRankMethod.Max => CoreEnums.PlRollingRankMethod.Max,
+        RollingRankMethod.Dense => CoreEnums.PlRollingRankMethod.Dense,
+        RollingRankMethod.Random => CoreEnums.PlRollingRankMethod.Random,
+        _ => throw new ArgumentOutOfRangeException(nameof(method), method, null)
+    };
+    internal static CoreEnums.PlUniqueKeepStrategy ToNative(this UniqueKeepStrategy strategy) => strategy switch
+    {
+        UniqueKeepStrategy.First => CoreEnums.PlUniqueKeepStrategy.First,
+        UniqueKeepStrategy.Last => CoreEnums.PlUniqueKeepStrategy.Last,
+        UniqueKeepStrategy.Any => CoreEnums.PlUniqueKeepStrategy.Any,
+        UniqueKeepStrategy.None => CoreEnums.PlUniqueKeepStrategy.None,
+        _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
+    };
+    internal static CoreEnums.PlJoinValidation ToNative(this JoinValidation validation) => validation switch
+    {
+        JoinValidation.ManyToMany => CoreEnums.PlJoinValidation.ManyToMany,
+        JoinValidation.ManyToOne => CoreEnums.PlJoinValidation.ManyToOne,
+        JoinValidation.OneToMany => CoreEnums.PlJoinValidation.OneToMany,
+        JoinValidation.OneToOne => CoreEnums.PlJoinValidation.OneToOne,
+        _ => throw new ArgumentOutOfRangeException(nameof(validation), validation, null)
+    };
+    internal static CoreEnums.PlJoinCoalesce ToNative(this JoinCoalesce coalesce) => coalesce switch
+    {
+        JoinCoalesce.JoinSpecific => CoreEnums.PlJoinCoalesce.JoinSpecific,
+        JoinCoalesce.CoalesceColumns => CoreEnums.PlJoinCoalesce.CoalesceColumns,
+        JoinCoalesce.KeepColumns => CoreEnums.PlJoinCoalesce.KeepColumns,
+        _ => throw new ArgumentOutOfRangeException(nameof(coalesce), coalesce, null)
+    };
+    internal static CoreEnums.PlJoinMaintainOrder ToNative(this JoinMaintainOrder maintainOrder) => maintainOrder switch
+    {
+        JoinMaintainOrder.None => CoreEnums.PlJoinMaintainOrder.None,
+        JoinMaintainOrder.Left => CoreEnums.PlJoinMaintainOrder.Left,
+        JoinMaintainOrder.Right => CoreEnums.PlJoinMaintainOrder.Right,
+        JoinMaintainOrder.LeftRight => CoreEnums.PlJoinMaintainOrder.LeftRight,
+        JoinMaintainOrder.RightLeft => CoreEnums.PlJoinMaintainOrder.RightLeft,
+        _ => throw new ArgumentOutOfRangeException(nameof(maintainOrder), maintainOrder, null)
+    };
+    internal static CoreEnums.PlAsofStrategy ToNative(this AsofStrategy strategy) => strategy switch
+    {
+        AsofStrategy.Backward => CoreEnums.PlAsofStrategy.Backward,
+        AsofStrategy.Forward => CoreEnums.PlAsofStrategy.Forward,
+        AsofStrategy.Nearest => CoreEnums.PlAsofStrategy.Nearest,
+        _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
+    };
+    internal static CoreEnums.PlParallelStrategy ToNative(this ParallelStrategy strategy) => strategy switch
+    {
+        ParallelStrategy.Auto => CoreEnums.PlParallelStrategy.Auto,
+        ParallelStrategy.Columns => CoreEnums.PlParallelStrategy.Columns,
+        ParallelStrategy.RowGroups => CoreEnums.PlParallelStrategy.RowGroups,
+        ParallelStrategy.None => CoreEnums.PlParallelStrategy.None,
+        _ => throw new ArgumentOutOfRangeException(nameof(strategy), strategy, null)
+    };
+    internal static CoreEnums.PlCsvEncoding ToNative(this CsvEncoding encoding) => encoding switch
+    {
+        CsvEncoding.UTF8 => CoreEnums.PlCsvEncoding.UTF8,
+        CsvEncoding.LossyUTF8 => CoreEnums.PlCsvEncoding.LossyUTF8,
+        _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
+    };
+    internal static CoreEnums.PlJsonFormat ToNative(this JsonFormat jsonFormat) => jsonFormat switch
+    {
+        JsonFormat.Json => CoreEnums.PlJsonFormat.Json,
+        JsonFormat.JsonLines => CoreEnums.PlJsonFormat.JsonLines,
+        _ => throw new ArgumentOutOfRangeException(nameof(jsonFormat), jsonFormat, null)
+    };
+    internal static CoreEnums.PlIpcCompression ToNative(this IpcCompression compression) => compression switch
+    {
+        IpcCompression.None => CoreEnums.PlIpcCompression.None,
+        IpcCompression.LZ4 => CoreEnums.PlIpcCompression.LZ4,
+        IpcCompression.ZSTD => CoreEnums.PlIpcCompression.ZSTD,
+        _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
+    };
+    internal static CoreEnums.PlSyncOnClose ToNative(this SyncOnClose syncOnClose) => syncOnClose switch
+    {
+        SyncOnClose.None => CoreEnums.PlSyncOnClose.None,
+        SyncOnClose.Data => CoreEnums.PlSyncOnClose.Data,
+        SyncOnClose.All => CoreEnums.PlSyncOnClose.All,
+        _ => throw new ArgumentOutOfRangeException(nameof(syncOnClose), syncOnClose, null)
+    };
+    internal static CoreEnums.PlParquetCompression ToNative(this ParquetCompression compression) => compression switch
+    {
+        ParquetCompression.Uncompressed => CoreEnums.PlParquetCompression.Uncompressed,
+        ParquetCompression.Snappy => CoreEnums.PlParquetCompression.Snappy,
+        ParquetCompression.Gzip => CoreEnums.PlParquetCompression.Gzip,
+        ParquetCompression.Brotli => CoreEnums.PlParquetCompression.Brotli,
+        ParquetCompression.Zstd => CoreEnums.PlParquetCompression.Zstd,
+        ParquetCompression.Lz4Raw => CoreEnums.PlParquetCompression.Lz4Raw,
+        _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
+    };
+    internal static CoreEnums.PlQuoteStyle ToNative(this QuoteStyle style) => style switch
+    {
+        QuoteStyle.Necessary => CoreEnums.PlQuoteStyle.Necessary,
+        QuoteStyle.Always => CoreEnums.PlQuoteStyle.Always,
+        QuoteStyle.NonNumeric => CoreEnums.PlQuoteStyle.NonNumeric,
+        QuoteStyle.Never => CoreEnums.PlQuoteStyle.Never,
+        _ => throw new ArgumentOutOfRangeException(nameof(style), style, null)
     };
 }
 

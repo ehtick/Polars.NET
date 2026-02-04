@@ -1,8 +1,6 @@
 name: Build and Publish NuGet
 
 # 触发机制：
-# 1. 当推送到 main 分支时触发
-# 2. 或者手动在 GitHub 界面点击 "Run workflow" 触发
 on:
   push:
     tags:
@@ -17,7 +15,7 @@ on:
 
 jobs:
   # ===================================================
-  # 第一阶段：并行构建 Rust 原生库 (The Matrix Build)
+  # The Matrix Build
   # ===================================================
   build-rust:
     name: Build Rust (${{ matrix.os }})
@@ -26,20 +24,47 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x64
+          # --- Linux x64 glibc ---
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            rid: linux-x64
             artifact_name: libnative_shim.so
+            use_cross: false
+
+          # --- Linux x64 Musl ---
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            rid: linux-musl-x64
+            artifact_name: libnative_shim.so
+            use_cross: true 
+            
+          # --- Linux ARM64 glibc---
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            rid: linux-arm64
+            artifact_name: libnative_shim.so
+            use_cross: true
+            
+          # --- Linux ARM64 Musl ---
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            rid: linux-musl-arm64
+            artifact_name: libnative_shim.so
+            use_cross: true
           
           # Windows x64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            rid: win-x64
             artifact_name: native_shim.dll
+            use_cross: false
 
-          # MacOS ARM64 (Apple Silicon) - 目前 GitHub macos-latest 默认是 ARM64
+          # MacOS ARM64 (Apple Silicon) - 
           - os: macos-latest
             target: aarch64-apple-darwin
+            rid: osx-arm64
             artifact_name: libnative_shim.dylib
+            use_cross: false
 
     steps:
       - uses: actions/checkout@v4
@@ -48,22 +73,36 @@ jobs:
         if: runner.os == 'Linux'
         run: rm -rf native_shim/.cargo
 
-      # 安装 Rust 工具链
+      # Install Rust
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      # Install Cross
+      - name: Install cross
+        if: matrix.use_cross == true
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - uses: swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
           workspaces: ./native_shim
 
-      # 编译 Rust (Release 模式)
+      # Compile Rust (Release mode)
       # 这里的 native_shim 是你的 Rust 目录名，如果改了名字记得调整
-      - name: Cargo Build
-        working-directory: ./native_shim
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Build Native Shim
+        shell: bash
+        run: |
+          CARGO_CMD="cargo"
+          if [[ "${{ matrix.use_cross }}" == "true" ]]; then
+            CARGO_CMD="cross"
+          fi
+          
+          echo "Building for ${{ matrix.target }} using $CARGO_CMD..."
+          
+          cd native_shim
+          $CARGO_CMD build --release --target ${{ matrix.target }}
 
       - name: Prepare Artifact
         shell: bash
@@ -72,19 +111,19 @@ jobs:
           cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} .
           echo "✅ Moved artifact to root: ${{ matrix.artifact_name }}"
 
-      # 上传构建产物 (暂存到 GitHub Actions)
+      # Upload Artifact to Git Actions
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: native-lib-${{ matrix.os }} #以此区分不同系统的包
+          name: native-lib-${{ matrix.rid }}
           path: native_shim/${{ matrix.artifact_name }}
           if-no-files-found: error
 
   # ===================================================
-  # 第二阶段：打包 .NET NuGet (The Packaging)
+  # Pack .NET NuGet (The Packaging)
   # ===================================================
   package-dotnet:
-    needs: build-rust # 必须等 Rust 编译完
+    needs: build-rust
     runs-on: ubuntu-latest
     name: Pack NuGet Packages
     
@@ -99,28 +138,46 @@ jobs:
       - name: Create Libs Directory
         run: |
           mkdir -p libs/linux-x64
+          mkdir -p libs/linux-musl-x64
+          mkdir -p libs/linux-arm64
+          mkdir -p libs/linux-musl-arm64
           mkdir -p libs/win-x64
           mkdir -p libs/osx-arm64
 
-      # 2. 下载并归位：Linux
-      - name: Download Linux Lib
-        uses: actions/download-artifact@v4
+      # Linux x64
+      - uses: actions/download-artifact@v4
         with:
-          name: native-lib-ubuntu-latest
+          name: native-lib-linux-x64
           path: libs/linux-x64
-          
-      # 3. 下载并归位：Windows
-      - name: Download Windows Lib
-        uses: actions/download-artifact@v4
+
+      # Linux Musl x64
+      - uses: actions/download-artifact@v4
         with:
-          name: native-lib-windows-latest
+          name: native-lib-linux-musl-x64
+          path: libs/linux-musl-x64
+
+      # Linux ARM64
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-lib-linux-arm64
+          path: libs/linux-arm64
+
+      # Linux Musl ARM64
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-lib-linux-musl-arm64
+          path: libs/linux-musl-arm64
+
+      # Windows x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-lib-win-x64
           path: libs/win-x64
 
-      # 4. 下载并归位：MacOS
-      - name: Download MacOS Lib
-        uses: actions/download-artifact@v4
+      # MacOS ARM64
+      - uses: actions/download-artifact@v4
         with:
-          name: native-lib-macos-latest
+          name: native-lib-osx-arm64
           path: libs/osx-arm64
 
       # 调试步骤：打印一下目录结构，确保文件都在
@@ -146,10 +203,10 @@ jobs:
           name: polars-net-nugets
           path: nupkgs
   # ===================================================
-  # 第三阶段：全平台冒烟测试 (Smoke Test)
+  # Smoke Test
   # ===================================================
   smoke-test:
-    needs: package-dotnet # 必须等包打完
+    needs: package-dotnet 
     name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -162,7 +219,6 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # 1. 下载刚才打包阶段生成的 NuGet 包
       - uses: actions/download-artifact@v4
         with:
           name: polars-net-nugets
@@ -178,7 +234,10 @@ jobs:
           dotnet new nugetconfig
           dotnet nuget add source ../local_feed --name LocalFeed
           
-          dotnet add package Polars.NET --version 0.1.0-alpha2
+          PACKAGE_VERSION=$(ls ../local_feed/Polars.NET.*.nupkg | head -n 1 | grep -oP 'Polars.NET.\K[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?')
+          echo "Detected Package Version: $PACKAGE_VERSION"
+          
+          dotnet add package Polars.NET --version "$PACKAGE_VERSION"
           
           cat <<EOF > Program.cs
           using System;

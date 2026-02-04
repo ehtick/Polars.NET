@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Apache.Arrow;
 using Apache.Arrow.C;
+using Polars.NET.Core.Native;
 
 namespace Polars.NET.Core;
 
@@ -23,11 +24,6 @@ public static partial class PolarsWrapper
             Console.Error.WriteLine($"[Polars C#] Error freeing UDF handle: {ex}");
         }
     }
-
-    // public static ExprHandle Map(ExprHandle expr, Func<IArrowArray, IArrowArray> func)
-    // {
-    //     return Map(expr, func);
-    // }
 
     public static ExprHandle Map(ExprHandle expr, Func<IArrowArray, IArrowArray> func, DataTypeHandle outputType)
     {

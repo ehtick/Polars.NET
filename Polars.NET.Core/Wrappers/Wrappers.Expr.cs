@@ -1,3 +1,5 @@
+using Polars.NET.Core.Native;
+
 namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
@@ -35,13 +37,14 @@ public static partial class PolarsWrapper
     }
     private static ExprHandle UnaryDtOp(Func<ExprHandle, ExprHandle> op, ExprHandle expr) 
         => UnaryOp(op, expr);
-    public static ExprHandle RollingOp(Func<ExprHandle, string ,UIntPtr,ExprHandle> op, ExprHandle expr, string windowSize,int minPeriods)
-    {
-        var h = op(expr, windowSize,(UIntPtr)minPeriods);
+    public static ExprHandle RollingOp(Func<ExprHandle, string ,UIntPtr,double[]?,UIntPtr,bool,ExprHandle> op, ExprHandle expr, string windowSize,int minPeriods, double[]? weights, bool center)
+    {   
+        UIntPtr len = weights != null ? (UIntPtr)weights.Length : UIntPtr.Zero;
+        var h = op(expr, windowSize,(UIntPtr)minPeriods,weights,len,center);
         expr.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-    private static ExprHandle RollingByOp(Func<ExprHandle, string, UIntPtr,ExprHandle, string, ExprHandle> op, ExprHandle expr, string windowSize, int minPeriods,ExprHandle by, string closed)
+    private static ExprHandle RollingByOp(Func<ExprHandle, string, UIntPtr,ExprHandle, PlClosedWindow, ExprHandle> op, ExprHandle expr, string windowSize, int minPeriods,ExprHandle by, PlClosedWindow closed)
     {
         var h = op(expr, windowSize,(UIntPtr)minPeriods, by, closed);
         expr.TransferOwnership();
@@ -58,22 +61,101 @@ public static partial class PolarsWrapper
             return ErrorHelper.Check(NativeBindings.pl_expr_cols(ptrs, (UIntPtr)ptrs.Length));
         });
     }
+    public static ExprHandle Lit(sbyte val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_i8(val));
+    public static ExprHandle Lit(byte val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_u8(val));
+    public static ExprHandle Lit(short val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_i16(val));
+    public static ExprHandle Lit(ushort val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_u16(val));
     public static ExprHandle Lit(int val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_i32(val));
+    public static ExprHandle Lit(uint val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_u32(val));
+    public static ExprHandle Lit(long val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_i64(val));
+    public static ExprHandle Lit(ulong val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_u64(val));
+    public static ExprHandle Lit(Int128 value)
+    {
+        // Lower 64 bits：
+        ulong lowPart = (ulong)value;
+
+        // Upper 64 bits
+        long highPart = (long)(value >> 64);
+        return ErrorHelper.Check(NativeBindings.pl_expr_lit_i128(lowPart, highPart));
+    }
+
     public static ExprHandle Lit(string val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_str(val));
     public static ExprHandle Lit(double val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_f64(val));
     public static ExprHandle Lit(float val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_f32(val));
-    public static ExprHandle Lit(long val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_i64(val));
     public static ExprHandle Lit(bool val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_bool(val));
     public static ExprHandle LitNull() => ErrorHelper.Check(NativeBindings.pl_expr_lit_null());
+    private static readonly int UnixEpochDayNumber = new DateOnly(1970, 1, 1).DayNumber;
+    private const long UnixEpochTicks = 621_355_968_000_000_000L;
     public static ExprHandle Lit(DateTime dt)
     {
         // C# DateTime.Ticks is from 0001-01-01 
         // Unix Epoch is 1970-01-01
-        long unixEpochTicks = 621355968000000000;
-        long ticksSinceEpoch = dt.Ticks - unixEpochTicks;
+        long ticksSinceEpoch = dt.Ticks - UnixEpochTicks;
         long micros = ticksSinceEpoch / 10; // 100ns -> 1us
         
         return ErrorHelper.Check(NativeBindings.pl_expr_lit_datetime(micros));
+    }
+    public static ExprHandle Lit(DateTimeOffset value)
+    {
+        long utcTicks = value.UtcTicks;
+
+        long deltaTicks = utcTicks - UnixEpochTicks;
+
+        long micros = deltaTicks / 10;
+
+        return ErrorHelper.Check(NativeBindings.pl_expr_lit_datetime(micros));
+    }
+    public static ExprHandle Lit(DateOnly value)
+    {
+        int daysSinceEpoch = value.DayNumber - UnixEpochDayNumber;
+
+        return ErrorHelper.Check(NativeBindings.pl_expr_lit_date(daysSinceEpoch));
+    }
+    public static ExprHandle Lit(TimeOnly value)
+    {
+        long nanoseconds = value.Ticks * 100;
+
+        return ErrorHelper.Check(NativeBindings.pl_expr_lit_time(nanoseconds));
+    }
+    public static ExprHandle Lit(TimeSpan value)
+    {
+        // .NET Ticks = 100 ns
+        // Target Unit = 1 us = 1000 ns
+        // Conversion: Ticks / 10
+        long microseconds = value.Ticks / 10;
+
+        return ErrorHelper.Check(NativeBindings.pl_expr_lit_duration(microseconds));
+    }
+    public static ExprHandle Lit(decimal value)
+    {
+        // Get decimal binary part
+        // bits[0] = low, bits[1] = mid, bits[2] = high, bits[3] = flags (sign & scale)
+        int[] bits = decimal.GetBits(value);
+        byte scale = (byte)((bits[3] >> 16) & 0x7F);
+
+        ulong low64 = (uint)bits[0] | ((ulong)(uint)bits[1] << 32);
+        ulong high32 = (uint)bits[2];
+        
+        Int128 unscaled = new Int128(high32, low64);
+
+        if ((bits[3] & 0x80000000) != 0)
+        {
+            unscaled = -unscaled;
+        }
+
+        // ==========================================
+        // Deassemble Int128 into High/Low
+        // ==========================================
+        ulong lowPart = (ulong)unscaled;
+        long highPart = (long)(unscaled >> 64);
+        return ErrorHelper.Check(NativeBindings.pl_expr_lit_decimal(lowPart, highPart, scale));
+    }
+    public static ExprHandle Lit(SeriesHandle serieshandle)
+    {
+        var h = NativeBindings.pl_expr_lit_series(serieshandle);
+        serieshandle.TransferOwnership();
+
+        return ErrorHelper.Check(h);
     }
     // Alias
     public static ExprHandle Alias(ExprHandle expr, string name) 
@@ -82,12 +164,126 @@ public static partial class PolarsWrapper
         expr.TransferOwnership();
         return ErrorHelper.Check(h);
     }
+    // Reverse
+    public static ExprHandle Reverse(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_reverse, e);
     // Aggregate
+    public static ExprHandle First(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_first, e);
+    public static ExprHandle Last(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_last, e);
+    public static ExprHandle All(ExprHandle e, bool ignoreNulls)
+    {
+        var h = NativeBindings.pl_expr_all(e,ignoreNulls);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle Any(ExprHandle e, bool ignoreNulls)
+    {
+        var h = NativeBindings.pl_expr_any(e,ignoreNulls);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle Item(ExprHandle e, bool allowEmpty)
+    {
+        var h = NativeBindings.pl_expr_item(e,allowEmpty);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
     public static ExprHandle Sum(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_sum, e);
     public static ExprHandle Mean(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_mean, e);
     public static ExprHandle Max(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_max, e);
     public static ExprHandle Min(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_min, e);
     public static ExprHandle Abs(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_abs, e);
+    public static ExprHandle Product(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_product, e);
+    public static ExprHandle Skew(ExprHandle e, bool bias)
+    {
+        var h = NativeBindings.pl_expr_skew(e,bias);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle Kurtosis(ExprHandle e,bool fisher ,bool bias)
+    {
+        var h = NativeBindings.pl_expr_kurtosis(e,fisher,bias);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle PctChange(ExprHandle e,long n)
+    {
+        var h = NativeBindings.pl_expr_pct_change(e,n);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static unsafe ExprHandle Rank(ExprHandle e,PlRankMethod method,bool descending, ulong? seed)
+    {
+        ulong seedValue = seed.GetValueOrDefault();
+        ulong* pSeed = seed.HasValue ? &seedValue : null;
+        var h = NativeBindings.pl_expr_rank(e,method,descending,pSeed);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    // Cumulative Functions
+    public static ExprHandle CumSum(ExprHandle e, bool reverse)
+    {
+        var h = NativeBindings.pl_expr_cum_sum(e,reverse);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle CumMax(ExprHandle e, bool reverse)
+    {
+        var h = NativeBindings.pl_expr_cum_max(e,reverse);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle CumMin(ExprHandle e, bool reverse)
+    {
+        var h = NativeBindings.pl_expr_cum_min(e,reverse);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle CumProd(ExprHandle e, bool reverse)
+    {
+        var h = NativeBindings.pl_expr_cum_prod(e,reverse);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle CumCount(ExprHandle e, bool reverse)
+    {
+        var h = NativeBindings.pl_expr_cum_count(e,reverse);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    // EWM Functions
+    public static ExprHandle EwmMean(ExprHandle e, double alpha,bool adjust, bool bias,int minPeriods,bool ignoreNulls)
+    {
+        var h = NativeBindings.pl_expr_ewm_mean(e,alpha,adjust,bias,(UIntPtr)minPeriods,ignoreNulls);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle EwmStd(ExprHandle e, double alpha,bool adjust, bool bias,int minPeriods,bool ignoreNulls)
+    {
+        var h = NativeBindings.pl_expr_ewm_std(e,alpha,adjust,bias,(UIntPtr)minPeriods,ignoreNulls);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle EwmVar(ExprHandle e, double alpha,bool adjust, bool bias,int minPeriods,bool ignoreNulls)
+    {
+        var h = NativeBindings.pl_expr_ewm_var(e,alpha,adjust,bias,(UIntPtr)minPeriods,ignoreNulls);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle EwmMeanBy(ExprHandle e, ExprHandle by,string halfLife)
+    {
+        var h = NativeBindings.pl_expr_ewm_mean_by(e,by,halfLife);
+        e.TransferOwnership();
+        by.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    // Is_In
+    public static ExprHandle IsIn(ExprHandle expr, ExprHandle otherExpr, bool nullsEqual)
+    {
+        var h = NativeBindings.pl_expr_is_in(expr, otherExpr, nullsEqual);
+        expr.TransferOwnership();
+        otherExpr.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
     // Temporal
     public static ExprHandle DtYear(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_dt_year, e);
     public static ExprHandle DtQuarter(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_dt_quarter, e);
@@ -101,7 +297,6 @@ public static partial class PolarsWrapper
     public static ExprHandle DtMillisecond(ExprHandle e) => UnaryDtOp(NativeBindings.pl_expr_dt_millisecond, e);
     public static ExprHandle DtMicrosecond(ExprHandle e) => UnaryDtOp(NativeBindings.pl_expr_dt_microsecond, e);
     public static ExprHandle DtNanosecond(ExprHandle e) => UnaryDtOp(NativeBindings.pl_expr_dt_nanosecond, e);
-    
     public static ExprHandle DtToString(ExprHandle e, string format)
     {
         var h = NativeBindings.pl_expr_dt_to_string(e, format);
@@ -123,10 +318,19 @@ public static partial class PolarsWrapper
         => BinaryOp(NativeBindings.pl_expr_dt_offset_by, e, by);
 
     // Timestamp (Expr + Int)
-    public static ExprHandle DtTimestamp(ExprHandle e, int unitCode)
+    public static ExprHandle DtTimestamp(ExprHandle e, PlTimeUnit unitCode)
     {
         var h = NativeBindings.pl_expr_dt_timestamp(e, unitCode);
         e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle DtCombine(ExprHandle expr, ExprHandle time, PlTimeUnit tu)
+    {
+        var h = NativeBindings.pl_expr_dt_combine(expr, time, tu);
+        
+        expr.TransferOwnership();
+        time.TransferOwnership();
+        
         return ErrorHelper.Check(h);
     }
     // TimeZone
@@ -352,7 +556,10 @@ public static partial class PolarsWrapper
 
     public static ExprHandle IsNotNull(ExprHandle expr) 
         => UnaryOp(NativeBindings.pl_expr_is_not_null, expr);
-
+    public static ExprHandle DropNulls(ExprHandle expr) 
+        => UnaryOp(NativeBindings.pl_expr_drop_nulls, expr);
+    public static ExprHandle DropNans(ExprHandle expr) 
+        => UnaryOp(NativeBindings.pl_expr_drop_nans, expr);
     // Unique and Duplicated
     public static ExprHandle ExprIsUnique(ExprHandle expr)
         => UnaryOp(NativeBindings.pl_expr_is_unique,expr);
@@ -417,7 +624,7 @@ public static partial class PolarsWrapper
     }
     public static ExprHandle Median(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_median, e);
     
-    public static ExprHandle Quantile(ExprHandle e, double quantile, string method)
+    public static ExprHandle Quantile(ExprHandle e, double quantile, PlQuantileMethod method)
     {
         var h = NativeBindings.pl_expr_quantile(e, quantile, method);
         e.TransferOwnership();
@@ -468,9 +675,9 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(h);
     }
 
-    public static ExprHandle ListContains(ExprHandle listExpr, ExprHandle itemExpr)
+    public static ExprHandle ListContains(ExprHandle listExpr, ExprHandle itemExpr, bool nullsEqual)
     {
-        var h = NativeBindings.pl_expr_list_contains(listExpr, itemExpr);
+        var h = NativeBindings.pl_expr_list_contains(listExpr, itemExpr, nullsEqual);
         listExpr.TransferOwnership();
         itemExpr.TransferOwnership();
         return ErrorHelper.Check(h);
@@ -633,14 +840,94 @@ public static partial class PolarsWrapper
         e.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-    public static ExprHandle RollingMean(ExprHandle e, string w, int minPeriods) => RollingOp(NativeBindings.pl_expr_rolling_mean, e, w, minPeriods);
-    public static ExprHandle RollingMax(ExprHandle e, string w, int minPeriods) => RollingOp(NativeBindings.pl_expr_rolling_max, e, w, minPeriods);
-    public static ExprHandle RollingMin(ExprHandle e, string w, int minPeriods) => RollingOp(NativeBindings.pl_expr_rolling_min, e, w, minPeriods);
-    public static ExprHandle RollingSum(ExprHandle e, string w, int minPeriods) => RollingOp(NativeBindings.pl_expr_rolling_sum, e, w, minPeriods);
-    public static ExprHandle RollingMeanBy(ExprHandle e, string w, int minPeriods, ExprHandle by, string closed) => RollingByOp(NativeBindings.pl_expr_rolling_mean_by, e, w, minPeriods, by, closed);
-    public static ExprHandle RollingSumBy(ExprHandle e, string w, int minPeriods, ExprHandle by, string closed) => RollingByOp(NativeBindings.pl_expr_rolling_sum_by, e, w, minPeriods, by, closed);
-    public static ExprHandle RollingMinBy(ExprHandle e, string w, int minPeriods, ExprHandle by, string closed) => RollingByOp(NativeBindings.pl_expr_rolling_min_by, e, w, minPeriods, by, closed);
-    public static ExprHandle RollingMaxBy(ExprHandle e, string w, int minPeriods, ExprHandle by, string closed) => RollingByOp(NativeBindings.pl_expr_rolling_max_by, e, w, minPeriods, by, closed);
+    public static ExprHandle RollingMean(ExprHandle e, string w, int minPeriods, double[]? weights,bool center) => RollingOp(NativeBindings.pl_expr_rolling_mean, e, w, minPeriods,weights,center);
+    public static ExprHandle RollingMax(ExprHandle e, string w, int minPeriods, double[]? weights,bool center) => RollingOp(NativeBindings.pl_expr_rolling_max, e, w, minPeriods,weights,center);
+    public static ExprHandle RollingMin(ExprHandle e, string w, int minPeriods, double[]? weights,bool center) => RollingOp(NativeBindings.pl_expr_rolling_min, e, w, minPeriods,weights,center);
+    public static ExprHandle RollingSum(ExprHandle e, string w, int minPeriods, double[]? weights,bool center) => RollingOp(NativeBindings.pl_expr_rolling_sum, e, w, minPeriods,weights,center);
+    public static ExprHandle RollingStd(ExprHandle e, string w, int minPeriods, double[]? weights,bool center) => RollingOp(NativeBindings.pl_expr_rolling_std, e, w, minPeriods,weights,center);
+    public static ExprHandle RollingVar(ExprHandle e, string w, int minPeriods, double[]? weights,bool center,byte ddof)
+    {   
+        UIntPtr len = weights != null ? (UIntPtr)weights.Length : UIntPtr.Zero;
+        var h = NativeBindings.pl_expr_rolling_var(e, w, (UIntPtr)minPeriods,weights,len,center, ddof);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    
+    public static ExprHandle RollingMedian(ExprHandle e, string w, int minPeriods, double[]? weights,bool center) => RollingOp(NativeBindings.pl_expr_rolling_median, e, w, minPeriods,weights,center);
+    public static ExprHandle RollingSkew(ExprHandle e, string w, int minPeriods, double[]? weights,bool center, bool bias)    
+    {   
+        UIntPtr len = weights != null ? (UIntPtr)weights.Length : UIntPtr.Zero;
+        var h = NativeBindings.pl_expr_rolling_skew(e, w, (UIntPtr)minPeriods,weights,len,center,bias);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle RollingKurtosis(ExprHandle e, string w, int minPeriods, double[]? weights,bool center,bool fisher, bool bias)    
+    {   
+        UIntPtr len = weights != null ? (UIntPtr)weights.Length : UIntPtr.Zero;
+        var h = NativeBindings.pl_expr_rolling_kurtosis(e, w, (UIntPtr)minPeriods,weights,len,center,fisher,bias);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }    public unsafe static ExprHandle RollingRank(ExprHandle e, string w, int minPeriods,PlRankMethod method,ulong? seed,double[]? weights, bool center)
+    {
+        ulong seedValue = seed.GetValueOrDefault();
+        ulong* pSeed = seed.HasValue ? &seedValue : null;
+        UIntPtr len = weights != null ? (UIntPtr)weights.Length : UIntPtr.Zero;
+        var h = NativeBindings.pl_expr_rolling_rank(e,w,(UIntPtr)minPeriods,method,pSeed,weights,len, center);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle RollingQuantile(ExprHandle e,double quantile,PlQuantileMethod method ,string w, int minPeriods,double[]? weights, bool center)
+    {
+        UIntPtr len = weights != null ? (UIntPtr)weights.Length : UIntPtr.Zero;
+        var h = NativeBindings.pl_expr_rolling_quantile(e,quantile,method,w,(UIntPtr)minPeriods,weights,len, center);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle RollingMeanBy(ExprHandle e, string w, int minPeriods, ExprHandle by, PlClosedWindow closed) => RollingByOp(NativeBindings.pl_expr_rolling_mean_by, e, w, minPeriods,by, closed);
+    public static ExprHandle RollingSumBy(ExprHandle e, string w, int minPeriods, ExprHandle by, PlClosedWindow closed) => RollingByOp(NativeBindings.pl_expr_rolling_sum_by, e, w, minPeriods,by, closed);
+    public static ExprHandle RollingMinBy(ExprHandle e, string w, int minPeriods, ExprHandle by, PlClosedWindow closed) => RollingByOp(NativeBindings.pl_expr_rolling_min_by, e, w, minPeriods,by, closed);
+    public static ExprHandle RollingMaxBy(ExprHandle e, string w, int minPeriods, ExprHandle by, PlClosedWindow closed) => RollingByOp(NativeBindings.pl_expr_rolling_max_by, e, w, minPeriods,by, closed);
+    public static ExprHandle RollingStdBy(ExprHandle e, string w, int minPeriods, ExprHandle by, PlClosedWindow closed) => RollingByOp(NativeBindings.pl_expr_rolling_std_by, e, w, minPeriods,by, closed);
+    public static ExprHandle RollingVarBy(ExprHandle e, string w, int minPeriods, ExprHandle by, PlClosedWindow closed, byte ddof) 
+    {
+        var h = NativeBindings.pl_expr_rolling_var_by(e, w, (UIntPtr)minPeriods,by, closed,ddof);
+        e.TransferOwnership();
+        by.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle RollingMedianBy(ExprHandle e, string w, int minPeriods, ExprHandle by, PlClosedWindow closed) => RollingByOp(NativeBindings.pl_expr_rolling_median_by, e, w, minPeriods,by, closed);
+    public static unsafe ExprHandle RollingRankBy(
+        ExprHandle e,
+        string windowSize, 
+        ExprHandle by, 
+        PlRollingRankMethod method, 
+        ulong? seed,
+        int minPeriods, 
+        PlClosedWindow closed)
+    {
+        ulong seedValue = seed.GetValueOrDefault();
+        ulong* pSeed = seed.HasValue ? &seedValue : null;
+
+        var h = NativeBindings.pl_expr_rolling_rank_by(
+            e,
+            method,
+            pSeed,
+            windowSize,
+            (UIntPtr)minPeriods,
+            by,
+            closed
+        );
+        e.TransferOwnership();
+        by.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    public static ExprHandle RollingQuantileBy(ExprHandle e, double quantile, PlQuantileMethod method, string w, int minPeriods, ExprHandle by, PlClosedWindow closed)
+    {
+        var h = NativeBindings.pl_expr_rolling_quantile_by(e,quantile,method,w,(UIntPtr)minPeriods,by,closed);
+        e.TransferOwnership();
+        by.TransferOwnership(); 
+        return ErrorHelper.Check(h);
+    }
     public static ExprHandle IfElse(ExprHandle pred, ExprHandle ifTrue, ExprHandle ifFalse)
     {
         var h = NativeBindings.pl_expr_if_else(pred, ifTrue, ifFalse);

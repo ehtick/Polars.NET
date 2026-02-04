@@ -26,20 +26,23 @@ public enum PlDataType : int
     List = 20,
     Categorical=21,
     Decimal=22,
-    Array = 23
+    Array = 23,
+    Int128= 24,
+    UInt128 =25
 }
 
-public enum PlJoinType
+public enum PlJoinType : byte
 {
     Inner = 0,
     Left = 1,
     Outer = 2, 
     Cross = 3,
     Semi = 4,
-    Anti = 5
+    Anti = 5,
+    IEJoin = 6
 }
 
-public enum PlPivotAgg
+public enum PlPivotAgg: byte
 {
     First = 0,
     Sum = 1,
@@ -67,7 +70,7 @@ public enum PlTimeUnit
 /// <summary>
 /// Concat Type Enum
 /// </summary>
-public enum PlConcatType
+public enum PlConcatType : byte
 {
     Vertical = 0,
     Horizontal = 1,
@@ -121,4 +124,126 @@ public enum PlRoll
     /// Roll backward to the previous business day.
     /// </summary>
     Backward = 2
+}
+
+public enum PlRankMethod: byte
+{
+    Average = 0, // Default
+    Min = 1,
+    Max = 2,
+    Dense = 3,
+    Ordinal = 4,
+    Random = 5,
+}
+public enum PlRollingRankMethod: byte
+{
+    Average = 0, // Default
+    Min = 1,
+    Max = 2,
+    Dense = 3,
+    Random = 4,
+}
+public enum PlQuantileMethod : byte
+{
+    Nearest = 0,
+    Higher = 1,
+    Lower = 2,
+    Midpoint = 3,
+    Linear = 4 // Default
+}
+
+public enum PlUniqueKeepStrategy : byte
+{
+    First = 0,
+    Last = 1,
+    Any = 2,
+    None = 3
+}
+
+public enum PlJoinValidation: byte
+{
+    // Default
+    ManyToMany = 0,
+    ManyToOne = 1,
+    OneToMany = 2,
+    OneToOne = 3
+}
+
+public enum PlJoinCoalesce: byte
+{
+    // Default
+    JoinSpecific = 0,
+    CoalesceColumns = 1,
+    KeepColumns = 2,
+}
+
+public enum PlJoinMaintainOrder: byte
+{
+    // Default
+    None = 0,
+    Left = 1,
+    Right =2,
+    LeftRight =3,
+    RightLeft =4
+}
+
+public enum PlAsofStrategy: byte  
+{
+    // Default
+    Backward =0,
+    Forward =1,
+    Nearest =2
+}
+
+public enum PlParallelStrategy: byte
+{
+    // Default
+    Auto=0,
+    Columns=1,
+    RowGroups=2,
+    None=3
+}
+
+public enum PlCsvEncoding: byte
+{
+    UTF8=0,
+    LossyUTF8=1    
+}
+
+public enum PlJsonFormat: byte
+{
+    Json =0,
+    JsonLines=1
+}
+
+public enum PlIpcCompression : byte
+{
+    None = 0,
+    LZ4 = 1,
+    ZSTD = 2
+}
+
+public enum PlSyncOnClose : byte
+{
+    None = 0,
+    Data = 1,
+    All = 2
+}
+
+public enum PlParquetCompression : byte
+{
+    Uncompressed = 0,
+    Snappy = 1,
+    Gzip = 2,
+    Brotli = 3,
+    Zstd = 4,
+    Lz4Raw = 5
+}
+
+public enum PlQuoteStyle : byte
+{
+    Necessary = 0,
+    Always = 1,
+    NonNumeric = 2,
+    Never = 3
 }

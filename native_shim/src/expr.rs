@@ -1,8 +1,9 @@
 use polars::prelude::*;
 use std::{ffi::CStr, os::raw::c_char};
-use crate::types::{ExprContext,DataTypeContext};
+use crate::{datatypes::parse_timeunit, types::{DataTypeContext, ExprContext, SeriesContext}};
 use std::ops::{Add, Sub, Mul, Div, Rem};
 use crate::utils::{consume_exprs_array, ptr_to_str};
+use polars_arrow::array::PrimitiveArray;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_free(ptr: *mut ExprContext) {
@@ -16,7 +17,6 @@ pub extern "C" fn pl_expr_free(ptr: *mut ExprContext) {
 // ==========================================
 // Marcos
 // ==========================================
-
 /// Literal Constructor
 /// like: fn pl_expr_lit_i32(val: i32) -> *mut ExprContext
 macro_rules! gen_lit_ctor {
@@ -55,6 +55,32 @@ macro_rules! gen_unary_op {
             ffi_try!({
                 let ctx = unsafe { Box::from_raw(ptr) };
                 let new_expr = ctx.inner.$method(); 
+                Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+            })
+        }
+    };
+}
+
+macro_rules! gen_unary_op_arg_bool {
+    ($func_name:ident, $method:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $func_name(ptr: *mut ExprContext, param: bool) -> *mut ExprContext {
+            ffi_try!({
+                let ctx = unsafe { Box::from_raw(ptr) };
+                let new_expr = ctx.inner.$method(param); 
+                Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+            })
+        }
+    };
+}
+
+macro_rules! gen_unary_op_u8 {
+    ($func_name:ident, $method:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $func_name(ptr: *mut ExprContext, param: u8) -> *mut ExprContext {
+            ffi_try!({
+                let ctx = unsafe { Box::from_raw(ptr) };
+                let new_expr = ctx.inner.$method(param); 
                 Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
             })
         }
@@ -108,6 +134,9 @@ macro_rules! gen_rolling_op {
             expr_ptr: *mut ExprContext,
             window_size_ptr: *const c_char,
             min_periods: usize,
+            weights_ptr: *const f64, 
+            weights_len: usize,      
+            center: bool             
         ) -> *mut ExprContext {
             ffi_try!({
                 let ctx = unsafe { Box::from_raw(expr_ptr) };
@@ -116,12 +145,20 @@ macro_rules! gen_rolling_op {
                 // Parse size
                 let window_size = parse_fixed_window_size(window_size_str)?;
 
+                // Parse weights (Handle null ptr)
+                let weights = if !weights_ptr.is_null() && weights_len > 0 {
+                    let slice = unsafe { std::slice::from_raw_parts(weights_ptr, weights_len) };
+                    Some(slice.to_vec())
+                } else {
+                    None
+                };
+
                 // Build Fixed Window Options
                 let options = RollingOptionsFixedWindow {
                     window_size,
-                    min_periods: min_periods, // 默认至少1个数据，防止全Null
-                    weights: None,
-                    center: false,
+                    min_periods: min_periods, 
+                    weights,    
+                    center,     
                     fn_params: None,
                 };
 
@@ -133,13 +170,13 @@ macro_rules! gen_rolling_op {
         }
     };
 }
-fn map_closed_window(s: &str) -> ClosedWindow {
-    match s {
-        "left" => ClosedWindow::Left,
-        "right" => ClosedWindow::Right,
-        "both" => ClosedWindow::Both,
-        "none" => ClosedWindow::None,
-        _ => ClosedWindow::Left, // Default [ )
+fn parse_closed_window(val: u8) -> ClosedWindow {
+    match val {
+        0 => ClosedWindow::Left,
+        1 => ClosedWindow::Right,
+        2 => ClosedWindow::Both,
+        3 => ClosedWindow::None,
+        _ => ClosedWindow::Left,
     }
 }
 macro_rules! gen_rolling_by_op {
@@ -150,28 +187,29 @@ macro_rules! gen_rolling_by_op {
             window_size_ptr: *const c_char,
             min_periods: usize,
             by_ptr: *mut ExprContext,       
-            closed_ptr: *const c_char       
+            closed: u8  
         ) -> *mut ExprContext {
             ffi_try!({
                 let ctx = unsafe { Box::from_raw(expr_ptr) };
                 let by = unsafe { Box::from_raw(by_ptr) }; 
                 
                 let window_size_str = ptr_to_str(window_size_ptr).unwrap();
-                let closed_str = ptr_to_str(closed_ptr).unwrap_or("left");
-
+                
                 // Parse Duration
-                // Duration::parse "1d", "30m" like format
                 let duration = Duration::parse(window_size_str);
+                
+                // Update: Use u8 helper directly
+                let closed_window = parse_closed_window(closed);
 
                 // Build Options
                 let options = RollingOptionsDynamicWindow {
                     window_size: duration,
                     min_periods: min_periods,
-                    closed_window: map_closed_window(closed_str),
+                    closed_window: closed_window,
                     fn_params: None,
                 };
 
-                // 3. Caill expr.rolling_xxx_by(by, options)
+                // Call expr.rolling_xxx_by(by, options)
                 let new_expr = ctx.inner.$method(
                     by.inner, 
                     options
@@ -182,8 +220,40 @@ macro_rules! gen_rolling_by_op {
         }
     };
 }
+
+/// EWM Ops Macro (Unified)
+/// Signature: fn name(ptr, alpha, adjust, bias, min_periods, ignore_nulls)
+macro_rules! gen_ewm_op {
+    ($func_name:ident, $method:ident) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $func_name(
+            expr_ptr: *mut ExprContext,
+            alpha: f64,
+            adjust: bool,
+            bias: bool,        // Unified: mean also takes bias now
+            min_periods: usize,
+            ignore_nulls: bool
+        ) -> *mut ExprContext {
+            ffi_try!({
+                let ctx = unsafe { Box::from_raw(expr_ptr) };
+                
+                let options = EWMOptions {
+                    alpha: alpha,
+                    adjust: adjust,
+                    bias: bias,
+                    min_periods: min_periods,
+                    ignore_nulls: ignore_nulls,
+                };
+
+                let new_expr = ctx.inner.$method(options);
+                Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+            })
+        }
+    };
+}
+
 // ==========================================
-// 2. 宏应用区域 (Boilerplate 消灭术)
+// Boilerplate Killer
 // ==========================================
 
 // --- Group 1: lit funcs ---
@@ -192,6 +262,12 @@ gen_lit_ctor!(pl_expr_lit_i64, i64);
 gen_lit_ctor!(pl_expr_lit_bool, bool);
 gen_lit_ctor!(pl_expr_lit_f32, f32);
 gen_lit_ctor!(pl_expr_lit_f64, f64);
+gen_lit_ctor!(pl_expr_lit_i8, i8);
+gen_lit_ctor!(pl_expr_lit_u8, u8);
+gen_lit_ctor!(pl_expr_lit_i16, i16);
+gen_lit_ctor!(pl_expr_lit_u16, u16);
+gen_lit_ctor!(pl_expr_lit_u32, u32);
+gen_lit_ctor!(pl_expr_lit_u64, u64);
 
 // --- Group 2: String col and lit ---
 gen_str_ctor!(pl_expr_col, col);
@@ -203,11 +279,20 @@ gen_unary_op!(pl_expr_mean, mean);
 gen_unary_op!(pl_expr_max, max);
 gen_unary_op!(pl_expr_min, min);
 gen_unary_op!(pl_expr_abs, abs);
+gen_unary_op!(pl_expr_product, product);
+gen_unary_op!(pl_expr_first, first);
+gen_unary_op!(pl_expr_last, last);
+gen_unary_op!(pl_expr_reverse, reverse);
+gen_unary_op_arg_bool!(pl_expr_any, any);
+gen_unary_op_arg_bool!(pl_expr_all, all);
+gen_unary_op_arg_bool!(pl_expr_item, item);
 // Logic Not (!)
 gen_unary_op!(pl_expr_not, not);
 // is_null()
 gen_unary_op!(pl_expr_is_null, is_null);
 gen_unary_op!(pl_expr_is_not_null, is_not_null);
+gen_unary_op!(pl_expr_drop_nulls, drop_nulls);
+gen_unary_op!(pl_expr_drop_nans, drop_nans);
 // dupilicated and unique
 gen_unary_op!(pl_expr_unique, unique);
 gen_unary_op!(pl_expr_unique_stable, unique_stable);
@@ -252,7 +337,7 @@ gen_binary_op!(pl_expr_sub, sub); // -
 gen_binary_op!(pl_expr_mul, mul); // *
 gen_binary_op!(pl_expr_div, div); // /
 gen_binary_op!(pl_expr_floor_div, floor_div); // //
-gen_binary_op!(pl_expr_rem, rem); // % (取余)
+gen_binary_op!(pl_expr_rem, rem); // % 
 // Logic Ops
 gen_binary_op!(pl_expr_and, and); // &
 gen_binary_op!(pl_expr_or, or);   // |
@@ -261,6 +346,18 @@ gen_binary_op!(pl_expr_xor, xor); // xor
 gen_binary_op!(pl_expr_fill_null, fill_null);
 // Math Ops
 gen_binary_op!(pl_expr_pow,pow);
+// --- Cumulative Functions ---
+gen_unary_op_arg_bool!(pl_expr_cum_sum, cum_sum);
+gen_unary_op_arg_bool!(pl_expr_cum_max, cum_max);
+gen_unary_op_arg_bool!(pl_expr_cum_min, cum_min);
+gen_unary_op_arg_bool!(pl_expr_cum_prod, cum_prod);
+gen_unary_op_arg_bool!(pl_expr_cum_count, cum_count);
+
+// --- EWM Functions ---
+// Mean/Std/Var all share the same signature now
+gen_ewm_op!(pl_expr_ewm_mean, ewm_mean);
+gen_ewm_op!(pl_expr_ewm_std, ewm_std);
+gen_ewm_op!(pl_expr_ewm_var, ewm_var);
 
 // --- Group 5: Namespace Ops ---
 // dt namespace
@@ -294,11 +391,30 @@ gen_rolling_op!(pl_expr_rolling_mean, rolling_mean);
 gen_rolling_op!(pl_expr_rolling_sum, rolling_sum);
 gen_rolling_op!(pl_expr_rolling_min, rolling_min);
 gen_rolling_op!(pl_expr_rolling_max, rolling_max);
+gen_rolling_op!(pl_expr_rolling_std, rolling_std);
+gen_rolling_op!(pl_expr_rolling_median, rolling_median);
 
 gen_rolling_by_op!(pl_expr_rolling_mean_by, rolling_mean_by);
 gen_rolling_by_op!(pl_expr_rolling_sum_by, rolling_sum_by);
 gen_rolling_by_op!(pl_expr_rolling_min_by, rolling_min_by);
 gen_rolling_by_op!(pl_expr_rolling_max_by, rolling_max_by);
+gen_rolling_by_op!(pl_expr_rolling_std_by, rolling_std_by);
+gen_rolling_by_op!(pl_expr_rolling_median_by, rolling_median_by);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_dt_combine(
+    expr_ptr: *mut ExprContext, 
+    time_ptr: *mut ExprContext, 
+    tu: u8
+) -> *mut ExprContext {
+    let expr = unsafe { Box::from_raw(expr_ptr)};
+    let time = unsafe {Box::from_raw(time_ptr)};
+    let time_unit = parse_timeunit(tu);
+
+    let new_expr = expr.inner.dt().combine(time.inner, time_unit);
+
+    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_alias(expr_ptr: *mut ExprContext, name_ptr: *const c_char) -> *mut ExprContext {
@@ -318,6 +434,45 @@ pub extern "C" fn pl_expr_lit_null() -> *mut Expr {
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_is_in(
+    expr_ptr: *mut ExprContext, 
+    other_ptr: *mut ExprContext,
+    nulls_equal : bool
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let other = unsafe { Box::from_raw(other_ptr) };
+
+        let new_expr = ctx.inner.is_in(other.inner,nulls_equal);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// ==========================================
+// EWM By (Time-based EWM)
+// ==========================================
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_ewm_mean_by(
+    expr_ptr: *mut ExprContext,
+    by_ptr: *mut ExprContext,       // The 'times' expression
+    half_life_ptr: *const c_char    // Duration string, e.g. "1d", "12h"
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let by = unsafe { Box::from_raw(by_ptr) };
+        
+        let half_life_str = ptr_to_str(half_life_ptr).unwrap();
+        
+        let half_life = Duration::parse(half_life_str);
+
+        let new_expr = ctx.inner.ewm_mean_by(by.inner, half_life);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
 // ==========================================
 // Bitwise Operations (Shift)
 // ==========================================
@@ -479,7 +634,7 @@ unsafe fn str_or_null_lit(ptr: *const c_char) -> Expr {
         lit(NULL) 
     } else {
         let s = unsafe { CStr::from_ptr(ptr).to_string_lossy() };
-        lit(s.as_ref())
+        lit(s.as_ref() as &str)
     }
 }
 
@@ -540,7 +695,7 @@ pub extern "C" fn pl_expr_str_strip_prefix(
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let prefix_str = unsafe { CStr::from_ptr(prefix).to_string_lossy() };
         
-        let new_expr = ctx.inner.str().strip_prefix(lit(prefix_str.as_ref()));
+        let new_expr = ctx.inner.str().strip_prefix(lit(prefix_str.as_ref() as &str));
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -556,7 +711,7 @@ pub extern "C" fn pl_expr_str_strip_suffix(
         let ctx = unsafe { Box::from_raw(expr_ptr)};
         let suffix_str = unsafe { CStr::from_ptr(suffix).to_string_lossy() };
         
-        let new_expr = ctx.inner.str().strip_suffix(lit(suffix_str.as_ref()));
+        let new_expr = ctx.inner.str().strip_suffix(lit(suffix_str.as_ref()as &str));
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -567,7 +722,7 @@ pub extern "C" fn pl_expr_str_starts_with(expr_ptr: *mut ExprContext, prefix: *c
     let ctx = unsafe { Box::from_raw(expr_ptr) };
     let p = unsafe { CStr::from_ptr(prefix).to_string_lossy() };
     
-    let new_expr = ctx.inner.str().starts_with(lit(p.as_ref()));
+    let new_expr = ctx.inner.str().starts_with(lit(p.as_ref()as &str));
     Box::into_raw(Box::new(ExprContext { inner: new_expr }))
 }
 
@@ -576,7 +731,7 @@ pub extern "C" fn pl_expr_str_ends_with(expr_ptr: *mut ExprContext, suffix: *con
     let ctx = unsafe {Box::from_raw(expr_ptr)};
     let s = unsafe { CStr::from_ptr(suffix).to_string_lossy() };
     
-    let new_expr = ctx.inner.str().ends_with(lit(s.as_ref()));
+    let new_expr = ctx.inner.str().ends_with(lit(s.as_ref()as &str));
     Box::into_raw(Box::new(ExprContext { inner: new_expr }))
 }
 
@@ -653,7 +808,7 @@ pub extern "C" fn pl_expr_dt_truncate(expr_ptr: *mut ExprContext, every: *const 
         let every_str = unsafe { CStr::from_ptr(every).to_string_lossy() };
         
         // dt().truncate(every)
-        let new_expr = ctx.inner.dt().truncate(lit(every_str.as_ref()));
+        let new_expr = ctx.inner.dt().truncate(lit(every_str.as_ref()as &str));
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -666,7 +821,7 @@ pub extern "C" fn pl_expr_dt_round(expr_ptr: *mut ExprContext, every: *const c_c
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let every_str = unsafe { CStr::from_ptr(every).to_string_lossy() };
         
-        let new_expr = ctx.inner.dt().round(lit(every_str.as_ref()));
+        let new_expr = ctx.inner.dt().round(lit(every_str.as_ref()as &str));
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
@@ -688,16 +843,10 @@ pub extern "C" fn pl_expr_dt_offset_by(expr_ptr: *mut ExprContext, by_ptr: *mut 
 // Timestamp (to Int64)
 // unit: 0=ns, 1=us, 2=ms
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_dt_timestamp(expr_ptr: *mut ExprContext, unit_code: i32) -> *mut ExprContext {
+pub extern "C" fn pl_expr_dt_timestamp(expr_ptr: *mut ExprContext, unit_code: u8) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
-        let unit = match unit_code {
-            0 => TimeUnit::Nanoseconds,
-            1 => TimeUnit::Microseconds,
-            2 => TimeUnit::Milliseconds,
-            _ => TimeUnit::Microseconds,
-        };
-        
+        let unit = parse_timeunit(unit_code);
         let new_expr = ctx.inner.dt().timestamp(unit);
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
@@ -722,7 +871,7 @@ pub extern "C" fn pl_expr_dt_convert_time_zone(
         let tz_str = unsafe { CStr::from_ptr(tz_ptr).to_string_lossy() };
         
         // Polars 0.50+ TimeZone::new(str)
-        let tz = unsafe{ TimeZone::new_unchecked(tz_str.as_ref()) };
+        let tz = unsafe{ TimeZone::new_unchecked(tz_str.as_ref()as &str) };
         
         let new_expr = ctx.inner.dt().convert_time_zone(tz);
         
@@ -748,7 +897,7 @@ pub extern "C" fn pl_expr_dt_replace_time_zone(
             None
         } else {
             let s = unsafe { CStr::from_ptr(tz_ptr).to_string_lossy() };
-            unsafe { Some(TimeZone::new_unchecked(s.as_ref())) }
+            unsafe { Some(TimeZone::new_unchecked(s.as_ref()as &str)) }
         };
 
         // Build Ambiguous Expr
@@ -888,6 +1037,115 @@ pub extern "C" fn pl_expr_lit_datetime(
         Ok(Box::into_raw(Box::new(ExprContext { inner: dt_expr })))
     })
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_date(
+    days: i32
+) -> *mut ExprContext {
+    ffi_try!({
+        let lit_expr = lit(days);
+        let dt_expr = lit_expr.cast(DataType::Date);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: dt_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_time(
+    nanoseconds: i64
+) -> *mut ExprContext {
+    ffi_try!({
+        let lit_expr = lit(nanoseconds);
+        let dt_expr = lit_expr.cast(DataType::Time);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: dt_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_duration(
+    microseconds: i64
+) -> *mut ExprContext {
+    ffi_try!({
+        let lit_expr = lit(microseconds);
+        
+        let dur_expr = lit_expr.cast(DataType::Duration(TimeUnit::Microseconds));
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: dur_expr })))
+    })
+}
+
+// lit Decimal and Int128
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_decimal(
+    low: u64,  // C# split low part
+    high: i64, // C# split high part
+    scale: u32,
+) -> *mut ExprContext {
+    ffi_try!({
+        // Rebuild i128 (Unscaled Value)
+        let v = ((high as i128) << 64) | (low as i128);
+
+        let data_type = ArrowDataType::Decimal(38, scale as usize);
+
+        let arrow_array = PrimitiveArray::new(
+            data_type,
+            vec![v].into(), 
+            None
+        );
+
+        let series = Series::from_arrow(
+            "literal".into(), 
+            Box::new(arrow_array)
+        ).unwrap();
+
+        let expr = lit(series);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_i128(
+    low: u64,  // C# split low part
+    high: i64 // C# split high part
+) -> *mut ExprContext {
+    ffi_try!({
+        // Rebuild i128 (Unscaled Value)
+        let v = ((high as i128) << 64) | (low as i128);
+
+        let data_type = ArrowDataType::Int128;
+
+        let arrow_array = PrimitiveArray::new(
+            data_type,
+            vec![v].into(), 
+            None
+        );
+
+        let series = Series::from_arrow(
+            "literal".into(), 
+            Box::new(arrow_array)
+        ).unwrap();
+
+        let expr = lit(series);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_lit_series(
+    series_ptr: *mut SeriesContext
+) -> *mut ExprContext {
+    ffi_try!({
+        let s_ctx = unsafe { Box::from_raw(series_ptr) };
+        let s = s_ctx.series;
+
+        let expr = lit(s);
+
+        Ok(Box::into_raw(Box::new(ExprContext { inner: expr })))
+    })
+}
 // ==========================================
 // List Ops
 // ==========================================
@@ -931,16 +1189,18 @@ pub extern "C" fn pl_expr_list_sort(
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_list_contains(
     expr_ptr: *mut ExprContext,
-    item_ptr: *mut ExprContext
+    item_ptr: *mut ExprContext,
+    nulls_equal: bool
 ) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
         let item = unsafe { Box::from_raw(item_ptr) };
 
-        let new_expr = item.inner.is_in(ctx.inner, true);
+        let new_expr = ctx.inner.list().contains(item.inner, nulls_equal);
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_cols(
@@ -1386,6 +1646,318 @@ pub unsafe extern "C" fn pl_expr_struct_json_encode(
     Box::into_raw(Box::new(new_expr))
 }
 
+// --- Rolling Var ---
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_rolling_var(
+    expr_ptr: *mut ExprContext,
+    window_size_ptr: *const c_char,
+    min_periods: usize,
+    weights_ptr: *const f64, 
+    weights_len: usize,      
+    center: bool,  
+    ddof: u8
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let window_size_str = ptr_to_str(window_size_ptr).unwrap();
+        let window_size = parse_fixed_window_size(window_size_str)?;
+
+        let params = RollingFnParams::Var(RollingVarParams { ddof });
+
+        let weights = if !weights_ptr.is_null() && weights_len > 0 {
+                    let slice = unsafe { std::slice::from_raw_parts(weights_ptr, weights_len) };
+                    Some(slice.to_vec())
+                } else {
+                    None
+                };
+
+        let options = RollingOptionsFixedWindow {
+            window_size,
+            min_periods,
+            weights: weights,
+            center: center,
+            fn_params: Some(params),
+        };
+
+        let new_expr = ctx.inner.rolling_var(options);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_rolling_var_by(
+    expr_ptr: *mut ExprContext,
+    window_size_ptr: *const c_char,
+    min_periods: usize,
+    by_ptr: *mut ExprContext,
+    closed: u8,
+    ddof: u8 
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let by = unsafe { Box::from_raw(by_ptr) };
+        
+        let window_size_str = ptr_to_str(window_size_ptr).unwrap();
+        let duration = Duration::parse(window_size_str);
+        let closed_window = parse_closed_window(closed);
+
+        let params = RollingFnParams::Var(RollingVarParams { ddof });
+
+        let options = RollingOptionsDynamicWindow {
+            window_size: duration,
+            min_periods,
+            closed_window,
+            fn_params: Some(params),
+        };
+
+        let new_expr = ctx.inner.rolling_var_by(by.inner, options);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// --- Skews ---
+gen_unary_op_arg_bool!(pl_expr_skew, skew);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_rolling_skew(
+    expr_ptr: *mut ExprContext,
+    window_size_ptr: *const c_char,
+    min_periods: usize,
+    weights_ptr: *const f64, 
+    weights_len: usize,      
+    center: bool,  
+    bias: bool 
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let window_size_str = ptr_to_str(window_size_ptr).unwrap();
+        let window_size = parse_fixed_window_size(window_size_str)?;
+        let weights = if !weights_ptr.is_null() && weights_len > 0 {
+                    let slice = unsafe { std::slice::from_raw_parts(weights_ptr, weights_len) };
+                    Some(slice.to_vec())
+                } else {
+                    None
+                };
+        let params = RollingFnParams::Skew { bias };
+
+        let options = RollingOptionsFixedWindow {
+            window_size,
+            min_periods,
+            weights: weights,
+            center: center,
+            fn_params: Some(params),
+        };
+
+        let new_expr = ctx.inner.rolling_skew(options);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+// --- Kurtosis
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_kurtosis(
+    expr_ptr: *mut ExprContext,
+    fisher: bool,
+    bias: bool
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.kurtosis(fisher, bias);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_rolling_kurtosis(
+    expr_ptr: *mut ExprContext,
+    window_size_ptr: *const c_char,
+    min_periods: usize,
+    weights_ptr: *const f64, 
+    weights_len: usize,      
+    center: bool,  
+    fisher: bool, 
+    bias: bool    
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let window_size_str = ptr_to_str(window_size_ptr).unwrap();
+        let window_size = parse_fixed_window_size(window_size_str)?;
+
+        let weights = if !weights_ptr.is_null() && weights_len > 0 {
+                    let slice = unsafe { std::slice::from_raw_parts(weights_ptr, weights_len) };
+                    Some(slice.to_vec())
+                } else {
+                    None
+                };
+
+        let params = RollingFnParams::Kurtosis { fisher, bias };
+
+        let options = RollingOptionsFixedWindow {
+            window_size,
+            min_periods,
+            weights: weights,
+            center: center,
+            fn_params: Some(params),
+        };
+
+        let new_expr = ctx.inner.rolling_kurtosis(options);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+// --- Ranks ---
+
+// Helper: Map u8 to RankMethod
+// C# Enum mapping:
+// 0 = Average (Default), 1 = Min, 2 = Max, 3 = Dense, 4 = Ordinal, 5 = Random
+fn parse_rank_method(val: u8) -> RankMethod {
+    match val {
+        1 => RankMethod::Min,
+        2 => RankMethod::Max,
+        3 => RankMethod::Dense,
+        4 => RankMethod::Ordinal,
+        5 => RankMethod::Random,
+        _ => RankMethod::Average,
+    }
+}
+fn parse_rolling_rank_method(val: u8) -> RollingRankMethod {
+    match val {
+        1 => RollingRankMethod::Min,
+        2 => RollingRankMethod::Max,
+        3 => RollingRankMethod::Dense,
+        4 => RollingRankMethod::Random,
+        _ => RollingRankMethod::Average,
+    }
+}
+// rank(method, descending, seed)
+// method: "average", "min", "max", "dense", "ordinal", "random"
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_rank(
+    expr_ptr: *mut ExprContext,
+    method: u8, // Changed from *const c_char, removed _ptr suffix
+    descending: bool,
+    seed_ptr: *const u64
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
+        let rank_method = parse_rank_method(method);
+
+        let options = RankOptions {
+            method: rank_method,
+            descending,
+        };
+
+        let seed = if seed_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { *seed_ptr })
+        };
+
+        let new_expr = ctx.inner.rank(options, seed);
+
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_rolling_rank(
+    expr_ptr: *mut ExprContext,
+    window_size_ptr: *const c_char,
+    min_periods: usize,
+    method: u8,                            
+    seed_ptr: *const u64,  
+    weights_ptr: *const f64,
+    weights_len: usize,
+    center: bool
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let window_size_str = ptr_to_str(window_size_ptr).unwrap();
+        let window_size = parse_fixed_window_size(window_size_str)?;
+        
+        let rank_method = parse_rolling_rank_method(method); 
+        let seed = if seed_ptr.is_null() { None } else { Some(unsafe { *seed_ptr }) };
+
+        let rank_params = RollingFnParams::Rank {
+            method: rank_method,
+            seed: seed
+        };
+
+        let weights = if !weights_ptr.is_null() && weights_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(weights_ptr, weights_len) };
+            Some(slice.to_vec())
+        } else {
+            None
+        };
+
+        let options = RollingOptionsFixedWindow {
+            window_size,
+            min_periods,
+            weights,
+            center: center,
+            fn_params: Some(rank_params) 
+        };
+
+        let new_expr = ctx.inner.rolling_rank(options);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_rolling_rank_by(
+    expr_ptr: *mut ExprContext,
+    method: u8,                     
+    seed_ptr: *const u64,           
+    window_size_ptr: *const c_char,
+    min_periods: usize,
+    by_ptr: *mut ExprContext,       
+    closed: u8
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let by = unsafe { Box::from_raw(by_ptr) }; 
+        
+        let window_size_str = ptr_to_str(window_size_ptr).unwrap();
+        let duration = Duration::parse(window_size_str);
+        let closed_window = parse_closed_window(closed);
+
+        let rank_method = parse_rolling_rank_method(method);
+
+        let seed = if seed_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { *seed_ptr })
+        };
+
+        let rank_params = RollingFnParams::Rank {
+            method: rank_method,
+            seed: seed
+        };
+
+        let options = RollingOptionsDynamicWindow {
+            window_size: duration,
+            min_periods,
+            closed_window,
+            fn_params: Some(rank_params) 
+        };
+
+        let new_expr = ctx.inner.rolling_rank_by(by.inner, options);
+
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+// --- Differences ---
+// pct_change(n) -> (val - lag(n)) / lag(n)
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_pct_change(
+    expr_ptr: *mut ExprContext,
+    n: i64
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let new_expr = ctx.inner.pct_change(lit(n));
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_over(
     expr_ptr: *mut ExprContext,
@@ -1508,57 +2080,120 @@ pub extern "C" fn pl_expr_if_else(
 }
 
 // --- Statistics ---
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_count(expr_ptr: *mut ExprContext) -> *mut ExprContext {
-    let ctx = unsafe { Box::from_raw(expr_ptr) };
-    let new_expr = ctx.inner.count();
-    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_std(expr_ptr: *mut ExprContext, ddof: u8) -> *mut ExprContext {
-    let ctx = unsafe { Box::from_raw(expr_ptr)};
-    // std(ddof) -> ddof usually 1 for sample std dev
-    let new_expr = ctx.inner.std(ddof);
-    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_var(expr_ptr: *mut ExprContext, ddof: u8) -> *mut ExprContext {
-    let ctx = unsafe { Box::from_raw(expr_ptr)};
-    let new_expr = ctx.inner.var(ddof);
-    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_median(expr_ptr: *mut ExprContext) -> *mut ExprContext {
-    let ctx = unsafe { Box::from_raw(expr_ptr)};
-    let new_expr = ctx.inner.median();
-    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
-}
+gen_unary_op!(pl_expr_count, count);
+gen_unary_op!(pl_expr_median, median);
+gen_unary_op_u8!(pl_expr_std, std);
+gen_unary_op_u8!(pl_expr_var, var);
 
 // quantile(quantile, interpolation)
 // interpolation: "nearest", "higher", "lower", "midpoint", "linear"
+
+// Helper: Map u8 to QuantileMethod
+// C# Enum mapping:
+// 0 = Nearest, 1 = Higher, 2 = Lower, 3 = Midpoint, 4 = Linear (Default)
+fn parse_quantile_method(val: u8) -> QuantileMethod {
+    match val {
+        0 => QuantileMethod::Nearest,
+        1 => QuantileMethod::Higher,
+        2 => QuantileMethod::Lower,
+        3 => QuantileMethod::Midpoint,
+        _ => QuantileMethod::Linear,
+    }
+
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_quantile(
     expr_ptr: *mut ExprContext, 
-    quantile: f64, // e.g. 0.5
-    interpol: *const c_char
+    quantile: f64, 
+    interpol: u8  // Changed from *const c_char
 ) -> *mut ExprContext {
-    let ctx = unsafe { Box::from_raw(expr_ptr) };
-    let method_str = unsafe { CStr::from_ptr(interpol).to_string_lossy() };
-    
-    // Parse QuantileInterpolOptions
-    let method = match method_str.as_ref() {
-        "nearest" => QuantileMethod::Nearest,
-        "higher" => QuantileMethod::Higher,
-        "lower" => QuantileMethod::Lower,
-        "midpoint" => QuantileMethod::Midpoint,
-        _ => QuantileMethod::Linear,  
-    };
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
+        let method = parse_quantile_method(interpol);
 
-    let new_expr = ctx.inner.quantile(lit(quantile), method);
-    Box::into_raw(Box::new(ExprContext { inner: new_expr }))
+        let new_expr = ctx.inner.quantile(lit(quantile), method);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_rolling_quantile(
+    expr_ptr: *mut ExprContext,
+    quantile: f64,
+    interpolation: u8, // Changed from *const c_char, removed _ptr suffix
+    window_size_ptr: *const c_char,
+    min_periods: usize,
+    weights_ptr: *const f64,
+    weights_len: usize,
+    center: bool
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let window_size_str = ptr_to_str(window_size_ptr).unwrap();
+        
+        let window_size = parse_fixed_window_size(window_size_str)?;
+        
+        let method = parse_quantile_method(interpolation);
+
+        // Parse Weights
+        let weights = if !weights_ptr.is_null() && weights_len > 0 {
+            let slice = unsafe { std::slice::from_raw_parts(weights_ptr, weights_len) };
+            Some(slice.to_vec())
+        } else {
+            None
+        };
+
+        let options = RollingOptionsFixedWindow {
+            window_size,
+            min_periods,
+            weights,
+            center: center,
+            fn_params: None
+        };
+
+        let new_expr = ctx.inner.rolling_quantile(method, quantile, options);
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_rolling_quantile_by(
+    expr_ptr: *mut ExprContext,
+    quantile: f64,                  
+    interpolation: u8,              // Interpolation Enum
+    window_size_ptr: *const c_char, 
+    min_periods: usize,
+    by_ptr: *mut ExprContext,       
+    closed: u8                      // Changed from *const c_char to u8
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        let by = unsafe { Box::from_raw(by_ptr) };
+        
+        let window_size_str = ptr_to_str(window_size_ptr).unwrap();
+        
+        let duration = Duration::parse(window_size_str);
+        
+        let closed_window = parse_closed_window(closed);
+        let method = parse_quantile_method(interpolation);
+
+        let options = RollingOptionsDynamicWindow {
+            window_size: duration,
+            min_periods,
+            closed_window,
+            fn_params: None, 
+        };
+
+        let new_expr = ctx.inner.rolling_quantile_by(
+            by.inner,
+            method,
+            quantile,
+            options
+        );
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
 }
 
 #[unsafe(no_mangle)]

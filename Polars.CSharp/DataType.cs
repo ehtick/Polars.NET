@@ -7,7 +7,7 @@ namespace Polars.CSharp;
 /// Represents a Polars data type. 
 /// Wraps the underlying Rust DataType Handle and provides high-level metadata.
 /// </summary>
-public class DataType : IDisposable
+public class DataType : IDisposable, IEquatable<DataType>
 {
     internal DataTypeHandle Handle { get; }
     
@@ -96,6 +96,65 @@ public class DataType : IDisposable
         }
     }
 
+    // =========================================================================
+    // Value Equality Implementation
+    // =========================================================================
+
+    public override bool Equals(object? obj)
+    {
+        return Equals(obj as DataType);
+    }
+
+    public bool Equals(DataType? other)
+    {
+        if (other is null) return false;
+        if (ReferenceEquals(this, other)) return true;
+
+        if (Kind != other.Kind) return false;
+
+        switch (Kind)
+        {
+            case DataTypeKind.Datetime:
+                return Unit == other.Unit && TimeZone == other.TimeZone;
+
+            case DataTypeKind.Duration:
+                return Unit == other.Unit;
+
+            case DataTypeKind.Decimal:
+                return Precision == other.Precision && Scale == other.Scale;
+
+            case DataTypeKind.Array:
+                if (ArrayWidth != other.ArrayWidth) return false;
+                goto case DataTypeKind.List;
+
+            case DataTypeKind.List:
+                using (var myInner = InnerType)
+                using (var otherInner = other.InnerType)
+                {
+                    if (myInner == null && otherInner == null) return true;
+                    if (myInner == null || otherInner == null) return false;
+                    return myInner.Equals(otherInner);
+                }
+
+            default:
+                return true;
+        }
+    }
+
+    public override int GetHashCode()
+        => ToString().GetHashCode();
+
+    public static bool operator ==(DataType? left, DataType? right)
+    {
+        if (left is null) return right is null;
+        return left.Equals(right);
+    }
+
+    public static bool operator !=(DataType? left, DataType? right)
+    {
+        return !(left == right);
+    }
+
     // ==========================================
     // Helper Properties
     // ==========================================
@@ -107,7 +166,8 @@ public class DataType : IDisposable
     {
         DataTypeKind.Int8 or DataTypeKind.Int16 or DataTypeKind.Int32 or DataTypeKind.Int64 or
         DataTypeKind.UInt8 or DataTypeKind.UInt16 or DataTypeKind.UInt32 or DataTypeKind.UInt64 or
-        DataTypeKind.Float32 or DataTypeKind.Float64 or DataTypeKind.Decimal => true,
+        DataTypeKind.Float32 or DataTypeKind.Float64 or DataTypeKind.Decimal or 
+        DataTypeKind.Int128 or DataTypeKind.UInt128=> true,
         _ => false
     };
 
@@ -121,10 +181,12 @@ public class DataType : IDisposable
     public static DataType Int16   => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.Int16), DataTypeKind.Int16);
     public static DataType Int32   => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.Int32), DataTypeKind.Int32);    
     public static DataType Int64   => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.Int64), DataTypeKind.Int64);
+    public static DataType Int128   => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.Int128), DataTypeKind.Int128);
     public static DataType UInt8   => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.UInt8), DataTypeKind.UInt8);
     public static DataType UInt16  => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.UInt16), DataTypeKind.UInt16);
     public static DataType UInt32  => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.UInt32), DataTypeKind.UInt32);
     public static DataType UInt64  => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.UInt64), DataTypeKind.UInt64);
+    public static DataType UInt128   => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.UInt128), DataTypeKind.UInt128);
     public static DataType Float32 => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.Float32), DataTypeKind.Float32);
     public static DataType Float64 => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.Float64), DataTypeKind.Float64);
     public static DataType String  => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.String), DataTypeKind.String);
@@ -156,7 +218,7 @@ public class DataType : IDisposable
     /// <param name="timeZone">timezone string (e.g. "Asia/Shanghai")， null for no timezone (Naive)</param>
     public static DataType Datetime(TimeUnit unit, string? timeZone = null)
     {
-        var handle = PolarsWrapper.NewDateTimeType((int)unit, timeZone);
+        var handle = PolarsWrapper.NewDateTimeType((byte)unit, timeZone);
         return new DataType(handle,DataTypeKind.Datetime);
     }
     /// <summary>
@@ -164,7 +226,7 @@ public class DataType : IDisposable
     /// Usage: DataType.Duration(TimeUnit.Nanoseconds)
     /// </summary>
     public static DataType Duration(TimeUnit unit = TimeUnit.Microseconds)
-        => new(PolarsWrapper.NewDurationType((int)unit), DataTypeKind.Duration);
+        => new(PolarsWrapper.NewDurationType((byte)unit), DataTypeKind.Duration);
     /// <summary>
     /// Creates a List type.
     /// Usage: DataType.List(DataType.Int32)

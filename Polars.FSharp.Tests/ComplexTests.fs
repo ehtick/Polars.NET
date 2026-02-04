@@ -39,7 +39,7 @@ type ``Complex Query Tests`` () =
     [<Fact>]
     member _.``GroupBy Queries`` () =
         use csv = new TempCsv "name,birthdate,weight,height\nBen Brown,1985-02-15,72.5,1.77\nQinglei,2025-11-25,70.0,1.80\nZhang,2025-10-31,55,1.75"
-        let lf = LazyFrame.ScanCsv csv.Path
+        let lf = LazyFrame.ScanCsv(csv.Path,tryParseDates=true)
 
         let res = 
             lf 
@@ -67,7 +67,7 @@ type ``Complex Query Tests`` () =
             "Li Si,1988-05-20,60.5678,1.604\n" +
             "Wang Wu,1996-12-31,80.9999,1.859"
         use csv = new TempCsv(csvContent)
-        let lf = LazyFrame.ScanCsv csv.Path
+        let lf = LazyFrame.ScanCsv(csv.Path,tryParseDates=true)
 
         let res = 
             lf
@@ -170,7 +170,7 @@ type ``Complex Query Tests`` () =
             res 
             |> pl.select [ pl.col "my_name"; pl.col "my_tag_list" ]
             // [修改] 加上列表括号 []
-            |> pl.explode [ pl.col "my_tag_list" ] 
+            |> pl.explode ["my_tag_list"]  
         
         Assert.Equal(3L, exploded.Rows)
         Assert.Equal("coding", exploded.String("my_tag_list", 0).Value)
@@ -247,34 +247,71 @@ type ``Complex Query Tests`` () =
         Assert.Equal("Charlie", res.String("name", 2).Value)
         Assert.Equal(0.0, res.Float("diff_from_avg", 2).Value)
     [<Fact>]
-    member _.``Reshaping and IO: Pivot, Unpivot`` () =
-        // 1. 准备宽表数据 (Sales Data)
+    member _.``Reshaping and IO: Pivot, Unpivot (In-Memory & Custom Expr)`` () =
+        // 1. 准备宽表数据 (Sales Data) - 纯内存构建，告别 CSV IO
         // Year, Q1, Q2
-        use csv = new TempCsv "year,Q1,Q2\n2023,100,200\n2024,300,400"
-        let df = DataFrame.ReadCsv csv.Path
+        let df = 
+            DataFrame.create [
+                Series.create("year", [2023; 2024])
+                Series.create("Q1",   [100;  300])
+                Series.create("Q2",   [200;  400])
+            ]
 
-        // --- Test 1: Eager Unpivot (Wide -> Long) ---
+        // --- Test 1: Unpivot (Wide -> Long) ---
         // 结果: year, quarter, revenue
+        // 使用成员方法 .Unpivot (C# 风格) 或者管道风格皆可，这里演示成员方法以配合可选参数
         let longDf = 
-            df 
-            |> pl.unpivot ["year"] ["Q1"; "Q2"] (Some "quarter") (Some "revenue")
-            |> pl.sort(pl.col "year", false)
+            df.Unpivot(
+                index = ["year"], 
+                on = ["Q1"; "Q2"], 
+                variableName = Some "quarter", 
+                valueName = Some "revenue"
+            ).Sort [pl.col "year";pl.col "quarter"] // 排序保证断言顺序
 
-        Assert.Equal(4L, longDf.Rows)
-        Assert.Equal("Q1", longDf.String("quarter", 0).Value)
-        Assert.Equal(100L, longDf.Int("revenue", 0).Value)
+        Assert.Equal(4L, longDf.Height)
+        
+        // 验证第一行: 2023, Q1, 100
+        Assert.Equal(2023, longDf.Cell<int>(0, "year"))
+        Assert.Equal("Q1", longDf.Cell<string>(0, "quarter"))
+        Assert.Equal(100, longDf.Cell<int>(0, "revenue"))
 
-        // --- Test 2: Eager Pivot (Long -> Wide) ---
+        // --- Test 2: Standard Pivot (Enum Aggregation) ---
         // 还原回: year, Q1, Q2
-        let wideDf = 
-            longDf
-            |> pl.pivot ["year"] ["quarter"] ["revenue"] PivotAgg.Sum
-            |> pl.sort(pl.col "year", false)
+        let wideDfEnum = 
+            longDf.Pivot(
+                index = ["year"], 
+                columns = ["quarter"], 
+                values = ["revenue"], 
+                aggFn = PivotAgg.Sum,
+                sortColumns = true 
+            ).Sort(pl.col "year", false)
 
-        Assert.Equal(2L, wideDf.Rows)
-        Assert.Equal(3L, wideDf.Width) // year, Q1, Q2
-        Assert.Equal(100L, wideDf.Int("Q1", 0).Value)
-        Assert.Equal(400L, wideDf.Int("Q2", 1).Value)
+        Assert.Equal(2L, wideDfEnum.Height)
+        Assert.Equal(3L, wideDfEnum.Width) // year, Q1, Q2
+        Assert.Equal(100, wideDfEnum.Cell<int>(0, "Q1")) // 2023 Q1
+        Assert.Equal(400, wideDfEnum.Cell<int>(1, "Q2")) // 2024 Q2
+
+        // --- Test 3: Pivot with Custom Expr (自定义表达式) ---
+        // 场景：在透视的同时，将收入翻倍 (Revenue * 2)
+        // 注意：根据 Polars Pivot 机制，聚合时的上下文是匿名 Value 列，需使用 pl.col("")
+        let wideDfExpr = 
+            longDf.Pivot(
+                index = ["year"], 
+                columns = ["quarter"], 
+                values = ["revenue"], 
+                // [关键] 使用 Expr 重载
+                // pl.col("").sum() 代表对当前分组后的 revenue 值求和
+                // * pl.lit(2) 代表结果翻倍
+                aggExpr = pl.col("").Sum() * pl.lit 2, 
+                sortColumns = true
+            ).Sort(pl.col "year", false)
+
+        // 验证结果
+        // 2023 Q1 原值为 100 -> 翻倍后应为 200
+        Assert.Equal(200, wideDfExpr.Cell<int>(0, "Q1"))
+        
+        // 2024 Q2 原值为 400 -> 翻倍后应为 800
+        Assert.Equal(800, wideDfExpr.Cell<int>(1, "Q2"))
 
     [<Fact>]
     member _.``Lazy Reshaping: Concat All Types`` () =
@@ -287,7 +324,7 @@ type ``Complex Query Tests`` () =
 
         // 1. Horizontal: [a, b]
         let dfHorz = 
-            pl.concatLazy [lf1; lf2] Horizonal
+            pl.concatLazy [lf1; lf2] Horizontal
             |> pl.collect
         
         Assert.Equal(1L, dfHorz.Rows)
@@ -324,7 +361,7 @@ type ``Complex Query Tests`` () =
         let df2 = DataFrame.ReadCsv csv2.Path
 
         // 1. 执行 Concat
-        let bigDf = pl.concat [df1; df2] Vertical
+        let bigDf = pl.concat [df1; df2]
 
         // 验证结果
         Assert.Equal(2L, bigDf.Rows)
@@ -435,7 +472,7 @@ type ``Complex Query Tests`` () =
                 // 10:30: 窗口 [09:30, 10:30) -> 10 + 20 = 30
                 // 12:00: 窗口 [11:00, 12:00) -> 30 (前面的都过期了)
                 (pl.col "val")
-                    .RollingSumBy("1h", pl.col "time", closed="right") // closed="left" means [ )
+                    .RollingSumBy("1h", pl.col "time", closed= ClosedWindow.Right) // closed="left" means [ )
                     .Alias "sum_1h"
             )
             |> pl.collect
@@ -446,31 +483,63 @@ type ``Complex Query Tests`` () =
         Assert.Equal(30L, res.Int("sum_1h", 2).Value)
     [<Fact>]
     member _.``Lazy Join (Standard Join)`` () =
-        // 左表: 用户 (id, name)
-        use usersCsv = new TempCsv "id,name\n1,Alice\n2,Bob"
-        // 右表: 订单 (uid, amount)
-        use ordersCsv = new TempCsv "uid,amount\n1,100\n1,200\n3,50"
+        // 1. 准备数据 (内存构建 -> Lazy)
+        // 左表: 用户 (id, name, common)
+        // "common" 列用于测试 Suffix 后缀冲突处理
+        let users = 
+            DataFrame.create [
+                Series.create("id", [1; 2])
+                Series.create("name", ["Alice"; "Bob"])
+                Series.create("common", ["U1"; "U2"]) 
+            ]
+        let lfUsers = users.Lazy()
 
-        let lfUsers = LazyFrame.ScanCsv usersCsv.Path
-        let lfOrders = LazyFrame.ScanCsv ordersCsv.Path
+        // 右表: 订单 (uid, amount, common)
+        let orders = 
+            DataFrame.create [
+                Series.create("uid", [1; 1; 3])
+                Series.create("amount", [100; 200; 50])
+                Series.create("common", ["O1"; "O2"; "O3"]) 
+            ]
+        let lfOrders = orders.Lazy()
 
+        // 2. 执行 Join (Left Join)
+        // 注意：这里直接调用 .Join 类方法，以便使用可选参数
+        // 预期行为：
+        // - Alice (1) 匹配到两单 (100, 200)
+        // - Bob (2) 无匹配 (null)
+        // - 列名冲突自动处理 (common -> common_right_test)
         let res = 
-            lfUsers
-            |> pl.joinLazy lfOrders [pl.col "id"] [pl.col "uid"] JoinType.Left
+            lfUsers.Join(
+                other = lfOrders, 
+                leftOn = [pl.col "id"], 
+                rightOn = [pl.col "uid"], 
+                how = JoinType.Left,
+                // --- 新功能测试 ---
+                suffix = "_right_test",            // 自定义后缀
+                validation = JoinValidation.ManyToMany // 显式指定验证模式
+            )
             |> pl.collect
-            |> pl.sort(pl.col "id", false)
 
-        // 验证
-        // Alice (id=1) 有两单
-        Assert.Equal("Alice", res.String("name", 0).Value)
-        Assert.Equal(100L, res.Int("amount", 0).Value)
+        let resSorted = res.Sort([pl.col "id"; pl.col "amount"], [false; false], [false;false]) // 排序保证断言顺序
+
+        // 3. 验证
+        // Row 0: Alice - 100
+        Assert.Equal("Alice", resSorted.Cell<string>(0, "name"))
+        Assert.Equal(100, resSorted.Cell<int>(0, "amount"))
+        Assert.Equal("U1", resSorted.Cell<string>(0, "common"))             // 左表原样
+        Assert.Equal("O1", resSorted.Cell<string>(0, "common_right_test"))  // 右表加后缀
+
+        // Row 1: Alice - 200
+        Assert.Equal("Alice", resSorted.Cell<string>(1, "name"))
+        Assert.Equal(200, resSorted.Cell<int>(1, "amount"))
+
+        // Row 2: Bob - null
+        Assert.Equal("Bob", resSorted.Cell<string>(2, "name"))
         
-        Assert.Equal("Alice", res.String("name", 1).Value)
-        Assert.Equal(200L, res.Int("amount", 1).Value)
-
-        // Bob (id=2) 没单 -> null
-        Assert.Equal("Bob", res.String("name", 2).Value)
-        Assert.True(res.Int("amount", 2).IsNone) // 验证 Left Join 的空值处理
+        // 验证空值 (Amount 应该是 null)
+        let amountNull = resSorted.Column("amount").IsNullAt(2)
+        Assert.True(amountNull, "Bob should have null amount")
     [<Fact>]
     member _.``Join AsOf: Trades matching Quotes (with GroupBy and Tolerance)`` () =
         // 1. 交易数据 (Trades)
@@ -500,15 +569,18 @@ type ``Complex Query Tests`` () =
         // 3. 执行 AsOf Join
         // 逻辑：找到交易发生时刻(time)之前(backward)最近的一次报价
         // 必须匹配 ticker (by=["ticker"])
-        // 容差: 2个时间单位 (tolerance="2")
+        // 容差: 2个时间单位 (tolerance=2L)
         let res = 
-            lfTrades
-            |> pl.joinAsOf lfQuotes 
-                (pl.col "time") (pl.col "time") // On Time
-                [pl.col "ticker"] [pl.col "ticker"] // By Ticker
-                (Some "backward") // Strategy
-                (Some "2")        // Tolerance: 只匹配最近2ms内的数据
-            |> pl.sortLazy (pl.col "ticker") false // 排序方便断言
+            lfTrades.JoinAsOf(
+                lfQuotes,
+                pl.col "time",
+                pl.col "time", 
+                2L,                      
+                strategy = Backward,       
+                byLeft = [pl.col "ticker"], 
+                byRight = [pl.col "ticker"]
+            )
+            |> pl.sortLazy (pl.col "ticker") false
             |> pl.sortLazy (pl.col "time") false
             |> pl.collect
 
@@ -567,10 +639,9 @@ type ``Complex Query Tests`` () =
         // ---------------------------------------------------------
         // 2. [Transform] 构建 Polars 流式管道
         // ---------------------------------------------------------
-
+        
         // 这里的 batchSize=50_000 意味着 Polars 每次只从 Reader 拉取 5万行进内存
         let lf = LazyFrame.scanDb(readerFactory, batchSize=50_000)
-
         // Step C: 定义转换逻辑 (Transform)
         // 业务需求：
         // 1. 只保留 "US" 地区的订单

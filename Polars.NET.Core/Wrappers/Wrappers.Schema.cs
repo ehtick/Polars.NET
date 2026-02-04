@@ -1,7 +1,17 @@
+using System.Runtime.InteropServices;
+using Polars.NET.Core.Native;
+
 namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
 {
+    /// <summary>
+    /// Create Blank Schema
+    /// </summary>
+    public static SchemaHandle SchemaCreate()
+    {
+        return NewSchema(Array.Empty<string>(), Array.Empty<DataTypeHandle>());
+    }
 
     /// <summary>
     /// Build Schema from name and dtype
@@ -21,37 +31,37 @@ public static partial class PolarsWrapper
         });
     }
     /// <summary>
-    /// Convert Schema Dict to SchemaHandle for Rust
-    /// SafeHandleLock -> Marshal Strings -> New Schema -> Action -> Dispose Schema
+    /// Get the length of Schema
     /// </summary>
-    private static T WithSchemaHandle<T>(
-        Dictionary<string, DataTypeHandle>? schema, 
-        Func<SchemaHandle, T> action)
+    public static ulong GetSchemaLen(SchemaHandle schema)
+        => NativeBindings.pl_schema_len(schema);
+    /// <summary>
+    /// Get Schema Field by Index
+    /// </summary>
+    public static void GetSchemaFieldAt(SchemaHandle schema, ulong index, out string name, out DataTypeHandle typeHandle)
     {
-        // If Schema is blank，transfer invalid handle
-        if (schema == null || schema.Count == 0)
-        {
-            return action(new SchemaHandle()); 
-        }
+        NativeBindings.pl_schema_get_at_index(
+            schema, 
+            (UIntPtr)index, 
+            out IntPtr namePtr, 
+            out var outTypeHandle
+        );
 
-        var names = schema.Keys.ToArray();
-        var handles = schema.Values.ToArray();
+        typeHandle = ErrorHelper.Check(outTypeHandle);
 
-        // Lock DataTypeHandles and get its raw pointer
-        using var locker = new SafeHandleLock<DataTypeHandle>(handles);
-        var typePtrs = locker.Pointers;
-        
-        return UseUtf8StringArray(names, namePtrs => 
-        {
-            using var schemaHandle = ErrorHelper.Check(
-                NativeBindings.pl_schema_new(
-                    namePtrs, 
-                    typePtrs, 
-                    (UIntPtr)names.Length
-                )
-            );
+        name = ErrorHelper.CheckString(namePtr);
+    }
+    public static void SchemaAddField(SchemaHandle schema, string name, DataTypeHandle dtype)
+    {
+        if (schema.IsInvalid) throw new ArgumentException("Schema handle is invalid");
+        if (dtype.IsInvalid) throw new ArgumentException("DataType handle is invalid");
+        using var handlesLock = new SafeHandleLock<SafeHandle>([schema, dtype]);
+        NativeBindings.pl_schema_add_field(
+            handlesLock.Pointers[0],
+            name,
+            handlesLock.Pointers[1]
+        );
 
-            return action(schemaHandle);
-        });
+        ErrorHelper.CheckVoid(); 
     }
 }

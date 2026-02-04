@@ -164,7 +164,7 @@ type SelectorTests() =
         // 需求：炸开所有 List 类型的列 (Tag1, Tag2)
         // ==========================================
         
-        let dfTag = df.Explode [ !> pl.cs.startsWith("Tag") ]
+        let dfTag = df.Explode(pl.cs.startsWith "Tag")
         Assert.Equal(4L, dfTag.Rows) // 2 + 1 + 1
 
         // ==========================================

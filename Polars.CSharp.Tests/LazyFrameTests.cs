@@ -113,70 +113,72 @@ David,40,80000";
         Assert.Equal(20, df.GetValue<int?>(1, "B"));
         Assert.Equal(300, df.GetValue<int?>(1, "C"));
     }
-        [Fact]
-    public void Test_LazyFrame_Join_MultiColumn()
+    [Fact]
+    public void Test_LazyFrame_Join_MultiColumn_WithParams()
     {
-        // 场景：学生在不同年份有不同的成绩
-        // Alice 在 2023 和 2024 都有成绩
-        // Bob 只有 2023 的成绩
-        var scoresContent = @"student,year,score
-Alice,2023,85
-Alice,2024,90
-Bob,2023,70";
-        using var scoresCsv = new DisposableFile(scoresContent,".csv");
-        using var scoresLf = LazyFrame.ScanCsv(scoresCsv.Path);
+        // 1. 准备数据 (内存构建 -> Lazy)
+        // 左表：Alice (2023, 2024), Bob (2023)
+        // note 列用于测试 suffix
+        using var scoresDf = DataFrame.FromColumns(new 
+        {
+            student = new[] { "Alice", "Alice", "Bob" },
+            year    = new[] { 2023,    2024,    2023 },
+            score   = new[] { 85,      90,      70 },
+            note    = new[] { "L1",    "L2",    "L3" }
+        });
+        using var scoresLf = scoresDf.Lazy();
 
-        // 场景：班级分配表
-        // Alice: 2023是Math班, 2024是Physics班
-        // Bob:   2024是History班 (注意：Bob 2023没有班级记录)
-        var classContent = @"student,year,class
-Alice,2023,Math
-Alice,2024,Physics
-Bob,2024,History";
-        using var classCsv = new DisposableFile(classContent,".csv");
-        using var classLf = LazyFrame.ScanCsv(classCsv.Path);
+        // 右表：Alice (2023, 2024), Bob (2024)
+        // note 列产生冲突
+        using var classDf = DataFrame.FromColumns(new 
+        {
+            student = new[] { "Alice", "Alice", "Bob" },
+            year    = new[] { 2023,    2024,    2024 },
+            className = new[] { "Math", "Physics", "History" },
+            note    = new[] { "R1",    "R2",    "R3" }
+        });
+        using var classLf = classDf.Lazy();
 
-        // 执行多列 Join (Inner Join)
-        // 逻辑：必须 student 和 year 都相同才算匹配
-        // 预期结果：
-        // 1. Alice + 2023 -> 匹配
-        // 2. Alice + 2024 -> 匹配
-        // 3. Bob + 2023   -> 左表有Bob 2023，但右表只有 Bob 2024 -> 丢弃 (因为是 Inner Join)
+        // 2. 执行 Lazy Join (Inner)
+        // 预期匹配：Alice 2023, Alice 2024
         using var joinedLf = scoresLf.Join(
             classLf,
-            leftOn: [Col("student"), Col("year")],   // 左表双键
-            rightOn: [Col("student"), Col("year")],  // 右表双键
-            how: JoinType.Inner
+            leftOn: [Col("student"), Col("year")],
+            rightOn: [Col("student"), Col("year")],
+            how: JoinType.Inner,
+            
+            // --- 新参数测试 ---
+            suffix: "_lazy_conflict",            // 测试后缀
+            validation: JoinValidation.OneToOne, // 测试 Lazy 模式下的验证 (Lazy 执行时会检查)
+            coalesce: JoinCoalesce.JoinSpecific
         );
+
+        // 3. Collect 执行
         using var joinedDf = joinedLf.Collect();
-        // 验证高度：应该只有 2 行 (Alice 2023, Alice 2024)
-        Assert.Equal(2, joinedDf.Height); 
-        
-        // 验证宽度：student, year, score, class (year 在 Join 后通常会去重或保留一份，具体看 Polars 行为，通常保留左表的)
-        // Polars Join 后列名如果冲突会自动处理，或者保留 Key。
-        // 这里的列应该是: student, year, score, class
-        Assert.Equal(4, joinedDf.Width);
 
-        
-        // 排序以确保验证顺序 (按 year 排序)
-        // 但这里我们简单通过 Filter 验证或者假定顺序（CSV读取顺序通常保留）
-        
-        // 验证第一行 (Alice 2023)
-        Assert.Equal("Alice", joinedDf.Column("student").GetValue<string>(0));
-        Assert.Equal(2023, joinedDf.Column("year").GetValue<long>(0));
-        Assert.Equal("Math", joinedDf.Column("class").GetValue<string>(0));
+        // 4. 验证
+        Assert.Equal(2, joinedDf.Height);
+        Assert.Equal(6, joinedDf.Width); // student, year, score, note, className, note_lazy_conflict
 
-        // 验证第二行 (Alice 2024)
-        Assert.Equal("Alice", joinedDf.Column("student").GetValue<string>(1));
-        Assert.Equal(2024, joinedDf.Column("year").GetValue<long>(1));
-        Assert.Equal("Physics", joinedDf.Column("class").GetValue<string>(1));
+        // 验证 Suffix 生效
+        var cols = joinedDf.ColumnNames;
+        Assert.Contains("note", cols);
+        Assert.Contains("note_lazy_conflict", cols);
 
-        // 验证 Bob 确实被删除了 (因为他在右表没有 2023 的记录)
-        // 我们可以简单地检查 DataFrame 里没有 Bob
+        // 验证数据准确性 (简单取第一行，Alice 2023)
+        // 注意：Join 后的顺序不一定保证，除非 Sort，但在简单场景下通常稳定
+        using var sorted = joinedDf.Sort("year");
+        
+        Assert.Equal(2023, sorted.GetValue<int>(0, "year"));
+        Assert.Equal("Math", sorted.GetValue<string>(0, "className"));
+        Assert.Equal("L1", sorted.GetValue<string>(0, "note"));
+        Assert.Equal("R1", sorted.GetValue<string>(0, "note_lazy_conflict"));
+
+        // 验证 Bob (2023) 被过滤 (Inner Join)
         using var bobCheck = joinedDf.Filter(Col("student") == Lit("Bob"));
         Assert.Equal(0, bobCheck.Height);
     }
-        [Fact]
+    [Fact]
     public void Test_LazyFrame_GroupBy_Agg()
     {
          // 准备数据: Department, Salary
@@ -258,7 +260,7 @@ HR,50";
         // 场景: 股票交易匹配报价，但增加了 "2分钟" 的有效窗口
         // 如果报价太旧（超过2分钟），则认为数据失效，不予匹配
         
-        // 使用 ISO 格式日期，配合 tryParseDates: true，让 Polars 自动识别为 Datetime
+        // 使用 ISO 格式日期，配合 tryParseDates: true
         var tradesContent = @"time,sym,qty
 2024-01-01 10:00:00,AAPL,10
 2024-01-01 10:02:00,AAPL,20
@@ -272,7 +274,6 @@ HR,50";
         using var quotesCsv = new DisposableFile(quotesContent, ".csv");
 
         // [关键] tryParseDates: true
-        // 确保 'time' 列被解析为 Datetime 类型，而不是 String
         using var lfTrades = LazyFrame.ScanCsv(tradesCsv.Path, tryParseDates: true);
         using var lfQuotes = LazyFrame.ScanCsv(quotesCsv.Path, tryParseDates: true);
 
@@ -283,11 +284,11 @@ HR,50";
             rightOn: Col("time"),
             
             // [核心升级] 使用 TimeSpan 强类型容差！
-            // 逻辑：只匹配最近 2 分钟内的报价
-            // 我们刚才实现的 DurationFormatter 会自动将其转为 "2m"
             tolerance: TimeSpan.FromMinutes(2), 
             
-            strategy: "backward",
+            // [核心升级] 使用枚举，拒绝魔法字符串！
+            strategy: AsofStrategy.Backward,
+            
             leftBy: [Col("sym")],
             rightBy: [Col("sym")]
         );
@@ -297,18 +298,13 @@ HR,50";
         // 验证结果
         Assert.Equal(3, df.Height);
 
-        // Row 0: Trade 10:00 -> Quote 09:59 (Diff: 1m)
-        // 1m <= 2m -> 匹配成功
+        // Row 0: Trade 10:00 -> Quote 09:59 (Diff: 1m <= 2m) -> Match
         Assert.Equal(150, df.Column("bid").GetValue<long?>(0));
 
-        // Row 1: Trade 10:02 -> Quote 10:01 (Diff: 1m)
-        // 1m <= 2m -> 匹配成功
+        // Row 1: Trade 10:02 -> Quote 10:01 (Diff: 1m <= 2m) -> Match
         Assert.Equal(151, df.Column("bid").GetValue<long?>(1));
 
-        // Row 2: Trade 10:05 -> Quote 10:01 (Diff: 4m)
-        // backward 找到的最近记录是 10:01
-        // 但是 4m > 2m (Tolerance)
-        // -> 匹配失败，bid 应该为 null
+        // Row 2: Trade 10:05 -> Quote 10:01 (Diff: 4m > 2m) -> No Match
         Assert.Null(df.Column("bid").GetValue<long?>(2));
     }
     [Fact]
@@ -371,17 +367,19 @@ HR,50";
     [Fact]
     public void Test_LazyFrame_Explode()
     {
-        using var s = new Series("chars", ["a,b", "c"]);
-        using var df = new DataFrame(s);
+        using var s = new Series("chars", ["a,b","c"]);
+        using var df = DataFrame.FromSeries(s);
         
         // 转换为 Lazy 模式
         using var lf = df.Lazy();
+
+        using var selector = Selector.Cols("expanded");
 
         // 链式调用: Split -> Explode -> Collect
         // 这一步调用你的 public LazyFrame Explode(params Expr[] exprs)
         using var res = lf
             .Select(Col("chars").Str.Split(",").Alias("expanded"))
-            .Explode(Col("expanded"))
+            .Explode(selector)
             .Collect();
 
         // 验证
@@ -391,66 +389,71 @@ HR,50";
         Assert.Equal("c", res.GetValue<string>(2, "expanded"));
     }
     [Fact]
-    public void TestLazySchema_ZeroParse()
+    public void TestLazySchema_ZeroParse_Introspection()
     {
-        Console.WriteLine("===  LazyFrame Schema Zero-Parse Test ===");
+        Console.WriteLine("=== LazyFrame Schema Zero-Parse Test ===");
 
         // 1. 准备数据
         // Schema: { "a": Int32, "b": Float64, "c": String }
         using var s1 = Series.From("a", [1, 2, 3]);
         using var s2 = Series.From("b", [1.1, 2.2, 3.3]);
         using var s3 = Series.From("c", ["apple", "banana", "cherry"]);
-        using var df = new DataFrame(s1, s2, s3);
+        using var df = DataFrame.FromSeries(s1, s2, s3);
         
         using var lf = df.Lazy();
 
         // 2. 获取初始 Schema
+        // [Architectural Change] lf.Schema 返回 PolarsSchema 对象 (IDisposable)
+        // 我们需要用 'using' 来确保 Handle 被释放
         Console.WriteLine("--- 1. Initial Schema ---");
-        var schema1 = lf.Schema; // 这里触发 Rust collect_schema
+        using var schema1 = lf.Schema; 
 
-        Assert.Equal(3, schema1.Count);
+        // [API Update] 使用 .Length 而不是 .Count
+        Assert.Equal(3, schema1.Length);
         
-        // 验证类型 (强类型枚举匹配)
+        // [Zero-Parse] 直接访问 Kind 枚举，没有任何字符串比较
         Assert.Equal(DataTypeKind.Int32, schema1["a"].Kind);
         Assert.Equal(DataTypeKind.Float64, schema1["b"].Kind);
         Assert.Equal(DataTypeKind.String, schema1["c"].Kind);
 
-        PrintSchema(schema1);
+        // 调用新的 ToString() 实现
+        Console.WriteLine(schema1.ToString()); 
 
         // 3. 执行 Lazy 操作并验证 Schema 变更
         // 操作：
-        // - "a" 转为 Float64
-        // - "c" 进行聚合 (Implode) 变成 List<String>
+        // - "a" Cast 为 Float64
+        // - "c" Implode 聚合为 List<String>
         Console.WriteLine("\n--- 2. Modified Schema (Type Inference) ---");
         
         using var lf2 = lf.Select(
             Col("a").Cast(DataType.Float64).Alias("a_cast"),
-            Col("c").Implode().Alias("c_list") // 变成 List
+            Col("c").Implode().Alias("c_list") // 结果应该是 List<String>
         );
 
-        var schema2 = lf2.Schema;
+        // 再次获取 Schema (Rust 会在这一步运行 Logical Plan 的类型推断)
+        using var schema2 = lf2.Schema;
 
-        // 验证 "a_cast" 变成了 Float64
+        // 验证 "a_cast"
         Assert.Equal(DataTypeKind.Float64, schema2["a_cast"].Kind);
         Console.WriteLine($"[Check] a_cast is Float64: {schema2["a_cast"].Kind == DataTypeKind.Float64}");
 
-        // 验证 "c_list" 变成了 List
-        var cListType = schema2["c_list"];
-        Assert.Equal(DataTypeKind.List, cListType.Kind);
-        Console.WriteLine($"[Check] c_list is List: {cListType.Kind == DataTypeKind.List}");
+        // 4. [高光时刻] 验证嵌套类型 (Deep Introspection)
+        // 这里的 c_list 是 DataTypeKind.List
+        var listType = schema2["c_list"];
+        Assert.Equal(DataTypeKind.List, listType.Kind);
+        Console.WriteLine($"[Check] c_list is List: {listType.Kind == DataTypeKind.List}");
 
-        // 4. [高光时刻] 验证嵌套类型 (Introspection)
-        // 我们没有解析字符串 "list[str]"，而是直接问 Rust 内部类型是什么
-        // cListType.InnerType 会触发 pl_datatype_get_inner FFI 调用
-        var innerType = cListType.InnerType; 
+        // [Zero-Parse Ultimate] 获取内部类型
+        // 我们不解析 "List<String>" 字符串，而是直接请求 Inner Handle
+        // listType.InnerType 返回一个新的 DataType 对象
+        using var innerType = listType.InnerType; 
         
         Assert.NotNull(innerType);
         Assert.Equal(DataTypeKind.String, innerType!.Kind);
         Console.WriteLine($"[Check] c_list inner type is String: {innerType.Kind == DataTypeKind.String}");
 
-        PrintSchema(schema2);
-        
-        Console.WriteLine("=== NO STRING PARSE! ===");
+        Console.WriteLine(schema2.ToString());
+        Console.WriteLine("=== SUCCESS: Validated without a single string parse! ===");
     }
     [Fact]
     public void Test_LazyFrame_Sort_FullOptions()
@@ -644,5 +647,117 @@ HR,50";
         var bottomVals = bottom["val"].ToArray<int>();
         Assert.Contains(1, bottomVals);
         Assert.Contains(5, bottomVals);
+    }
+    [Fact]
+    public void Test_LazyFrame_Slice()
+    {
+        // 1. 准备 CSV: 5 行数据 (0, 1, 2, 3, 4)
+        using var csv = new DisposableFile("val\n0\n1\n2\n3\n4", ".csv");
+        using var lf = LazyFrame.ScanCsv(csv.Path);
+
+        // 2. 定义切片计划: Slice(-3, 2)
+        // 意思是从倒数第 3 行开始，取 2 行
+        // 数据: 0, 1, [2], [3], 4
+        // 倒数第三行是 "2"
+        var slicedLf = lf.Slice(-3, 2);
+
+        // 3. 执行计划 (Collect)
+        using var df = slicedLf.Collect();
+
+        // 4. 验证结果
+        Assert.Equal(2, df.Height);
+        
+        // 验证值
+        Assert.Equal(2, df["val"].GetValue<int>(0));
+        Assert.Equal(3, df["val"].GetValue<int>(1));
+    }
+    [Fact]
+    public void Test_Drop_ByColumnNames()
+    {
+        // 1. Arrange: 准备一个包含多列的数据
+        var df = DataFrame.From(
+        [
+            new { Name = "Alice", Age = 25, City = "New York", Salary = 5000 },
+            new { Name = "Bob", Age = 30, City = "London", Salary = 6000 }
+        ]);
+
+        // 2. Act: 使用 Lazy 模式并删除 "City" 和 "Salary" 两列
+        var lf = df.Lazy();
+        var res = lf.Drop("City", "Salary")
+                    .Collect();
+
+        // 3. Assert: 验证结果
+        Assert.Equal(2, res.Width); // 剩下 Name 和 Age
+        Assert.Contains("Name", res.ColumnNames);
+        Assert.Contains("Age", res.ColumnNames);
+        
+        // 确保被删的列真的没了
+        Assert.DoesNotContain("City", res.ColumnNames);
+        Assert.DoesNotContain("Salary", res.ColumnNames);
+    }
+
+    [Fact]
+    public void Test_Drop_BySelector()
+    {
+        // 1. Arrange
+        var df = DataFrame.From(new[]
+        {
+            new { A = 1, B = 2.2, C = "hello" },
+            new { A = 3, B = 4.4, C = "world" }
+        });
+
+        // 2. Act: 使用 Selector API 删除
+        // 假设我们不想看 'B' 列
+        // Selector.Cols("B") 创建了一个指向 "B" 列的选择器
+        var lf = df.Lazy();
+        var res = lf.Drop(Selector.Cols("B"))
+                    .Collect();
+
+        // 3. Assert
+        Assert.Equal(2, res.Width);
+        Assert.Equal("A", res.ColumnNames[0]);
+        Assert.Equal("C", res.ColumnNames[1]);
+        
+        // 再次确认 B 确实被丢了
+        Assert.Throws<ArgumentException>(() => res["B"]);
+    }
+    [Fact]
+    public void Test_Lazy_Unique()
+    {
+        var df = DataFrame.From(new[]
+        {
+            new { A = 1, B = 1 },
+            new { A = 1, B = 2 },
+            new { A = 2, B = 3 },
+            new { A = 1, B = 1 } // Duplicate of first row
+        });
+
+        // 1. Test Selector (Subset=[A])
+        // Keep First -> 应该保留 A=1(row0), A=2(row2)
+        // 注意：row1 (A=1, B=2) 因为 A 重复，且 Keep=First，可能会被丢弃（取决于 subset）
+        
+        var lf = df.Lazy();
+        
+        // Case A: Subset on "A", Keep First
+        var res1 = lf.Unique(Selector.Cols("A"), UniqueKeepStrategy.First)
+                     .Collect();
+        
+        // A=1 出现了3次，保留第一个; A=2 出现1次
+        Assert.Equal(2, res1.Height); 
+        
+        // Case B: Subset on All (null selector), Keep None (Drop all duplicates)
+        // (1,1) 重复了，会被删掉。 (1,2) 和 (2,3) 是唯一的。
+        var res2 = lf.Unique(subset: null, keep: UniqueKeepStrategy.None)
+                     .Collect();
+                     
+        Assert.Equal(2, res2.Height);
+        Assert.Equal(2, (int)res2["B"][0]); 
+        
+        // 第 1 行应该是 (2, 3)
+        Assert.Equal(3, (int)res2["B"][1]);
+        
+        // Case C: String overload
+        var res3 = lf.Unique("A", "B").Collect();
+        Assert.Equal(3, res3.Height); // (1,1), (1,2), (2,3) are kept. The last (1,1) dropped.
     }
 }

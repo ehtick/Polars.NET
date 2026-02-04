@@ -1,10 +1,8 @@
 using System.Collections;
 using System.Data;
 using System.Data.Common;
-using System.Text;
+using System.Text.Json;
 using Apache.Arrow;
-using Apache.Arrow.Arrays;
-using Apache.Arrow.Types;
 
 namespace Polars.NET.Core.Data
 {
@@ -20,6 +18,7 @@ namespace Polars.NET.Core.Data
         private int _currentRowIndex;
         private bool _isClosed;
         private readonly Dictionary<string, Type>? _typeOverrides;
+        private Func<int, object?>[] _columnAccessors = System.Array.Empty<Func<int, object?>>();
 
         public ArrowToDbStream(IEnumerable<RecordBatch> stream,Dictionary<string, Type>? typeOverrides = null)
         {
@@ -33,48 +32,76 @@ namespace Polars.NET.Core.Data
         {
             if (_schema != null) return true;
             
-            if (_batchEnumerator.MoveNext())
+            if (LoadNextBatch()) 
             {
-                _currentBatch = _batchEnumerator.Current;
-                _schema = _currentBatch.Schema;
                 return true;
             }
-            
             _isClosed = true;
             return false;
+        }
+
+        private bool LoadNextBatch()
+        {
+            if (_batchEnumerator.MoveNext())
+            {
+                // Release last batch
+                _currentBatch?.Dispose();
+                
+                _currentBatch = _batchEnumerator.Current;
+                
+                // RebuildAccessors
+                _schema = _currentBatch.Schema;
+                RebuildAccessors(); 
+                
+                _currentRowIndex = -1;
+                if (_currentBatch.Length == 0) return LoadNextBatch(); 
+                return true;
+            }
+            return false;
+        }
+
+        private void RebuildAccessors()
+        {
+            int count = _schema!.FieldsList.Count;
+            _columnAccessors = new Func<int, object?>[count];
+
+            for (int i = 0; i < count; i++)
+            {
+                var field = _schema.GetFieldByIndex(i);
+                var arrowCol = _currentBatch!.Column(i);
+
+                // Confirm target .NET type
+                Type targetType;
+                if (_typeOverrides != null && _typeOverrides.TryGetValue(field.Name, out var overrideType))
+                {
+                    targetType = overrideType;
+                }
+                else
+                {
+                    targetType = Arrow.ArrowTypeResolver.GetNetTypeFromArrowType(field.DataType);
+                }
+
+                _columnAccessors[i] = Arrow.ArrowReader.CreateAccessor(arrowCol, targetType);
+            }
         }
 
         public override bool Read()
         {
             if (_isClosed) return false;
 
-            if (_schema == null)
-            {
-                if (!EnsureSchema()) return false; // null stream
-            }
-
             _currentRowIndex++;
 
-            // Current Batch is not null
             if (_currentBatch != null && _currentRowIndex < _currentBatch.Length)
             {
                 return true;
             }
 
-            // Need next Batch
-            if (_batchEnumerator.MoveNext())
+            if (LoadNextBatch())
             {
-                _currentBatch?.Dispose();
-                _currentBatch = _batchEnumerator.Current;
-                _schema = _currentBatch.Schema; 
-                _currentRowIndex = 0;
-
-                if (_currentBatch.Length == 0) return Read();
-
+                _currentRowIndex++;
                 return true;
             }
 
-            // No more data batch
             _currentBatch = null!;
             _isClosed = true;
             return false;
@@ -82,200 +109,47 @@ namespace Polars.NET.Core.Data
 
         public override object GetValue(int ordinal)
         {
-            // Get raw value
+            // 1. GetRawValue
             if (_currentBatch == null) throw new InvalidOperationException("No batch");
-            var col = _currentBatch.Column(ordinal);
-            if (col.IsNull(_currentRowIndex)) return DBNull.Value;
             
-            var val = GetValueFromArray(col, _currentRowIndex);
+            var val = _columnAccessors[ordinal](_currentRowIndex);
             
-            // Get target dtype
+            if (val == null) return DBNull.Value;
+
             var targetType = GetFieldType(ordinal);
 
-            if (val.GetType() == targetType) return val;
+            // =========================================================
+            // 🔥 Magic Zone for datetime
+            // =========================================================
 
-            // -------------------------------------------------------------
-            // Magic Zone: Physical type -> Logical type
-            // -------------------------------------------------------------
+            if (val is DateTimeOffset dto && targetType == typeof(DateTime))
+            {
+                return dto.DateTime; 
+            }
 
-            // A. Long (Int64) degeneration -> Timestamp, Time, Duration
             if (val is long lVal)
             {
-                // 1. long -> DateTime (Timestamp)
-                if (targetType == typeof(DateTime))
-                {
-                    // Microseconds (Polars default)
-                    return DateTime.UnixEpoch.AddTicks(lVal * 10); 
-                }
-
-                // 2. long -> DateTimeOffset
-                if (targetType == typeof(DateTimeOffset))
-                {
-                    return new DateTimeOffset(DateTime.UnixEpoch.Ticks + (lVal * 10), TimeSpan.Zero);
-                }
-
-                // 3. long -> TimeSpan (Duration)
-                if (targetType == typeof(TimeSpan))
-                {
-                    // 1 us = 10 ticks
-                    return new TimeSpan(lVal * 10);
-                }
-
-                // 4. long -> TimeOnly (Time64)
-                if (targetType == typeof(TimeOnly))
-                {
-                    return new TimeOnly(lVal * 10);
-                }
+                 if (targetType == typeof(DateTime)) return DateTime.UnixEpoch.AddTicks(lVal * 10);
+                 if (targetType == typeof(TimeSpan)) return new TimeSpan(lVal * 10);
+                 if (targetType == typeof(TimeOnly)) return new TimeOnly(lVal * 10);
             }
 
-            // B. Int (Int32) degeneration -> Date32
-            else if (val is int iVal)
+            // =========================================================
+            // 3. JSON serialize
+            // =========================================================
+            if (val is not string && 
+                !(val is IConvertible) && 
+                !(val is byte[]) && 
+                !(val is DateTime) && 
+                !(val is DateTimeOffset) && 
+                !(val is DateOnly) && 
+                !(val is TimeOnly) && 
+                !(val is TimeSpan))
             {
-                // int -> DateOnly (Date32)
-                if (targetType == typeof(DateOnly))
-                {
-                    return DateOnly.FromDateTime(DateTime.UnixEpoch.AddDays(iVal));
-                }
+                return JsonSerializer.Serialize(val);
             }
 
-            // C. Otheres (float -> decimal if needed)
-            
             return val;
-        }
-        private static object GetValueFromArray(IArrowArray array, int index)
-        {
-            switch (array)
-            {
-                case Int32Array arr: return arr.GetValue(index) ?? (object)DBNull.Value;
-                case Int64Array arr: return arr.GetValue(index) ?? (object)DBNull.Value;
-                case FloatArray arr: return arr.GetValue(index) ?? (object)DBNull.Value;
-                case DoubleArray arr: return arr.GetValue(index) ?? (object)DBNull.Value;
-                case BooleanArray arr: return arr.GetValue(index) ?? (object)DBNull.Value;
-                case StringArray arr: return arr.GetString(index);
-                case LargeStringArray arr: return arr.GetString(index);
-                case StringViewArray arr: return arr.GetString(index);
-                case BinaryArray arr: return arr.GetBytes(index).ToArray();
-                case BinaryViewArray arr: return arr.GetBytes(index).ToArray();
-                case FixedSizeBinaryArray arr: return arr.GetBytes(index).ToArray();
-                case FixedSizeListArray arr:
-                    return FormatFixedSizeList(arr, index);
-                case Date32Array arr:
-                    var dt = arr.GetDateTime(index);
-                    return dt.HasValue ? DateOnly.FromDateTime(dt.Value) : DBNull.Value;
-
-                case TimestampArray arr: 
-                    return arr.GetTimestamp(index)?.DateTime ?? (object)DBNull.Value;
-                case Date64Array arr:
-                     return arr.GetDateTime(index) ?? (object)DBNull.Value;                
-                case Time64Array arr:
-                    var micros = arr.GetMicroSeconds(index);
-                    if (!micros.HasValue) return DBNull.Value;
-                    return TimeOnly.FromTimeSpan(TimeSpan.FromTicks(micros.Value * 10));
-                case DurationArray arr:
-                {
-                    var val = arr.GetValue(index); 
-                    if (!val.HasValue) return DBNull.Value;
-
-                    return new TimeSpan(val.Value * 10);
-                }
-
-                case ListArray arr:
-                    return FormatList(arr, index);
-                case StructArray arr: return FormatStruct(arr, index);
-                
-                default:
-                    throw new NotSupportedException($"ArrowToDbStream does not yet support type: {array.GetType().Name}");
-            }
-        }
-        // -------------------------------------------------------------
-        // JSON Format Helper
-        // -------------------------------------------------------------
-        private static string FormatJsonValue(object? val)
-        {
-            if (val == null || val == DBNull.Value) return "null";
-
-            return val switch
-            {
-                string jsonStr when jsonStr.Length > 1 && (jsonStr.StartsWith("{") || jsonStr.StartsWith("[")) 
-                    => jsonStr,
-
-                string s => System.Text.Json.JsonSerializer.Serialize(s),
-                char c => System.Text.Json.JsonSerializer.Serialize(c.ToString()),
-
-                // Primitive Type
-                bool b => b ? "true" : "false",
-                
-                // DateTime (Keep ISO 8601 format)
-                DateTime dt => $"\"{dt:O}\"",
-                DateTimeOffset dto => $"\"{dto:O}\"",
-                DateOnly d => $"\"{d:yyyy-MM-dd}\"",
-                TimeOnly t => $"\"{t:HH:mm:ss.ffffff}\"",
-                TimeSpan ts => $"\"{ts}\"", 
-
-                // others.ToString
-                _ => val.ToString()!
-            };
-        }
-        // Format Struct -> JSON Object
-        private static string FormatStruct(StructArray arr, int index)
-        {
-            if (arr.IsNull(index)) return "null";
-
-            var structType = (StructType)arr.Data.DataType;
-            var sb = new StringBuilder("{");
-            
-            for (int i = 0; i < structType.Fields.Count; i++)
-            {
-                if (i > 0) sb.Append(", ");
-                
-                var field = structType.Fields[i];
-                var childArr = arr.Fields[i];
-                
-                sb.Append($"\"{field.Name}\": ");
-                
-                object val = GetValueFromArray(childArr, index);
-                sb.Append(FormatJsonValue(val));
-            }
-            sb.Append("}");
-            return sb.ToString();
-        }
-        // Format Array
-        private static string FormatFixedSizeList(FixedSizeListArray arr, int index)
-        {
-            if (arr.IsNull(index)) return "null";
-
-            var type = (FixedSizeListType)arr.Data.DataType;
-            int width = type.ListSize;
-            int start = index * width;
-            
-            var sb = new StringBuilder("[");
-            for (int i = 0; i < width; i++)
-            {
-                if (i > 0) sb.Append(", ");
-                object val = GetValueFromArray(arr.Values, start + i);
-                sb.Append(FormatJsonValue(val));
-            }
-            sb.Append("]");
-            return sb.ToString();
-        }
-        // Format List
-        private static string FormatList(ListArray arr, int index)
-        {
-            if (arr.IsNull(index)) return "null";
-
-            int start = arr.ValueOffsets[index];
-            int end = arr.ValueOffsets[index + 1];
-            int count = end - start;
-
-            var sb = new StringBuilder("[");
-            for (int i = 0; i < count; i++)
-            {
-                if (i > 0) sb.Append(", ");
-                object val = GetValueFromArray(arr.Values, start + i);
-                sb.Append(FormatJsonValue(val));
-            }
-            sb.Append("]");
-            return sb.ToString();
         }
         public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length)
         {
@@ -357,32 +231,11 @@ namespace Polars.NET.Core.Data
         public override Type GetFieldType(int ordinal)
         {
             EnsureSchema();
-            if (_schema == null) return typeof(object);
-            var field = _schema.GetFieldByIndex(ordinal);
+            var field = _schema!.GetFieldByIndex(ordinal);
+            
+            if (_typeOverrides != null && _typeOverrides.TryGetValue(field.Name, out var t)) return t;
 
-            if (_typeOverrides!.TryGetValue(field.Name, out var targetType))
-            {   
-                return targetType;
-            }
-            return field.DataType switch
-            {
-                Int32Type => typeof(int),
-                Int64Type => typeof(long),
-                FloatType => typeof(float),
-                DoubleType => typeof(double),
-                BooleanType => typeof(bool),
-                StringType => typeof(string),
-                LargeStringType => typeof(string),
-                StringViewType => typeof(string), 
-                TimestampType => typeof(DateTime),
-                Date32Type => typeof(DateOnly),
-                Date64Type => typeof(DateTime),
-                Time32Type => typeof(TimeOnly),
-                Time64Type => typeof(TimeOnly),
-                DurationType => typeof(TimeSpan),
-                BinaryType => typeof(byte[]),
-                _ => typeof(object)
-            };
+            return Arrow.ArrowTypeResolver.GetNetTypeFromArrowType(field.DataType);
         }
 
         public override bool IsDBNull(int ordinal)
@@ -407,6 +260,7 @@ namespace Polars.NET.Core.Data
             {
                 _isClosed = true;
                 _batchEnumerator.Dispose();
+                _currentBatch?.Dispose();
                 _currentBatch = null;
             }
         }

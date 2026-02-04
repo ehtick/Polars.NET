@@ -3,6 +3,7 @@ namespace Polars.FSharp.Tests
 open System
 open Xunit
 open Polars.FSharp
+open Polars.NET.Core
 
 type ``Safety Tests`` () =
 
@@ -11,7 +12,7 @@ type ``Safety Tests`` () =
         use csv = new TempCsv "a,b\n1,2"
         let df = DataFrame.ReadCsv csv.Path
         
-        let ex = Assert.Throws<Exception>(fun () -> 
+        let ex = Assert.Throws<PolarsException>(fun () -> 
             df 
             |> pl.filter (pl.col "WrongColumn" .>  pl.lit 1) 
             |> ignore

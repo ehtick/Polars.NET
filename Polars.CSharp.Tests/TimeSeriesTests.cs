@@ -128,4 +128,36 @@ public class TimeSeriesTests
         
         Assert.Equal(10, res.GetValue<int>(0, "Count"));
     }
+    [Fact]
+    public void TestDtCombine()
+    {
+        // 1. 准备数据：一列 Date，一列 Time
+        var df = DataFrame.FromColumns(new
+        {
+            date = new[] { new DateOnly(2024, 1, 1), new DateOnly(2024, 12, 31) },
+            time = new[] { new TimeOnly(10, 30, 0), new TimeOnly(23, 59, 59, 123) } // 123ms
+        });
+
+        // 2. 执行 Combine 操作
+        // 注意：Polars 的底层物理 TimeUnit 仅支持 Nanoseconds, Microseconds, Milliseconds。
+        // 虽然 C# 枚举包含 Second/Day 等，但在这里不能使用秒及以上的单位。
+        // Note: Only sub-second units (Nanoseconds, Microseconds, Milliseconds) are supported here.
+        var res = df.Select(
+            Col("date").Dt.Combine(Col("time"), TimeUnit.Milliseconds).Alias("dt_ms"),
+            Col("date").Dt.Combine(Col("time"), TimeUnit.Microseconds).Alias("dt_us")
+        );
+
+        // 3. 验证结果
+        // 验证第一行: 2024-01-01 10:30:00
+        Assert.Equal(new DateTime(2024, 1, 1, 10, 30, 0), res["dt_ms"][0]);
+        Assert.Equal(new DateTime(2024, 1, 1, 10, 30, 0),res["dt_us"][0]);
+
+        // 验证第二行: 2024-12-31 23:59:59.123
+        Assert.Equal(new DateTime(2024, 12, 31, 23, 59, 59, 123),res["dt_ms"][1]); // ms 精度
+        Assert.Equal(new DateTime(2024, 12, 31, 23, 59, 59, 123), res["dt_us"][1]); // us 精度也能涵盖 ms
+
+        // 4. 验证数据类型元数据
+        Assert.Equal(DataTypeKind.Datetime, res.Schema["dt_ms"].Kind);
+        Assert.Equal(DataTypeKind.Datetime, res.Schema["dt_us"].Kind);
+    }
 }

@@ -1,111 +1,18 @@
 namespace Polars.FSharp
 
-open System
-open Apache.Arrow
-open Polars.NET.Core
-open Polars.NET.Core.Arrow
-
-// =========================================================================================
-// MODULE: Series Extensions (Data Conversion & Computation)
-// =========================================================================================
 [<AutoOpen>]
-[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
-module SeriesExtensions =
-    // -----------------------------------------------------------
-    // 1. Data Conversion (Series <-> Seq)
-    // -----------------------------------------------------------
-    type Series with
-        /// <summary>
-        /// High-performance creation from any sequence. 
-        /// Supports nested lists, structs, and F# Options.
-        /// </summary>
-        static member ofSeq<'T>(name: string, data: seq<'T>) : Series =
-            let arrowArray = ArrowConverter.Build data
-            
-            let handle = ArrowFfiBridge.ImportSeries(name, arrowArray)
-            
-            new Series(handle)
-
-        /// <summary>
-        /// Convert Series to a typed sequence of Options.
-        /// Uses high-performance Arrow reader (Zero-Copy).
-        /// Supports: Primitives, String, DateTime, DateOnly, TimeOnly, List, Struct.
-        /// </summary>
-        member this.AsSeq<'T>() : seq<'T option> =
-            seq {
-                use cArray = PolarsWrapper.SeriesToArrow this.Handle
-                
-                let accessor = ArrowReader.GetSeriesAccessor<'T> cArray
-                let len = cArray.Length
-
-                for i in 0 .. len - 1 do
-                    let valObj = accessor.Invoke i
-                    if isNull valObj then 
-                        None 
-                    else 
-                        Some(unbox<'T> valObj)
-            }
-        /// <summary>
-        /// Get values as a list (forces evaluation).
-        /// </summary>
-        member this.ToList<'T>() = this.AsSeq<'T>() |> Seq.toList
-
-    // -----------------------------------------------------------
-    // 3. UDF Support (Direct Map on Series)
-    // -----------------------------------------------------------
-    type Series with
-        /// <summary>
-        /// Apply a C# UDF (Arrow->Arrow) directly to this Series.
-        /// Returns a new Series.
-        /// </summary>
-        member this.Map(func: Func<IArrowArray, IArrowArray>) : Series =
-            let inputArrow = this.ToArrow()
-            
-            let outputArrow = func.Invoke inputArrow
-
-            let field = new Field(this.Name, outputArrow.Data.DataType, true)
-            let schema = new Schema([| field |], null)
-            use batch = new RecordBatch(schema, [| outputArrow |], outputArrow.Length)
-            
-            use df = DataFrame.FromArrow batch
-            
-            let res = df.Column 0
-            
-            res.Rename this.Name
-
-// =========================================================================================
-// MODULE: DataFrame Serialization (Record <-> DataFrame)
-// =========================================================================================
-[<AutoOpen>]
-module Serialization =
-
-    // ==========================================
-    // Extensions (Exposed Methods)
-    // ==========================================
+module Describe =
     
     type DataFrame with
-        
         /// <summary>
-        /// [ToRecords] Transform DataFrame to F# Records
+        /// Generate a summary statistics DataFrame (count, mean, std, min, 25%, 50%, 75%, max).
+        /// Similar to pandas/polars describe().
         /// </summary>
-        member this.ToRecords<'T>() : seq<'T> =
-            use batch = ArrowFfiBridge.ExportDataFrame this.Handle
-            
-            ArrowReader.ReadRecordBatch<'T> batch |> Seq.toList |> List.toSeq
-
-        /// <summary>
-        /// Create a DataFrame from a sequence of F# Records or Objects.
-        /// Uses high-performance Apache Arrow interop.
-        /// Supports: F# Option, Nested Lists, DateTime, etc.
-        /// </summary>
-        static member ofRecords<'T>(data: seq<'T>) : DataFrame =
-            let batch = ArrowFfiBridge.BuildRecordBatch data
-            
-            let handle = ArrowFfiBridge.ImportDataFrame batch
-            new DataFrame(handle)
         member this.Describe() : DataFrame =
+            use schema = this.Schema
+            
             let numericCols = 
-                this.Schema 
+                schema.ToMap()
                 |> Map.filter (fun _ dtype -> dtype.IsNumeric)
                 |> Map.keys
                 |> Seq.toList
@@ -135,16 +42,4 @@ module Serialization =
                     this |> pl.select exprs
                 )
 
-            pl.concat rowFrames Vertical
-
-        /// <summary>
-        /// Get a value from the DataFrame using a generic type argument.
-        /// Eliminates the need for unbox, but throws if type mismatches.
-        /// </summary>
-        member this.Cell<'T>(colName: string ,rowIndex: int) : 'T =
-            let s = this.Column colName
-            s.GetValue<'T>(int64 rowIndex)
-
-        member this.Cell<'T>(rowIndex: int,colName: string ) : 'T =
-            let s = this.Column colName
-            s.GetValue<'T>(int64 rowIndex)
+            pl.concat rowFrames

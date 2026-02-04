@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Polars.NET.Core.Native;
 
 namespace Polars.NET.Core;
 
@@ -13,7 +14,7 @@ public abstract class PolarsHandle : SafeHandle
     public IntPtr TransferOwnership()
     {
         IntPtr ptr = handle;
-        SetHandleAsInvalid();
+        SetHandle(IntPtr.Zero);
         return ptr;
     }
 }

@@ -6,6 +6,11 @@ type TimeUnit =
     | Nanoseconds
     | Microseconds
     | Milliseconds
+    member internal this.ToNative() =
+        match this with
+        | Nanoseconds -> PlTimeUnit.Nanoseconds
+        | Microseconds -> PlTimeUnit.Microseconds
+        | Milliseconds -> PlTimeUnit.Milliseconds
 
 type Field = { Name: string; DataType: DataType }
 
@@ -24,7 +29,8 @@ and DataType =
     | Categorical
     | Decimal of precision: int option * scale: int option
     | Unknown | SameAsInput | Null | List of DataType | Array of DataType * width: uint64
-    | Struct of Field list
+    | Struct of Field list 
+    | Int128 | UInt128
     member this.Code : int =
         match this with
         | Unknown | SameAsInput -> 0
@@ -51,6 +57,8 @@ and DataType =
         | Categorical -> 21
         | Decimal _ -> 22
         | Array _ -> 23
+        | Int128 -> 24
+        | UInt128 -> 25
     static member FromHandle (handle: DataTypeHandle) : DataType =
         let kind = PolarsWrapper.GetDataTypeKind handle
 
@@ -68,6 +76,8 @@ and DataType =
         | 11 -> Float64
         | 12 -> String 
         | 13 -> Date
+        | 24 -> Int128
+        | 25 -> UInt128
         
         // --- Complex Type ---
         
@@ -142,7 +152,7 @@ and DataType =
         match this with
         | UInt8 | UInt16 | UInt32 | UInt64
         | Int8 | Int16 | Int32 | Int64
-        | Float32 | Float64 
+        | Float32 | Float64 | Int128
         | Decimal _ -> true
         | _ -> false
 
@@ -176,6 +186,8 @@ and DataType =
         | Binary -> PolarsWrapper.NewPrimitiveType 17
         | Date -> PolarsWrapper.NewPrimitiveType 13
         | Time -> PolarsWrapper.NewPrimitiveType 15
+        | Int128 -> PolarsWrapper.NewPrimitiveType 24
+        | UInt128 -> PolarsWrapper.NewPrimitiveType 25
         
         // --- Complex Type ---
 
@@ -183,12 +195,12 @@ and DataType =
         | Datetime(unit, tz) ->
             let code = toUnitCode unit
             let tzStr = Option.toObj tz // None -> null
-            PolarsWrapper.NewDateTimeType(code, tzStr)
+            PolarsWrapper.NewDateTimeType(byte code, tzStr)
 
         // Duration
         | Duration unit ->
             let code = toUnitCode unit
-            PolarsWrapper.NewDurationType code
+            PolarsWrapper.NewDurationType (byte code)
 
         // Categorical
         | Categorical -> 
@@ -264,14 +276,14 @@ type PivotAgg =
 /// </summary>
 type ConcatType =
     | Vertical
-    | Horizonal
+    | Horizontal
     | Diagonal
     
     // 内部转换 helper
     member internal this.ToNative() =
         match this with
         | Vertical -> PlConcatType.Vertical
-        | Horizonal -> PlConcatType.Horizontal
+        | Horizontal -> PlConcatType.Horizontal
         | Diagonal -> PlConcatType.Diagonal
 
 type Label =
@@ -327,3 +339,169 @@ type Roll =
         | Raise -> PlRoll.Raise
         | Forward -> PlRoll.Forward
         | Backward -> PlRoll.Backward
+
+type QuantileMethod =
+    | Nearest 
+    | Higher 
+    | Lower
+    | Midpoint
+    | Linear
+    member internal this.ToNative() =
+        match this with
+        | Nearest -> PlQuantileMethod.Nearest
+        | Higher -> PlQuantileMethod.Higher
+        | Lower -> PlQuantileMethod.Lower
+        | Midpoint -> PlQuantileMethod.Midpoint
+        | Linear -> PlQuantileMethod.Linear
+
+type RankMethod =
+    | Average 
+    | Min
+    | Max
+    | Dense
+    | Ordinal
+    | Random
+    member internal this.ToNative() =
+        match this with
+        | Average -> PlRankMethod.Average
+        | Min -> PlRankMethod.Min
+        | Max -> PlRankMethod.Max
+        | Dense -> PlRankMethod.Dense
+        | Ordinal -> PlRankMethod.Ordinal
+        | Random -> PlRankMethod.Random
+
+type RollingRankMethod =
+    | Average 
+    | Min
+    | Max
+    | Dense
+    | Random
+    member internal this.ToNative() =
+        match this with
+        | Average -> PlRollingRankMethod.Average
+        | Min -> PlRollingRankMethod.Min
+        | Max -> PlRollingRankMethod.Max
+        | Dense -> PlRollingRankMethod.Dense
+        | Random -> PlRollingRankMethod.Random
+
+type JoinValidation =
+    | ManyToMany
+    | ManyToOne
+    | OneToMany
+    | OneToOne
+    member internal this.ToNative() =
+        match this with
+        | ManyToMany -> PlJoinValidation.ManyToMany
+        | ManyToOne -> PlJoinValidation.ManyToOne
+        | OneToMany -> PlJoinValidation.OneToMany
+        | OneToOne -> PlJoinValidation.OneToOne
+
+type JoinCoalesce =
+    | JoinSpecific
+    | CoalesceColumns
+    | KeepColumns
+    member internal this.ToNative() =
+        match this with
+        | JoinSpecific -> PlJoinCoalesce.JoinSpecific
+        | CoalesceColumns -> PlJoinCoalesce.CoalesceColumns
+        | KeepColumns -> PlJoinCoalesce.KeepColumns
+
+type JoinMaintainOrder =
+    | NotMaintainOrder
+    | Left
+    | Right
+    | LeftRight
+    | RightLeft
+    member internal this.ToNative() =
+        match this with
+        | NotMaintainOrder -> PlJoinMaintainOrder.None
+        | Left -> PlJoinMaintainOrder.Left
+        | Right -> PlJoinMaintainOrder.Right
+        | LeftRight -> PlJoinMaintainOrder.LeftRight
+        | RightLeft -> PlJoinMaintainOrder.RightLeft
+
+type AsofStrategy =
+    | Backward
+    | Forward
+    | Nearest
+    member internal this.ToNative() =
+        match this with
+        | Backward -> PlAsofStrategy.Backward
+        | Forward -> PlAsofStrategy.Forward
+        | Nearest -> PlAsofStrategy.Nearest
+
+type ParallelStrategy =
+    | Auto
+    | Columns
+    | RowGroups
+    | NoParallel
+    member internal this.ToNative() =
+        match this with
+        | Auto -> PlParallelStrategy.Auto
+        | Columns -> PlParallelStrategy.Columns
+        | RowGroups -> PlParallelStrategy.RowGroups
+        | NoParallel -> PlParallelStrategy.None
+
+type CsvEncoding =
+    | UTF8
+    | LossyUTF8
+    member internal this.ToNative() =
+        match this with
+        | UTF8 -> PlCsvEncoding.UTF8
+        | LossyUTF8 -> PlCsvEncoding.LossyUTF8
+
+type JsonFormat =
+    | Json
+    | JsonLines
+    member internal this.ToNative() =
+        match this with
+        | Json -> PlJsonFormat.Json
+        | JsonLines -> PlJsonFormat.JsonLines
+
+type IpcCompression =
+    | NoCompression
+    | LZ4
+    | ZSTD
+    member internal this.ToNative() =
+        match this with
+        | NoCompression -> PlIpcCompression.None
+        | LZ4 -> PlIpcCompression.LZ4
+        | ZSTD -> PlIpcCompression.ZSTD
+
+type SyncOnClose =
+    | NoSync
+    | Data
+    | All
+    member internal this.ToNative() =
+        match this with
+        | NoSync -> PlSyncOnClose.None
+        | Data -> PlSyncOnClose.Data
+        | All -> PlSyncOnClose.All
+
+type ParquetCompression =
+    | Uncompressed
+    | Snappy
+    | Gzip
+    | Brotli
+    | Zstd
+    | Lz4Raw
+    member internal this.ToNative() =
+        match this with
+        | Uncompressed -> PlParquetCompression.Uncompressed
+        | Snappy -> PlParquetCompression.Snappy
+        | Gzip -> PlParquetCompression.Gzip
+        | Brotli -> PlParquetCompression.Brotli
+        | Zstd -> PlParquetCompression.Zstd
+        | Lz4Raw -> PlParquetCompression.Lz4Raw
+
+type QuoteStyle =
+    | Always
+    | Necessary
+    | Never
+    | NonNumeric
+    member internal this.ToNative() =
+        match this with
+        | Always -> PlQuoteStyle.Always
+        | Necessary -> PlQuoteStyle.Necessary
+        | Never -> PlQuoteStyle.Never
+        | NonNumeric -> PlQuoteStyle.NonNumeric

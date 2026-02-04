@@ -7,44 +7,132 @@ open System.Threading.Tasks
 
 [<EditorBrowsable(EditorBrowsableState.Never)>]
 type LitMechanism = LitMechanism with
+    static member ($) (LitMechanism, v: int8) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: uint8) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: int16) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: uint16) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: int) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: uint) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: int64) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: uint64) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: Int128) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: string) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: float32) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: double) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: DateTime) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: DateOnly) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: TimeOnly) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: DateTimeOffset) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: TimeSpan) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: decimal) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: bool) = new Expr(PolarsWrapper.Lit v)
-    static member ($) (LitMechanism, v: float32) = new Expr(PolarsWrapper.Lit v)
-    static member ($) (LitMechanism, v: int64) = new Expr(PolarsWrapper.Lit v)
+    // --- List ---
+    static member ($) (LitMechanism, v: int list)      = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: int64 list)    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: float list)    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle)) // double
+    static member ($) (LitMechanism, v: float32 list)  = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: string list)   = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: bool list)     = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: DateTime list) = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: DateOnly list) = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+
+    // --- Array (High Performance) ---
+    static member ($) (LitMechanism, v: int[])      = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: int64[])    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: float[])    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: float32[])  = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: string[])   = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: bool[])     = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: DateTime[]) = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+
+    // --- Nullable List (Option) ---
+    static member ($) (LitMechanism, v: int option list)    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: float option list)  = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: string option list) = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+
+    
+/// <summary>
+/// The main entry point for Polars.NET F# API.
+/// <para>Contains factories for Expressions (pl.col, pl.lit), shortcuts for DataFrame operations, and types.</para>
+/// </summary>
 module pl =
 
     // --- Factories ---
-    /// <summary> Reference a column by name. </summary>
+    /// <summary>   
+    /// Create an expression representing a column with the given name.
+    /// </summary>
+    /// <param name="name">The name of the column.</param>
     let col (name: string) = Expr.Col name
-    /// <summary> Select multiple columns (returns a Wildcard Expression). </summary>
+    /// <summary>
+    /// Create an expression representing multiple columns (Wildcard).
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// pl.cols ["A"; "B"]
+    /// </code>
+    /// </example>
     let cols (names: string list) =
         let arr = List.toArray names
         Expr.Cols names
-    /// <summary> Select all columns (returns a Selector). </summary>
+    /// <summary>
+    /// Select all columns.
+    /// Equivalent to `pl.col("*")`.
+    /// </summary>
     let all () = new Selector(PolarsWrapper.SelectorAll())
 
-    /// <summary> Create a literal expression from a value. </summary>
+    /// <summary>
+    /// Create a literal expression from a value.
+    /// <para>Supported types: int, float, bool, string, DateTime,decimal,list,option list,array.</para>
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// df.Filter(pl.col("Age") .> pl.lit(18))
+    /// </code>
+    /// </example>
     let inline lit (value: ^T) : Expr = 
         ((^T or LitMechanism) : (static member ($) : LitMechanism * ^T -> Expr) (LitMechanism, value))
+    /// <summary>
+    /// Create a literal expression from a Series.
+    /// </summary>
+    let litSeries (series: Series) = 
+        let h = PolarsWrapper.CloneSeries series.Handle 
+        new Expr(PolarsWrapper.Lit h)
     // --- Expr Helpers ---
     /// <summary> Cast an expression to a different data type. </summary>
     let cast (dtype: DataType) (e: Expr) = e.Cast dtype
-
+    /// <summary> Boolean data type. </summary>
     let boolean = DataType.Boolean
+    /// <summary> 32-bit Integer data type. </summary>
     let int32 = DataType.Int32
+    /// <summary> 64-bit Integer data type. </summary>
     let int64 = DataType.Int64
+    /// <summary> 64-bit Floating point data type. </summary>
     let float64 = DataType.Float64
+    /// <summary> String data type (UTF-8). </summary>
     let string = DataType.String
+    /// <summary> Date data type (no time). </summary>
     let date = DataType.Date
+    /// <summary> Datetime data type. </summary>
     let datetime = DataType.Datetime
+    /// <summary> Duration (TimeSpan) data type. </summary>
     let timeSpan = DataType.Duration
+    /// <summary> Time data type (no date). </summary>
     let time = DataType.Time
+    // [Temporal]
+    
+    /// <summary>
+    /// Combine a Date expression and a Time expression into a Datetime expression.
+    /// Usage: pl.col("date") |> pl.combineDateAndTime (pl.col("time"))
+    /// </summary>
+    let combineDateAndTime (time: Expr) (date: Expr) = date.Dt.Combine time
 
+    /// <summary>
+    /// Combine a Date expression and a Time expression with a specific TimeUnit.
+    /// Usage: pl.col("date") |> pl.combineDateAndTimeUnit (pl.col("time")) TimeUnit.Milliseconds
+    /// </summary>
+    let combineDateAndTimeUnit (time: Expr) (tu: TimeUnit) (date: Expr) = date.Dt.Combine(time, tu)
     /// <summary> Count the number of elements in an expression. </summary>
-    let count () = new Expr(PolarsWrapper.Len())
+    let count() = new Expr(PolarsWrapper.Len())
     /// Alias for count
     let len = count
     /// <summary> Alias an expression with a new name. </summary>
@@ -62,22 +150,22 @@ module pl =
         new Expr(PolarsWrapper.AsStruct handles)
     let struct_ = asStruct
     // --- Eager Ops ---
-    /// <summary> Add or replace columns. </summary>
+    /// <summary> Add or replace a single column in the DataFrame. </summary>
     let withColumn (expr: Expr) (df: DataFrame) : DataFrame =
         df.WithColumn expr
-    /// <summary> Add or replace multiple columns. </summary>
+    /// <summary> Add or replace multiple columns in the DataFrame. </summary>
     let withColumns (exprs: Expr list) (df: DataFrame) : DataFrame =
         df.WithColumns exprs
 
     /// <summary> Filter rows based on a boolean expression. </summary>
     let filter (expr: Expr) (df: DataFrame) : DataFrame =
         df.Filter expr
-    /// <summary> Select columns from DataFrame. </summary>
+    /// <summary> Select columns from the DataFrame. </summary>
     let select (exprs: Expr list) (df: DataFrame) : DataFrame =
         df.Select exprs
     /// <summary> Sort (Order By) the DataFrame. </summary>
     let sort (expr: Expr,desc: bool) (df: DataFrame) : DataFrame =
-        df.Sort (expr,desc )
+        df.Sort (expr,desc)
     let orderBy (expr: Expr) (desc: bool) (df: DataFrame) = sort(expr,desc) df
     /// <summary> Group by keys and apply aggregations. </summary>
     let groupBy (keys: Expr list) (aggs: Expr list) (df: DataFrame) : DataFrame =
@@ -85,9 +173,28 @@ module pl =
     /// <summary> Perform a join between two DataFrames. </summary>
     let join (other: DataFrame) (leftOn: Expr list) (rightOn: Expr list) (how: JoinType) (left: DataFrame) : DataFrame =
         left.Join (other, leftOn, rightOn, how)
-    /// <summary> Concatenate multiple DataFrames. </summary>
-    let concat (dfs: DataFrame list) (how:ConcatType) : DataFrame =
-        DataFrame.Concat dfs how
+    /// <summary>
+    /// Vertically concat DataFrames (Standard concat).
+    /// </summary>
+    let concat (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.ConcatVertical dfs
+
+    /// <summary>
+    /// Horizontally concat DataFrames.
+    /// </summary>
+    let concatHorizontal (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.ConcatHorizontal(dfs, checkDuplicates=true)
+
+    /// <summary>
+    /// Horizontally concat DataFrames (Allow duplicates).
+    /// </summary>
+    let concatHorizontalNoCheck (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.ConcatHorizontal(dfs, checkDuplicates=false)
+    /// <summary>
+    /// Diagonally concat DataFrames
+    /// </summary>
+    let concatDiagonal (dfs: seq<DataFrame>) : DataFrame =
+        DataFrame.ConcatDiagonal dfs
     /// <summary>
     /// Combine multiple expressions horizontally into a List element.
     /// Supports Selectors (e.g. pl.concatList([pl.cs.numeric()])).
@@ -107,10 +214,12 @@ module pl =
     let tail (n: int) (df: DataFrame) : DataFrame =
         df.Tail n
     /// <summary> Explode list-like columns into multiple rows. </summary>
-    let explode (exprs: Expr list) (df: DataFrame) : DataFrame =
-        df.Explode exprs
+    let explode (columns: seq<string>) (df: DataFrame) : DataFrame =
+        df.Explode columns
+    /// <summary> Decompose a struct column into multiple columns. </summary>
     let unnestColumn(column: string) (df:DataFrame) : DataFrame =
         df.UnnestColumn column
+    /// <summary> Decompose multiple struct columns. </summary>
     let unnestColumns(columns: string list) (df:DataFrame) : DataFrame =
         df.UnnestColumns columns
 
@@ -118,21 +227,48 @@ module pl =
 
     /// <summary> Pivot the DataFrame from long to wide format. </summary>
     let pivot (index: string list) (columns: string list) (values: string list) (aggFn: PivotAgg) (df: DataFrame) : DataFrame =
-        df.Pivot index columns values aggFn
+        df.Pivot(index,columns,values,aggFn)
 
-    /// <summary> Unpivot (Melt) the DataFrame from wide to long format. </summary>
-    let unpivot (index: string list) (on: string list) (variableName: string option) (valueName: string option) (df: DataFrame) : DataFrame =
-        df.Unpivot index on variableName valueName
+    /// <summary>
+    /// Unpivot (Melt) the DataFrame.
+    /// Supports pipelining: df |> Frame.unpivot ...
+    /// </summary>
+    let unpivot (index: seq<string>) (on: seq<string>) (variableName: string option) (valueName: string option) (df: DataFrame) =
+        df.Unpivot(index, on, variableName, valueName)
+    /// <summary>
+    /// Unpivot (Melt) the DataFrame by selector.
+    /// Supports pipelining: df |> Frame.unpivot ...
+    /// </summary>
+    let unpivotSel (index: Selector) (on: Selector) (variableName: string option) (valueName: string option) (df: DataFrame) =
+        df.Unpivot(index, on, variableName, valueName)
     /// Alias for unpivot
     let melt = unpivot    
+    /// <summary>
+    /// Horizontally stack columns to the DataFrame.
+    /// </summary>
+    let hstack (columns: Series list) (df: DataFrame) : DataFrame =
+        df.HStack columns
+
+    /// <summary>
+    /// Vertically stack another DataFrame to this one.
+    /// </summary>
+    let vstack (other: DataFrame) (df: DataFrame) : DataFrame =
+        df.VStack other
     /// Aggregation Helpers
+    // <summary> Sum aggregation. </summary>
     let sum (e: Expr) = e.Sum()
+    // <summary> Mean aggregation. </summary>
     let mean (e: Expr) = e.Mean()
+    // <summary> Max aggregation. </summary>
     let max (e: Expr) = e.Max()
+    // <summary> Min aggregation. </summary>
     let min (e: Expr) = e.Min()
     // Fill Helpers
+    /// <summary> Fill null values with a specific value. </summary>
     let fillNull (fillValue: Expr) (e: Expr) = e.FillNull fillValue
+    /// <summary> Check for null values. </summary>
     let isNull (e: Expr) = e.IsNull()
+    /// <summary> Check for non-null values. </summary>
     let isNotNull (e: Expr) = e.IsNotNull()
     // unique and duplicated helpers
     /// <summary> Get unique values. </summary>
@@ -144,17 +280,27 @@ module pl =
     /// <summary> Check if values are duplicated. </summary>
     let inline isDuplicated (e: Expr) = e.IsDuplicated()
     // Math Helpers
+    /// <summary> Absolute value. </summary>
     let abs (e: Expr) = e.Abs()
+    /// <summary> Power. </summary>
     let pow (exponent: Expr) (baseExpr: Expr) = baseExpr.Pow exponent
+    /// <summary> Square root. </summary>
     let sqrt (e: Expr) = e.Sqrt()
+    /// <summary> Exponential (e^x). </summary>
     let exp (e: Expr) = e.Exp()
+    /// <summary> True division. </summary>
     let inline truediv (other: Expr) (e: Expr) = e.Truediv other
+    /// <summary> Floor division (integer result). </summary>
     let inline floorDiv (other: Expr) (e: Expr) = e.FloorDiv other
+    /// <summary> Modulo (remainder). </summary>
     let inline mod_ (other: Expr) (e: Expr) = e.Mod other
-
+    /// <summary> Cube root. </summary>
     let inline cbrt (e: Expr) = e.Cbrt()
+    /// <summary> Sign of the value (-1, 0, 1). </summary>
     let inline sign (e: Expr) = e.Sign()
+    /// <summary> Ceiling (round up). </summary>
     let inline ceil (e: Expr) = e.Ceil()
+    /// <summary> Floor (round down). </summary>
     let inline floor (e: Expr) = e.Floor()
 
     // Trig
@@ -207,22 +353,46 @@ module pl =
     /// <summary> Group by keys and apply aggregations. </summary>
     let groupByLazy (keys: Expr list) (aggs: Expr list) (lf: LazyFrame) : LazyFrame =
         lf.GroupBy(keys, aggs)
-    /// <summary> Unpivot (Melt) the LazyFrame from wide to long format. </summary>
-    let unpivotLazy (index: string list) (on: string list) (variableName: string option) (valueName: string option) (lf: LazyFrame) : LazyFrame =
-        lf.Unpivot index on variableName valueName
+    /// <summary>
+    /// Unpivot (Melt) the LazyFrame.
+    /// Usage: lf |> LazyFrame.unpivot ["ID"] ["Val"] None None
+    /// </summary>
+    let unpivotLazy (index: seq<string>) (on: seq<string>) (variableName: string option) (valueName: string option) (lf: LazyFrame) : LazyFrame =
+        lf.Unpivot(index, on, variableName, valueName)
+    /// <summary>
+    /// Unpivot (Melt) the LazyFrame by selector.
+    /// Usage: lf |> LazyFrame.unpivot ["ID"] ["Val"] None None
+    /// </summary>
+    let unpivotLazySel (index: Selector) (on: Selector) (variableName: string option) (valueName: string option) (lf: LazyFrame) : LazyFrame =
+        lf.Unpivot(index, on, variableName, valueName)
     /// Alias for unpivotLazy
     let meltLazy = unpivotLazy
     /// <summary> Perform a join between two LazyFrames. </summary>
     let joinLazy (other: LazyFrame) (leftOn: Expr list) (rightOn: Expr list) (how: JoinType) (lf: LazyFrame) : LazyFrame =
         lf.Join(other,leftOn, rightOn, how)
     /// <summary> Perform an As-Of Join (time-series join). </summary>
+    /// <summary>
+    /// Perform an As-Of Join (Lite version).
+    /// For full options (int/float tolerance, suffix, validation, etc.), use the member method: df.JoinAsOf(...)
+    /// </summary>
     let joinAsOf (other: LazyFrame) 
-                 (leftOn: Expr) (rightOn: Expr) 
-                 (byLeft: Expr list) (byRight: Expr list) 
-                 (strategy: string option) 
-                 (tolerance: string option) 
+                 (leftOn: Expr) 
+                 (rightOn: Expr) 
+                 (byLeft: Expr list) 
+                 (byRight: Expr list) 
+                 (strategy: AsofStrategy option) 
+                 (tolerance: string option)     
                  (lf: LazyFrame) : LazyFrame =
-        lf.JoinAsOf(other,leftOn,rightOn,byLeft, byRight, strategy, tolerance)
+        
+        lf.JoinAsOfInternal(
+            other, 
+            leftOn, 
+            rightOn, 
+            byLeft = byLeft,
+            byRight = byRight,
+            ?strategy = strategy,
+            ?tolerance = tolerance
+        )
     /// <summary> Concatenate multiple LazyFrames. </summary>
     let concatLazy (lfs: LazyFrame list) (how: ConcatType) : LazyFrame =
         LazyFrame.Concat lfs how
