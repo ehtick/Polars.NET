@@ -10,6 +10,8 @@
 
 **Polars.NET** is not just a binding; it is a production-grade data engineering toolkit for the .NET ecosystem. It brings the lightning-fast performance of the Polars Rust engine to C# and F#, while adding unique, enterprise-ready features missing from other solutions—like seamless **Database Streaming**, **Zero-Copy Interop**, and **Safe Native UDFs**.
 
+Windows(x64), Linux(x64,ARM64,both glibc and musl), macOS(ARM64) supported.
+
 ## Why Polars.NET exists
 
 The .NET ecosystem deserves a first-class, production-grade DataFrame engine —
