@@ -3,6 +3,7 @@
 [![NuGet](https://img.shields.io/nuget/v/Polars.FSharp.svg)](https://www.nuget.org/packages/Polars.FSharp)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/Polars.FSharp.svg)](https://www.nuget.org/packages/Polars.FSharp)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-online-brightgreen.svg?style=flat-square&logo=read-the-docs&logoColor=white)](https://errorlsc.github.io/Polars.NET/index.html)
 
 # Polars.NET
 
@@ -256,9 +257,9 @@ We are building the future of data engineering in .NET.
 
 - AI & Tensor Integration: Zero-copy export to .NET 9 Tensors and Microsoft.ML, enabling seamless "Data Prep -> Training/Inference" pipelines.
 
-- LINQ Provider (Long-term): IQueryable implementation to translate standard LINQ queries into high-performance Polars Expressions.
+- Cloud Support : Direct IO with AWS, Azure and Datalake
 
-- Documentation: Comprehensive API Reference.
+- Documentation: [📖 **Read the Comprehensive API Reference**](https://errorlsc.github.io/Polars.NET/index.html)
 
 ## 🤝 Contributing
 

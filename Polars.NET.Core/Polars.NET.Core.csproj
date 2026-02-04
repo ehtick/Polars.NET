@@ -47,9 +47,19 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(Configuration)' == 'Release' And '$(BuildRustNative)' != 'true'">
+    
     <None Include="..\libs\win-x64\native_shim.dll" Pack="true" PackagePath="runtimes\win-x64\native\native_shim.dll" Visible="false" />
+    
     <None Include="..\libs\linux-x64\libnative_shim.so" Pack="true" PackagePath="runtimes\linux-x64\native\libnative_shim.so" Visible="false" />
+    
+    <None Include="..\libs\linux-musl-x64\libnative_shim.so" Pack="true" PackagePath="runtimes\linux-musl-x64\native\libnative_shim.so" Visible="false" />
+    
+    <None Include="..\libs\linux-arm64\libnative_shim.so" Pack="true" PackagePath="runtimes\linux-arm64\native\libnative_shim.so" Visible="false" />
+    
+    <None Include="..\libs\linux-musl-arm64\libnative_shim.so" Pack="true" PackagePath="runtimes\linux-musl-arm64\native\libnative_shim.so" Visible="false" />
+    
     <None Include="..\libs\osx-arm64\libnative_shim.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native\libnative_shim.dylib" Visible="false" />
+
   </ItemGroup>
 
   <ItemGroup>
