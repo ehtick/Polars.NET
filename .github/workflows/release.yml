@@ -92,12 +92,12 @@ jobs:
           workspaces: ./native_shim
       
       - name: Fix Perl path (Windows)
-              if: runner.os == 'Windows'
-              shell: powershell
-              run: |
-                echo "C:\Strawberry\c\bin" >> $env:GITHUB_PATH
-                echo "C:\Strawberry\perl\site\bin" >> $env:GITHUB_PATH
-                echo "C:\Strawberry\perl\bin" >> $env:GITHUB_PATH
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          echo "C:\Strawberry\c\bin" >> $env:GITHUB_PATH
+          echo "C:\Strawberry\perl\site\bin" >> $env:GITHUB_PATH
+          echo "C:\Strawberry\perl\bin" >> $env:GITHUB_PATH
       # Compile Rust (Release mode)
       # 这里的 native_shim 是你的 Rust 目录名，如果改了名字记得调整
       - name: Build Native Shim
