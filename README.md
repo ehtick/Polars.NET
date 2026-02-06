@@ -238,6 +238,6 @@ Contributions are welcome! Whether it's adding new expression mappings, improvin
 
 3. Submit a Pull Request.
 
-## 📄 License
+## License
 
 MIT License. See LICENSE for details.
