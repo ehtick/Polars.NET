@@ -16,7 +16,7 @@ Supported Platforms: Windows (x64), Linux (x64/ARM64, glibc/musl), macOS (ARM64)
 This is the game I'd like to play: binding the lightning-fast Polars engine to the .NET ecosystem.
 And it brings a lot of fun.
 ![.NET Benchmark](assets/benchmark5.png)
-![Python Benchmark](assets/benchmark4.png)
+![Python Benchmark](assets/benchmark2.png)
 
 ## Installation
 
