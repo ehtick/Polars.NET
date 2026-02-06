@@ -28,7 +28,7 @@ dotnet add package Polars.FSharp
 ```
 
 - Requirements: .NET 8+.
-- Hardware: CPU with AVX2 support (x86-64-v3). Roughly Intel Haswell (2013+) or AMD Excavator (2015+).
+- Hardware: CPU with AVX2 support (x86-64-v3). Roughly Intel Haswell (2013+) or AMD Excavator (2015+). If you have AVX-512 supported CPU, please try to compile Rust core on your machine use RUSTFLAGS='-C target-cpu=native'
 
 ## Quick Start
 
@@ -118,10 +118,10 @@ Polars.NET works seamlessly with .NET Interactive. Please refer to the example f
 
 | Method                  | Mean      | Managed Mem |
 |------------------------ |----------:| -----------:|
-| Polars_Streaming        |   1.688 s |     2.41 KB |        
-| DuckDB_SQL              |   2.298 s |     5.86 KB |        
+| Polars_Streaming        |   1.688 s |     2.41 KB |
+| DuckDB_SQL              |   2.298 s |     5.86 KB |
 | Microsoft_Data_Analysis | 171.973 s |      498 GB |
-| Native_PLINQ            |  38.723 s |    15.32 GB | 
+| Native_PLINQ            |  38.723 s |    15.32 GB |
 
 #### 2. Cosine Similarity (100M Elements)
 
@@ -141,22 +141,22 @@ Polars.NET works seamlessly with .NET Interactive. Please refer to the example f
 
 | Method             | Mean     | Managed Mem |
 |------------------- |---------:|------------:|
-| Polars_Rolling_MA  | 16.739 s |     2.73 KB |   
-| DuckDB_Rolling_MA  |  5.677 s |     1.16 KB |       
-| Linq_Rolling_100M  | 28.110 s |     1.29 GB |      
-| PLinq_Rolling_100M |  3.349 s |     7.87 GB |      
+| Polars_Rolling_MA  | 16.739 s |     2.73 KB |
+| DuckDB_Rolling_MA  |  5.677 s |     1.16 KB |
+| Linq_Rolling_100M  | 28.110 s |     1.29 GB |
+| PLinq_Rolling_100M |  3.349 s |     7.87 GB |
 
 #### 4. NDJSON Parsing (5M Rows)
 
 - Winner: DuckDB DuckDB's projection pushdown on JSON is superior.
     Polars.NET is still 3x faster than System.Text.Json and 10x faster than Newtonsoft.
 
-| Method                 | Mean        | Managed Mem |     
+| Method                 | Mean        | Managed Mem |
 |----------------------- |------------:|------------:|
 | DuckDB_ScanNdjson      |    764.1 ms |     2.73 KB |
 | Polars_ScanNdjson      |  2,279.5 ms |      3.6 KB |
 | SystemTextJson_Process |  7,267.9 ms |     5.51 GB |
-| Newtonsoft_Dynamic     | 25,970.3 ms |    42.78 GB | 
+| Newtonsoft_Dynamic     | 25,970.3 ms |    42.78 GB |
 
 #### 5. Excel Parsing (1M Rows, 20 Cols)
 
@@ -187,8 +187,8 @@ Polars.NET works seamlessly with .NET Interactive. Please refer to the example f
 
 | Method                      | Mean        | Managed Mem |
 |---------------------------- |------------:|------------:|
-| Deedle_Decimal_Rolling      | 1,824.86 ms |     4.24 GB |       
-| Polars_Rolling              |    41.89 ms |     1352  B |       
+| Deedle_Decimal_Rolling      | 1,824.86 ms |     4.24 GB |
+| Polars_Rolling              |    41.89 ms |     1352  B |
 
 #### 8. Polars.NET vs Python brothers(pandas and pypolars)
 
@@ -209,16 +209,16 @@ Polars.NET works seamlessly with .NET Interactive. Please refer to the example f
 | Method             | Mean      | Managed Mem |
 |--------------------|----------:|------------:|
 | Polars.NET_GroupBy |  16.75 ms |       741 B |
-| Pandas_GroupBy     |  17.70 ms |             |   
-| PyPolars_GroupBy   | 145.73 ms |             |     
+| Pandas_GroupBy     |  17.70 ms |             |
+| PyPolars_GroupBy   | 145.73 ms |             |
 
 ## Architecture
 
 3-Layer Architecture ensures stability even when the underlying Rust engine changes.
 
 1. Hand-written Rust C ABI layer bridging .NET and Polars. (native_shim)
-2. .NET Core layer for dirty works like `unsafe` ops, wrappers, `LibraryImports`. (Polars.NET.Core)
-3. C# and F# API layer here. No `unsafe` blocks. (Polars.CSharp & Polars.FSharp)
+2. .NET Core layer for dirty works like unsafe ops, wrappers, LibraryImports. (Polars.NET.Core)
+3. High level C# and F# API layer here. No unsafe blocks. (Polars.CSharp & Polars.FSharp)
 
 ## Roadmap & Documentation
 

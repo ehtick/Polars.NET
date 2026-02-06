@@ -234,7 +234,7 @@ jobs:
           VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' Polars.NET.Core/Polars.NET.Core.csproj | head -n 1 | tr -d '\r')
           
           if [ -z "$VERSION" ]; then
-            echo "❌ Failed to extract version from csproj!"
+            echo "Failed to extract version from csproj!"
             exit 1
           fi
 
@@ -255,16 +255,16 @@ jobs:
 
           class Program {
               static void Main() {
-                  Console.WriteLine("🚀 Starting Polars.NET Smoke Test...");
+                  Console.WriteLine("Starting Polars.NET Smoke Test...");
                   try {
                       var df = DataFrame.FromColumns(new {
                           Id = new[] { 1, 2, 3 },
                           Val = new[] { 10.0, 20.0, 30.0 }
                       });
                       Console.WriteLine($"[Success] DataFrame Created: {df.Height} rows");
-                      Console.WriteLine("✅ Smoke Test Passed!");
+                      Console.WriteLine(" Smoke Test Passed!");
                   } catch (Exception ex) {
-                      Console.Error.WriteLine("❌ Error: " + ex.ToString());
+                      Console.Error.WriteLine("Error: " + ex.ToString());
                       Environment.Exit(1);
                   }
               }

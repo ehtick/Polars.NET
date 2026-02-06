@@ -16,10 +16,10 @@ Understanding these two modes is crucial for performance:
 In Polars.NET, you don't manipulate data directly in loops. You construct `Expr` objects that tell the engine *what* to do.
 
 ```csharp
-// ❌ Avoid: Traditional C# loops (Slow, data copying)
+// Avoid: Traditional C# loops (Slow, data copying)
 foreach(var row in df.Rows()) { ... }
 
-// ✅ Do: Use Expressions (Fast, SIMD, Parallel)
+// Do: Use Expressions (Fast, SIMD, Parallel)
 df.Select(
     Col("A").Sum(),
     Col("B").Filter(Col("A") > 10).Mean()
@@ -41,7 +41,7 @@ If your dataset is larger than your available RAM, standard execution might fail
 ```
 // This enables the streaming engine to process data in chunks
 // keeping memory usage low and stable.
-var result = lazyFrame.CollectStreaming();
+var result = lazyFrame.Collect(useStreaming:true);
 ```
 
 #### 3. Native Expressions > UDFs

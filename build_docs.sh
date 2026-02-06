@@ -23,4 +23,3 @@ docfx metadata docs/docfx.json
 docfx build docs/docfx.json
 rm -rf docs/api/fsharp_generated
 echo "=== Done! ==="
-docfx serve docs/_site
