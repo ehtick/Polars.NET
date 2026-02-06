@@ -989,7 +989,7 @@ public class IoTests
         // [测试 A] 只查数值列
         var q = lf.Select(Col("Id"), Col("Value")).Filter(Col("Id") > 500);
 
-        using var df = q.CollectStreaming();
+        using var df = q.Collect();
         
         Assert.Equal(499, df.Height);
     }

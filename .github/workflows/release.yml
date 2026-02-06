@@ -1,16 +1,15 @@
 name: Build and Publish NuGet
 
-# 触发机制：
 on:
   push:
     tags:
       - 'v*'
     paths-ignore:
-      - '**.md'         # 忽略所有 .md 文件
-      - 'LICENSE'       # 忽略 License
-      - '.gitignore'    # 忽略 gitignore
-      - 'docs/**'       # 忽略 docs 目录下的所有东西
-      - 'icon.png'      # 忽略图标更新
+      - '**.md'        
+      - 'LICENSE'      
+      - '.gitignore'    
+      - 'docs/**'     
+      - 'icon.png'      
   workflow_dispatch:
 
 jobs:
@@ -30,6 +29,7 @@ jobs:
             rid: linux-x64
             artifact_name: libnative_shim.so
             use_cross: false
+            rustflags: "-C target-cpu=x86-64-v3"
 
           # --- Linux x64 Musl ---
           - os: ubuntu-latest
@@ -37,7 +37,7 @@ jobs:
             rid: linux-musl-x64
             artifact_name: libnative_shim.so
             use_cross: true 
-            rustflags: "-C target-feature=-crt-static"
+            rustflags: "-C target-feature=-crt-static -C target-cpu=x86-64-v3"
             
           # --- Linux ARM64 glibc---
           - os: ubuntu-latest
@@ -60,6 +60,7 @@ jobs:
             rid: win-x64
             artifact_name: native_shim.dll
             use_cross: false
+            rustflags: "-C target-cpu=x86-64-v3"
 
           # MacOS ARM64 (Apple Silicon) - 
           - os: macos-latest
@@ -96,7 +97,6 @@ jobs:
         shell: powershell
         run: echo "PERL=C:/Strawberry/perl/bin/perl.exe" >> $env:GITHUB_ENV
       # Compile Rust (Release mode)
-      # 这里的 native_shim 是你的 Rust 目录名，如果改了名字记得调整
       - name: Build Native Shim
         shell: bash
         env:
@@ -108,7 +108,7 @@ jobs:
           fi
           
           echo "Building for ${{ matrix.target }} using $CARGO_CMD..."
-          echo "👉 RUSTFLAGS: $RUSTFLAGS"
+          echo "RUSTFLAGS: $RUSTFLAGS"
 
           cd native_shim
           $CARGO_CMD build --release --target ${{ matrix.target }}
@@ -118,7 +118,7 @@ jobs:
         working-directory: ./native_shim
         run: |
           cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} .
-          echo "✅ Moved artifact to root: ${{ matrix.artifact_name }}"
+          echo "Moved artifact to root: ${{ matrix.artifact_name }}"
 
       # Upload Artifact to Git Actions
       - name: Upload Artifact
@@ -143,7 +143,6 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # 1. 准备目录结构 (对应 .csproj 里的路径)
       - name: Create Libs Directory
         run: |
           mkdir -p libs/linux-x64
@@ -189,23 +188,18 @@ jobs:
           name: native-lib-osx-arm64
           path: libs/osx-arm64
 
-      # 调试步骤：打印一下目录结构，确保文件都在
       - name: Inspect Directory Structure
         run: ls -R libs/
 
-      # 5. 打包 Core (关键参数：BuildRustNative=false)
       - name: Pack Core
         run: dotnet pack Polars.NET.Core/Polars.NET.Core.csproj -c Release -p:BuildRustNative=false -o nupkgs
 
-      # 6. 打包 C# API
       - name: Pack CSharp
         run: dotnet pack Polars.CSharp/Polars.CSharp.csproj -c Release -p:BuildRustNative=false -o nupkgs
 
-      # 7. 打包 F# API
       - name: Pack FSharp
         run: dotnet pack Polars.FSharp/Polars.FSharp.fsproj -c Release -p:BuildRustNative=false -o nupkgs
 
-      # 8. 上传最终的 .nupkg 文件供下载
       - name: Upload NuGet Packages
         uses: actions/upload-artifact@v4
         with:
@@ -234,7 +228,6 @@ jobs:
           name: polars-net-nugets
           path: local_feed
 
-      # 2. 运行测试 (使用 Bash，在 Windows 上也能跑)
       - name: Run Smoke Test
         shell: bash
         run: |

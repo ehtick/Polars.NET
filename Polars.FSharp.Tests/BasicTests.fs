@@ -652,7 +652,7 @@ type ``Basic Functionality Tests`` () =
         let res = 
             LazyFrame.scanSeq data
                 |> pl.filterLazy(pl.col "Group" .== pl.lit "A")
-                |> pl.collectStreaming
+                |> pl.collect
 
         // 3. 验证
         Assert.Equal(2L, res.Rows) // 只剩下 Id 1 和 3

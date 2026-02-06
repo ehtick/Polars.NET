@@ -24,7 +24,7 @@
   </PropertyGroup>
 
   <Target Name="BuildRustShim" BeforeTargets="BeforeBuild" Condition="'$(BuildRustNative)' == 'true'">
-    <Message Text="🦀 [Dev] Building Rust Native Shim..." Importance="high" />
+    <Message Text="[Dev] Building Rust Native Shim..." Importance="high" />
     <Exec Command="cargo build --release" 
           WorkingDirectory="$(RustProjectDir)" 
           EnvironmentVariables="RUSTFLAGS=-C target-cpu=x86-64-v3" />

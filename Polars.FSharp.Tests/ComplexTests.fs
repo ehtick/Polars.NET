@@ -32,7 +32,7 @@ type ``Complex Query Tests`` () =
             lf
             |> pl.filterLazy (pl.col "a" .> pl.lit 1)
             |> pl.limit 1u
-            |> pl.collect
+            |> pl.collectStreaming
 
         Assert.Equal(1L, df.Rows)
 

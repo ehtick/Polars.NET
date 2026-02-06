@@ -1938,7 +1938,7 @@ public class LazyFrame : IDisposable
         using var newLfHandle = PolarsWrapper.SinkBatches(CloneHandle(), onBatchReceived);
 
         using var lfRes = new LazyFrame(newLfHandle);
-        using var _ = lfRes.CollectStreaming(); 
+        using var _ = lfRes.Collect(); 
     }
     /// <summary>
     /// Stream the result of the LazyFrame calculation into an <see cref="IDataReader"/>.

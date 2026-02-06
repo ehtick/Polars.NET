@@ -226,7 +226,7 @@ Polars.NET works seamlessly with .NET Interactive. Please refer to the example f
 
 - Cloud Support : Direct IO integration with AWS S3, Azure Blob Storage, and Data Lakes.
 
-- Documentation: [📖 **Read the Comprehensive API Reference**](https://errorlsc.github.io/Polars.NET/index.html)
+- Documentation: [**Docs Here**](https://errorlsc.github.io/Polars.NET/index.html)
 
 ## Contributing
 

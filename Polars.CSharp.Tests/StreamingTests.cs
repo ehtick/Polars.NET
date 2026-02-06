@@ -101,7 +101,7 @@ public class StreamingTests
 
         // 3. 第一次执行 (Trigger!)
         // 此时 Rust 才会通过回调，驱动 C# 的 Enumerator
-        using var df1 = q.Clone().CollectStreaming();
+        using var df1 = q.Clone().Collect();
 
         // --- 验证 1: 数据完整性 (验证 PrependEnumerator 是否工作) ---
         // 过滤后应该剩 25000 行
@@ -119,7 +119,7 @@ public class StreamingTests
         // LazyFrame 应该可以被多次 Collect。
         // 这验证了我们的 ScanContext.Factory 是否正确创建了新的 Enumerator。
         
-        using var df2 = q.CollectStreaming();
+        using var df2 = q.Collect();
         Assert.Equal(df1.Height, df2.Height);
         Assert.Equal(df1.GetValue<int>(0, "Id"), df2.GetValue<int>(0, "Id"));
     }
@@ -175,7 +175,7 @@ public class StreamingTests
         //   c. 释放这 5万行内存
         //   d. 重复...
         // 整个过程内存占用极低，哪怕处理 1TB 数据也不会崩
-        using var df = q.CollectStreaming();
+        using var df = q.Collect();
 
         // 5. 验证
         Assert.Equal(1, df.Height);

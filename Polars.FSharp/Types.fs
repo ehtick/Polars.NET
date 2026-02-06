@@ -4817,7 +4817,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         let newHandle = PolarsWrapper.SinkBatches(this.CloneHandle(), onBatch)
         
         let lfRes = new LazyFrame(newHandle)
-        use _ = lfRes.CollectStreaming()
+        use _ = lfRes.Collect()
         () 
     /// <summary>
     /// Stream query results directly to a database or other IDataReader consumer.
