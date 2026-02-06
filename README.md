@@ -15,16 +15,20 @@ Supported Platforms: Windows (x64), Linux (x64/ARM64, glibc/musl), macOS (ARM64)
 
 This is the game I'd like to play: binding the lightning-fast Polars engine to the .NET ecosystem.
 And it brings a lot of fun.
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark_summary_dark.png">
-  <img alt="Speedup Summary" src="assets/benchmark_summary_light.png">
-</picture>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark_python_dark.png">
-  <img alt="Polars.NET vs Python" src="assets/benchmark_python_light.png">
-</picture>
+- Polars.NET vs Python Ecosystem
 
+    <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark_python_dark.png">
+    <img alt="Polars.NET vs Python" src="assets/benchmark_python_light.png">
+    </picture>
+
+- Speedup vs Legacy .NET
+
+    <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/benchmark_summary_dark.png">
+    <img alt="Speedup Summary" src="assets/benchmark_summary_light.png">
+    </picture>
 
 ## Installation
 
