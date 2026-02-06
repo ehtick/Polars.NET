@@ -27,7 +27,7 @@ public class LazyFrame : IDisposable
     // ==========================================
     // Scan IO
     // ==========================================
- /// <summary>
+    /// <summary>
     /// Lazily scans a CSV file into a LazyFrame.
     /// <para>
     /// This allows for query optimization (predicate pushdown, projection pushdown) 
@@ -55,13 +55,14 @@ public class LazyFrame : IDisposable
     /// <param name="missingIsNull">Treat missing fields (empty strings between delimiters) as null. Defaults to true.</param>
     /// <param name="commentPrefix">Lines starting with this prefix will be ignored. E.g., "#".</param>
     /// <param name="decimalComma">Use comma ',' as the decimal separator (European style). Defaults to false.</param>
+    /// <param name="chunkSize">Set the chunk size for each thread. Default is null for auto setting.</param>
     /// <returns>A new LazyFrame.</returns>
     public static LazyFrame ScanCsv(
         string path,
         PolarsSchema? schema = null,
         bool hasHeader = true,
         char separator = ',',
-        char quoteChar = '"',           
+        char? quoteChar = '"',           
         char eolChar = '\n',            
         bool ignoreErrors = false,
         bool tryParseDates = true,
@@ -77,7 +78,8 @@ public class LazyFrame : IDisposable
         string[]? nullValues = null,    
         bool missingIsNull = true,      
         string? commentPrefix = null,   
-        bool decimalComma = false)      
+        bool decimalComma = false,
+        ulong? chunkSize = null)      
     {
         var handle = PolarsWrapper.ScanCsv(
             path,
@@ -100,7 +102,8 @@ public class LazyFrame : IDisposable
             nullValues,
             missingIsNull,
             commentPrefix,
-            decimalComma
+            decimalComma,
+            chunkSize
         );
 
         return new LazyFrame(handle);
@@ -139,7 +142,7 @@ public class LazyFrame : IDisposable
         PolarsSchema? schema = null,
         bool hasHeader = true,
         char separator = ',',
-        char quoteChar = '"',          
+        char? quoteChar = '"',          
         char eolChar = '\n',           
         bool ignoreErrors = false,
         bool tryParseDates = true,
@@ -387,7 +390,6 @@ public class LazyFrame : IDisposable
         uint rowIndexOffset = 0,
         bool hivePartitioning = false)
     {
-        // 必须读入内存，因为 ScanSources 需要持有数据所有权
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
         
@@ -917,6 +919,30 @@ public class LazyFrame : IDisposable
     {
         var handle = PolarsWrapper.LazySlice(CloneHandle(), offset, length);
         return new LazyFrame(handle);
+    }
+    /// <summary>
+    /// Renames columns in the <see cref="LazyFrame"/>.
+    /// </summary>
+    /// <param name="existing">An array of existing column names to be renamed.</param>
+    /// <param name="newNames">An array of new column names, corresponding by index to the names in <paramref name="existing"/>.</param>
+    /// <param name="strict">
+    /// If <c>true</c>, an error is raised if any column in <paramref name="existing"/> is not found in the schema. 
+    /// If <c>false</c>, columns that are not found are silently ignored. Default is <c>true</c>.
+    /// </param>
+    /// <returns>A new <see cref="LazyFrame"/> with the rename operation applied.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="existing"/> or <paramref name="newNames"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when the length of <paramref name="existing"/> does not match the length of <paramref name="newNames"/>.</exception>
+    public LazyFrame Rename(string[] existing, string[] newNames, bool strict = true)
+    {
+        if (existing == null || newNames == null)
+            throw new ArgumentNullException("Column names cannot be null");
+            
+        if (existing.Length != newNames.Length)
+            throw new ArgumentException("Column arrays length mismatch");
+
+        var newHandle = PolarsWrapper.LazyRename(Handle, existing, newNames, strict);
+        
+        return new LazyFrame(newHandle);
     }
     /// <summary>
     /// Slice the LazyFrame (Convenience overload).
@@ -1683,7 +1709,7 @@ public class LazyFrame : IDisposable
         TimeSpan? period = null,
         TimeSpan? offset = null,
         Expr[]? by = null,
-        Label label = Label.Left, // [修改] 默认 Left
+        Label label = Label.Left,
         bool includeBoundaries = false,
         ClosedWindow closedWindow = ClosedWindow.Left,
         StartBy startBy = StartBy.WindowBound
@@ -1714,8 +1740,8 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Execute the query plan and return a DataFrame.
     /// </summary>
-    public DataFrame Collect()
-        => new(PolarsWrapper.LazyCollect(Handle));
+    public DataFrame Collect(bool useStreaming=false)
+        => new(PolarsWrapper.LazyCollect(Handle,useStreaming));
 
     /// <summary>
     /// Execute the query plan using the streaming engine.
@@ -1725,9 +1751,9 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Execute the query plan asynchronously and return a DataFrame.
     /// </summary>
-    public async Task<DataFrame> CollectAsync()
+    public async Task<DataFrame> CollectAsync(bool useStreaming=false)
     {
-        var dfHandle = await PolarsWrapper.LazyCollectAsync(Handle);
+        var dfHandle = await PolarsWrapper.LazyCollectAsync(Handle,useStreaming);
         return new DataFrame(dfHandle);
     }
     // ==========================================

@@ -115,7 +115,7 @@ unsafe internal partial class NativeBindings
         UIntPtr sliceLen
     );
     [LibraryImport(LibName)]
-    public static partial DataFrameHandle pl_lazy_collect(LazyFrameHandle lf);
+    public static partial DataFrameHandle pl_lazy_collect(LazyFrameHandle lf,[MarshalAs(UnmanagedType.U1)] bool useStreaming);
     [LibraryImport(LibName)]
     public static partial LazyFrameHandle pl_lazy_clone(LazyFrameHandle lf);
 
@@ -124,6 +124,15 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] 
     public static partial LazyFrameHandle pl_lazy_explode(LazyFrameHandle lf, SelectorHandle selector);
     // --- Reshaping (Lazy) ---
+    [LibraryImport(LibName)]
+    public static partial LazyFrameHandle pl_lazyframe_rename(
+        LazyFrameHandle lf, 
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] existing, 
+        UIntPtr existingLen, 
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] newNames, 
+        UIntPtr newLen, 
+        [MarshalAs(UnmanagedType.U1)] bool strict
+    );
     [LibraryImport(LibName)] 
     public static partial LazyFrameHandle pl_lazyframe_unpivot(
         LazyFrameHandle lf,

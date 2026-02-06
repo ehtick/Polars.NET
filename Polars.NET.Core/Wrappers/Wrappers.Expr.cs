@@ -284,6 +284,8 @@ public static partial class PolarsWrapper
         otherExpr.TransferOwnership();
         return ErrorHelper.Check(h);
     }
+    public static ExprHandle Filter(ExprHandle expr, ExprHandle predicate) 
+        => BinaryOp(NativeBindings.pl_expr_filter, expr, predicate);
     // Temporal
     public static ExprHandle DtYear(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_dt_year, e);
     public static ExprHandle DtQuarter(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_dt_quarter, e);

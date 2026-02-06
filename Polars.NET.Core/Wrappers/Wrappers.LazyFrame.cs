@@ -23,9 +23,9 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(newLf);
     }
 
-    public static DataFrameHandle LazyCollect(LazyFrameHandle lf)
+    public static DataFrameHandle LazyCollect(LazyFrameHandle lf,bool useStreaming)
     {
-        var df = NativeBindings.pl_lazy_collect(lf);
+        var df = NativeBindings.pl_lazy_collect(lf,useStreaming);
         lf.TransferOwnership();
         return ErrorHelper.Check(df);
     }
@@ -40,6 +40,20 @@ public static partial class PolarsWrapper
     {
         var h = NativeBindings.pl_lazyframe_slice(lf, offset,len);
         lf.TransferOwnership();   
+        return ErrorHelper.Check(h);
+    }
+    public static LazyFrameHandle LazyRename(LazyFrameHandle lf, string[] existing, string[] newNames, bool strict)
+    {
+        var h = NativeBindings.pl_lazyframe_rename(
+            lf, 
+            existing, 
+            (nuint)existing.Length, 
+            newNames, 
+            (nuint)newNames.Length, 
+            strict
+        );
+        lf.TransferOwnership();   
+        
         return ErrorHelper.Check(h);
     }
     public static LazyFrameHandle LazyFrameSort(
@@ -353,9 +367,9 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         return ErrorHelper.Check(df);
     }
-    public static Task<DataFrameHandle> LazyCollectAsync(LazyFrameHandle handle)
+    public static Task<DataFrameHandle> LazyCollectAsync(LazyFrameHandle handle,bool useStreaming)
     {        
-        return Task.Run(() => LazyCollect(handle));
+        return Task.Run(() => LazyCollect(handle,useStreaming));
     }
     // --- Clone Ops ---
     public static LazyFrameHandle LazyClone(LazyFrameHandle lf)

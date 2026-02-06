@@ -3,7 +3,7 @@ use std::ffi::{CStr, c_char};
 use polars::prelude::*;
 use crate::types::*;
 use polars::lazy::dsl::UnpivotArgsDSL;
-use crate::utils::{consume_exprs_array, map_jointype,map_validation, map_coalesce, map_maintain_order, parse_keep_strategy,map_asof_strategy, ptr_to_str};
+use crate::utils::{consume_exprs_array, map_asof_strategy, map_coalesce, map_jointype, map_maintain_order, map_validation, parse_keep_strategy, ptr_to_str, ptr_to_vec_string};
 
 // ==========================================
 // Macro Definition
@@ -89,6 +89,30 @@ gen_lazy_single_expr_op!(pl_lazy_filter, filter);
 // --- Limit ---
 gen_lazy_scalar_op!(pl_lazy_limit, limit, u32);
 gen_lazy_scalar_op!(pl_lazy_tail, tail, u32);
+
+// ==========================================
+// Rename
+// ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_rename(
+    lf_ptr: *mut LazyFrameContext,
+    existing_ptr: *const *const c_char,
+    existing_len: usize,
+    new_ptr: *const *const c_char,
+    new_len: usize,
+    strict: bool,
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+        
+        let existing = unsafe { ptr_to_vec_string(existing_ptr, existing_len) };
+        let new_cols = unsafe { ptr_to_vec_string(new_ptr, new_len) };
+
+        let df = lf_ctx.inner.rename(existing, new_cols, strict);
+
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: df })))
+    })
+}
 
 // ==========================================
 // Slice
@@ -378,11 +402,19 @@ pub extern "C" fn pl_lazyframe_unnest(
 // ==========================================
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_collect(lf_ptr: *mut LazyFrameContext) -> *mut DataFrameContext {
+pub extern "C" fn pl_lazy_collect(
+    lf_ptr: *mut LazyFrameContext, 
+    use_streaming: bool
+) -> *mut DataFrameContext {
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
-        
-        let df = lf_ctx.inner.collect()?;
+        let lf = lf_ctx.inner;
+
+        let df = if use_streaming {
+            lf.with_new_streaming(true).collect_with_engine(Engine::Streaming)?
+        } else {
+            lf.collect_with_engine(Engine::Auto)?
+        };
 
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })
@@ -396,7 +428,7 @@ pub extern "C" fn pl_lazy_collect_streaming(lf_ptr: *mut LazyFrameContext) -> *m
         // Polars 0.50+ API: with_streaming(true).collect()
         let df = lf_ctx.inner
             .with_new_streaming(true)
-            .collect()?;
+            .collect_with_engine(Engine::Streaming)?;
             
         Ok(Box::into_raw(Box::new(DataFrameContext { df })))
     })

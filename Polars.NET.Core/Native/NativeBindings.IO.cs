@@ -78,7 +78,8 @@ unsafe internal partial class NativeBindings
         nuint null_values_len,
         [MarshalAs(UnmanagedType.U1)] bool missing_is_null,
         string? comment_prefix,
-        [MarshalAs(UnmanagedType.U1)] bool decimal_comma
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma,
+        nuint chunkSize
     );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_csv_mem(

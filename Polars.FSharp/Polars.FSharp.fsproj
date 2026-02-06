@@ -8,7 +8,7 @@
     <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
 
     <PackageId>Polars.FSharp</PackageId>
-    <Version>0.2.0-beta1</Version>
+    <Version>0.2.1-beta1</Version>
     <Authors>ErrorLSC</Authors>
     <Description>Idiomatic F# API for Polars DataFrame library with strict type safety and pipeline support.</Description>
     <PackageTags>polars;dataframe;fsharp;functional;data-science</PackageTags>

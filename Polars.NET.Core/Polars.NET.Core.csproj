@@ -9,7 +9,7 @@
     <IsPackable>true</IsPackable>
 
     <PackageId>Polars.NET.Core</PackageId>
-    <Version>0.2.0-beta1</Version>
+    <Version>0.2.1-beta1</Version>
     <Authors>ErrorLSC</Authors>
     <Description>Core infrastructure and native bindings for Polars.NET. Not intended for direct use.</Description>
     <PackageTags>internal;native</PackageTags>
@@ -25,7 +25,9 @@
 
   <Target Name="BuildRustShim" BeforeTargets="BeforeBuild" Condition="'$(BuildRustNative)' == 'true'">
     <Message Text="🦀 [Dev] Building Rust Native Shim..." Importance="high" />
-    <Exec Command="cargo build --release" WorkingDirectory="$(RustProjectDir)" />
+    <Exec Command="cargo build --release" 
+          WorkingDirectory="$(RustProjectDir)" 
+          EnvironmentVariables="RUSTFLAGS=-C target-cpu=x86-64-v3" />
   </Target>
 
   <ItemGroup Condition="'$(BuildRustNative)' == 'true'">

@@ -2115,4 +2115,51 @@ TooShort,1990-05-20,1.60";
         // 应该变成 3 行 (2 + 1)
         Assert.Equal(3, exploded.Height);
     }
+    [Fact]
+    public void Filter_Expression_Works()
+    {
+        // 准备数据：a 为 1..10， group 为分组 ID
+        var df = new DataFrame(
+            new Series("a", Enumerable.Range(1, 10).ToArray()),
+            new Series("group", new[] { 1, 1, 1, 1, 1, 2, 2, 2, 2, 2 })
+        );
+
+        // 场景：在 Select 中使用 Expr.Filter
+        // 这里的逻辑是：取出列 "a"，但只保留那些 "a" 大于 5 的元素
+        // 注意：在 Polars Eager 模式下，Select 返回的 DataFrame 要求所有列长度一致。
+        // 所以单纯 df.Select(Col("a").Filter(...)) 会因为行数变少而成功返回一个较短的 DF。
+        
+        var res = df.Select(
+            Col("a").Filter(Col("a") > 5).Alias("filtered_a")
+        );
+
+        var series = res["filtered_a"];
+
+        // 验证：1..10 中大于 5 的有 6, 7, 8, 9, 10 (共5个)
+        Assert.Equal(5, series.Len());
+        Assert.Equal(6, (int)series[0]);
+        Assert.Equal(10, (int)series[4]);
+    }
+
+    [Fact]
+    public void Filter_In_GroupBy_Works()
+    {
+        // 这是一个更典型的场景：在分组聚合中进行过滤
+        var df = new DataFrame(
+            new Series("id", new[] { 1, 1, 1, 2, 2 }),
+            new Series("val", new[] { 10, 20, 30, 40, 50 })
+        );
+
+        // GroupBy id, 然后取出 val 中大于 15 的值的平均值
+        var res = df.GroupBy("id").Agg(
+            Col("val").Filter(Col("val") > 15).Mean().Alias("conditional_mean")
+        ).Sort("id", false);
+
+        // Group 1: [10, 20, 30] -> Filter(>15) -> [20, 30] -> Mean -> 25
+        // Group 2: [40, 50] -> Filter(>15) -> [40, 50] -> Mean -> 45
+        
+        var meanCol = res["conditional_mean"];
+        Assert.Equal(25.0, (double)meanCol[0]);
+        Assert.Equal(45.0, (double)meanCol[1]);
+    }
 }

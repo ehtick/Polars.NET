@@ -1015,6 +1015,7 @@ public partial class Series : IDisposable
     /// </summary>
     /// <returns></returns>
     public Series IsInfinite() => new(PolarsWrapper.SeriesIsInfinite(Handle));
+
     // ==========================================
     // Unique Ops and Boolean Mask
     // ==========================================
@@ -1058,6 +1059,15 @@ public partial class Series : IDisposable
     /// </summary>
     public Series IsIn(Expr other, bool nullsEqual = false)
         => ApplyExpr(Polars.Col(Name).IsIn(other,nullsEqual));
+    /// <summary>
+    /// Filter a series.
+    /// <br/>
+    /// Mostly useful in <c>group_by</c> context or when you want to filter an expression based on another expression within a <c>Select</c> context.
+    /// </summary>
+    /// <param name="predicate">Boolean expression used to filter the current expression.</param>
+    /// <returns>A new series with filtered values.</returns>
+    public Series Filter(Expr predicate) 
+        => ApplyExpr(Polars.Col(Name).Filter(predicate));
     // ==========================================
     // Common Ops 
     // ==========================================

@@ -6,7 +6,8 @@
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile> 
 
-    <PackageId>Polars.NET</PackageId> <Version>0.2.0-beta1</Version>
+    <PackageId>Polars.NET</PackageId> 
+    <Version>0.2.1-beta1</Version>
     <Authors>ErrorLSC</Authors>
     <Description>Idiomatic C# API Frontend for Polars DataFrame library.</Description>
     <PackageTags>polars;dataframe;data-analysis;csharp</PackageTags>

@@ -422,7 +422,7 @@ module pl =
             let lfClone = lf.CloneHandle()
             
             let! dfHandle = 
-                Task.Run(fun () -> PolarsWrapper.LazyCollect lfClone) 
+                Task.Run(fun () -> PolarsWrapper.LazyCollect(lfClone,true)) 
                 |> Async.AwaitTask
                 
             return new DataFrame(dfHandle)

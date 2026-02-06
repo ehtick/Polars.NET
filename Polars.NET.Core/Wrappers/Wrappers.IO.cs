@@ -12,7 +12,7 @@ public static partial class PolarsWrapper
         string[]? columns,
         bool hasHeader,
         byte separator,
-        byte quoteChar,
+        char? quoteChar,
         byte eolChar,
         bool ignoreErrors,
         bool tryParseDates,
@@ -42,14 +42,14 @@ public static partial class PolarsWrapper
             
             // Schema Handle
             SchemaHandle schemaHandle = schema ?? new SchemaHandle();
-
+            byte quoteVal = quoteChar.HasValue ? (byte)quoteChar.Value : (byte)0;
             return NativeBindings.pl_read_csv(
                 path,
                 columns,
                 (nuint)(columns?.Length ?? 0),
                 hasHeader,
                 separator,
-                quoteChar,
+                quoteVal,
                 eolChar,
                 ignoreErrors,
                 tryParseDates,
@@ -75,7 +75,7 @@ public static partial class PolarsWrapper
         string[]? columns,
         bool hasHeader,
         byte separator,
-        byte quoteChar,
+        char? quoteChar,
         byte eolChar,
         bool ignoreErrors,
         bool tryParseDates,
@@ -122,7 +122,7 @@ public static partial class PolarsWrapper
         SchemaHandle? schema,
         bool hasHeader,
         char separator,
-        char quoteChar,       
+        char? quoteChar,       
         char eolChar,         
         bool ignoreErrors,
         bool tryParseDates,
@@ -138,7 +138,8 @@ public static partial class PolarsWrapper
         string[]? nullValues, 
         bool missingIsNull,   
         string? commentPrefix,
-        bool decimalComma)    
+        bool decimalComma,
+        ulong? chunkSize)    
     {
         UIntPtr nRowsVal = nRows.HasValue ? (UIntPtr)nRows.Value : 0;
         UIntPtr* pNRows = nRows.HasValue ? &nRowsVal : null;
@@ -148,11 +149,14 @@ public static partial class PolarsWrapper
 
         SchemaHandle schemaHandle = schema ?? new SchemaHandle();
 
+        UIntPtr csize = chunkSize.HasValue ? (UIntPtr)chunkSize.Value : UIntPtr.Zero;
+        byte quoteVal = quoteChar.HasValue ? (byte)quoteChar.Value : (byte)0;
+
         return ErrorHelper.Check(NativeBindings.pl_scan_csv(
             path,
             hasHeader,
             (byte)separator,
-            (byte)quoteChar, 
+            quoteVal, 
             (byte)eolChar,   
             ignoreErrors,
             tryParseDates,
@@ -170,7 +174,8 @@ public static partial class PolarsWrapper
             (nuint)(nullValues?.Length ?? 0), 
             missingIsNull,                 
             commentPrefix,                 
-            decimalComma                   
+            decimalComma,
+            csize                 
         ));
     }
 
@@ -179,7 +184,7 @@ public static partial class PolarsWrapper
         SchemaHandle? schema,
         bool hasHeader,
         char separator,
-        char quoteChar,       
+        char? quoteChar,       
         char eolChar,         
         bool ignoreErrors,
         bool tryParseDates,
@@ -205,7 +210,7 @@ public static partial class PolarsWrapper
 
         UIntPtr inferVal = inferSchemaLength.HasValue ? (UIntPtr)inferSchemaLength.Value : 0;
         UIntPtr* pInfer = inferSchemaLength.HasValue ? &inferVal : null;
-
+        byte quoteVal = quoteChar.HasValue ? (byte)quoteChar.Value : (byte)0;
         SchemaHandle schemaHandle = schema ?? new SchemaHandle();
 
         fixed (byte* pBuffer = buffer)
@@ -216,7 +221,7 @@ public static partial class PolarsWrapper
                 
                 hasHeader,
                 (byte)separator,
-                (byte)quoteChar, 
+                quoteVal, 
                 (byte)eolChar,   
                 ignoreErrors,
                 tryParseDates,

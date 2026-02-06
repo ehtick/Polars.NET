@@ -330,6 +330,7 @@ gen_binary_op!(pl_expr_gt, gt); // >
 gen_binary_op!(pl_expr_gt_eq, gt_eq); // >=
 gen_binary_op!(pl_expr_lt, lt);       // <
 gen_binary_op!(pl_expr_lt_eq, lt_eq); // <=
+gen_binary_op!(pl_expr_filter,filter);
 
 // Arithmetic
 gen_binary_op!(pl_expr_add, add); // +
@@ -415,6 +416,7 @@ pub extern "C" fn pl_expr_dt_combine(
 
     Box::into_raw(Box::new(ExprContext { inner: new_expr }))
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_alias(expr_ptr: *mut ExprContext, name_ptr: *const c_char) -> *mut ExprContext {

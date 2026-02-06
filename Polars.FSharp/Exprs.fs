@@ -446,6 +446,15 @@ and Expr(handle: ExprHandle) =
     member this.IsIn(other: Expr,?nullsEqual: bool) : Expr = 
         let nE = defaultArg nullsEqual false
         new Expr(PolarsWrapper.IsIn(this.CloneHandle(), other.CloneHandle(),nE))
+    /// <summary>
+    /// Filter a single column.
+    /// <br/>
+    /// Mostly useful in <c>group_by</c> context or when you want to filter an expression based on another expression within a <c>Select</c> context.
+    /// </summary>
+    /// <param name="predicate">Boolean expression used to filter the current expression.</param>
+    /// <returns>A new expression with filtered values.</returns>
+    member this.Filter(predicate:Expr) : Expr =
+        new Expr(PolarsWrapper.Filter(this.CloneHandle(),predicate.CloneHandle()))
     member this.FillNull(fillValue: Expr) = 
         new Expr(PolarsWrapper.FillNull(this.CloneHandle(), fillValue.CloneHandle()))
     member this.FillNan(fillValue:Expr) =

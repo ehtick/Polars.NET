@@ -1080,7 +1080,15 @@ public class Expr : IDisposable
     /// </summary>
     public Expr IsIn(Expr other, bool nullsEqual = false)
      => new(PolarsWrapper.IsIn(CloneHandle(),other.CloneHandle(),nullsEqual));
-
+    /// <summary>
+    /// Filter a single column.
+    /// <br/>
+    /// Mostly useful in <c>group_by</c> context or when you want to filter an expression based on another expression within a <c>Select</c> context.
+    /// </summary>
+    /// <param name="predicate">Boolean expression used to filter the current expression.</param>
+    /// <returns>A new expression with filtered values.</returns>
+    public Expr Filter(Expr predicate)
+     => new(PolarsWrapper.Filter(CloneHandle(),predicate.CloneHandle()));
     // ==========================================
     // Casting
     // ==========================================

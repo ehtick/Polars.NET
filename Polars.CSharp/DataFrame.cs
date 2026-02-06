@@ -90,7 +90,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         string[]? columns = null,
         bool hasHeader = true,
         char separator = ',',
-        char quoteChar = '"',
+        char? quoteChar = '"',
         char eolChar = '\n',
         bool ignoreErrors = false,
         bool tryParseDates = true,
@@ -113,7 +113,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             columns,
             hasHeader,
             (byte)separator,
-            (byte)quoteChar,
+            quoteChar,
             (byte)eolChar,
             ignoreErrors,
             tryParseDates,
@@ -479,7 +479,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         string[]? columns = null,
         bool hasHeader = true,
         char separator = ',',
-        char quoteChar = '"',
+        char? quoteChar = '"',
         char eolChar = '\n',
         bool ignoreErrors = false,
         bool tryParseDates = true,
@@ -502,7 +502,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             columns,
             hasHeader,
             (byte)separator, 
-            (byte)quoteChar,
+            quoteChar,
             (byte)eolChar, 
             ignoreErrors,
             tryParseDates,
@@ -2477,7 +2477,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // =========================================================
     // Internal Column Buffers
     // =========================================================
-
     private interface IColumnBuffer
     {
         void Add(object? val);

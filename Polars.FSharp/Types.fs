@@ -287,6 +287,15 @@ type Series(handle: SeriesHandle) =
     /// </summary>
     member this.IsIn(other:Expr, ?nullsEqual:bool) =
         this.ApplyExpr(Expr.Col(this.Name).IsIn(other=other,?nullsEqual=nullsEqual))
+    /// <summary>
+    /// Filter a series.
+    /// <br/>
+    /// Mostly useful in <c>group_by</c> context or when you want to filter an expression based on another expression within a <c>Select</c> context.
+    /// </summary>
+    /// <param name="predicate">Boolean expression used to filter the current expression.</param>
+    /// <returns>A new series with filtered values.</returns>
+    member this.Filter(predicate:Expr) = 
+        this.ApplyExpr(Expr.Col(this.Name).Filter predicate)
     // ==========================================
     // UDF / Map (Apply Custom C# / F# Functions)
     // ==========================================
@@ -2508,7 +2517,7 @@ and DataFrame(handle: DataFrameHandle) =
         // 1. Defaults
         let pHeader = defaultArg hasHeader true
         let pSep = defaultArg separator ',' |> byte
-        let pQuote = defaultArg quoteChar '"' |> byte
+        let pQuote = defaultArg quoteChar '"'
         let pEol = defaultArg eolChar '\n' |> byte
         let pIgnoreErrors = defaultArg ignoreErrors false
         let pTryParseDates = defaultArg tryParseDates true
@@ -3984,8 +3993,9 @@ and LazyFrame(handle: LazyFrameHandle) =
         member x.Dispose() = x.Dispose()
     member internal this.CloneHandle() = PolarsWrapper.LazyClone handle
     /// <summary> Execute the plan and return a DataFrame. </summary>
-    member this.Collect() = 
-        let dfHandle = PolarsWrapper.LazyCollect handle
+    member this.Collect(?streaming:bool) = 
+        let stream = defaultArg streaming false
+        let dfHandle = PolarsWrapper.LazyCollect(handle,stream)
         new DataFrame(dfHandle)
     /// <summary> Execute the plan using the streaming engine. </summary>
     member _.CollectStreaming() =
@@ -4040,7 +4050,8 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?nullValues: string list,  // [NEW]
             ?missingIsNull: bool,      // [NEW]
             ?commentPrefix: string,    // [NEW]
-            ?decimalComma: bool        // [NEW]
+            ?decimalComma: bool,
+            ?chunkSize: uint64
         ) =
         // 1. Defaults
         let pSep = defaultArg separator ','
@@ -4063,6 +4074,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         // 2. Options -> Nullables / Objects
         let pNRows = nRows |> Option.map uint64 |> Option.toNullable
         let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
+        let pChunkSize = chunkSize |> Option.map uint64 |> Option.toNullable
         
         // NullValues: string list -> string[]
         let pNullValues = 
@@ -4098,7 +4110,8 @@ and LazyFrame(handle: LazyFrameHandle) =
             pNullValues,
             pMissingIsNull,
             Option.toObj commentPrefix,
-            pDecimalComma
+            pDecimalComma,
+            pChunkSize
         )
 
         new LazyFrame(handle)
@@ -5294,7 +5307,30 @@ and LazyFrame(handle: LazyFrameHandle) =
     member this.Slice(offset: int64, length: int32) = 
         if length < 0 then raise(ArgumentOutOfRangeException(sprintf "Length must be non-negative."))
         else this.Slice(offset,length)
+    /// <summary>
+    /// Rename the lazyframe columns
+    /// Example: lf.Rename ["colA", "col1"; "colB", "col2"]
+    /// </summary>
+    /// <param name="strict">
+    /// If <c>true</c>, an error is raised if any column in <paramref name="existing"/> is not found in the schema. 
+    /// If <c>false</c>, columns that are not found are silently ignored. Default is <c>true</c>.
+    /// </param>
+    member this.Rename(mapping: (string * string) list, ?strict: bool) =
+        let oldNames, newNames = List.unzip mapping
+        let isStrict = defaultArg strict true
+        let oldNames, newNames = List.unzip mapping
+        let pOldNames = List.toArray oldNames
+        let pNewNames = List.toArray newNames
+        let pStrict = defaultArg strict true
 
+        let handle = PolarsWrapper.LazyRename(
+            this.Handle, 
+            pOldNames, 
+            pNewNames, 
+            pStrict
+        )
+        
+        new LazyFrame(handle)
     static member Concat  (lfs: LazyFrame list) (how: ConcatType) : LazyFrame =
         let handles = lfs |> List.map (fun lf -> lf.CloneHandle()) |> List.toArray
         new LazyFrame(PolarsWrapper.LazyConcat(handles, how.ToNative(), false, true))

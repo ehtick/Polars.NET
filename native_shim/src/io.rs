@@ -197,7 +197,8 @@ pub extern "C" fn pl_scan_csv(
     null_values_len: usize,                
     missing_is_null: bool,                 
     comment_prefix: *const c_char,         
-    decimal_comma: bool,                   
+    decimal_comma: bool,
+    chunk_size:usize                   
 ) -> *mut LazyFrameContext {
     ffi_try!({
         // Path
@@ -257,7 +258,7 @@ pub extern "C" fn pl_scan_csv(
         };
 
         // Build Reader
-        let reader = LazyCsvReader::new(PlPath::new(p_ref))
+        let mut reader = LazyCsvReader::new(PlPath::new(p_ref))
             .with_has_header(has_header)
             .with_separator(separator)
             .with_quote_char(if quote_char == 0 { None } else { Some(quote_char) }) 
@@ -276,7 +277,11 @@ pub extern "C" fn pl_scan_csv(
             .with_null_values(null_vals)         
             .with_missing_is_null(missing_is_null) 
             .with_comment_prefix(comment)        
-            .with_decimal_comma(decimal_comma);  
+            .with_decimal_comma(decimal_comma);
+
+        if chunk_size != 0 {
+                    reader = reader.with_chunk_size(chunk_size);
+                }
 
         // Finish
         let inner = reader.finish()?;
@@ -320,7 +325,8 @@ pub extern "C" fn pl_scan_csv_mem(
     null_values_len: usize,                
     missing_is_null: bool,                 
     comment_prefix: *const c_char,         
-    decimal_comma: bool,                   
+    decimal_comma: bool, 
+    chunk_size:usize                  
 ) -> *mut LazyFrameContext {
     ffi_try!({
         // --- 1. Prepare Buffer Source ---
@@ -379,7 +385,7 @@ pub extern "C" fn pl_scan_csv_mem(
         };
 
         // --- 3. Build Reader ---
-        let reader = LazyCsvReader::new_with_sources(sources)
+        let mut reader = LazyCsvReader::new_with_sources(sources)
             .with_has_header(has_header)
             .with_separator(separator)
             .with_quote_char(if quote_char == 0 { None } else { Some(quote_char) })
@@ -398,8 +404,11 @@ pub extern "C" fn pl_scan_csv_mem(
             .with_null_values(null_vals)         
             .with_missing_is_null(missing_is_null) 
             .with_comment_prefix(comment)        
-            .with_decimal_comma(decimal_comma);  
-
+            .with_decimal_comma(decimal_comma); 
+         
+        if chunk_size != 0 {
+                    reader = reader.with_chunk_size(chunk_size);
+                }
         // --- 4. Finish ---
         let inner = reader.finish()?;
 
