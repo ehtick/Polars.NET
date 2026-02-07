@@ -1,10 +1,11 @@
-using Microsoft.Data.SqlClient;
-using Polars.CSharp.Tests.Fixtures;
+using Microsoft.Data.SqlClient; 
+using Polars.CSharp;           
+using Polars.Integration.Tests.Fixtures;
+using Xunit;
 
-namespace Polars.CSharp.Tests
+namespace Polars.Integration.Tests
 {
-    // 注入我们刚才写的 Fixture
-    [Trait("Category", "Integration")]
+    // 注入我们之前写好的 Testcontainers 版 MsSqlFixture
     public class IntegrationTests : IClassFixture<MsSqlFixture>
     {
         private readonly MsSqlFixture _fixture;
@@ -14,12 +15,16 @@ namespace Polars.CSharp.Tests
             _fixture = fixture;
         }
 
-        [Fact]  
+        [Fact]
         public async Task Test_RealSqlServer_ETL_EndToEnd_WithNulls()
         {
+            // ---------------------------------------------------------
             // 1. 准备数据库环境 (DDL)
-            // Region, Amount, OrderDate 默认都是允许 NULL 的
+            // ---------------------------------------------------------
+            // 随机表名，防止多次运行冲突
             var tableName = "Orders_" + Guid.NewGuid().ToString("N");
+            
+            // Region, Amount, OrderDate 默认允许 NULL
             var setupSql = $@"
                 CREATE TABLE {tableName} (
                     OrderId INT PRIMARY KEY,
@@ -35,7 +40,10 @@ namespace Polars.CSharp.Tests
                 await cmd.ExecuteNonQueryAsync();
             }
 
-            // 2. 准备 Polars 数据 (Source) - 构造包含 Null 的数据
+            // ---------------------------------------------------------
+            // 2. 准备 Polars 数据 (Source)
+            // ---------------------------------------------------------
+            // 构造包含 Null 的数据，模拟真实脏数据场景
             int totalRows = 10000;
             var baseTime = DateTime.UtcNow.Date;
 
@@ -43,7 +51,7 @@ namespace Polars.CSharp.Tests
             // - Region: 每 100 行插入一个 null
             // - Amount: 每 50 行插入一个 null
             // - OrderDate: 每 10 行插入一个 null (高频 null 测试)
-            var df = DataFrame.FromColumns(new
+            using var df = DataFrame.FromColumns(new
             {
                 OrderId = Enumerable.Range(0, totalRows).ToArray(),
                 
@@ -61,11 +69,14 @@ namespace Polars.CSharp.Tests
                     .ToArray()
             });
 
-            // 3. 执行 ETL (SinkTo)
+            // ---------------------------------------------------------
+            // 3. 执行 ETL (SinkTo -> SqlBulkCopy)
+            // ---------------------------------------------------------
+            // 将 Polars 数据流式写入 SQL Server
             await Task.Run(() =>
             {
-                // 定义契约：即使是可空类型，Type 这里通常还是写基础类型
-                // DataReader 会根据值是否为 null 自动处理 DBNull.Value
+                // 定义类型映射契约
+                // 虽然是可空类型，但 Type 依然传基础类型，DataWriter 会自动处理 DBNull
                 var overrides = new Dictionary<string, Type>
                 {
                     { "OrderDate", typeof(DateTime) } 
@@ -80,6 +91,7 @@ namespace Polars.CSharp.Tests
                     bulk.EnableStreaming = true; 
                     bulk.BatchSize = 2000;
 
+                    // 显式映射列名，防止顺序不一致
                     bulk.ColumnMappings.Add("OrderId", "OrderId");
                     bulk.ColumnMappings.Add("Region", "Region");
                     bulk.ColumnMappings.Add("Amount", "Amount");
@@ -97,14 +109,17 @@ namespace Polars.CSharp.Tests
                 }, bufferSize: 100, typeOverrides: overrides);
             });
 
+            // ---------------------------------------------------------
             // 4. 验证 (Verify)
+            // ---------------------------------------------------------
             using (var conn = new SqlConnection(_fixture.ConnectionString))
             {
                 await conn.OpenAsync();
 
                 // 4.1 验证总行数
                 using var cmdCount = new SqlCommand($"SELECT COUNT(*) FROM {tableName}", conn);
-                Assert.Equal(totalRows, (int)await cmdCount.ExecuteScalarAsync());
+                var count = Convert.ToInt32(await cmdCount.ExecuteScalarAsync());
+                Assert.Equal(totalRows, count);
 
                 // 4.2 验证 Null 写入情况
                 // 检查 OrderId = 0 (它是 100, 50, 10 的公倍数，所以三个字段都应该是 NULL)
@@ -112,12 +127,12 @@ namespace Polars.CSharp.Tests
                     $"SELECT Region, Amount, OrderDate FROM {tableName} WHERE OrderId = 0", conn);
                 
                 using var reader = await cmdNullCheck.ExecuteReaderAsync();
-                Assert.True(await reader.ReadAsync());
+                Assert.True(await reader.ReadAsync(), "Should find row with OrderId = 0");
 
                 // 断言数据库里真的是 DBNull
-                Assert.True(await reader.IsDBNullAsync(0), "Region should be NULL for ID 0"); // Region
-                Assert.True(await reader.IsDBNullAsync(1), "Amount should be NULL for ID 0"); // Amount
-                Assert.True(await reader.IsDBNullAsync(2), "OrderDate should be NULL for ID 0"); // OrderDate
+                Assert.True(await reader.IsDBNullAsync(0), "Region should be NULL for ID 0"); 
+                Assert.True(await reader.IsDBNullAsync(1), "Amount should be NULL for ID 0");
+                Assert.True(await reader.IsDBNullAsync(2), "OrderDate should be NULL for ID 0");
                 reader.Close();
 
                 // 4.3 验证非 Null 写入情况
@@ -125,11 +140,12 @@ namespace Polars.CSharp.Tests
                 using var cmdValueCheck = new SqlCommand(
                     $"SELECT Region, Amount, OrderDate FROM {tableName} WHERE OrderId = 1", conn);
                 
-                var valResult = await cmdValueCheck.ExecuteReaderAsync();
-                Assert.True(await valResult.ReadAsync());
+                using var valResult = await cmdValueCheck.ExecuteReaderAsync();
+                Assert.True(await valResult.ReadAsync(), "Should find row with OrderId = 1");
 
                 Assert.Equal("US", valResult["Region"]);
-                Assert.Equal(100.5, Convert.ToDouble(valResult["Amount"])); // float 可能会有微小精度差异，这里简单对比
+                // float 对比时注意精度，这里数据是简单的 100.5，通常相等
+                Assert.Equal(100.5, Convert.ToDouble(valResult["Amount"])); 
                 Assert.Equal(baseTime, valResult["OrderDate"]);
             }
         }

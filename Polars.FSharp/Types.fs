@@ -167,6 +167,13 @@ type Series(handle: SeriesHandle) =
     /// <summary> Fill null values with a literal string. </summary>
     member this.FillNull(fillValue: string) = 
         this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
+    /// <summary>
+    /// Interpolate intermediate values. The interpolation method can be configured.
+    /// <para>Nulls at the beginning and end of the series remain null.</para>
+    /// </summary>
+    /// <param name="method">Interpolation method (Linear or Nearest).</param>
+    member this.Interpolate(?method:InterpolationMethod) = 
+        this.ApplyExpr(Expr.Col(this.Name).Interpolate(?method=method))
     /// <summary> Fill null values with a literal boolean. </summary>
     member this.FillNull(fillValue: bool) = 
         this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))
@@ -398,7 +405,8 @@ type Series(handle: SeriesHandle) =
     /// <summary> Logarithm with Series base. </summary>
     member this.Log(baseVal: Series) = 
         this.ApplyBinaryExpr(baseVal, fun l r -> l.Log r)
-
+    member this.Dot(other: Series) = 
+        this.ApplyBinaryExpr(other, fun l r -> l.Dot r)
     /// <summary> True division (float result). </summary>
     member this.Truediv(other: Series) = 
         this.ApplyBinaryExpr(other, fun l r -> l.Truediv r)
@@ -1730,6 +1738,12 @@ type Series(handle: SeriesHandle) =
     member this.Median() = 
         this.ApplyExpr(Expr.Col(this.Name).Median())
     /// <summary>
+    /// Get the mode.
+    /// </summary>
+    /// <returns>A new <see cref="Series"/> containing the Mode (length 1).</returns>
+    member this.Mode() = 
+        this.ApplyExpr(Expr.Col(this.Name).Mode()) 
+    /// <summary>
     /// Get the Skew.
     /// </summary>
     /// <param name="bias">If False, the calculations are corrected for statistical bias.</param>
@@ -2345,6 +2359,7 @@ and SeriesArrayNameSpace(parent: Series) =
     member _.Max() = apply (fun e -> e.Array.Max())
     member _.Mean() = apply (fun e -> e.Array.Mean())
     member _.Median() = apply (fun e -> e.Array.Median())
+    
     
     member _.Std(?ddof: int) = 
         apply (fun e -> e.Array.Std(?ddof=ddof))

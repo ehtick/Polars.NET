@@ -671,7 +671,27 @@ public class Expr : IDisposable
     /// Calculate the power of the expression with a given numeric exponent.
     /// </summary>
     public Expr Pow(double exponent) => new(PolarsWrapper.Pow(CloneHandle(), PolarsWrapper.Lit(exponent)));
-
+    /// <summary>
+    /// Compute the dot/inner product between two expressions.
+    /// <para>
+    /// The dot product is the sum of the products of the corresponding entries of the two sequences of numbers.
+    /// </para>
+    /// </summary>
+    /// <param name="other">The other expression to compute the dot product with.</param>
+    /// <returns>A scalar expression representing the dot product result.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new 
+    /// {
+    ///     a = new[] { 1, 2, 3 },
+    ///     b = new[] { 4, 5, 6 }
+    /// });
+    /// 
+    /// // (1*4) + (2*5) + (3*6) = 4 + 10 + 18 = 32
+    /// df.Select(Col("a").Dot(Col("b"))).Show();
+    /// </code>
+    /// </example>
+    public Expr Dot(Expr other) => new(PolarsWrapper.Dot(CloneHandle(), other.CloneHandle()));
     /// <summary>
     /// Calculate the power of the Euler's number.
     /// </summary>
@@ -757,6 +777,13 @@ public class Expr : IDisposable
     /// Fill null values with a specific strategy (Backward).
     /// </summary>
     public Expr BackwardFill(uint? limit = null) => new(PolarsWrapper.BackwardFill(CloneHandle(), limit ?? 0));
+    /// <summary>
+    /// Interpolate intermediate values. The interpolation method can be configured.
+    /// <para>Nulls at the beginning and end of the series remain null.</para>
+    /// </summary>
+    /// <param name="method">Interpolation method (Linear or Nearest).</param>
+    public Expr Interpolate(InterpolationMethod method = InterpolationMethod.Linear)
+        => new(PolarsWrapper.Interpolate(CloneHandle(), method.ToNative()));
     /// <summary>
     /// Evaluate whether the expression is null.
     /// </summary>
@@ -918,6 +945,11 @@ public class Expr : IDisposable
     /// </summary>
     /// <returns>A series which length is 1</returns>
     public Expr Median() => new(PolarsWrapper.Median(CloneHandle()));
+    /// <summary>
+    /// Get the mode value.
+    /// </summary>
+    /// <returns>A series which length is 1</returns>
+    public Expr Mode() => new(PolarsWrapper.Mode(CloneHandle()));
     /// <summary>
     /// Compute the sample skewness of a data set.
     /// </summary>

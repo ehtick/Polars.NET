@@ -1,7 +1,3 @@
-using Apache.Arrow.Types;
-using Microsoft.VisualBasic;
-using Org.BouncyCastle.Tls.Crypto.Impl;
-using Polars.NET.Core.Arrow;
 using static Polars.CSharp.Polars;
 namespace Polars.CSharp.Tests;
 

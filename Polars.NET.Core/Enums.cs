@@ -247,3 +247,9 @@ public enum PlQuoteStyle : byte
     NonNumeric = 2,
     Never = 3
 }
+
+public enum PlInterpolationMethod
+{
+    Linear = 0,
+    Nearest = 1
+}

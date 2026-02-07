@@ -449,39 +449,28 @@ public static partial class PolarsWrapper
 
     public static decimal? SeriesGetDecimal(SeriesHandle s, long idx)
     {
-        // Get Int128 raw value and scale
-        if (NativeBindings.pl_series_get_decimal(s, (UIntPtr)idx, out Int128 val, out UIntPtr scalePtr))
+        if (NativeBindings.pl_series_get_decimal(s, (UIntPtr)idx, out ulong low, out long high, out UIntPtr scalePtr))
         {
             int scale = (int)scalePtr;
+            
+            Int128 val = new Int128((ulong)high, low);
 
-            // Boundary Check ：C# decimal max Scale is 28
-            // If Polars Scale > 28，C# decimal is not able to save such data
+            // Boundary Check
             if (scale >= DecimalPacker.PowersOf10Int128.Length) 
             {
-                // Fallback: lose accuracy or return null
                 try { return (decimal)val / (decimal)Math.Pow(10, scale); }
                 catch { return null; }
             }
 
-            // Int128 -> Decimal
-            
             Int128 divisor = DecimalPacker.PowersOf10Int128[scale];
-
-            // Integer Part
             Int128 intPart = val / divisor;
-            // Fractional Part
             Int128 remPart = val % divisor;
 
             try 
             {
-                // Int part
                 decimal dInt = (decimal)intPart;
-                
-                // rem part
                 decimal dRem = (decimal)remPart;
                 decimal dDivisor = (decimal)divisor; 
-                
-                // Assemble
                 return dInt + (dRem / dDivisor);
             }
             catch (OverflowException)

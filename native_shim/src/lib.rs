@@ -9,6 +9,7 @@ mod utils;
 mod types;
 mod expr;
 mod io;
+mod io_remote;
 mod eager;
 mod lazy;
 mod udf;

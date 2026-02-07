@@ -347,6 +347,27 @@ public partial class Series : IDisposable
     /// <param name="baseVal"></param>
     /// <returns></returns>
     public Series Ln(double baseVal = Math.E) => ApplyExpr(Polars.Col(Name).Ln(baseVal));
+    // ==========================================
+    // Linear Algebra (Dot Product)
+    // ==========================================
+
+    /// <summary>
+    /// Compute the dot/inner product between two Series.
+    /// <para>
+    /// The behavior is equivalent to `(this * other).Sum()`.
+    /// </para>
+    /// </summary>
+    /// <param name="other">The other Series to compute the dot product with.</param>
+    /// <returns>A Series of length 1 containing the result.</returns>
+    public Series Dot(Series other)
+        => ApplyBinaryExpr(other, (left, right) => left.Dot(right));
+    /// <summary>
+    /// Compute the dot/inner product and return the scalar value directly.
+    /// </summary>
+    /// <typeparam name="T">The type of the result (e.g. double, long).</typeparam>
+    /// <param name="other">The other Series.</param>
+    /// <returns>The dot product value.</returns>
+    public T? Dot<T>(Series other) => Dot(other).GetValue<T>(0);
     /// <summary>
     /// Round the number
     /// </summary>
@@ -791,6 +812,12 @@ public partial class Series : IDisposable
     /// </summary>
     public Series BackwardFill(uint? limit = null) => ApplyExpr(Polars.Col(Name).BackwardFill(limit));
     /// <summary>
+    /// Interpolate intermediate values.
+    /// </summary>
+    /// <inheritdoc cref="Expr.Interpolate(InterpolationMethod)"/>
+    public Series Interpolate(InterpolationMethod method = InterpolationMethod.Linear)
+        => ApplyExpr(Polars.Col(Name).Interpolate(method));
+    /// <summary>
     /// Fill floating point NaN values with a specified value.
     /// Note: This is different from FillNull. It only handles IEEE 754 NaN.
     /// </summary>
@@ -874,6 +901,11 @@ public partial class Series : IDisposable
     /// </summary>
     /// <returns>A new <see cref="Series"/> containing the median value (length 1).</returns>
     public Series Median() => ApplyExpr(Polars.Col(Name).Median());
+    /// <summary>
+    /// <inheritdoc cref="Expr.Median()" path="/summary"/>
+    /// </summary>
+    /// <returns>A new <see cref="Series"/> containing the mode value (length 1).</returns>
+    public Series Mode() => ApplyExpr(Polars.Col(Name).Mode());
 
     /// <summary>
     /// <inheritdoc cref="Expr.Skew(bool)" path="/summary"/>

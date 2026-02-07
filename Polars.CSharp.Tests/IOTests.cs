@@ -768,6 +768,7 @@ public class IoTests
         }
     }
     [Fact]
+    [Trait("Category","Debug")]
     public void Test_Streaming_SinkParquet_EndToEnd()
     {
         // ====================================================

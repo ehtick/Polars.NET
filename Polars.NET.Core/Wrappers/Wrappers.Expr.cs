@@ -553,6 +553,13 @@ public static partial class PolarsWrapper
         => BinaryOp(NativeBindings.pl_expr_fill_null, expr, fillValue);
     public static ExprHandle FillNan(ExprHandle expr, ExprHandle fillValue) 
         => BinaryOp(NativeBindings.pl_expr_fill_nan, expr, fillValue);
+    public static ExprHandle Interpolate(ExprHandle expr, PlInterpolationMethod method)
+    {
+        var h = NativeBindings.pl_expr_interpolate(expr, method);
+        expr.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    
     public static ExprHandle IsNull(ExprHandle expr) 
         => UnaryOp(NativeBindings.pl_expr_is_null, expr);
 
@@ -576,6 +583,7 @@ public static partial class PolarsWrapper
         => UnaryOp(NativeBindings.pl_expr_unique_stable,expr);
     // Math
     public static ExprHandle Pow(ExprHandle b, ExprHandle e) => BinaryOp(NativeBindings.pl_expr_pow, b, e);
+    public static ExprHandle Dot(ExprHandle left, ExprHandle right) => BinaryOp(NativeBindings.pl_expr_dot, left, right);
     public static ExprHandle Sqrt(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_sqrt, e);
     public static ExprHandle Cbrt(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_cbrt, e);
     public static ExprHandle Exp(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_exp, e);
@@ -625,6 +633,7 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(h);
     }
     public static ExprHandle Median(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_median, e);
+    public static ExprHandle Mode(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_mode, e);
     
     public static ExprHandle Quantile(ExprHandle e, double quantile, PlQuantileMethod method)
     {

@@ -148,6 +148,8 @@ unsafe internal partial class NativeBindings
     // null ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_fill_null(ExprHandle expr, ExprHandle fillValue);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_fill_nan(ExprHandle expr, ExprHandle fillValue);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_interpolate(ExprHandle expr, PlInterpolationMethod method);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_null(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_not_null(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_drop_nulls(ExprHandle expr);
@@ -162,6 +164,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_unique_stable(ExprHandle expr);
     // Math ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_pow(ExprHandle baseExpr, ExprHandle exponent);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_dot(ExprHandle left, ExprHandle right);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sqrt(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cbrt(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_exp(ExprHandle expr);
@@ -541,6 +544,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_if_else(ExprHandle pred, ExprHandle ifTrue, ExprHandle ifFalse);
     // Statistical
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_count(ExprHandle e);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_mode(ExprHandle e);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_std(ExprHandle e, byte ddof);
 
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_var(ExprHandle e, byte ddof);

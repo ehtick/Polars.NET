@@ -145,14 +145,17 @@ and Expr(handle: ExprHandle) =
         new Expr(PolarsWrapper.Item(this.CloneHandle(),allow))
     member this.Sum() = new Expr(PolarsWrapper.Sum (this.CloneHandle()))
     member this.Mean() = new Expr(PolarsWrapper.Mean (this.CloneHandle()))
+    member this.Mode() =new Expr(PolarsWrapper.Mode (this.CloneHandle()))
     member this.Max() = new Expr(PolarsWrapper.Max (this.CloneHandle()))
     member this.Min() = new Expr(PolarsWrapper.Min (this.CloneHandle()))
     member this.Product() = new Expr(PolarsWrapper.Product (this.CloneHandle()))
+    
     // Math
     member this.Abs() = new Expr(PolarsWrapper.Abs (this.CloneHandle()))
     member this.Sqrt() = new Expr(PolarsWrapper.Sqrt(this.CloneHandle()))
     member this.Cbrt() = new Expr(PolarsWrapper.Cbrt(this.CloneHandle()))
     member this.Exp() = new Expr(PolarsWrapper.Exp(this.CloneHandle()))
+    member this.Dot(other:Expr) = new Expr(PolarsWrapper.Dot(this.CloneHandle(),other.CloneHandle()))
     member this.Pow(exponent: Expr) = 
         new Expr(PolarsWrapper.Pow(this.CloneHandle(), exponent.CloneHandle()))
     member this.Pow(exponent: double) = 
@@ -457,6 +460,14 @@ and Expr(handle: ExprHandle) =
         new Expr(PolarsWrapper.Filter(this.CloneHandle(),predicate.CloneHandle()))
     member this.FillNull(fillValue: Expr) = 
         new Expr(PolarsWrapper.FillNull(this.CloneHandle(), fillValue.CloneHandle()))
+    /// <summary>
+    /// Interpolate intermediate values. The interpolation method can be configured.
+    /// <para>Nulls at the beginning and end of the series remain null.</para>
+    /// </summary>
+    /// <param name="method">Interpolation method (Linear or Nearest).</param>
+    member this.Interpolate(?method:InterpolationMethod) = 
+        let met = defaultArg method InterpolationMethod.Linear
+        new Expr(PolarsWrapper.Interpolate(this.CloneHandle(), met.ToNative()))
     member this.FillNan(fillValue:Expr) =
         new Expr(PolarsWrapper.FillNan(this.CloneHandle(), fillValue.CloneHandle()));
     member this.IsNull() = 

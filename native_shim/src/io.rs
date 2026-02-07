@@ -2,7 +2,7 @@ use polars::prelude::*;
 use polars_io::mmap::MmapBytesReader;
 use polars_io::{HiveOptions, RowIndex};
 use polars_arrow::ffi::{self, ArrowArray, ArrowSchema, export_array_to_c, export_field_to_c};
-use polars_arrow::array::StructArray;
+use polars_arrow::array::{StructArray};
 use polars_arrow::datatypes::{ArrowDataType, Field};
 use polars_core::prelude::CompatLevel;
 use std::ffi::{CStr, c_void};
@@ -640,7 +640,7 @@ pub extern "C" fn pl_lazyframe_sink_csv(
             sink_options
         )?
         .with_new_streaming(true)
-        .collect()?;
+        .collect_with_engine(Engine::Auto)?;
 
         Ok(())
     })
@@ -1393,7 +1393,7 @@ pub extern "C" fn pl_lazyframe_sink_json(
             sink_options
         )?
         .with_new_streaming(true)
-        .collect()?;
+        .collect_with_engine(Engine::Auto)?;
 
         Ok(())
     })
@@ -1791,11 +1791,12 @@ pub extern "C" fn pl_lazyframe_sink_ipc(
                 sink_options
             )?
             .with_new_streaming(true) // Ensure streaming engine is used
-            .collect()?;
+            .collect_with_engine(Engine::Auto)?;
         
         Ok(())
     })
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_dataframe_from_arrow_record_batch(

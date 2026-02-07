@@ -12,7 +12,6 @@
 *.tmp
 *.log
 *.txt
-*.sln
 # --- OS Files ---
 .DS_Store
 Thumbs.db

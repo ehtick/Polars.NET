@@ -1263,4 +1263,25 @@ public void Test_Series_Ewm_Methods()
         Assert.Null(s.GetValue<int?>(0));
         Assert.Equal(1, s.GetValue<int?>(1));
     }
+    [Fact]
+    public void Test_Series_Dot_Product()
+    {
+        using var s1 = Series.From("a", new[] { 1, 2, 3 });
+        using var s2 = Series.From("b", new[] { 4, 5, 6 });
+
+        // 1. 测试返回 Series 版本
+        using var resSeries = s1.Dot(s2);
+        Assert.Equal(1, resSeries.Length);
+        Assert.Equal(32L, resSeries.GetValue<long>(0));
+
+        // 2. 测试直接返回标量版本
+        var resScalar = s1.Dot<long>(s2);
+        Assert.Equal(32L, resScalar);
+        
+        // 3. 测试同名 Series (ApplyBinaryExpr 应该自动处理改名)
+        using var s3 = Series.From("a", new[] { 10, 20, 30 }); // 名字也是 'a'
+        var resSameName = s1.Dot<long>(s3);
+        // 1*10 + 2*20 + 3*30 = 10 + 40 + 90 = 140
+        Assert.Equal(140L, resSameName);
+    }
 }

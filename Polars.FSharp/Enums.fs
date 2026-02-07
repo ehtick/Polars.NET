@@ -505,3 +505,11 @@ type QuoteStyle =
         | Necessary -> PlQuoteStyle.Necessary
         | Never -> PlQuoteStyle.Never
         | NonNumeric -> PlQuoteStyle.NonNumeric
+
+type InterpolationMethod =
+    | Nearest
+    | Linear
+    member internal this.ToNative() =
+        match this with
+        | Nearest -> PlInterpolationMethod.Nearest
+        | Linear -> PlInterpolationMethod.Linear

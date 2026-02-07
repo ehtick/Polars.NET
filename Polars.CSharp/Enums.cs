@@ -306,6 +306,12 @@ public enum QuoteStyle : byte
     /// </summary>
     Never = 3
 }
+
+public enum InterpolationMethod
+{
+    Linear = 0,
+    Nearest = 1
+}
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -538,6 +544,12 @@ internal static class EnumExtensions
         QuoteStyle.NonNumeric => CoreEnums.PlQuoteStyle.NonNumeric,
         QuoteStyle.Never => CoreEnums.PlQuoteStyle.Never,
         _ => throw new ArgumentOutOfRangeException(nameof(style), style, null)
+    };
+    internal static CoreEnums.PlInterpolationMethod ToNative(this InterpolationMethod method) => method switch
+    {
+        InterpolationMethod.Nearest => CoreEnums.PlInterpolationMethod.Nearest,
+        InterpolationMethod.Linear => CoreEnums.PlInterpolationMethod.Linear,
+        _ => throw new ArgumentOutOfRangeException(nameof(method), method, null)
     };
 }
 

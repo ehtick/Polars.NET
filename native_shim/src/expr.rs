@@ -276,6 +276,7 @@ gen_str_ctor!(pl_expr_lit_str, lit);
 // --- Group 3: Unarp Ops ---
 gen_unary_op!(pl_expr_sum, sum);
 gen_unary_op!(pl_expr_mean, mean);
+gen_unary_op!(pl_expr_mode, mode);
 gen_unary_op!(pl_expr_max, max);
 gen_unary_op!(pl_expr_min, min);
 gen_unary_op!(pl_expr_abs, abs);
@@ -347,6 +348,7 @@ gen_binary_op!(pl_expr_xor, xor); // xor
 gen_binary_op!(pl_expr_fill_null, fill_null);
 // Math Ops
 gen_binary_op!(pl_expr_pow,pow);
+gen_binary_op!(pl_expr_dot, dot);
 // --- Cumulative Functions ---
 gen_unary_op_arg_bool!(pl_expr_cum_sum, cum_sum);
 gen_unary_op_arg_bool!(pl_expr_cum_max, cum_max);
@@ -2055,6 +2057,27 @@ pub extern "C" fn pl_expr_backward_fill(
         
         let strategy = FillNullStrategy::Backward(limit_opt);
         let new_expr = ctx.inner.fill_null_with_strategy(strategy);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
+// ==========================================
+// Interpolate
+// ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_interpolate(
+    expr_ptr: *mut ExprContext,
+    method: u8 // 0=Linear, 1=Nearest
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
+        let interp_method = match method {
+            1 => InterpolationMethod::Nearest,
+            _ => InterpolationMethod::Linear,
+        };
+
+        let new_expr = ctx.inner.interpolate(interp_method);
         
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
