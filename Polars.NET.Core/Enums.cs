@@ -253,3 +253,13 @@ public enum PlInterpolationMethod
     Linear = 0,
     Nearest = 1
 }
+
+public enum PlCloudProvider : byte
+{
+    None = 0,
+    Aws = 1,
+    Azure = 2,
+    Gcp = 3,
+    Http = 4,
+    HuggingFace = 5
+}

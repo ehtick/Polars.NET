@@ -4233,12 +4233,15 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <param name="useStatistics">Use parquet statistics to prune row groups.</param>
     /// <param name="glob">Expand path using globbing rules.</param>
     /// <param name="allowMissingColumns">If true, do not fail if columns are missing.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks when reading. (default: false)</param>
+    /// <param name="cache">Cache the result after reading. (default: true)</param>
     /// <param name="rowIndexName">If provided, add a row index column with this name.</param>
     /// <param name="rowIndexOffset">Start index for the row index column.</param>
     /// <param name="includePathColumn">If provided, add a column with the path of the file.</param>
     /// <param name="schema">Overwrite the schema of the dataset.</param>
     /// <param name="hiveSchema">The schema of the hive partitions.</param>
     /// <param name="tryParseHiveDates">Attempt to parse hive values as Date/Datetime.</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     static member ScanParquet
         (
             path: string,
@@ -4248,12 +4251,15 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?useStatistics: bool,
             ?glob: bool,
             ?allowMissingColumns: bool,
+            ?rechunk:bool,
+            ?cache:bool,
             ?rowIndexName: string,
             ?rowIndexOffset: uint32,
             ?includePathColumn: string,
             ?schema: PolarsSchema,
             ?hiveSchema: PolarsSchema,
-            ?tryParseHiveDates: bool
+            ?tryParseHiveDates: bool,
+            ?cloudOptions: CloudOptions
         ) =
         // Defaults
         let pParallel = defaultArg parallelStrategy ParallelStrategy.Auto
@@ -4263,8 +4269,10 @@ and LazyFrame(handle: LazyFrameHandle) =
         let pAllowMissing = defaultArg allowMissingColumns false
         let pRowIndexOffset = defaultArg rowIndexOffset 0u
         let pTryHive = defaultArg tryParseHiveDates false
+        let pRechunk = defaultArg rechunk false
+        let pCache = defaultArg cache false
 
-        //  F# Types -> C# Interop Types
+        // F# Types -> C# Interop Types
         
         // nRows: int64 option -> ulong? (Nullable<ulong>)
         let pNRows = 
@@ -4283,6 +4291,29 @@ and LazyFrame(handle: LazyFrameHandle) =
             |> Option.map (fun s -> s.Handle) 
             |> Option.toObj
 
+        // Cloud Options Unwrapping Logic
+        let cProvider, cRetries, cCacheTtl, cKeys, cValues, cLen =
+            match cloudOptions with
+            | Some opts ->
+                // 1. Provider
+                let provider = opts.Provider.ToNative()
+
+                // 2. Integers
+                let retries = unativeint opts.Retries
+                let cache = opts.CacheTTL
+
+                // 3. Credentials: Map -> Arrays
+                let keys = opts.Credentials |> Map.toSeq |> Seq.map fst |> Seq.toArray
+                let values = opts.Credentials |> Map.toSeq |> Seq.map snd |> Seq.toArray
+                let len = unativeint keys.Length
+
+                provider, retries, cache, keys, values, len
+
+            | None ->
+                // Default: NotCloud
+                PlCloudProvider.None, unativeint 0, 0UL, null, null, unativeint 0
+
+        // Call Wrapper
         let handle = PolarsWrapper.ScanParquet(
             path,
             pNRows,
@@ -4291,14 +4322,23 @@ and LazyFrame(handle: LazyFrameHandle) =
             pStats,
             pGlob,
             pAllowMissing,
+            pRechunk,
+            pCache,
             Option.toObj rowIndexName,
             pRowIndexOffset,
             Option.toObj includePathColumn,
             hSchema,
             hHiveSchema,
-            pTryHive
+            pTryHive,
+            cProvider,
+            cRetries,
+            cCacheTtl,
+            cKeys,
+            cValues,
+            cLen
         )
-
+        
+        // 返回 LazyFrame 实例
         new LazyFrame(handle)
     /// <summary>
     /// [Memory] Lazily read parquet from a byte array (in-memory buffer).
@@ -4308,8 +4348,10 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <param name="parallel">Parallel strategy (Auto, Columns, RowGroups, None).</param>
     /// <param name="lowMemory">Reduce memory pressure at the expense of performance.</param>
     /// <param name="useStatistics">Use parquet statistics to prune row groups.</param>
-    /// <param name="glob">Globbing patterns (usually irrelevant for memory scan, defaults to true).</param>
+    /// <param name="glob">Globbing patterns (usually irrelevant for memory scan,always false).</param>
     /// <param name="allowMissingColumns">If true, do not fail if columns are missing.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks when reading. (default: false)</param>
+    /// <param name="cache">Cache the result after reading. (default: true)</param>
     /// <param name="rowIndexName">If provided, add a row index column with this name.</param>
     /// <param name="rowIndexOffset">Start index for the row index column.</param>
     /// <param name="includePathColumn">If provided, add a column with the path (usually irrelevant for memory).</param>
@@ -4325,6 +4367,8 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?useStatistics: bool,
             ?glob: bool,
             ?allowMissingColumns: bool,
+            ?rechunk:bool,
+            ?cache:bool,
             ?rowIndexName: string,
             ?rowIndexOffset: uint32,
             ?includePathColumn: string,
@@ -4339,6 +4383,8 @@ and LazyFrame(handle: LazyFrameHandle) =
         let pAllowMissing = defaultArg allowMissingColumns false
         let pRowIndexOffset = defaultArg rowIndexOffset 0u
         let pTryHive = defaultArg tryParseHiveDates false
+        let pRechunk = defaultArg rechunk false
+        let pCache = defaultArg cache false
 
         // 2. Type Conversions
         let pNRows = 
@@ -4364,8 +4410,10 @@ and LazyFrame(handle: LazyFrameHandle) =
             pParallel.ToNative(),
             pLowMem,
             pStats,
-            pGlob,
+            false,
             pAllowMissing,
+            pRechunk,
+            pCache,
             Option.toObj rowIndexName,
             pRowIndexOffset,
             Option.toObj includePathColumn,
@@ -4719,6 +4767,7 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
     /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
     /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     member this.SinkParquet(
         path: string,
         ?compression: ParquetCompression,
@@ -4728,7 +4777,8 @@ and LazyFrame(handle: LazyFrameHandle) =
         ?dataPageSize: int,
         ?maintainOrder: bool,
         ?syncOnClose: SyncOnClose,
-        ?mkdir: bool
+        ?mkdir: bool,
+        ?cloudOptions : CloudOptions
     ) : unit =
         let compression = defaultArg compression ParquetCompression.Snappy
         let compressionLevel = defaultArg compressionLevel -1
@@ -4739,6 +4789,26 @@ and LazyFrame(handle: LazyFrameHandle) =
         let syncOnClose = defaultArg syncOnClose SyncOnClose.NoSync
         let mkdir = defaultArg mkdir false
 
+        let cProvider, cRetries, cCacheTtl, cKeys, cValues, cLen =
+            match cloudOptions with
+            | Some opts ->
+                // 1. Provider
+                let provider = opts.Provider.ToNative()
+
+                // 2. Integers
+                let retries = unativeint opts.Retries
+                let cache = opts.CacheTTL
+
+                // 3. Credentials Map -> Arrays
+                let keys = opts.Credentials |> Map.toSeq |> Seq.map fst |> Seq.toArray
+                let values = opts.Credentials |> Map.toSeq |> Seq.map snd |> Seq.toArray
+                let len = unativeint keys.Length
+
+                provider, retries, cache, keys, values, len
+            
+            | None ->
+                // Default: NotCloud
+                PlCloudProvider.None, unativeint 0, 0UL, null, null, unativeint 0
         PolarsWrapper.SinkParquet(
             this.CloneHandle(), 
             path,
@@ -4749,7 +4819,13 @@ and LazyFrame(handle: LazyFrameHandle) =
             dataPageSize,
             maintainOrder,
             syncOnClose.ToNative(),
-            mkdir
+            mkdir,
+            cProvider,
+            cRetries,
+            cCacheTtl,
+            cKeys,
+            cValues,
+            cLen
         )
     /// <summary>
     /// Sink the LazyFrame to a JSON file.

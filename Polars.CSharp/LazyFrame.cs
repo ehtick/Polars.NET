@@ -187,16 +187,18 @@ public class LazyFrame : IDisposable
         return new LazyFrame(handle);
     }
 
-    /// <summary>
+/// <summary>
     /// Lazily read from a parquet file or multiple files via glob patterns.
     /// </summary>
-    /// <param name="path">Path to file or glob pattern (e.g. "data/*.parquet").</param>
+    /// <param name="path">Path to file or glob pattern (e.g. "data/*.parquet" or "s3://bucket/data.parquet").</param>
     /// <param name="nRows">Limit number of rows to read (optimization).</param>
     /// <param name="parallel">Parallel strategy.</param>
     /// <param name="lowMemory">Reduce memory usage at the expense of performance.</param>
     /// <param name="useStatistics">Use parquet statistics to optimize the query plan.</param>
     /// <param name="glob">Expand glob patterns (default: true).</param>
     /// <param name="allowMissingColumns">Allow missing columns when reading multiple files.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks when reading. (default: false)</param>
+    /// <param name="cache">Cache the result after reading. (default: true)</param>
     /// <param name="rowIndexName">If provided, adds a column with the row number.</param>
     /// <param name="rowIndexOffset">Offset for the row index.</param>
     /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
@@ -211,6 +213,7 @@ public class LazyFrame : IDisposable
     /// <param name="tryParseHiveDates">
     /// Whether to try parsing dates in Hive partitioning paths (default: true).
     /// </param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public static LazyFrame ScanParquet(
         string path,
         ulong? nRows = null,
@@ -219,15 +222,39 @@ public class LazyFrame : IDisposable
         bool useStatistics = true,
         bool glob = true,
         bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
         string? includePathColumn = null,
         PolarsSchema? schema = null,
         PolarsSchema? hivePartitionSchema = null,
-        bool tryParseHiveDates = false)
+        bool tryParseHiveDates = true,
+        CloudOptions? cloudOptions = null) 
     {
         var schemaHandle = schema?.Handle;
         var hiveSchemaHandle = hivePartitionSchema?.Handle;
+
+        CloudProvider provider = CloudProvider.None;
+        nuint retries = 0;
+        ulong cacheTtl = 0;
+        string[]? keys = null;
+        string[]? values = null;
+        nuint len = 0;
+
+        if (cloudOptions != null)
+        {
+            provider = cloudOptions.Provider;
+            retries = cloudOptions.MaxRetries;
+            cacheTtl = cloudOptions.FileCacheTtl;
+            
+            if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
+            {
+                keys = cloudOptions.Credentials.Keys.ToArray();
+                values = cloudOptions.Credentials.Values.ToArray();
+                len = (nuint)keys.Length;
+            }
+        }
 
         var h = PolarsWrapper.ScanParquet(
             path,
@@ -237,13 +264,21 @@ public class LazyFrame : IDisposable
             useStatistics,
             glob,
             allowMissingColumns,
+            rechunk, 
+            cache,   
             rowIndexName,
             rowIndexOffset,
             includePathColumn,
             schemaHandle,     
             hiveSchemaHandle, 
-            tryParseHiveDates
-        );
+            tryParseHiveDates,
+            provider.ToNative(),
+            retries,
+            cacheTtl,
+            keys,
+            values,
+            len
+            );
 
         return new LazyFrame(h);
     }
@@ -257,6 +292,8 @@ public class LazyFrame : IDisposable
         bool lowMemory = false,
         bool useStatistics = true,
         bool allowMissingColumns = false,
+        bool rechunk = false, // New
+        bool cache = true,    // New
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
         string? includePathColumn = null,
@@ -275,6 +312,8 @@ public class LazyFrame : IDisposable
             useStatistics,
             false, // glob = false for memory
             allowMissingColumns,
+            rechunk,
+            cache,
             rowIndexName,
             rowIndexOffset,
             includePathColumn,
@@ -1761,7 +1800,21 @@ public class LazyFrame : IDisposable
     // ==========================================
     /// <summary>
     /// Sink the LazyFrame to a Parquet file.
+    /// <para>
+    /// This allows for streaming execution, processing the data in chunks and writing it to the file
+    /// without loading the entire dataset into memory.
+    /// </para>
     /// </summary>
+    /// <param name="path">Path to the output file.</param>
+    /// <param name="compression">Compression codec to use.</param>
+    /// <param name="compressionLevel">Compression level (depends on the codec).</param>
+    /// <param name="statistics">Write statistics to the parquet file.</param>
+    /// <param name="rowGroupSize">Target row group size (in rows).</param>
+    /// <param name="dataPageSize">Target data page size (in bytes).</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
+    /// <param name="mkdir">Create parent directories if they don't exist (Local file system only).</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public void SinkParquet(
         string path,
         ParquetCompression compression = ParquetCompression.Snappy,
@@ -1771,8 +1824,30 @@ public class LazyFrame : IDisposable
         int dataPageSize = 0,
         bool maintainOrder = true,
         SyncOnClose syncOnClose = SyncOnClose.None,
-        bool mkdir = false)
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null) 
     {
+        CloudProvider provider = CloudProvider.None;
+        nuint retries = 0;
+        ulong cacheTtl = 0;
+        string[]? keys = null;
+        string[]? values = null;
+        nuint len = 0;
+
+        if (cloudOptions != null)
+        {
+            provider = cloudOptions.Provider;
+            retries = cloudOptions.MaxRetries;
+            cacheTtl = cloudOptions.FileCacheTtl;
+            
+            if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
+            {
+                keys = cloudOptions.Credentials.Keys.ToArray();
+                values = cloudOptions.Credentials.Values.ToArray();
+                len = (nuint)keys.Length;
+            }
+        }
+
         PolarsWrapper.SinkParquet(
             Handle,
             path,
@@ -1783,7 +1858,13 @@ public class LazyFrame : IDisposable
             dataPageSize,
             maintainOrder,
             syncOnClose.ToNative(),
-            mkdir
+            mkdir,
+            provider.ToNative(),
+            retries,
+            cacheTtl,
+            keys,
+            values,
+            len 
         );
     }
     /// <summary>

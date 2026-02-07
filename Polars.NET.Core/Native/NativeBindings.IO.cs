@@ -170,37 +170,49 @@ unsafe internal partial class NativeBindings
     );
 
     // Parquet
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_parquet(
         string path,
-        IntPtr nRows,               // *const usize
-        PlParallelStrategy parallel,
-        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
-        [MarshalAs(UnmanagedType.U1)] bool useStatistics,
-        [MarshalAs(UnmanagedType.U1)] bool glob,
-        [MarshalAs(UnmanagedType.U1)] bool allowMissingColumns,
-        string? rowIndexName,
-        uint rowIndexOffset,
-        string? includePathColumn,
-        IntPtr schema,              // *mut SchemaContext (Override Schema)
-        IntPtr hiveSchema,          // *mut SchemaContext (Hive Partition Schema)
-        [MarshalAs(UnmanagedType.U1)] bool tryParseHiveDates
+        IntPtr n_rows, // null for None
+        PlParallelStrategy parallel_code,
+        [MarshalAs(UnmanagedType.I1)] bool low_memory,
+        [MarshalAs(UnmanagedType.I1)] bool use_statistics,
+        [MarshalAs(UnmanagedType.I1)] bool glob,
+        [MarshalAs(UnmanagedType.I1)] bool allow_missing_columns,
+        [MarshalAs(UnmanagedType.I1)] bool rechunk, 
+        [MarshalAs(UnmanagedType.I1)] bool cache,   
+        string? row_index_name,
+        uint row_index_offset,
+        string? include_path_col,
+        IntPtr schema,
+        IntPtr hive_schema,
+        [MarshalAs(UnmanagedType.I1)] bool try_parse_hive_dates,
+        // Cloud Options
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_cache_ttl,
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string[]? cloud_keys,
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string[]? cloud_values,
+        UIntPtr cloud_len
     );
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_parquet_memory(
-        IntPtr buffer, UIntPtr bufferLen,
-        IntPtr nRows,               // *const usize
-        PlParallelStrategy parallel,
-        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
-        [MarshalAs(UnmanagedType.U1)] bool useStatistics,
-        [MarshalAs(UnmanagedType.U1)] bool glob,
-        [MarshalAs(UnmanagedType.U1)] bool allowMissingColumns,
-        string? rowIndexName,
-        uint rowIndexOffset,
-        string? includePathColumn,
-        IntPtr schema,              // *mut SchemaContext
-        IntPtr hiveSchema,          // *mut SchemaContext
-        [MarshalAs(UnmanagedType.U1)] bool tryParseHiveDates
+        IntPtr buffer_ptr,
+        UIntPtr buffer_len,
+        IntPtr n_rows,
+        PlParallelStrategy parallel_code,
+        [MarshalAs(UnmanagedType.I1)] bool low_memory,
+        [MarshalAs(UnmanagedType.I1)] bool use_statistics,
+        [MarshalAs(UnmanagedType.I1)] bool glob,
+        [MarshalAs(UnmanagedType.I1)] bool allow_missing_columns,
+        [MarshalAs(UnmanagedType.I1)] bool rechunk, 
+        [MarshalAs(UnmanagedType.I1)] bool cache,   
+        string? row_index_name,
+        uint row_index_offset,
+        string? include_path_col,
+        IntPtr schema,
+        IntPtr hive_schema,
+        [MarshalAs(UnmanagedType.I1)] bool try_parse_hive_dates
     );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial DataFrameHandle pl_read_parquet(
@@ -246,7 +258,13 @@ unsafe internal partial class NativeBindings
         nuint data_page_size,
         [MarshalAs(UnmanagedType.U1)] bool maintain_order,
         PlSyncOnClose sync_on_close,
-        [MarshalAs(UnmanagedType.U1)] bool mkdir
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_cache_ttl,
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string[]? cloud_keys,
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string[]? cloud_values,
+        UIntPtr cloud_len
     );
 
     // ---------------------------------------------------------

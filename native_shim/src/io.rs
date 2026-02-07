@@ -1,4 +1,5 @@
 use polars::prelude::*;
+use polars_io::cloud::CloudOptions;
 use polars_io::mmap::MmapBytesReader;
 use polars_io::{HiveOptions, RowIndex};
 use polars_arrow::ffi::{self, ArrowArray, ArrowSchema, export_array_to_c, export_field_to_c};
@@ -15,6 +16,63 @@ use crate::utils::{ptr_to_str,ptr_to_opt_string,map_parallel_strategy,ptr_to_sch
 use polars_utils::mmap::MemSlice;
 use std::path::PathBuf;
 use polars_utils::slice_enum::Slice;
+
+unsafe fn build_cloud_options(
+    provider_code: u8,
+    retries: usize,
+    cache_ttl: u64,
+    keys_ptr: *const *const c_char,
+    vals_ptr: *const *const c_char,
+    len: usize
+) -> Option<CloudOptions> {
+
+    if provider_code == 0 {
+        return None;
+    }
+
+    let scheme = match provider_code {
+        1 => Some(CloudScheme::S3),     // AWS, S3, S3a 
+        2 => Some(CloudScheme::Azure),  // Azure, Abfs, Abfss 
+        3 => Some(CloudScheme::Gcs),    // Gcs, Gs 
+        4 => Some(CloudScheme::Http),   // Http, Https
+        5 => Some(CloudScheme::Hf),     // Hugging Face
+        _ => {
+            eprintln!("Warning: Unknown cloud provider code: {}", provider_code);
+            None
+        }
+    };
+
+    let mut params = Vec::with_capacity(len);
+    if !keys_ptr.is_null() && !vals_ptr.is_null() && len > 0 {
+        let keys_slice = unsafe {std::slice::from_raw_parts(keys_ptr, len)};
+        let vals_slice = unsafe {std::slice::from_raw_parts(vals_ptr, len)};
+
+        for i in 0..len {
+            let k_ptr = keys_slice[i];
+            let v_ptr = vals_slice[i];
+            if !k_ptr.is_null() && !v_ptr.is_null() {
+                let k = unsafe {CStr::from_ptr(k_ptr).to_string_lossy().into_owned()};
+                let v = unsafe {CStr::from_ptr(v_ptr).to_string_lossy().into_owned()};
+                params.push((k, v));
+            }
+        }
+    }
+
+    let mut opts = match CloudOptions::from_untyped_config(scheme.as_ref(), params) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("Cloud config error: {}", e);
+            return None;
+        }
+    };
+
+    opts.max_retries = retries;
+    {
+        opts.file_cache_ttl = cache_ttl;
+    }
+
+    Some(opts)
+}
 
 // ==========================================
 // Read csv
@@ -762,6 +820,7 @@ pub extern "C" fn pl_read_parquet_memory(
     })
 }
 
+
 fn build_scan_args(
     n_rows: *const usize,
     parallel_code: u8,
@@ -774,7 +833,16 @@ fn build_scan_args(
     include_path_col_ptr: *const c_char,
     schema_ptr: *mut SchemaContext,        
     hive_schema_ptr: *mut SchemaContext,   
-    try_parse_hive_dates: bool             
+    try_parse_hive_dates: bool,      
+    rechunk: bool,
+    cache: bool,       
+    // --- Cloud Args ---
+    cloud_provider: u8,
+    cloud_retries: usize,
+    cloud_cache_ttl: u64,
+    cloud_keys: *const *const c_char,
+    cloud_values: *const *const c_char,
+    cloud_len: usize,
 ) -> ScanArgsParquet {
     let mut args = ScanArgsParquet::default();
 
@@ -784,6 +852,8 @@ fn build_scan_args(
     args.use_statistics = use_statistics;
     args.glob = glob;
     args.allow_missing_columns = allow_missing_columns;
+    args.rechunk = rechunk; 
+    args.cache = cache;     
 
     if !row_index_name_ptr.is_null() {
             let name = ptr_to_str(row_index_name_ptr).unwrap();
@@ -813,6 +883,17 @@ fn build_scan_args(
         try_parse_dates: try_parse_hive_dates,
     };
 
+    args.cloud_options = unsafe {
+        build_cloud_options(
+            cloud_provider, 
+            cloud_retries, 
+            cloud_cache_ttl, 
+            cloud_keys, 
+            cloud_values, 
+            cloud_len
+        )
+    };
+
     args
 }
 
@@ -825,13 +906,23 @@ pub extern "C" fn pl_scan_parquet(
     use_statistics: bool,
     glob: bool,
     allow_missing_columns: bool,
+    rechunk: bool, 
+    cache: bool,   
+    // --- Optional Names ---
     row_index_name_ptr: *const c_char,
     row_index_offset: u32,
     include_path_col_ptr: *const c_char,
-    // --- New Args ---
+    // --- Schema ---
     schema_ptr: *mut SchemaContext,
     hive_schema_ptr: *mut SchemaContext,
-    try_parse_hive_dates: bool
+    try_parse_hive_dates: bool,
+    // --- Cloud Options ---
+    cloud_provider: u8,
+    cloud_retries: usize,
+    cloud_cache_ttl: u64,
+    cloud_keys: *const *const c_char,
+    cloud_values: *const *const c_char,
+    cloud_len: usize
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let path = ptr_to_str(path_ptr)
@@ -839,9 +930,12 @@ pub extern "C" fn pl_scan_parquet(
 
         let args = build_scan_args(
             n_rows, parallel_code, low_memory, use_statistics, 
-            glob, allow_missing_columns, row_index_name_ptr, 
-            row_index_offset, include_path_col_ptr,
-            schema_ptr, hive_schema_ptr, try_parse_hive_dates 
+            glob, allow_missing_columns, 
+            row_index_name_ptr, row_index_offset, include_path_col_ptr,
+            schema_ptr, hive_schema_ptr, try_parse_hive_dates,
+            rechunk, cache,
+            cloud_provider, cloud_retries, cloud_cache_ttl, 
+            cloud_keys, cloud_values, cloud_len
         );
 
         let lf = LazyFrame::scan_parquet(PlPath::new(path), args)?;
@@ -862,25 +956,45 @@ pub extern "C" fn pl_scan_parquet_memory(
     use_statistics: bool,
     glob: bool,
     allow_missing_columns: bool,
+    rechunk: bool, 
+    cache: bool,   
     row_index_name_ptr: *const c_char,
     row_index_offset: u32,
     include_path_col_ptr: *const c_char,
-    // --- New Args ---
     schema_ptr: *mut SchemaContext,
     hive_schema_ptr: *mut SchemaContext,
     try_parse_hive_dates: bool
 ) -> *mut LazyFrameContext {
     ffi_try!({
+
         let slice = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
         let vec_data = slice.to_vec(); 
         let mem_slice = MemSlice::from_vec(vec_data);
         let sources = ScanSources::Buffers(Arc::new([mem_slice]));
 
+
         let args = build_scan_args(
-            n_rows, parallel_code, low_memory, use_statistics, 
-            glob, allow_missing_columns, row_index_name_ptr, 
-            row_index_offset, include_path_col_ptr,
-            schema_ptr, hive_schema_ptr, try_parse_hive_dates 
+            n_rows, 
+            parallel_code, 
+            low_memory, 
+            use_statistics, 
+            glob, 
+            allow_missing_columns, 
+            row_index_name_ptr, 
+            row_index_offset, 
+            include_path_col_ptr,
+            schema_ptr, 
+            hive_schema_ptr, 
+            try_parse_hive_dates,
+            rechunk,  
+            cache,    
+            // --- Cloud Options  ---
+            0,                // provider_code = None
+            0,                // retries
+            0,                // cache_ttl
+            std::ptr::null(), // keys_ptr
+            std::ptr::null(), // vals_ptr
+            0                 // len
         );
 
         let lf = LazyFrame::scan_parquet_sources(sources, args)?;
@@ -1021,6 +1135,13 @@ pub extern "C" fn pl_lazyframe_sink_parquet(
     maintain_order: bool,
     sync_on_close: u8,
     mkdir: bool,
+    // --- Cloud Options (New) ---
+    cloud_provider: u8,
+    cloud_retries: usize,
+    cloud_cache_ttl: u64,
+    cloud_keys: *const *const c_char,
+    cloud_values: *const *const c_char,
+    cloud_len: usize
 ) {
     ffi_try_void!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
@@ -1043,13 +1164,24 @@ pub extern "C" fn pl_lazyframe_sink_parquet(
             ..Default::default()
         };
 
+        let cloud_options = unsafe {
+            build_cloud_options(
+                cloud_provider,
+                cloud_retries,
+                cloud_cache_ttl,
+                cloud_keys,
+                cloud_values,
+                cloud_len
+            )
+        };
+
         let target = SinkTarget::Path(PlPath::new(path_str));
 
         let _ = lf_ctx.inner
             .sink_parquet(
                 target, 
                 write_options, 
-                None, // cloud_options
+                cloud_options, // cloud_options
                 sink_options
             )?
             .with_new_streaming(true)

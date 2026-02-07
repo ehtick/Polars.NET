@@ -2,7 +2,6 @@ using Apache.Arrow;
 using Apache.Arrow.C;
 using Polars.NET.Core.Arrow;
 using Polars.NET.Core.Native;
-
 namespace Polars.NET.Core;
 
 public static partial class PolarsWrapper
@@ -326,12 +325,21 @@ public static partial class PolarsWrapper
         bool useStatistics,
         bool glob,
         bool allowMissingColumns,
+        bool rechunk,
+        bool cache,
+        // ----------------
         string? rowIndexName,
         uint rowIndexOffset,
         string? includePathColumn,
-        SchemaHandle? schema,              
-        SchemaHandle? hivePartitionSchema, 
-        bool tryParseHiveDates)
+        SchemaHandle? schema,
+        SchemaHandle? hivePartitionSchema,
+        bool tryParseHiveDates,
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues,
+        nuint cloudLen)
     {
         unsafe
         {
@@ -349,19 +357,28 @@ public static partial class PolarsWrapper
             IntPtr hiveSchemaPtr = hivePartitionSchema != null ? hiveLock.Pointers[0] : IntPtr.Zero;
 
             var h = NativeBindings.pl_scan_parquet(
-                path, 
-                nRowsPtr, 
-                parallel, 
-                lowMemory, 
-                useStatistics, 
-                glob, 
-                allowMissingColumns, 
-                rowIndexName, 
-                rowIndexOffset, 
+                path,
+                nRowsPtr,
+                parallel,
+                lowMemory,
+                useStatistics,
+                glob,
+                allowMissingColumns,
+                rechunk, 
+                cache,  
+                rowIndexName,
+                rowIndexOffset,
                 includePathColumn,
-                schemaPtr,        
-                hiveSchemaPtr,    
-                tryParseHiveDates
+                schemaPtr,
+                hiveSchemaPtr,
+                tryParseHiveDates,
+                // Cloud Options
+                cloudProvider,
+                cloudRetries,
+                cloudCacheTtl,
+                cloudKeys,
+                cloudValues,
+                cloudLen
             );
 
             return ErrorHelper.Check(h);
@@ -375,6 +392,8 @@ public static partial class PolarsWrapper
         bool useStatistics,
         bool glob,
         bool allowMissingColumns,
+        bool rechunk,
+        bool cache,
         string? rowIndexName,
         uint rowIndexOffset,
         string? includePathColumn,
@@ -407,6 +426,8 @@ public static partial class PolarsWrapper
                     useStatistics, 
                     glob, 
                     allowMissingColumns, 
+                    cache,
+                    rechunk,
                     rowIndexName, 
                     rowIndexOffset, 
                     includePathColumn,
@@ -543,10 +564,17 @@ public static partial class PolarsWrapper
         int dataPageSize,
         bool maintainOrder,
         PlSyncOnClose syncOnClose,
-        bool mkdir)
+        bool mkdir,
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues,
+        nuint cloudLen)
     {
         nuint rgs = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
         nuint dps = dataPageSize > 0 ? (nuint)dataPageSize : 0;
+
 
         NativeBindings.pl_lazyframe_sink_parquet(
             lf, 
@@ -558,7 +586,14 @@ public static partial class PolarsWrapper
             dps, 
             maintainOrder, 
             syncOnClose, 
-            mkdir
+            mkdir,
+            // Cloud Args
+            cloudProvider,
+            cloudRetries,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
         );
         
         lf.TransferOwnership();

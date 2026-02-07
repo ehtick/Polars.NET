@@ -276,7 +276,7 @@ public enum SyncOnClose : byte
 
 public enum ParquetCompression : byte
 {
-    Uncompressed = 0,
+    None = 0,
     Snappy = 1,
     Gzip = 2,
     Brotli = 3,
@@ -312,6 +312,43 @@ public enum InterpolationMethod
     Linear = 0,
     Nearest = 1
 }
+
+/// <summary>
+/// Supported cloud providers for IO operations.
+/// </summary>
+public enum CloudProvider : byte
+{
+    /// <summary>
+    /// No cloud provider / Local file.
+    /// </summary>
+    None = 0,
+
+    /// <summary>
+    /// Amazon S3 or compatible services (MinIO, etc).
+    /// </summary>
+    Aws = 1,
+
+    /// <summary>
+    /// Azure Blob Storage / Data Lake Gen2.
+    /// </summary>
+    Azure = 2,
+
+    /// <summary>
+    /// Google Cloud Storage.
+    /// </summary>
+    Gcp = 3,
+
+    /// <summary>
+    /// Generic HTTP/HTTPS.
+    /// </summary>
+    Http = 4,
+
+    /// <summary>
+    /// Hugging Face datasets.
+    /// </summary>
+    HuggingFace = 5
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -529,7 +566,7 @@ internal static class EnumExtensions
     };
     internal static CoreEnums.PlParquetCompression ToNative(this ParquetCompression compression) => compression switch
     {
-        ParquetCompression.Uncompressed => CoreEnums.PlParquetCompression.Uncompressed,
+        ParquetCompression.None => CoreEnums.PlParquetCompression.Uncompressed,
         ParquetCompression.Snappy => CoreEnums.PlParquetCompression.Snappy,
         ParquetCompression.Gzip => CoreEnums.PlParquetCompression.Gzip,
         ParquetCompression.Brotli => CoreEnums.PlParquetCompression.Brotli,
@@ -550,6 +587,16 @@ internal static class EnumExtensions
         InterpolationMethod.Nearest => CoreEnums.PlInterpolationMethod.Nearest,
         InterpolationMethod.Linear => CoreEnums.PlInterpolationMethod.Linear,
         _ => throw new ArgumentOutOfRangeException(nameof(method), method, null)
+    };
+    internal static CoreEnums.PlCloudProvider ToNative(this CloudProvider cloud) => cloud switch
+    {
+        CloudProvider.None => CoreEnums.PlCloudProvider.None,
+        CloudProvider.Aws => CoreEnums.PlCloudProvider.Aws,
+        CloudProvider.Azure => CoreEnums.PlCloudProvider.Azure,
+        CloudProvider.Gcp => CoreEnums.PlCloudProvider.Gcp,
+        CloudProvider.Http => CoreEnums.PlCloudProvider.Http,
+        CloudProvider.HuggingFace => CoreEnums.PlCloudProvider.HuggingFace,
+        _ => throw new ArgumentOutOfRangeException(nameof(cloud), cloud, null)
     };
 }
 

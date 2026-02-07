@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <Compile Include="Enums.fs" />
+    <Compile Include="CloudOptions.fs" />
     <Compile Include="UdfUtils.fs" />
     <Compile Include="Exprs.fs" />
     <Compile Include="Types.fs" />

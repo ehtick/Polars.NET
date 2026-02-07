@@ -513,3 +513,19 @@ type InterpolationMethod =
         match this with
         | Nearest -> PlInterpolationMethod.Nearest
         | Linear -> PlInterpolationMethod.Linear
+
+type CloudProvider =
+    | NotCloud
+    | Aws
+    | Azure
+    | Gcp
+    | Http
+    | HuggingFace
+    member internal this.ToNative() =
+        match this with
+        | NotCloud -> PlCloudProvider.None
+        | Aws -> PlCloudProvider.Aws
+        | Azure -> PlCloudProvider.Azure
+        | Gcp -> PlCloudProvider.Gcp
+        | Http -> PlCloudProvider.Http
+        | HuggingFace -> PlCloudProvider.HuggingFace
