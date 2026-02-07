@@ -150,6 +150,8 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_fill_nan(ExprHandle expr, ExprHandle fillValue);
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_interpolate(ExprHandle expr, PlInterpolationMethod method);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_interpolate_by(ExprHandle expr, ExprHandle by);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_null(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_not_null(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_drop_nulls(ExprHandle expr);

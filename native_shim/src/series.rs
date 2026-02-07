@@ -74,64 +74,64 @@ gen_series_new!(pl_series_new_i64, i64, Int64Type);
 gen_series_new!(pl_series_new_u64, u64, UInt64Type);
 gen_series_new!(pl_series_new_f32, f32, Float32Type);
 gen_series_new!(pl_series_new_f64, f64, Float64Type);
-// gen_series_new!(pl_series_new_i128, i128, Int128Type);
-// gen_series_new!(pl_series_new_u128, u128, UInt128Type);
+gen_series_new!(pl_series_new_i128, i128, Int128Type);
+gen_series_new!(pl_series_new_u128, u128, UInt128Type);
 
-macro_rules! gen_series_new_128 {
-    ($func_name:ident, $rs_type:ty, $pl_type:ty) => {
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $func_name(
-            name: *const c_char,
-            ptr: *const u64, // <--- 关键点：这里接收 u64 指针，只要求 8 字节对齐
-            validity: *const u8, 
-            len: usize,
-        ) -> *mut SeriesContext {
-            ffi_try!({
-                let name = unsafe {CStr::from_ptr(name).to_string_lossy()};
+// macro_rules! gen_series_new_128 {
+//     ($func_name:ident, $rs_type:ty, $pl_type:ty) => {
+//         #[unsafe(no_mangle)]
+//         pub unsafe extern "C" fn $func_name(
+//             name: *const c_char,
+//             ptr: *const u64, 
+//             validity: *const u8, 
+//             len: usize,
+//         ) -> *mut SeriesContext {
+//             ffi_try!({
+//                 let name = unsafe {CStr::from_ptr(name).to_string_lossy()};
                 
-                let slice_u64 = unsafe { std::slice::from_raw_parts(ptr, len * 2) };
+//                 let slice_u64 = unsafe { std::slice::from_raw_parts(ptr, len * 2) };
                 
-                let values_vec: Vec<$rs_type> = slice_u64
-                    .chunks_exact(2)
-                    .map(|chunk| {
-                        let low = chunk[0];
-                        let high = chunk[1];
-                        ((high as $rs_type) << 64) | (low as $rs_type)
-                    })
-                    .collect();
+//                 let values_vec: Vec<$rs_type> = slice_u64
+//                     .chunks_exact(2)
+//                     .map(|chunk| {
+//                         let low = chunk[0];
+//                         let high = chunk[1];
+//                         ((high as $rs_type) << 64) | (low as $rs_type)
+//                     })
+//                     .collect();
 
-                let values_buffer = Buffer::from(values_vec);
+//                 let values_buffer = Buffer::from(values_vec);
 
-                let validity_bitmap = if validity.is_null() {
-                    None
-                } else {
-                    let bytes_len = (len + 7) / 8;
-                    let v_slice =unsafe { std::slice::from_raw_parts(validity, bytes_len)};
-                    let v_vec = v_slice.to_vec(); 
-                    Some(Bitmap::try_new(v_vec, len).unwrap())
-                };
+//                 let validity_bitmap = if validity.is_null() {
+//                     None
+//                 } else {
+//                     let bytes_len = (len + 7) / 8;
+//                     let v_slice =unsafe { std::slice::from_raw_parts(validity, bytes_len)};
+//                     let v_vec = v_slice.to_vec(); 
+//                     Some(Bitmap::try_new(v_vec, len).unwrap())
+//                 };
 
-                let arrow_dtype = <$pl_type as PolarsDataType>::get_static_dtype().to_arrow(CompatLevel::newest());
+//                 let arrow_dtype = <$pl_type as PolarsDataType>::get_static_dtype().to_arrow(CompatLevel::newest());
                 
-                let arrow_array = PrimitiveArray::new(
-                    arrow_dtype,
-                    values_buffer,
-                    validity_bitmap
-                );
+//                 let arrow_array = PrimitiveArray::new(
+//                     arrow_dtype,
+//                     values_buffer,
+//                     validity_bitmap
+//                 );
 
-                let ca = ChunkedArray::<$pl_type>::with_chunk(
-                    PlSmallStr::from_str(name.as_ref()), 
-                    arrow_array,
-                );
+//                 let ca = ChunkedArray::<$pl_type>::with_chunk(
+//                     PlSmallStr::from_str(name.as_ref()), 
+//                     arrow_array,
+//                 );
                 
-                Ok(Box::into_raw(Box::new(SeriesContext { series: ca.into_series() })))
-            })
-        }
-    };
-}
+//                 Ok(Box::into_raw(Box::new(SeriesContext { series: ca.into_series() })))
+//             })
+//         }
+//     };
+// }
 
-gen_series_new_128!(pl_series_new_i128, i128, Int128Type);
-gen_series_new_128!(pl_series_new_u128, u128, UInt128Type);
+// gen_series_new_128!(pl_series_new_i128, i128, Int128Type);
+// gen_series_new_128!(pl_series_new_u128, u128, UInt128Type);
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_series_new_bool(
@@ -380,8 +380,8 @@ pub unsafe extern "C" fn pl_series_new_duration(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_series_new_decimal(
     name: *const c_char,
-    ptr: *const u64,       
-    validity: *const u8,
+    ptr: *const i128,      // physical data: Int128
+    validity: *const u8,   // Bitmap
     len: usize,
     precision: usize,      
     scale: usize           
@@ -391,19 +391,9 @@ pub unsafe extern "C" fn pl_series_new_decimal(
         let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
         let bytes_len = (len + 7) / 8;
 
-        // 1. Data Copy (u64 -> i128)
-        // 解决 C# 传参对齐问题
-        let slice_u64 = unsafe { std::slice::from_raw_parts(ptr, len * 2) };
-        let vec_i128: Vec<i128> = slice_u64
-            .chunks_exact(2)
-            .map(|chunk| {
-                let low = chunk[0];
-                let high = chunk[1];
-                ((high as i128) << 64) | (low as i128)
-            })
-            .collect();
-
-        let values_buffer = Buffer::from(vec_i128);
+        // 1. Data Copy (i128)
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let vec = slice.to_vec();
 
         // 2. Validity
         let validity_bitmap = if validity.is_null() {
@@ -414,31 +404,22 @@ pub unsafe extern "C" fn pl_series_new_decimal(
             Some(Bitmap::try_new(v_vec, len).unwrap())
         };
 
-        // 3. Construct as Physical Int128 Series
-        // 【关键修复点】：不再硬编码 ArrowDataType::Decimal(38, 0)
-        // 而是直接获取 Int128Type 对应的 Arrow 类型（在 Polars 0.52 里它叫 Int128）
-        let physical_arrow_dtype = <Int128Type as PolarsDataType>::get_static_dtype()
-            .to_arrow(CompatLevel::newest());
-
+        // 3. Build Arrow Decimal Array
+        let data_type = ArrowDataType::Decimal(
+            if precision == 0 { 38 } else { precision }, 
+            scale
+        );
+        
         let arrow_array = PrimitiveArray::new(
-            physical_arrow_dtype,
-            values_buffer,
+            data_type,
+            vec.into(),
             validity_bitmap
         );
 
-        // 4. Create Int128Chunked (Physical Layer)
-        // 现在的 arrow_array 类型就是 Polars 想要的 Int128，Assertion 一定能过。
-        let ca = Int128Chunked::with_chunk(
-            PlSmallStr::from_str(name_str.as_ref()), 
-            arrow_array,
-        );
-
-        // 5. Logical Cast (Metadata Layer)
-        // 物理层构建完毕，安全地转换为逻辑 Decimal
-        let final_precision = if precision == 0 { 38 } else { precision };
-        let ca_decimal = ca.into_decimal(final_precision, scale);
+        // 4. Wrap into Series
+        let series = Series::from_arrow(PlSmallStr::from_str(name_str.as_ref()), Box::new(arrow_array)).unwrap();
         
-        Ok(Box::into_raw(Box::new(SeriesContext { series: ca_decimal?.into_series() })))
+        Ok(Box::into_raw(Box::new(SeriesContext { series })))
     })
 }
 
@@ -1015,8 +996,7 @@ pub extern "C" fn pl_series_get_str(s_ptr: *mut SeriesContext, idx: usize) -> *m
 pub extern "C" fn pl_series_get_decimal(
     s_ptr: *mut SeriesContext, 
     idx: usize, 
-    out_val_low: *mut u64,   
-    out_val_high: *mut i64,  
+    out_val: *mut i128, 
     out_scale: *mut usize
 ) -> bool {
     let ctx = unsafe { &*s_ptr };
@@ -1025,13 +1005,12 @@ pub extern "C" fn pl_series_get_decimal(
     if let Ok(ca) = ctx.series.decimal() {
         if let Some(val) = ca.phys.get(idx) {
             let scale = match ctx.series.dtype() {
-                DataType::Decimal(_, s) => *s,
+                DataType::Decimal(_, s) => *s, // 0.52: Decimal(precision, scale)
                 _ => 0,
             };
             
             unsafe {
-                *out_val_low = val as u64; 
-                *out_val_high = (val >> 64) as i64;
+                *out_val = val;
                 *out_scale = scale;
             }
             return true;

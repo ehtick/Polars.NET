@@ -785,6 +785,16 @@ public class Expr : IDisposable
     public Expr Interpolate(InterpolationMethod method = InterpolationMethod.Linear)
         => new(PolarsWrapper.Interpolate(CloneHandle(), method.ToNative()));
     /// <summary>
+    /// Interpolate intermediate values based on the values of another column.
+    /// <para>
+    /// This is useful when the data is not equally spaced, for example when interpolating based on a timestamp column.
+    /// </para>
+    /// </summary>
+    /// <param name="by">The column to use for interpolation (e.g. a timestamp column).</param>
+    /// <returns>A new expression with interpolated values.</returns>
+    public Expr InterpolateBy(Expr by) 
+        => new(PolarsWrapper.InterpolateBy(CloneHandle(), by.CloneHandle()));
+    /// <summary>
     /// Evaluate whether the expression is null.
     /// </summary>
     public Expr IsNull() => new(PolarsWrapper.IsNull(CloneHandle()));

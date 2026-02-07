@@ -468,6 +468,16 @@ and Expr(handle: ExprHandle) =
     member this.Interpolate(?method:InterpolationMethod) = 
         let met = defaultArg method InterpolationMethod.Linear
         new Expr(PolarsWrapper.Interpolate(this.CloneHandle(), met.ToNative()))
+    /// <summary>
+    /// Interpolate intermediate values based on the values of another column.
+    /// <para>
+    /// This is useful when the data is not equally spaced, for example when interpolating based on a timestamp column.
+    /// </para>
+    /// </summary>
+    /// <param name="by">The column to use for interpolation (e.g. a timestamp column).</param>
+    /// <returns>A new expression with interpolated values.</returns>
+    member this.InterpolateBy(by:Expr) = 
+        new Expr(PolarsWrapper.InterpolateBy(this.CloneHandle(), by.CloneHandle()))
     member this.FillNan(fillValue:Expr) =
         new Expr(PolarsWrapper.FillNan(this.CloneHandle(), fillValue.CloneHandle()));
     member this.IsNull() = 

@@ -818,6 +818,16 @@ public partial class Series : IDisposable
     public Series Interpolate(InterpolationMethod method = InterpolationMethod.Linear)
         => ApplyExpr(Polars.Col(Name).Interpolate(method));
     /// <summary>
+    /// Interpolate intermediate values based on the values of another Series.
+    /// <para>
+    /// Useful for linear interpolation across unevenly spaced data.
+    /// </para>
+    /// </summary>
+    /// <param name="by">The Series to use for interpolation (e.g. timestamps).</param>
+    /// <returns>A new Series with interpolated values.</returns>
+    public Series InterpolateBy(Series by)
+        => ApplyBinaryExpr(by, (left, right) => left.InterpolateBy(right));
+    /// <summary>
     /// Fill floating point NaN values with a specified value.
     /// Note: This is different from FillNull. It only handles IEEE 754 NaN.
     /// </summary>

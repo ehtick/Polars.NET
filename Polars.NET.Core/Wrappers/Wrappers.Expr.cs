@@ -559,6 +559,7 @@ public static partial class PolarsWrapper
         expr.TransferOwnership();
         return ErrorHelper.Check(h);
     }
+    public static ExprHandle InterpolateBy(ExprHandle e, ExprHandle by) => BinaryOp(NativeBindings.pl_expr_interpolate_by, e, by);
     
     public static ExprHandle IsNull(ExprHandle expr) 
         => UnaryOp(NativeBindings.pl_expr_is_null, expr);

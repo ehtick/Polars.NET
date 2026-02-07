@@ -32,13 +32,7 @@ unsafe internal partial class NativeBindings
     // Decimal: out Int128, out UIntPtr (scale)
     [LibraryImport(LibName)]
     [return: MarshalAs(UnmanagedType.I1)]
-    public static partial bool pl_series_get_decimal(
-    SeriesHandle s, 
-    UIntPtr idx, 
-    out ulong valLow, 
-    out long valHigh, 
-    out UIntPtr scale
-    );
+    public static partial bool pl_series_get_decimal(SeriesHandle s, UIntPtr idx, out Int128 val, out UIntPtr scale);
     [LibraryImport(LibName)]
     [return: MarshalAs(UnmanagedType.I1)]
     public static partial bool pl_series_get_date(SeriesHandle s, UIntPtr idx, out int val);

@@ -2288,4 +2288,41 @@ TooShort,1990-05-20,1.60";
         Assert.NotNull(nearestArr[1]);
         Assert.NotNull(nearestArr[2]);
     }
+    [Fact]
+    public void Test_InterpolateBy_Expr()
+    {
+        // 构造非等间距数据
+        // Time: 0, 10, 20 (中间缺了 2, 5 这种均匀步长，但这里只看相对距离)
+        // 让我们用一个更明显的例子：
+        // Position: 0,      2,          10
+        // Value:    0,      ?,          100
+        //
+        // Linear (Index based): Index 1 is exactly between Index 0 and Index 2.
+        //      Result = (0 + 100) / 2 = 50
+        //
+        // InterpolateBy (Position based):
+        //      Total dist = 10 - 0 = 10
+        //      Current dist = 2 - 0 = 2
+        //      Ratio = 2 / 10 = 0.2
+        //      Result = 0 + (100 - 0) * 0.2 = 20
+        
+        using var df = DataFrame.FromColumns(new
+        {
+            pos = new double[] { 0, 2, 10 },
+            val = new double?[] { 0, null, 100 }
+        });
+
+        using var res = df.Select(
+            Col("val").Interpolate().Alias("linear_index"),
+            Col("val").InterpolateBy(Col("pos")).Alias("linear_pos")
+        );
+
+        // 1. 验证普通插值 (基于 Index，位于中间)
+        var linearIndex = res["linear_index"][1];
+        Assert.Equal(50.0, (double)linearIndex!);
+
+        // 2. 验证按列插值 (基于 Position，位于 20% 处)
+        var linearPos = res["linear_pos"][1];
+        Assert.Equal(20.0, (double)linearPos!);
+    }
 }

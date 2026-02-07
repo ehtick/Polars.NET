@@ -174,6 +174,8 @@ type Series(handle: SeriesHandle) =
     /// <param name="method">Interpolation method (Linear or Nearest).</param>
     member this.Interpolate(?method:InterpolationMethod) = 
         this.ApplyExpr(Expr.Col(this.Name).Interpolate(?method=method))
+    member this.InterpolateBy(by:Series) = 
+        this.ApplyBinaryExpr(by, fun l r -> l.InterpolateBy r)
     /// <summary> Fill null values with a literal boolean. </summary>
     member this.FillNull(fillValue: bool) = 
         this.ApplyExpr(Expr.Col(this.Name).FillNull(new Expr(PolarsWrapper.Lit fillValue)))

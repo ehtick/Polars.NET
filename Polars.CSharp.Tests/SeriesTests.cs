@@ -1284,4 +1284,34 @@ public void Test_Series_Ewm_Methods()
         // 1*10 + 2*20 + 3*30 = 10 + 40 + 90 = 140
         Assert.Equal(140L, resSameName);
     }
+    [Fact]
+    public void Test_InterpolateBy_Series_Timestamp()
+    {
+        // 模拟时间序列数据
+        // T1: 10:00 (Val=10)
+        // T2: 10:15 (Val=null) <- 我们要插值这个点
+        // T3: 11:00 (Val=70)
+        
+        // T2 距离 T1 是 15分钟，距离 T3 是 45分钟。
+        // 总间隔 60分钟。T2 位于 15/60 = 1/4 处。
+        // Val = 10 + (70-10) * 0.25 = 10 + 15 = 25.
+
+        var baseTime = new DateTime(2024, 1, 1, 10, 0, 0);
+        
+        using var times = Series.From("time", new[]
+        {
+            baseTime,
+            baseTime.AddMinutes(15), 
+            baseTime.AddHours(1)
+        });
+
+        using var values = Series.From("val", new double?[] { 10.0, null, 70.0 });
+
+        // Act
+        using var interpolated = values.InterpolateBy(times);
+
+        // Assert
+        var result = interpolated.GetValue<double>(1);
+        Assert.Equal(25.0, result);
+    }
 }

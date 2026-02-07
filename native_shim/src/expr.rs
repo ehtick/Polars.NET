@@ -346,6 +346,7 @@ gen_binary_op!(pl_expr_or, or);   // |
 gen_binary_op!(pl_expr_xor, xor); // xor
 // Null Ops
 gen_binary_op!(pl_expr_fill_null, fill_null);
+gen_binary_op!(pl_expr_interpolate_by, interpolate_by);
 // Math Ops
 gen_binary_op!(pl_expr_pow,pow);
 gen_binary_op!(pl_expr_dot, dot);
