@@ -174,9 +174,9 @@ public static class ArrowConverter
                             // We need to Cast<RuntimeType>
                             var castMethod = typeof(Enumerable).GetMethod(nameof(Enumerable.Cast), BindingFlags.Public | BindingFlags.Static)!
                                 .MakeGenericMethod(runtimeType);
-                            var castData = castMethod.Invoke(null, new object[] { dataList });
+                            var castData = castMethod.Invoke(null, [dataList]);
 
-                            return (IArrowArray)method.Invoke(null, new object[] { castData! })!;
+                            return (IArrowArray)method.Invoke(null, [castData!])!;
                         }
                         catch 
                         { 
@@ -401,7 +401,6 @@ public static class ArrowConverter
     private static Date32Array BuildDate32(IEnumerable<DateOnly?> data)
     {
         var b = new Date32Array.Builder();
-        int epoch = new DateOnly(1970, 1, 1).DayNumber;
         foreach (var v in data)
         {
             if (v.HasValue) b.Append(v.Value.ToDateTime(TimeOnly.MinValue));
@@ -409,15 +408,21 @@ public static class ArrowConverter
         }
         return b.Build();
     }
-
-    // TimeOnly -> Time64 (Microseconds)
+    // TimeOnly -> Time64 (Nanoseconds)
     private static Time64Array BuildTime64(IEnumerable<TimeOnly?> data)
     {
-        var b = new Time64Array.Builder(TimeUnit.Microsecond); // 注意设置单位
+        var b = new Time64Array.Builder(TimeUnit.Nanosecond); 
+        
         foreach (var v in data)
         {
-            if (v.HasValue) b.Append(v.Value.Ticks / 10L); // 1 tick = 100ns, 10 ticks = 1us
-            else b.AppendNull();
+            if (v.HasValue) 
+            {
+                b.Append(v.Value.Ticks * 100L); 
+            }
+            else 
+            {
+                b.AppendNull();
+            }
         }
         return b.Build();
     }

@@ -331,7 +331,6 @@ public class IoTests
         // Assert.Single(dfFromStream.Column("status"));
     }
     [Fact]
-    // [Trait("Category","Debug")]
     public void Test_ScanParquet_File_Hive_Schema()
     {
         // ---------------------------------------------------
@@ -768,7 +767,6 @@ public class IoTests
         }
     }
     [Fact]
-    [Trait("Category","Debug")]
     public void Test_Streaming_SinkParquet_EndToEnd()
     {
         // ====================================================

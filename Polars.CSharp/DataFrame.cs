@@ -466,7 +466,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return new DataFrame(handle);
     }
     /// <summary>
-    /// Transfer a RecordBatch to Arrow
+    /// Transfer a DataFrame to Arrow
     /// </summary>
     /// <returns></returns>
     public RecordBatch ToArrow()
@@ -2188,7 +2188,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         // Consumer Task
         var consumerTask = Task.Run(() => 
         {
-            using var reader = new ArrowToDbStream(buffer.GetConsumingEnumerable(),typeOverrides = null);
+            using var reader = new ArrowToDbStream(buffer.GetConsumingEnumerable(),typeOverrides);
             
             writerAction(reader);
         });

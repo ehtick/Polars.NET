@@ -1,16 +1,15 @@
 using Microsoft.Data.SqlClient; 
 using Polars.CSharp;           
 using Polars.Integration.Tests.Fixtures;
-using Xunit;
 
 namespace Polars.Integration.Tests
 {
     // 注入我们之前写好的 Testcontainers 版 MsSqlFixture
-    public class IntegrationTests : IClassFixture<MsSqlFixture>
+    public class MsSqlTests : IClassFixture<MsSqlFixture>
     {
         private readonly MsSqlFixture _fixture;
 
-        public IntegrationTests(MsSqlFixture fixture)
+        public MsSqlTests(MsSqlFixture fixture)
         {
             _fixture = fixture;
         }

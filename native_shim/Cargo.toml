@@ -19,8 +19,9 @@ serde_json = "1.0.145"
 calamine = { version = "0.32", features = ["dates","chrono"] }
 chrono = "0.4.43"
 rust_xlsxwriter = { version = "0.93", features = ["chrono"] }
-openssl = { version ="0.10", features=["vendored"]}
 mimalloc = { version = "*", default-features = false }
+deltalake = {version = "0.30.2", features = ["s3","azure","gcs","datafusion","rustls","json"]}
+
 [lib]
 crate-type = ["cdylib"]
 

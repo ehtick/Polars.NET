@@ -820,7 +820,6 @@ pub extern "C" fn pl_read_parquet_memory(
     })
 }
 
-
 fn build_scan_args(
     n_rows: *const usize,
     parallel_code: u8,
@@ -1521,7 +1520,7 @@ pub extern "C" fn pl_lazyframe_sink_json(
         let _ = lf_ctx.inner.sink_json(
             target, 
             writer_options, 
-            None, 
+            None, // Cloud Options
             sink_options
         )?
         .with_new_streaming(true)

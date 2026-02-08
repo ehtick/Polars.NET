@@ -3,6 +3,7 @@
 using System.Collections.Concurrent;
 using System.Data;
 using Apache.Arrow;
+using Apache.Arrow.Types;
 using Polars.NET.Core;
 using Polars.NET.Core.Arrow;
 using Polars.NET.Core.Data;
@@ -594,7 +595,7 @@ public class LazyFrame : IDisposable
     /// <returns></returns>
     public static LazyFrame ScanEnumerable<T>(
         IEnumerable<T> data, 
-        Apache.Arrow.Schema? schema = null, 
+        Schema? schema = null, 
         int batchSize = 100_000,
         bool useBuffered = false)
     {
@@ -2077,10 +2078,10 @@ public class LazyFrame : IDisposable
         // 2. Start consumer (DB Writer)
         var consumerTask = Task.Run(() => 
         {
+            
             // ArrowToDbStream is responsible for disguising Buffer as DataReader
             // It automatically handles Dispose, so Batch will be released after writerAction finishes reading
             using var reader = new ArrowToDbStream(buffer.GetConsumingEnumerable(),typeOverrides);
-            
             // Hand over the reader to user logic
             // Users call bulk.WriteToServer(reader) here
             writerAction(reader);
