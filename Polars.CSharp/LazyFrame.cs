@@ -779,6 +779,109 @@ public class LazyFrame : IDisposable
         
         return new ScopedLazyFrame(handle, scope);
     }
+    /// -----------------------------------
+    /// Delta Lake
+    /// -----------------------------------
+    /// <summary>
+    /// Create a LazyFrame by scanning a Delta Lake table.
+    /// </summary>
+    /// <param name="path">Path to the Delta Lake table (folder containing _delta_log).</param>
+    /// <param name="cloudOptions">Options for cloud storage authentication (AWS S3, Azure, GCP, etc).</param>
+    /// <param name="version">The version of the table to read (e.g., 0, 1). Mutually exclusive with <paramref name="datetime"/>.</param>
+    /// <param name="datetime">The timestamp to read (ISO-8601 string, e.g., "2026-02-09T12:00:00Z"). Mutually exclusive with <paramref name="version"/>.</param>
+    /// <returns>A new LazyFrame.</returns>
+    public static LazyFrame ScanDelta(
+        string path,
+        long? version = null,
+        string? datetime = null,
+        CloudOptions? cloudOptions = null)
+    {
+        if (version.HasValue && datetime != null)
+        {
+            throw new ArgumentException("Cannot specify both 'version' and 'datetime' for Delta Time Travel.");
+        }
+        
+        // 1. Prepare Cloud Options
+        CloudProvider provider = CloudProvider.None;
+        nuint retries = 0;
+        ulong cacheTtl = 0;
+        string[]? keys = null;
+        string[]? values = null;
+        nuint len = 0;
+
+        if (cloudOptions != null)
+        {
+            provider = cloudOptions.Provider;
+            retries = cloudOptions.MaxRetries;
+            cacheTtl = cloudOptions.FileCacheTtl;
+
+            if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
+            {
+                keys = cloudOptions.Credentials.Keys.ToArray();
+                values = cloudOptions.Credentials.Values.ToArray();
+                len = (nuint)keys.Length;
+            }
+        }
+
+        // 2. Call Internal Wrapper
+        var h = PolarsWrapper.ScanDelta(
+            path,
+            version,
+            datetime,
+            provider.ToNative(),
+            retries,
+            cacheTtl,
+            keys,
+            values,
+            len
+        );
+
+        return new LazyFrame(h);
+    }
+    /// <summary>
+    /// Write the LazyFrame to a Delta Lake table.
+    /// </summary>
+    /// <param name="path">Path to the Delta Lake table.</param>
+    /// <param name="mode">Save mode (Append, Overwrite, etc.). Default is Append.</param>
+    /// <param name="cloudOptions">Cloud storage options.</param>
+    public void SinkDelta(
+        string path,
+        DeltaSaveMode mode = DeltaSaveMode.Append,
+        CloudOptions? cloudOptions = null)
+    {
+        // Cloud Options logic
+        CloudProvider provider = CloudProvider.None;
+        nuint retries = 0;
+        ulong cacheTtl = 0;
+        string[]? keys = null;
+        string[]? values = null;
+        nuint len = 0;
+
+        if (cloudOptions != null)
+        {
+            provider = cloudOptions.Provider;
+            retries = cloudOptions.MaxRetries;
+            cacheTtl = cloudOptions.FileCacheTtl;
+            if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
+            {
+                keys = cloudOptions.Credentials.Keys.ToArray();
+                values = cloudOptions.Credentials.Values.ToArray();
+                len = (nuint)keys.Length;
+            }
+        }
+
+        PolarsWrapper.SinkDelta(
+            Handle,
+            path,
+            mode.ToNative(),
+            provider.ToNative(),
+            retries,
+            cacheTtl,
+            keys,
+            values,
+            len
+        );
+    }
     // ==========================================
     // Meta / Inspection
     // ==========================================

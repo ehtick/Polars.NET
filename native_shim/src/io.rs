@@ -17,7 +17,7 @@ use polars_utils::mmap::MemSlice;
 use std::path::PathBuf;
 use polars_utils::slice_enum::Slice;
 
-unsafe fn build_cloud_options(
+pub(crate) unsafe fn build_cloud_options(
     provider_code: u8,
     retries: usize,
     cache_ttl: u64,

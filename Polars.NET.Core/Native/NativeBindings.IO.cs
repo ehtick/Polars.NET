@@ -469,4 +469,47 @@ unsafe internal partial class NativeBindings
         string? datetimeFormat   // Option<&str>
     );
 
+    // ==========================================
+    // Delta Lake
+    // ==========================================
+    
+    /// <summary>
+    /// Rust Signature:
+    /// pub extern "C" fn pl_scan_delta(
+    ///     path_ptr: *const c_char,
+    ///     cloud_provider: u8,
+    ///     cloud_retries: usize,
+    ///     cloud_cache_ttl: u64,
+    ///     cloud_keys: *const *const c_char,
+    ///     cloud_values: *const *const c_char,
+    ///     cloud_len: usize
+    /// ) -> *mut LazyFrameContext
+    /// </summary>
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_scan_delta(
+        string path,
+        // --- Time Travel ---
+        IntPtr version,
+        string? datetime,
+        // --- Cloud Options (Must match pl_scan_parquet pattern) ---
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_cache_ttl,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_keys,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_values,
+        UIntPtr cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_sink_delta(
+        LazyFrameHandle lf,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        PlDeltaSaveMode mode,
+        // ... Cloud Options ...
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_cache_ttl,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_keys,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_values,
+        UIntPtr cloud_len
+    );
 }

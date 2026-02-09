@@ -263,3 +263,11 @@ public enum PlCloudProvider : byte
     Http = 4,
     HuggingFace = 5
 }
+
+public enum PlDeltaSaveMode : byte
+{
+    Append = 0,
+    Overwrite = 1,
+    ErrorIfExists = 2,
+    Ignore = 3
+}

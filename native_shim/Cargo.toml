@@ -21,7 +21,8 @@ chrono = "0.4.43"
 rust_xlsxwriter = { version = "0.93", features = ["chrono"] }
 mimalloc = { version = "*", default-features = false }
 deltalake = {version = "0.30.2", features = ["s3","azure","gcs","datafusion","rustls","json"]}
-
+tokio = { version = "1.49.0", features = ["rt","macros","rt-multi-thread"]}
+url = "2.5.8"
 [lib]
 crate-type = ["cdylib"]
 

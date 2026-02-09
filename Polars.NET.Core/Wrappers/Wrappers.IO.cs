@@ -1098,4 +1098,61 @@ public static partial class PolarsWrapper
             throw new ObjectDisposedException(nameof(handle), "DataFrame handle is invalid or closed.");
         NativeBindings.pl_write_excel(handle, path, sheetName, dateFormat, datetimeFormat);
     }
+    // ---------------------------------------------------------
+    // DeltaLake
+    // ---------------------------------------------------------
+    public unsafe static LazyFrameHandle ScanDelta(
+        string path,
+        long? version,
+        string? datetime,
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues,
+        nuint cloudLen)
+    {
+        long versionVal = version.GetValueOrDefault();
+        IntPtr versionPtr = version.HasValue ? (IntPtr)(&versionVal) : IntPtr.Zero;
+        
+        var h = NativeBindings.pl_scan_delta(
+            path,
+            versionPtr,
+            datetime,
+            cloudProvider,
+            cloudRetries,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        return ErrorHelper.Check(h);
+    }
+    public static void SinkDelta(
+        LazyFrameHandle lf,
+        string path,
+        PlDeltaSaveMode mode, 
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues,
+        nuint cloudLen)
+    {
+        NativeBindings.pl_sink_delta(
+            lf,
+            path,
+            mode, 
+            cloudProvider,
+            cloudRetries,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+        lf.TransferOwnership();
+
+        ErrorHelper.CheckVoid();
+    }
 }

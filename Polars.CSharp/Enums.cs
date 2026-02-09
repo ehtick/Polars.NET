@@ -349,6 +349,32 @@ public enum CloudProvider : byte
     HuggingFace = 5
 }
 
+/// <summary>
+/// mode for saving delta lake table
+/// </summary>
+public enum DeltaSaveMode
+{
+    /// <summary>
+    /// Append to the table.
+    /// </summary>
+    Append = 0,
+
+    /// <summary>
+    /// Overwrite the table.
+    /// </summary>
+    Overwrite = 1,
+
+    /// <summary>
+    /// Throw an error if the table already exists.
+    /// </summary>
+    ErrorIfExists = 2,
+
+    /// <summary>
+    /// Ignore the operation if the table already exists.
+    /// </summary>
+    Ignore = 3
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -597,6 +623,14 @@ internal static class EnumExtensions
         CloudProvider.Http => CoreEnums.PlCloudProvider.Http,
         CloudProvider.HuggingFace => CoreEnums.PlCloudProvider.HuggingFace,
         _ => throw new ArgumentOutOfRangeException(nameof(cloud), cloud, null)
+    };
+    internal static CoreEnums.PlDeltaSaveMode ToNative(this DeltaSaveMode mode) => mode switch
+    {
+        DeltaSaveMode.Append => CoreEnums.PlDeltaSaveMode.Append,
+        DeltaSaveMode.Overwrite => CoreEnums.PlDeltaSaveMode.Overwrite,
+        DeltaSaveMode.ErrorIfExists => CoreEnums.PlDeltaSaveMode.ErrorIfExists,
+        DeltaSaveMode.Ignore => CoreEnums.PlDeltaSaveMode.Ignore,
+        _ => CoreEnums.PlDeltaSaveMode.Append
     };
 }
 
