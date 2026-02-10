@@ -1129,10 +1129,45 @@ public static partial class PolarsWrapper
 
         return ErrorHelper.Check(h);
     }
+    // public static void SinkDelta(
+    //     LazyFrameHandle lf,
+    //     string path,
+    //     PlDeltaSaveMode mode, 
+    //     PlCloudProvider cloudProvider,
+    //     nuint cloudRetries,
+    //     ulong cloudCacheTtl,
+    //     string[]? cloudKeys,
+    //     string[]? cloudValues,
+    //     nuint cloudLen)
+    // {
+    //     NativeBindings.pl_sink_delta(
+    //         lf,
+    //         path,
+    //         mode, 
+    //         cloudProvider,
+    //         cloudRetries,
+    //         cloudCacheTtl,
+    //         cloudKeys,
+    //         cloudValues,
+    //         cloudLen
+    //     );
+    //     lf.TransferOwnership();
+
+    //     ErrorHelper.CheckVoid();
+    // }
     public static void SinkDelta(
         LazyFrameHandle lf,
         string path,
-        PlDeltaSaveMode mode, 
+        PlDeltaSaveMode mode,
+        // Parquet Options
+        PlParquetCompression compression,
+        int compressionLevel,
+        bool statistics,
+        nuint rowGroupSize,
+        nuint dataPageSize,
+        // Sink Options
+        bool maintainOrder,
+        // Cloud Options
         PlCloudProvider cloudProvider,
         nuint cloudRetries,
         ulong cloudCacheTtl,
@@ -1143,7 +1178,13 @@ public static partial class PolarsWrapper
         NativeBindings.pl_sink_delta(
             lf,
             path,
-            mode, 
+            mode,
+            compression,
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            maintainOrder,
             cloudProvider,
             cloudRetries,
             cloudCacheTtl,

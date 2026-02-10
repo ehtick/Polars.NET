@@ -4,6 +4,7 @@ using System.Text;
 using Minio;
 using Minio.DataModel.Args;
 using Polars.Integration.Tests.Utils;
+using Polars.NET.Core;
 
 namespace Polars.Integration.Tests;
 
@@ -274,23 +275,18 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         Console.WriteLine($"Test C (Time Travel to {queryTime}) Passed");
     }
     [Fact]
-    [Trait("DeltaLake","FullCycle")]
-    public void Test_Sink_And_Scan_Delta_Full_Cycle()
+    [Trait("DeltaLake", "FullCycle")]
+    public void Test_Sink_And_Scan_Delta_Full_Cycle_Modes()
     {
         // ==========================================
         // 1. 环境与鉴权准备
         // ==========================================
-        var tableName = $"delta_sink_{Guid.NewGuid()}";
-        // MinIO 的 S3 路径
+        var tableName = $"delta_modes_{Guid.NewGuid()}";
         var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
         
-        // 处理 Endpoint: 
-        // Polars (Rust) 需要带协议头 (http://)
-        // MinIO (Raw) 只需要 ip:port
         var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
         var polarsEndpoint = $"http://{rawEndpoint}";
         
-        // 构造 CloudOptions
         var options = CloudOptions.Aws(
             region: _minio.Region,
             accessKey: _minio.AccessKey,
@@ -298,82 +294,105 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             endpoint: polarsEndpoint
         );
 
-        // [关键点]：配置 MinIO 兼容性和重试策略
-        // 虽然 Rust 端的 int 参数没用到，但 Deltalake crate 会读取这个 Map
-        // [核弹级配置]：把所有可能的大小写组合都加上，确保 MinIO 能写入
-            // options.Credentials!["aws_allow_http"] = "true"; // 小写
-            options.Credentials!["AWS_ALLOW_HTTP"] = "true"; // 大写
-            
-            // options.Credentials!["aws_s3_force_path_style"] = "true";
-            options.Credentials!["AWS_S3_FORCE_PATH_STYLE"] = "true";
-            
-            options.Credentials!["aws_max_attempts"] = "5";
-
-            // 关键：允许不安全重命名 (MinIO 必须)
-            // options.Credentials!["aws_s3_allow_unsafe_rename"] = "true"; // object_store 常用小写
-            // options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true"; // delta-rs 常用大写
-
+        // 核心配置：MinIO 兼容性 + 原子提交支持
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_allow_http"] = "true";
+        options.Credentials!["AWS_S3_FORCE_PATH_STYLE"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+        
         // ==========================================
-        // 2. 第一步：覆盖写入 (Overwrite) -> Version 0
+        // 2. [Mode: Append] 初始化写入 (Version 0 + 1)
         // ==========================================
-        Console.WriteLine("Step 1: Writing Version 0 (Overwrite)...");
+        Console.WriteLine("Step 1: Initial Write (Append)...");
         using (var df = DataFrame.FromColumns(new { 
             Id = new[] { 1, 2 }, 
-            Msg = new[] { "Hello", "World" } 
+            Msg = new[] { "V1_A", "V1_B" } 
         }))
         {
-            // 使用新的枚举 DeltaSaveMode
-            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Overwrite, cloudOptions: options);
+            // 此时表不存在，Append 会触发 Create Table
+            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
         }
 
+        // 验证 V1
+        using var dfV1 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(2, dfV1.Height);
+
         // ==========================================
-        // 3. 第二步：追加写入 (Append) -> Version 1
+        // 3. [Mode: Append] 追加写入 (Version 2)
         // ==========================================
-        Console.WriteLine("Step 2: Writing Version 1 (Append)...");
+        Console.WriteLine("Step 2: Appending Data (Append)...");
         using (var df2 = DataFrame.FromColumns(new { 
             Id = new[] { 3 }, 
-            Msg = new[] { "Polars.NET" } 
+            Msg = new[] { "V2_C" } 
         }))
         {
             df2.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
         }
 
-        // ==========================================
-        // 4. 第三步：读取最新版本 (应该包含 3 行)
-        // ==========================================
-        Console.WriteLine("Step 3: Reading Latest Snapshot...");
-        using var lfLatest = LazyFrame.ScanDelta(rootUrl, cloudOptions: options);
-        using var dfLatest = lfLatest.Collect();
+        // 验证 V2 (总共 3 行)
+        using var dfV2 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(3, dfV2.Height);
+        Assert.Contains("V1_A", dfV2["Msg"].ToArray<string>());
+        Assert.Contains("V2_C", dfV2["Msg"].ToArray<string>());
 
-        // 验证行数
-        Assert.Equal(3, dfLatest.Height);
-        
-        // 验证内容
-        var msgs = dfLatest["Msg"].ToArray<string>();
-        Assert.Contains("Hello", msgs);
-        Assert.Contains("World", msgs);
-        Assert.Contains("Polars.NET", msgs);
-        // dfLatest.Show();
         // ==========================================
-        // 5. 第四步：时间旅行 (回溯到 Version 1)
-        //    注意：我们的 Rust 实现中，Create(V0) 和 Write(V1) 是分两步提交的。
-        //    所以 V0 是仅含 Schema 的空表，V1 才是包含第一批数据的版本。
+        // 4. [Mode: Overwrite] 覆盖写入 (Version 3)
         // ==========================================
-        Console.WriteLine("Step 4: Time Travel to Version 1 (First Data Commit)...");
+        // 预期：之前的 3 行数据逻辑删除，只保留新的 1 行数据
+        Console.WriteLine("Step 3: Overwriting Data (Overwrite)...");
+        using (var dfOverwrite = DataFrame.FromColumns(new { 
+            Id = new[] { 999 }, 
+            Msg = new[] { "Overwrite_New" } 
+        }))
+        {
+            dfOverwrite.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Overwrite, cloudOptions: options);
+        }
+
+        // 验证 V3 (应该只有 1 行)
+        using var dfV3 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(1, dfV3.Height);
+        Assert.Equal("Overwrite_New", dfV3["Msg"].ToArray<string>()[0]);
         
-        // 修正：Version 0 -> Version 1
-        using var lfV1 = LazyFrame.ScanDelta(rootUrl, version: 1, cloudOptions: options);
-        using var dfV1 = lfV1.Collect();
-        // dfV1.Show();
-        // 验证行数 (V1 只有 2 行)
-        Assert.Equal(2, dfV1.Height);
-        
-        // 验证内容 (不应该包含 V2 的数据)
-        var msgsV1 = dfV1["Msg"].ToArray<string>();
-        Assert.Contains("Hello", msgsV1);
-        Assert.Contains("World", msgsV1);
-        Assert.DoesNotContain("Polars.NET", msgsV1);
-        
-        Console.WriteLine("Sink & Scan Delta Full Cycle Passed!");
+        // 验证 V3 的历史 (Time Travel Check)
+        // 我们可以回溯到 V2 确认旧数据还在历史里
+        using var dfBackToV2 = LazyFrame.ScanDelta(rootUrl, version: 2, cloudOptions: options).Collect();
+        Assert.Equal(3, dfBackToV2.Height);
+
+        // ==========================================
+        // 5. [Mode: ErrorIfExists] 冲突检测
+        // ==========================================
+        // 预期：表已存在，应抛出异常
+        Console.WriteLine("Step 4: Testing ErrorIfExists...");
+        using (var dfError = DataFrame.FromColumns(new { Id = new[] { 0 } }))
+        {
+            var ex = Assert.Throws<PolarsException>(() => 
+            {
+                dfError.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.ErrorIfExists, cloudOptions: options);
+            });
+            
+            // 验证 Rust 返回的错误信息
+            Assert.Contains("Table already exists", ex.Message);
+        }
+
+        // ==========================================
+        // 6. [Mode: Ignore] 忽略写入
+        // ==========================================
+        // 预期：表已存在，不报错，但不写入任何数据 (Height 保持为 1)
+        Console.WriteLine("Step 5: Testing Ignore...");
+        using (var dfIgnore = DataFrame.FromColumns(new { 
+            Id = new[] { 888 }, 
+            Msg = new[] { "Should_Not_Exist" } 
+        }))
+        {
+            dfIgnore.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Ignore, cloudOptions: options);
+        }
+
+        // 验证数据未变 (依然是 Overwrite 后的那 1 行)
+        using var dfFinal = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(1, dfFinal.Height);
+        Assert.DoesNotContain("Should_Not_Exist", dfFinal["Msg"].ToArray<string>());
+
+        Console.WriteLine("Delta Streaming Full Cycle (Append/Overwrite/Error/Ignore) Passed!");
     }
 }

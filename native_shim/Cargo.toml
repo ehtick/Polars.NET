@@ -23,6 +23,7 @@ mimalloc = { version = "*", default-features = false }
 deltalake = {version = "0.30.2", features = ["s3","azure","gcs","datafusion","rustls","json"]}
 tokio = { version = "1.49.0", features = ["rt","macros","rt-multi-thread"]}
 url = "2.5.8"
+uuid = {version="1.20.0", features=["v4"]}
 [lib]
 crate-type = ["cdylib"]
 

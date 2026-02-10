@@ -838,18 +838,64 @@ public class LazyFrame : IDisposable
 
         return new LazyFrame(h);
     }
+    // /// <summary>
+    // /// Write the LazyFrame to a Delta Lake table.
+    // /// </summary>
+    // /// <param name="path">Path to the Delta Lake table.</param>
+    // /// <param name="mode">Save mode (Append, Overwrite, etc.). Default is Append.</param>
+    // /// <param name="cloudOptions">Cloud storage options.</param>
+    // public void SinkDelta(
+    //     string path,
+    //     DeltaSaveMode mode = DeltaSaveMode.Append,
+    //     CloudOptions? cloudOptions = null)
+    // {
+    //     // Cloud Options logic
+    //     CloudProvider provider = CloudProvider.None;
+    //     nuint retries = 0;
+    //     ulong cacheTtl = 0;
+    //     string[]? keys = null;
+    //     string[]? values = null;
+    //     nuint len = 0;
+
+    //     if (cloudOptions != null)
+    //     {
+    //         provider = cloudOptions.Provider;
+    //         retries = cloudOptions.MaxRetries;
+    //         cacheTtl = cloudOptions.FileCacheTtl;
+    //         if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
+    //         {
+    //             keys = cloudOptions.Credentials.Keys.ToArray();
+    //             values = cloudOptions.Credentials.Values.ToArray();
+    //             len = (nuint)keys.Length;
+    //         }
+    //     }
+
+    //     PolarsWrapper.SinkDelta(
+    //         Handle,
+    //         path,
+    //         mode.ToNative(),
+    //         provider.ToNative(),
+    //         retries,
+    //         cacheTtl,
+    //         keys,
+    //         values,
+    //         len
+    //     );
+    // }
     /// <summary>
-    /// Write the LazyFrame to a Delta Lake table.
+    /// Sink the LazyFrame to a Delta Lake table.
     /// </summary>
-    /// <param name="path">Path to the Delta Lake table.</param>
-    /// <param name="mode">Save mode (Append, Overwrite, etc.). Default is Append.</param>
-    /// <param name="cloudOptions">Cloud storage options.</param>
     public void SinkDelta(
         string path,
         DeltaSaveMode mode = DeltaSaveMode.Append,
-        CloudOptions? cloudOptions = null)
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = true,
+        uint rowGroupSize = 512 * 1024,
+        uint dataPageSize = 1024 * 1024,
+        bool maintainOrder = false,
+        CloudOptions? cloudOptions=null)
     {
-        // Cloud Options logic
         CloudProvider provider = CloudProvider.None;
         nuint retries = 0;
         ulong cacheTtl = 0;
@@ -869,11 +915,16 @@ public class LazyFrame : IDisposable
                 len = (nuint)keys.Length;
             }
         }
-
         PolarsWrapper.SinkDelta(
             Handle,
             path,
             mode.ToNative(),
+            compression.ToNative(),
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            maintainOrder,
             provider.ToNative(),
             retries,
             cacheTtl,

@@ -820,7 +820,7 @@ pub extern "C" fn pl_read_parquet_memory(
     })
 }
 
-fn build_scan_args(
+pub(crate)fn build_scan_args(
     n_rows: *const usize,
     parallel_code: u8,
     low_memory: bool,
@@ -1004,7 +1004,7 @@ pub extern "C" fn pl_scan_parquet_memory(
 // ==========================================
 // Write&Sink Parquet
 // ==========================================
-fn build_parquet_write_options(
+pub(crate) fn build_parquet_write_options(
     compression: u8,        // 0:Uncompressed, 1:Snappy, 2:Gzip, 3:Brotli, 4:Zstd, 5:Lz4Raw
     compression_level: i32, // -1: Default
     statistics: bool,

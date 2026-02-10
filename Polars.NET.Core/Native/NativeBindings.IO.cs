@@ -499,17 +499,38 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_values,
         UIntPtr cloud_len
     );
+    // [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    // public static partial void pl_sink_delta(
+    //     LazyFrameHandle lf,
+    //     string path,
+    //     PlDeltaSaveMode mode,
+    //     // ... Cloud Options ...
+    //     PlCloudProvider cloud_provider,
+    //     UIntPtr cloud_retries,
+    //     ulong cloud_cache_ttl,
+    //     [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_keys,
+    //     [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_values,
+    //     UIntPtr cloud_len
+    // );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial void pl_sink_delta(
-        LazyFrameHandle lf,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        LazyFrameHandle lf, 
+        string path, 
         PlDeltaSaveMode mode,
-        // ... Cloud Options ...
-        PlCloudProvider cloud_provider,
-        UIntPtr cloud_retries,
-        ulong cloud_cache_ttl,
-        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_keys,
-        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_values,
-        UIntPtr cloud_len
+        // Parquet Options
+        PlParquetCompression compression, 
+        int compression_level, 
+        [MarshalAs(UnmanagedType.U1)] bool statistics, 
+        nuint row_group_size, 
+        nuint data_page_size,
+        // Sink Options
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        // Cloud Options
+        PlCloudProvider cloud_provider, 
+        UIntPtr cloud_retries, 
+        ulong cloud_cache_ttl, 
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_keys, 
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_values, 
+        nuint cloud_len
     );
 }
