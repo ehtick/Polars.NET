@@ -794,13 +794,30 @@ public class LazyFrame : IDisposable
         string path,
         long? version = null,
         string? datetime = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        bool useStatistics = true,
+        bool glob = true,
+        // bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = true,
         CloudOptions? cloudOptions = null)
     {
         if (version.HasValue && datetime != null)
         {
             throw new ArgumentException("Cannot specify both 'version' and 'datetime' for Delta Time Travel.");
         }
-        
+
+        var schemaHandle = schema?.Handle;
+        var hiveSchemaHandle = hivePartitionSchema?.Handle;
+
         // 1. Prepare Cloud Options
         CloudProvider provider = CloudProvider.None;
         nuint retries = 0;
@@ -828,6 +845,19 @@ public class LazyFrame : IDisposable
             path,
             version,
             datetime,
+            nRows,
+            parallel.ToNative(),
+            lowMemory,
+            useStatistics,
+            glob,
+            rechunk, 
+            cache,   
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schemaHandle,     
+            hiveSchemaHandle, 
+            tryParseHiveDates,
             provider.ToNative(),
             retries,
             cacheTtl,

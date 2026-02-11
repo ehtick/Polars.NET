@@ -1105,6 +1105,20 @@ public static partial class PolarsWrapper
         string path,
         long? version,
         string? datetime,
+        ulong? nRows,
+        PlParallelStrategy parallel,
+        bool lowMemory,
+        bool useStatistics,
+        bool glob,
+        // bool allowMissingColumns,
+        bool rechunk,
+        bool cache,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn,
+        SchemaHandle? schema,
+        SchemaHandle? hivePartitionSchema,
+        bool tryParseHiveDates,
         PlCloudProvider cloudProvider,
         nuint cloudRetries,
         ulong cloudCacheTtl,
@@ -1114,11 +1128,37 @@ public static partial class PolarsWrapper
     {
         long versionVal = version.GetValueOrDefault();
         IntPtr versionPtr = version.HasValue ? (IntPtr)(&versionVal) : IntPtr.Zero;
+
+        ulong nRowsVal = nRows.GetValueOrDefault();
+        IntPtr nRowsPtr = nRows.HasValue ? (IntPtr)(&nRowsVal) : IntPtr.Zero;
+
+        using var schemaLock = new SafeHandleLock<SchemaHandle>(
+            schema != null ? [schema] : null
+        );
+        IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+        using var hiveLock = new SafeHandleLock<SchemaHandle>(
+            hivePartitionSchema != null ? [hivePartitionSchema] : null
+        );
+        IntPtr hiveSchemaPtr = hivePartitionSchema != null ? hiveLock.Pointers[0] : IntPtr.Zero;
         
         var h = NativeBindings.pl_scan_delta(
             path,
             versionPtr,
             datetime,
+            nRowsPtr,
+            parallel,
+            lowMemory,
+            useStatistics,
+            glob,
+            rechunk, 
+            cache,  
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schemaPtr,
+            hiveSchemaPtr,
+            tryParseHiveDates,
             cloudProvider,
             cloudRetries,
             cloudCacheTtl,

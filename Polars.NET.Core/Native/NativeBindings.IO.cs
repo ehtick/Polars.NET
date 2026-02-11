@@ -475,15 +475,36 @@ unsafe internal partial class NativeBindings
     
     /// <summary>
     /// Rust Signature:
-    /// pub extern "C" fn pl_scan_delta(
-    ///     path_ptr: *const c_char,
-    ///     cloud_provider: u8,
-    ///     cloud_retries: usize,
-    ///     cloud_cache_ttl: u64,
-    ///     cloud_keys: *const *const c_char,
-    ///     cloud_values: *const *const c_char,
-    ///     cloud_len: usize
-    /// ) -> *mut LazyFrameContext
+    // pub extern "C" fn pl_scan_delta(
+    //     path_ptr: *const c_char,
+    //     // --- Time Travel Args ---
+    //     version: *const i64,
+    //     datetime_ptr: *const c_char,
+    //     // --- Scan Args ---
+    //     n_rows: *const usize,
+    //     parallel_code: u8,
+    //     low_memory: bool,
+    //     use_statistics: bool,
+    //     glob: bool,
+    //     allow_missing_columns: bool, // <--- 这一点至关重要，必须为 true
+    //     rechunk: bool, 
+    //     cache: bool,   
+    //     // --- Optional Names ---
+    //     row_index_name_ptr: *const c_char,
+    //     row_index_offset: u32,
+    //     include_path_col_ptr: *const c_char,
+    //     // --- Schema ---
+    //     schema_ptr: *mut SchemaContext, // 用户手动传的 Schema (优先级最高)
+    //     hive_schema_ptr: *mut SchemaContext,
+    //     try_parse_hive_dates: bool,
+    //     // --- Cloud Options ---
+    //     cloud_provider: u8,
+    //     cloud_retries: usize,
+    //     cloud_cache_ttl: u64,
+    //     cloud_keys: *const *const c_char,
+    //     cloud_values: *const *const c_char,
+    //     cloud_len: usize
+    // ) -> *mut LazyFrameContext {
     /// </summary>
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_delta(
@@ -491,6 +512,23 @@ unsafe internal partial class NativeBindings
         // --- Time Travel ---
         IntPtr version,
         string? datetime,
+        // --- Scan Args ---
+        IntPtr n_rows, // null for None
+        PlParallelStrategy parallel_code,
+        [MarshalAs(UnmanagedType.I1)] bool low_memory,
+        [MarshalAs(UnmanagedType.I1)] bool use_statistics,
+        [MarshalAs(UnmanagedType.I1)] bool glob,
+        // [MarshalAs(UnmanagedType.I1)] bool allow_missing_columns,
+        [MarshalAs(UnmanagedType.I1)] bool rechunk, 
+        [MarshalAs(UnmanagedType.I1)] bool cache,   
+        // --- Option Names ---
+        string? row_index_name,
+        uint row_index_offset,
+        string? include_path_col,
+        // --- Schema ---
+        IntPtr schema,
+        IntPtr hive_schema,
+        [MarshalAs(UnmanagedType.I1)] bool try_parse_hive_dates,
         // --- Cloud Options (Must match pl_scan_parquet pattern) ---
         PlCloudProvider cloud_provider,
         UIntPtr cloud_retries,
