@@ -1,26 +1,27 @@
 [package]
 name = "native_shim"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
-polars = { version = "0.52.0", features = ["lazy", "csv","parquet","strings","regex","cloud","dot_product","dot_diagram","mode","interpolate","interpolate_by",
+polars = { version = "0.53.0", features = ["lazy", "csv","parquet","strings","regex","cloud","dot_product","dot_diagram","mode","interpolate","interpolate_by",
 "timezones","semi_anti_join","cross_join","iejoin","is_between","is_in","is_unique","log","random","array_arithmetic","list_arithmetic",
 "abs","round_series","dtype-full","array_any_all","array_to_struct","pivot","sql","diff","rolling_window","rolling_window_by",
 "json","ipc","asof_join","diagonal_concat","top_k","rank","moment","pct_change","ewma","ewma_by","product","new_streaming","dataframe_arithmetic",
-"aws","azure","gcp","http"
-,"serde","dynamic_group_by","business"] }
-polars-core = { version = "0.52.0" }
-polars-arrow = { version = "0.52.0" }
-polars-io = { version = "0.52.0",features =["file_cache"] }
-polars-utils = { version = "0.52.0" }
+"aws","azure","gcp","http",
+"serde","dynamic_group_by","business"] }
+polars-core = { version = "0.53.0" }
+polars-arrow = { version = "0.53.0" }
+polars-io = { version = "0.53.0",features =["file_cache"] }
+polars-utils = { version = "0.53.0" }
+polars-buffer = {version="0.53.0"}
 flate2 = { version = "1.1.8", features = ["rust_backend"] }
 serde_json = "1.0.145"
 calamine = { version = "0.32", features = ["dates","chrono"] }
-chrono = "0.4.43"
+chrono = "0.4.41"
 rust_xlsxwriter = { version = "0.93", features = ["chrono"] }
 mimalloc = { version = "*", default-features = false }
-deltalake = {version = "0.30.2", features = ["s3","azure","gcs","datafusion","rustls","json"]}
+deltalake = {version = "0.30.2", features = ["s3","azure","gcs","rustls","json"]}
 tokio = { version = "1.49.0", features = ["rt","macros","rt-multi-thread"]}
 url = "2.5.8"
 uuid = {version="1.20.0", features=["v4"]}
@@ -42,4 +43,4 @@ strip = true        #  Strip symbols
 opt-level = 0       # Max :3
 lto = false          # Link time optimize
 codegen-units = 16   # set 1 for better binary layout
-panic = "abort"     
+panic = "unwind"     

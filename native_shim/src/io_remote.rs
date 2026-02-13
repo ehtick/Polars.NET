@@ -12,9 +12,10 @@ use deltalake::{DeltaTable, DeltaTableBuilder};
 use deltalake::protocol::{DeltaOperation, SaveMode};
 use deltalake::parquet::arrow::async_reader::{AsyncFileReader, ParquetObjectReader};
 use deltalake::parquet::file::statistics::Statistics as ParquetStatistics;
+use polars::prelude::sync_on_close::SyncOnCloseType;
 use serde_json::{json, Value};
 use polars::{error::PolarsError, prelude::*};
-use polars_arrow::buffer::Buffer;
+use polars_buffer::Buffer;
 use tokio::runtime::Runtime;
 use crate::io::build_scan_args;
 use crate::types::SchemaContext;
@@ -228,6 +229,9 @@ pub extern "C" fn pl_scan_delta(
     // --- Cloud Options ---
     cloud_provider: u8,
     cloud_retries: usize,
+    cloud_retry_timeout_ms: u64,      
+    cloud_retry_init_backoff_ms: u64, 
+    cloud_retry_max_backoff_ms: u64, 
     cloud_cache_ttl: u64,
     cloud_keys: *const *const c_char,
     cloud_values: *const *const c_char,
@@ -329,10 +333,12 @@ pub extern "C" fn pl_scan_delta(
             n_rows, parallel_code, low_memory, use_statistics, 
             glob, allow_missing_columns, 
             row_index_name_ptr, row_index_offset, include_path_col_ptr,
-            schema_ptr, // 如果用户传了 schema_ptr，args.schema 就会被设置
+            schema_ptr, 
             hive_schema_ptr, try_parse_hive_dates,
             rechunk, cache,
-            cloud_provider, cloud_retries, cloud_cache_ttl, 
+            cloud_provider, cloud_retries,    cloud_retry_timeout_ms,      
+            cloud_retry_init_backoff_ms, 
+            cloud_retry_max_backoff_ms,  cloud_cache_ttl, 
             cloud_keys, cloud_values, cloud_len
         );
 
@@ -345,8 +351,8 @@ pub extern "C" fn pl_scan_delta(
         }
         
         // 6. Scan
-        let pl_paths: Vec<PlPath> = file_uris.iter().map(|s| PlPath::new(s)).collect();
-        let buffer: Buffer<PlPath> = pl_paths.into();
+        let pl_paths: Vec<PlRefPath> = file_uris.iter().map(|s| PlRefPath::new(s)).collect();
+        let buffer: Buffer<PlRefPath> = pl_paths.into();
         
         let lf = LazyFrame::scan_parquet_files(buffer, args)?;
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
@@ -432,11 +438,15 @@ pub extern "C" fn pl_sink_delta(
     statistics: bool,
     row_group_size: usize,
     data_page_size: usize,
+    compat_level: i32,
     // Sink Options
     maintain_order: bool,
     // Cloud Options
     cloud_provider: u8, // Polars sink_parquet 可能会用到，这里暂时透传
     cloud_retries: usize,
+    cloud_retry_timeout_ms: u64,      
+    cloud_retry_init_backoff_ms: u64, 
+    cloud_retry_max_backoff_ms: u64,  
     cloud_cache_ttl: u64,
     cloud_keys: *const *const c_char,
     cloud_values: *const *const c_char,
@@ -475,6 +485,9 @@ pub extern "C" fn pl_sink_delta(
             build_cloud_options(
                 cloud_provider,
                 cloud_retries,
+                cloud_retry_timeout_ms,      
+                cloud_retry_init_backoff_ms, 
+                cloud_retry_max_backoff_ms,
                 cloud_cache_ttl,
                 cloud_keys,
                 cloud_values,
@@ -578,36 +591,35 @@ pub extern "C" fn pl_sink_delta(
         };
 
         // 3. 构建 Polars Parquet Write Options
-        let write_options = build_parquet_write_options(
+        let parquet_options = build_parquet_write_options(
             compression,
             compression_level,
             statistics,
             row_group_size,
-            data_page_size
+            data_page_size,
+            compat_level, 
         ).map_err(|e| PolarsError::ComputeError(format!("Failed to build parquet options: {}", e).into()))?;
+        
+        let file_format = FileWriteFormat::Parquet(parquet_options);
         
         // 4. 执行 Polars Sink (Streaming!)
         // 这一步是真正的重活，Polars 会流式地把数据通过网络/文件系统写出去
 
         // 这里的 sink_parquet 调用可能会阻塞，直到写完
         // 注意：lf_ctx.inner 此时被消耗掉
-        let target = SinkTarget::Path(PlPath::new(&full_write_path));
+        let target = SinkTarget::Path(PlRefPath::new(&full_write_path));
+        let destination = SinkDestination::File { target };
         
         // 注意：SinkOptions 结构体构建可能随 Polars 版本不同，请参考原有的实现
-        let sink_options = SinkOptions {
-             maintain_order,
-             ..Default::default()
+        let unified_args = UnifiedSinkArgs {
+            maintain_order,
+            mkdir: false, // 写单个 part 文件通常不需要递归建目录，或者由外部保证
+            sync_on_close: SyncOnCloseType::None, // 或者传入你的 sync 变量
+            cloud_options: cloud_options.map(Arc::new), 
         };
 
         lf_ctx.inner
-            .sink_parquet(
-                target, 
-                write_options, 
-                cloud_options, 
-                sink_options
-            )?
-            // 关键：开启 Streaming
-            .with_new_streaming(true) 
+            .sink(destination, file_format, unified_args)?
             .collect()?;
         // ==========================================
         // Step C: 提交事务 (包含 Create Table 逻辑)

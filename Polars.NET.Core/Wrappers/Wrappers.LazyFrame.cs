@@ -222,26 +222,59 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-    public static LazyFrameHandle LazyExplode(LazyFrameHandle lf, SelectorHandle selector)
+    public static LazyFrameHandle LazyExplode(LazyFrameHandle lf, SelectorHandle selector, bool emptyAsNull,bool keepNulls)
     {
-        var newLf = NativeBindings.pl_lazy_explode(lf, selector);
+        var newLf = NativeBindings.pl_lazyframe_explode(lf, selector,emptyAsNull,keepNulls);
         lf.TransferOwnership(); 
         selector.TransferOwnership();
         return ErrorHelper.Check(newLf);
     }
-    public static LazyFrameHandle LazyUnpivot(LazyFrameHandle lf, SelectorHandle index, SelectorHandle on, string? variableName, string? valueName)
+    public static LazyFrameHandle LazyPivot(
+        LazyFrameHandle lf, 
+        SelectorHandle on, 
+        DataFrameHandle onColumns, 
+        SelectorHandle index, 
+        SelectorHandle values, 
+        ExprHandle? aggExpr, 
+        PlPivotAgg aggCode, 
+        bool maintainOrder, 
+        string? separator)
+    {
+        IntPtr aggExprPtr = aggExpr?.TransferOwnership() ?? IntPtr.Zero;
+
+        var h = NativeBindings.pl_lazyframe_pivot(
+            lf,
+            on,
+            onColumns,
+            index,
+            values,
+            aggExprPtr,
+            aggCode,
+            maintainOrder,
+            separator
+        );
+        
+        lf.TransferOwnership();
+
+        on.TransferOwnership();
+        index.TransferOwnership();
+        values.TransferOwnership();
+
+        return ErrorHelper.Check(h);
+    }
+    public static LazyFrameHandle LazyUnpivot(LazyFrameHandle lf, SelectorHandle index, SelectorHandle? on, string? variableName, string? valueName)
     {
 
         var h = NativeBindings.pl_lazyframe_unpivot(
             lf,
             index,
-            on,
+            on, 
             variableName,
             valueName
         );
         lf.TransferOwnership();
         index.TransferOwnership();
-        on.TransferOwnership();
+        on?.TransferOwnership();
         return ErrorHelper.Check(h);
     }
     public static LazyFrameHandle LazyConcat(LazyFrameHandle[] handles,PlConcatType how, bool rechunk = false, bool parallel = true)
@@ -264,6 +297,7 @@ public static partial class PolarsWrapper
         PlJoinValidation validation,
         PlJoinCoalesce coalesce,
         PlJoinMaintainOrder maintainOrder,
+        PlJoinSide joinSide,
         bool nullsEqual,
         long? sliceOffset,
         ulong sliceLen)
@@ -285,6 +319,7 @@ public static partial class PolarsWrapper
                 validation,
                 coalesce,
                 maintainOrder,
+                joinSide,
                 nullsEqual,
                 offsetPtr,      
                 (UIntPtr)sliceLen
@@ -311,6 +346,7 @@ public static partial class PolarsWrapper
         PlJoinValidation validation,
         PlJoinCoalesce coalesce,
         PlJoinMaintainOrder maintainOrder,
+        PlJoinSide joinSide,
         bool nullsEqual,
         long? sliceOffset,
         ulong sliceLen)
@@ -349,6 +385,7 @@ public static partial class PolarsWrapper
                 validation,
                 coalesce,
                 maintainOrder,
+                joinSide,
                 nullsEqual,
                 sOffPtr,
                 (UIntPtr)sliceLen

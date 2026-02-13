@@ -29,6 +29,8 @@ public static partial class PolarsWrapper
         ErrorHelper.Check(NativeBindings.pl_series_new_i128(name, data, validity, (UIntPtr)data.Length));
     public static SeriesHandle SeriesNew(string name, UInt128[] data, byte[]? validity) => 
         ErrorHelper.Check(NativeBindings.pl_series_new_u128(name, data, validity, (UIntPtr)data.Length));
+    public static SeriesHandle SeriesNew(string name, Half[] data, byte[]? validity) => 
+        ErrorHelper.Check(NativeBindings.pl_series_new_f16(name, data, validity, (UIntPtr)data.Length));
     public static SeriesHandle SeriesNew(string name, float[] data, byte[]? validity) => 
         ErrorHelper.Check(NativeBindings.pl_series_new_f32(name, data, validity, (UIntPtr)data.Length));
     public static SeriesHandle SeriesNew(string name, double[] data, byte[]? validity) => 

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text;
 using static Polars.CSharp.Polars;
 
@@ -243,7 +244,7 @@ public class IoTests
         // 3. 强制极小的 RowGroupSize (2行一组) -> 理论上产生 3 个 Group
         df.WriteParquet(
             f.Path,
-            compression: ParquetCompression.Zstd,
+            compression: ParquetCompression.ZSTD,
             compressionLevel: 3,
             statistics: true,
             rowGroupSize: 2
@@ -469,8 +470,7 @@ public class IoTests
         // 1. 写入压缩文件
         dfOriginal.WriteIpc(
             f.Path, 
-            compression: IpcCompression.LZ4, 
-            parallel: true
+            compression: IpcCompression.LZ4
         );
 
         // 2. 读取验证 (注意：压缩文件不应开启 memoryMap)
@@ -501,8 +501,7 @@ public class IoTests
         // 1. 写入 (无压缩，兼容 Mmap)
         dfOriginal.WriteIpc(
             f.Path, 
-            compression: IpcCompression.None, 
-            parallel: true
+            compression: IpcCompression.None
         );
 
         // =================================================================
@@ -640,7 +639,7 @@ public class IoTests
             // ---------------------------------------------------
             df.WriteCsv(
                 path,
-                hasHeader: true,
+                includeHeader: true,
                 separator: '|',               // 使用竖线作为分隔符
                 quoteChar: '\'',              // 使用单引号作为引用符
                 quoteStyle: QuoteStyle.NonNumeric, // 非数字类型强制加引号
@@ -735,7 +734,7 @@ public class IoTests
             // - SyncOnClose: All (验证 Sync 枚举传递)
             df.Lazy().SinkParquet(
                 path,
-                compression: ParquetCompression.Zstd,
+                compression: ParquetCompression.ZSTD,
                 compressionLevel: 3, // 指定压缩等级
                 statistics: true,
                 rowGroupSize: 2,
@@ -767,6 +766,7 @@ public class IoTests
         }
     }
     [Fact]
+    [Trait("Category","Debug")]
     public void Test_Streaming_SinkParquet_EndToEnd()
     {
         // ====================================================

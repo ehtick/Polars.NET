@@ -16,6 +16,24 @@ public class CloudOptions
     public uint MaxRetries { get; set; } = 2;
 
     /// <summary>
+    /// The timeout for a single cloud request in milliseconds.
+    /// <br/>Default is <b>30,000ms (30 seconds)</b>.
+    /// </summary>
+    public ulong RetryTimeoutMs { get; set; } = 30_000;
+
+    /// <summary>
+    /// The initial backoff time for retries in milliseconds.
+    /// <br/>Default is <b>500ms</b>.
+    /// </summary>
+    public ulong RetryInitBackoffMs { get; set; } = 500;
+
+    /// <summary>
+    /// The maximum backoff time for retries in milliseconds.
+    /// <br/>Default is <b>10,000ms (10 seconds)</b>.
+    /// </summary>
+    public ulong RetryMaxBackoffMs { get; set; } = 10_000;
+
+    /// <summary>
     /// Time-to-live for the file cache in seconds. Default is 0 (no cache/default).
     /// </summary>
     public ulong FileCacheTtl { get; set; } = 0;
@@ -180,5 +198,42 @@ public class CloudOptions
             Provider = CloudProvider.HuggingFace,
             Credentials = creds
         };
+    }
+
+    internal static (
+        CloudProvider Provider,
+        nuint Retries,
+        ulong RetryTimeoutMs,
+        ulong RetryInitBackoffMs,
+        ulong RetryMaxBackoffMs,
+        ulong CacheTtl,
+        string[]? Keys,
+        string[]? Values
+    ) ParseCloudOptions(CloudOptions? options)
+    {
+        if (options == null)
+        {
+            return (CloudProvider.None, 0, 0, 0, 0, 0, null, null);
+        }
+
+        string[]? keys = null;
+        string[]? values = null;
+
+        if (options.Credentials != null && options.Credentials.Count > 0)
+        {
+            keys = options.Credentials.Keys.ToArray();
+            values = options.Credentials.Values.ToArray();
+        }
+
+        return (
+            options.Provider,
+            options.MaxRetries,
+            options.RetryTimeoutMs,
+            options.RetryInitBackoffMs,
+            options.RetryMaxBackoffMs,
+            options.FileCacheTtl,
+            keys,
+            values
+        );
     }
 }

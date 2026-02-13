@@ -1067,12 +1067,20 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <summary>
     /// Explode list/array columns into multiple rows using selector.
     /// </summary>
-    /// <param name="selector"></param>
-    /// <returns></returns>
-    public DataFrame Explode(Selector selector)
+    /// <param name="selector">Column Selector</param>
+    /// <param name="emptyAsNull">
+    /// If <c>true</c>, empty lists are exploded into a single <c>null</c> value. 
+    /// If <c>false</c>, rows with empty lists are removed from the result.
+    /// </param>
+    /// <param name="keepNulls">
+    /// If <c>true</c>, <c>null</c> values in the column are preserved as <c>null</c> in the result. 
+    /// If <c>false</c>, rows with <c>null</c> values are removed.
+    /// </param>
+        /// <returns></returns>
+    public DataFrame Explode(Selector selector,bool emptyAsNull=true, bool keepNulls=true)
     {
         var sh = selector.CloneHandle();
-        return new DataFrame(PolarsWrapper.Explode(Handle, sh));
+        return new DataFrame(PolarsWrapper.Explode(Handle, sh,emptyAsNull,keepNulls));
     }
     /// <summary>
     /// Decompose a struct column into multiple columns.
@@ -1240,6 +1248,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="validation">Check if join keys are unique.</param>
     /// <param name="coalesce">How to coalesce the join keys.</param>
     /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="joinSide">Specifies the strategy for the hash join build side.</param>
     /// <param name="nullsEqual">Consider nulls as equal.</param>
     /// <param name="sliceOffset">Slice the result starting at this offset.</param>
     /// <param name="sliceLen">Length of the slice.</param>
@@ -1252,6 +1261,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1271,6 +1281,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             validation.ToNative(),
             coalesce.ToNative(),
             maintainOrder.ToNative(),
+            joinSide.ToNative(),
             nullsEqual,
             sliceOffset,
             sliceLen
@@ -1289,6 +1300,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="validation">Check if join keys are unique.</param>
     /// <param name="coalesce">How to coalesce the join keys.</param>
     /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="joinSide">Specifies the strategy for the hash join build side.</param>
     /// <param name="nullsEqual">Consider nulls as equal.</param>
     /// <param name="sliceOffset">Slice the result starting at this offset.</param>
     /// <param name="sliceLen">Length of the slice.</param>
@@ -1338,6 +1350,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1353,6 +1366,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             validation, 
             coalesce, 
             maintainOrder, 
+            joinSide,
             nullsEqual, 
             sliceOffset, 
             sliceLen
@@ -1370,10 +1384,11 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="validation">Check if join keys are unique.</param>
     /// <param name="coalesce">How to coalesce the join keys.</param>
     /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="joinSide">Specifies the strategy for the hash join build side.</param>
     /// <param name="nullsEqual">Consider nulls as equal.</param>
     /// <param name="sliceOffset">Slice the result starting at this offset.</param>
     /// <param name="sliceLen">Length of the slice.</param>
-    /// <seealso cref="Join(DataFrame, string[], string[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,bool,long?,ulong)"/>
+    /// <seealso cref="Join(DataFrame, string[], string[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,JoinSide,bool,long?,ulong)"/>
     public DataFrame Join(
         DataFrame other, 
         string leftOn, 
@@ -1383,6 +1398,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1396,12 +1412,13 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             validation, 
             coalesce, 
             maintainOrder, 
+            joinSide,
             nullsEqual, 
             sliceOffset, 
             sliceLen
         );
     }
-    /// <inheritdoc cref="LazyFrame.JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="LazyFrame.JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     /// <example>
     /// <code>
     /// // Trades: Events happening at specific times
@@ -1457,6 +1474,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1476,13 +1494,14 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             validation,
             coalesce,
             maintainOrder,
+            joinSide,
             nullsEqual,
             sliceOffset,
             sliceLen
         ).Collect();
     }
 
-    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -1496,6 +1515,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1507,11 +1527,11 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             tolerance,
             null,null,
             strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
-            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+            validation,coalesce,maintainOrder,joinSide,nullsEqual,sliceOffset,sliceLen
         );
     }
 
-    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -1525,6 +1545,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1536,10 +1557,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             DurationFormatter.ToPolarsString(tolerance),
             null,null,
             strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
-            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+            validation,coalesce,maintainOrder,joinSide,nullsEqual,sliceOffset,sliceLen
         );
     }
-    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -1553,6 +1574,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1564,10 +1586,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             null,
             tolerance,null,
             strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
-            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+            validation,coalesce,maintainOrder,joinSide,nullsEqual,sliceOffset,sliceLen
         );
     }
-    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -1581,6 +1603,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1592,11 +1615,16 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             null,
             null,tolerance,
             strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
-            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+            validation,coalesce,maintainOrder,joinSide,nullsEqual,sliceOffset,sliceLen
         );
     }
 
-    private static DataFrame ConcatInternal(IEnumerable<DataFrame> dfs, PlConcatType how, bool checkDuplicates)
+    private static DataFrame ConcatInternal(
+        IEnumerable<DataFrame> dfs, 
+        PlConcatType how, 
+        bool checkDuplicates,
+        bool strict = true,
+        bool unitLengthAsScalar = false)
     {
         var dfList = dfs.ToList();
         if (dfList.Count == 0) return new DataFrame();
@@ -1604,7 +1632,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
         var handles = dfList.Select(df => df.Clone().Handle).ToArray();
 
-        var h = PolarsWrapper.Concat(handles, how, checkDuplicates);
+        var h = PolarsWrapper.Concat(handles, how, checkDuplicates,strict,unitLengthAsScalar);
         return new DataFrame(h);
     }
     /// <summary>
@@ -1672,9 +1700,15 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// If true, check that the column names are unique. 
     /// If multiple columns have the same name, they will be dropped.
     /// </param>
-    public static DataFrame ConcatHorizontal(IEnumerable<DataFrame> dfs, bool checkDuplicates = true)
+    /// <param name="strict">For Horizontal: if true, error on height mismatch.</param>
+    /// <param name="unitLengthAsScalar">For Horizontal: if true, broadcast length-1 DataFrames to match height.</param>
+    public static DataFrame ConcatHorizontal(
+        IEnumerable<DataFrame> dfs,
+        bool checkDuplicates = true,
+        bool strict = true,
+        bool unitLengthAsScalar = false)
     {
-        return ConcatInternal(dfs, PlConcatType.Horizontal, checkDuplicates);
+        return ConcatInternal(dfs, PlConcatType.Horizontal, checkDuplicates, strict,unitLengthAsScalar);
     }
     /// <summary>
     /// Diagonal concatenation of DataFrames.
@@ -1859,6 +1893,47 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // Pivot / Unpivot
     // ==========================================
     /// <summary>
+    /// Pivot the DataFrame using Selectors for column selection. 
+    /// This is the most flexible pivot method.
+    /// </summary>
+    /// <param name="index">Selector for the index column(s).</param>
+    /// <param name="columns">Selector for the column(s) to pivot.</param>
+    /// <param name="values">Selector for the value column(s).</param>
+    /// <param name="aggregateExpr">Optional expression to aggregate the values. If null, uses <paramref name="aggregateFunction"/>.</param>
+    /// <param name="aggregateFunction">Aggregation function to use if <paramref name="aggregateExpr"/> is null. Default is First.</param>
+    /// <param name="sortColumns">Sort the transposed columns by name.</param>
+    /// <param name="maintainOrder">Keep the original order of the rows (index).</param>
+    /// <param name="separator">Separator used to combine column names when multiple value columns are selected.</param>
+    public DataFrame Pivot(
+        Selector index, 
+        Selector columns, 
+        Selector values, 
+        Expr? aggregateExpr = null, 
+        PivotAgg aggregateFunction = PivotAgg.First,
+        bool sortColumns = false, 
+        bool maintainOrder = true,
+        string? separator = null)
+    {
+        using var indexH = index.CloneHandle();
+        using var columnsH = columns.CloneHandle();
+        using var valuesH = values.CloneHandle();
+        using var aggExprH = aggregateExpr?.CloneHandle(); 
+
+        var h = PolarsWrapper.Pivot(
+            Handle,
+            indexH,
+            columnsH,
+            valuesH,
+            aggExprH, 
+            aggregateFunction.ToNative(),
+            sortColumns,
+            maintainOrder,
+            separator
+        );
+
+        return new DataFrame(h);
+    }
+    /// <summary>
     /// Pivot the DataFrame from long to wide format.
     /// <para>
     /// This creates a new column for each unique value in the <paramref name="columns"/> argument.
@@ -1870,6 +1945,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="values">Column names to use for the values in the cells.</param>
     /// <param name="aggregateFunction">Aggregation function to use if multiple values exist for an index/column pair. Default is First.</param>
     /// <param name="sortColumns">Sort the transposed columns by name. Default is by order of discovery.</param>
+    /// <param name="maintainOrder">Keep the original order of the rows.</param>
     /// <param name="separator">Used as separator/delimiter in generated column names in case of multiple values columns.</param>
     /// <returns>A wide-format DataFrame.</returns>
     /// <example>
@@ -1902,8 +1978,23 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg aggregateFunction = PivotAgg.First,bool sortColumns =false,string? separator=null)
-        => new(PolarsWrapper.Pivot(Handle, index, columns, values,null, aggregateFunction.ToNative(),sortColumns,separator));
+    public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg aggregateFunction = PivotAgg.First,bool sortColumns =false,bool maintainOrder = true,string? separator=null)
+    {
+        using var sIndex = Selector.Cols(index);
+        using var sColumns = Selector.Cols(columns);
+        using var sValues = Selector.Cols(values);
+
+        return Pivot(
+            sIndex, 
+            sColumns, 
+            sValues, 
+            aggregateExpr: null, 
+            aggregateFunction: aggregateFunction, 
+            sortColumns: sortColumns, 
+            maintainOrder: maintainOrder, 
+            separator: separator
+        );
+    }
     /// <summary>
     /// Pivot a DataFrame with a custom aggregation expression.
     /// </summary>
@@ -1919,6 +2010,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="separator">
     /// Separator used to combine column names when multiple value columns are selected.
     /// </param>
+    /// <param name="maintainOrder">Keep the original order of the rows.</param>
     /// <returns>Pivoted DataFrame.</returns>
     public DataFrame Pivot(
         string[] index,
@@ -1926,27 +2018,30 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         string[] values,
         Expr aggregateExpr,
         bool sortColumns = false,
+        bool maintainOrder = true,
         string? separator = null)
     {
-        var exprHandle = PolarsWrapper.CloneExpr(aggregateExpr.Handle);
+        // 语法糖
+        using var sIndex = Selector.Cols(index);
+        using var sColumns = Selector.Cols(columns);
+        using var sValues = Selector.Cols(values);
 
-        var h = PolarsWrapper.Pivot(
-            Handle,
-            index,
-            columns,
-            values,
-            exprHandle,
-            (PlPivotAgg)0, // Dummy value, ignored by Rust when Expr is present
-            sortColumns,
-            separator
+        // 调用核心方法
+        // 此时 aggregateFunction 参数会被忽略（Rust 端优先使用 Expr）
+        return Pivot(
+            sIndex, 
+            sColumns, 
+            sValues, 
+            aggregateExpr: aggregateExpr, 
+            sortColumns: sortColumns, 
+            maintainOrder: maintainOrder, 
+            separator: separator
         );
-
-        return new DataFrame(h);
     }
     /// <summary>
     /// Unpivot (Melt) the DataFrame from wide to long format.
     /// <para>
-    /// This is the reverse of <see cref="Pivot(string[], string[], string[], PivotAgg, bool, string?)"/>. It collapses multiple columns into key-value pairs.
+    /// This is the reverse of <see cref="Pivot(string[], string[], string[], PivotAgg, bool,bool, string?)"/>. It collapses multiple columns into key-value pairs.
     /// </para>
     /// </summary>
     /// <param name="index">Column names to keep as identifiers (id_vars).</param>
@@ -1983,10 +2078,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    public DataFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
+    public DataFrame Unpivot(string[] index, string[]? on, string variableName = "variable", string valueName = "value")
     {
         using var sIndex = Selector.Cols(index);
-        using var sOn = Selector.Cols(on);
+        using var sOn = on is not null ? Selector.Cols(on) : null;
 
         return Unpivot(sIndex, sOn, variableName, valueName);
     }
@@ -1998,17 +2093,17 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="variableName"></param>
     /// <param name="valueName"></param>
     /// <returns></returns>
-    public DataFrame Unpivot(Selector index, Selector on, string variableName = "variable", string valueName = "value")
+    public DataFrame Unpivot(Selector index, Selector? on, string variableName = "variable", string valueName = "value")
     {
         var indexClone = index.CloneHandle();
-        var onClone = on.CloneHandle();
+        var onClone = on?.CloneHandle();
         return new DataFrame(PolarsWrapper.Unpivot(Handle, indexClone, onClone, variableName, valueName));
     }
     /// <summary>
     /// Alias for <see cref="Unpivot(string[], string[], string, string)"/>. Melts the DataFrame from wide to long format.
     /// </summary>
     /// <seealso cref="Unpivot(string[], string[], string, string)"/>
-    public DataFrame Melt(string[] index, string[] on, string variableName = "variable", string valueName = "value") 
+    public DataFrame Melt(string[] index, string[]? on, string variableName = "variable", string valueName = "value") 
         => Unpivot(index, on, variableName, valueName);
 
     // ==========================================
@@ -2016,10 +2111,13 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     /// <summary>
     /// Write DataFrame to a comma-separated values (CSV) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
     /// </summary>
     /// <param name="path">The output file path.</param>
-    /// <param name="hasHeader">Whether to include the header row. Defaults to true.</param>
-    /// <param name="useBom">Whether to include the UTF-8 Byte Order Mark (BOM). Useful for Excel compatibility. Defaults to false.</param>
+    /// <param name="includeHeader">Whether to include the header row. Defaults to true.</param>
+    /// <param name="includeBom">Whether to include the UTF-8 Byte Order Mark (BOM). Defaults to false.</param>
     /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
     /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'.</param>
     /// <param name="quoteStyle">The quoting style to use. Defaults to <see cref="QuoteStyle.Necessary"/>.</param>
@@ -2033,19 +2131,28 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// The number of decimal places to write for floats. 
     /// If null (default), uses full precision.
     /// </param>
-    /// <param name="decimalComma">Whether to use a comma ',' as the decimal separator (European style). Defaults to false.</param>
+    /// <param name="decimalComma">Whether to use a comma ',' as the decimal separator. Defaults to false.</param>
     /// <param name="dateFormat">Format string for Date columns. If null, uses ISO 8601.</param>
     /// <param name="timeFormat">Format string for Time columns. If null, uses ISO 8601.</param>
     /// <param name="datetimeFormat">Format string for Datetime columns. If null, uses ISO 8601.</param>
+    /// <param name="checkExtension">Whether to check if the file extension matches '.csv'. Defaults to true.</param>
+    /// <param name="compression">Compression method (Gzip/Zstd). Defaults to None.</param>
+    /// <param name="compressionLevel">Compression level (depends on the codec). -1 for default.</param>
+    /// <param name="maintainOrder">
+    /// Whether to maintain the order of the data. 
+    /// Setting this to false can improve performance in streaming mode. Defaults to true.
+    /// </param>
+    /// <param name="syncOnClose">File synchronization behavior on close (e.g., flush to disk). Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the output directory if it does not exist. Defaults to false.</param>
     /// <param name="batchSize">
     /// The batch size for writing rows. 
-    /// Larger values may improve performance but consume more memory. 
     /// 0 means use the Polars default.
     /// </param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public void WriteCsv(
         string path,
-        bool hasHeader = true,
-        bool useBom = false,
+        bool includeHeader = true,
+        bool includeBom = false,
         char separator = ',',
         char quoteChar = '"',
         QuoteStyle quoteStyle = QuoteStyle.Necessary,
@@ -2057,37 +2164,55 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         string? dateFormat = null,
         string? timeFormat = null,
         string? datetimeFormat = null,
-        int batchSize = 0)
+        bool checkExtension = true,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        int batchSize = 0,
+        CloudOptions? cloudOptions = null)
     {
-        PolarsWrapper.WriteCsv(
-            Handle, 
-            path, 
-            hasHeader, 
-            useBom, 
-            batchSize,
-            separator, 
-            quoteChar, 
-            quoteStyle.ToNative(),
-            nullValue, 
+
+        var lf = Lazy();
+
+        lf.SinkCsv(
+            path,
+            includeHeader,
+            includeBom,
+            separator,
+            quoteChar,
+            quoteStyle,
+            nullValue,
             lineTerminator,
-            dateFormat, 
-            timeFormat, 
+            floatScientific,
+            floatPrecision,
+            decimalComma,
+            dateFormat,
+            timeFormat,
             datetimeFormat,
-            floatScientific, 
-            floatPrecision, 
-            decimalComma
+            checkExtension,
+            compression,
+            compressionLevel,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            batchSize,
+            cloudOptions
         );
     }
     /// <summary>
-    /// Write DataFrame to Parquet file.
+    /// Write DataFrame to a Parquet file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming, statistics, and cloud storage.
+    /// </para>
     /// </summary>
     /// <param name="path">Output file path.</param>
-    /// <param name="compression">Compression method. Defaults to Snappy (common standard) or Uncompressed depending on preference. Let's default to Snappy.</param>
-    /// <param name="compressionLevel">Compression level for Gzip/Brotli/Zstd. -1 means default.</param>
-    /// <param name="statistics">Compute and write column statistics. Defaults to false (faster).</param>
+    /// <param name="compression">Compression method. Defaults to Snappy.</param>
+    /// <param name="compressionLevel">Compression level. -1 means default.</param>
+    /// <param name="statistics">Compute and write column statistics. Defaults to false.</param>
     /// <param name="rowGroupSize">Number of rows per row group. 0 means use default.</param>
     /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
-    /// <param name="parallel">Write in parallel. Defaults to true.</param>
     public void WriteParquet(
         string path,
         ParquetCompression compression = ParquetCompression.Snappy,
@@ -2105,23 +2230,50 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             statistics,
             rowGroupSize,
             dataPageSize,
+            0,
             parallel
         );
     }
     /// <summary>
-    /// Write DataFrame to IPC (Arrow) file with compression and parallel options.
+    /// Write DataFrame to an IPC (Arrow/Feather) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
     /// </summary>
-    /// <param name="path">The file path to write to.</param>
+    /// <param name="path">The output file path.</param>
     /// <param name="compression">Compression method (None, LZ4, ZSTD). Defaults to None.</param>
-    /// <param name="parallel">Whether to use parallel writing. Defaults to true.</param>
-    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    /// <param name="compatLevel">Compatibility level (default -1 = newest).</param>
+    /// <param name="recordBatchSize">Number of rows per record batch (0 = default).</param>
+    /// <param name="recordBatchStatistics">Write statistics to the record batch header (default = true).</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
+    /// <param name="mkdir">Create parent directories if they don't exist (Local file system only).</param>
+    /// <param name="cloudOptions">Options for cloud storage.</param>
     public void WriteIpc(
-        string path, 
-        IpcCompression compression = IpcCompression.None, 
-        bool parallel = true, 
-        int compatLevel = -1)
-            => PolarsWrapper.WriteIpc(Handle, path, compression.ToNative(), parallel, compatLevel);
+        string path,
+        IpcCompression compression = IpcCompression.None,
+        int compatLevel = -1,
+        int recordBatchSize = 0,
+        bool recordBatchStatistics = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
 
+        lf.SinkIpc(
+            path,
+            compression,
+            compatLevel,
+            recordBatchSize,
+            recordBatchStatistics,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            cloudOptions
+        );
+    }
     /// <summary>
     /// Write DataFrame to a JSON file.
     /// </summary>
@@ -2133,9 +2285,42 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     }
 
     /// <summary>
-    /// Alias for WriteJson with format=JsonLines.
+    /// Write DataFrame to a Newline Delimited JSON (NDJSON) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming, compression, and cloud storage.
+    /// </para>
     /// </summary>
-    public void WriteNdJson(string path) => WriteJson(path, JsonFormat.JsonLines);
+    /// <param name="path">Output file path.</param>
+    /// <param name="compression">Compression method (Gzip/Zstd). Defaults to None.</param>
+    /// <param name="compressionLevel">Compression level. -1 for default.</param>
+    /// <param name="checkExtension">Whether to check if the file extension matches '.json' or '.ndjson'.</param>
+    /// <param name="maintainOrder">Maintain the order of data.</param>
+    /// <param name="syncOnClose">Sync to disk on close.</param>
+    /// <param name="mkdir">Create parent directories.</param>
+    /// <param name="cloudOptions">Cloud storage options.</param>
+    public void WriteNdJson(
+        string path,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool checkExtension = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+
+        lf.SinkJson(
+            path,
+            compression,
+            compressionLevel,
+            checkExtension,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            cloudOptions
+        );
+    }
     // ---------------------------------------------------------
     // Write Excel (Native)
     // ---------------------------------------------------------

@@ -39,6 +39,7 @@ public class Expr : IDisposable
             // --- Float ---
             double d => new Expr(PolarsWrapper.Lit(d)),
             float f => new Expr(PolarsWrapper.Lit(f)),
+            Half h => new Expr(PolarsWrapper.Lit(h)),
 
             // --- String and Boolean ---
             string str => new Expr(PolarsWrapper.Lit(str)),
@@ -1978,6 +1979,14 @@ public class Expr : IDisposable
     /// Use <see cref="DataFrame.Explode(string[])"/> for safely exploding columns while repeating others.
     /// </para>
     /// </summary>
+    /// <param name="emptyAsNull">
+    /// If <c>true</c>, empty lists are exploded into a single <c>null</c> value. 
+    /// If <c>false</c>, rows with empty lists are removed from the result.
+    /// </param>
+    /// <param name="keepNulls">
+    /// If <c>true</c>, <c>null</c> values in the column are preserved as <c>null</c> in the result. 
+    /// If <c>false</c>, rows with <c>null</c> values are removed.
+    /// </param>
     /// <example>
     /// <code>
     /// var df = DataFrame.FromColumns(new
@@ -2007,7 +2016,7 @@ public class Expr : IDisposable
     /// // df.Explode("tags").Show();
     /// </code>
     /// </example>
-    public Expr Explode() => new(PolarsWrapper.Explode(CloneHandle()));
+    public Expr Explode(bool emptyAsNull=true,bool keepNulls=true) => new(PolarsWrapper.Explode(CloneHandle(),emptyAsNull,keepNulls));
     /// <summary>
     /// Aggregate values into a list.
     /// <para>
@@ -2988,7 +2997,11 @@ public class ArrayOps
         return new Expr(PolarsWrapper.ArrayJoin(h, separator, ignoreNulls));
     }
 
-    public Expr Explode() => Wrap(PolarsWrapper.ArrayExplode); // New
+    public Expr Explode(bool emptyAsNull=true,bool keepNulls = true)
+    {
+        var h = PolarsWrapper.CloneExpr(_expr.Handle);
+        return new Expr(PolarsWrapper.ArrayExplode(h,emptyAsNull,keepNulls)); 
+    }
 
     /// <summary>
     /// Convert array to struct. Fields will be named field_0, field_1, etc.

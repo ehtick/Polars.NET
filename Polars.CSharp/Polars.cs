@@ -52,6 +52,7 @@ public static class Polars
     public static Expr Lit(TimeOnly value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(TimeSpan value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(bool value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(Half value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(float value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(decimal value) => new(PolarsWrapper.Lit(value));
     public static Expr LitNull() => new(PolarsWrapper.LitNull());

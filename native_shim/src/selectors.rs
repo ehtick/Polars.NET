@@ -194,6 +194,9 @@ fn map_i32_to_dtype_selector(kind: i32) -> DataTypeSelector {
         21 => DataTypeSelector::Categorical,
         22 => DataTypeSelector::Decimal,
         23 => DataTypeSelector::Array(None, None),
+        24 => dt_selector_single(DataType::Int128),
+        25 => dt_selector_single(DataType::UInt128),
+        26 => dt_selector_single(DataType::Float16),
         // Empty
         _ => DataTypeSelector::Empty,
     }

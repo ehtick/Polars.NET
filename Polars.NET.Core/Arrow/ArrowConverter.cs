@@ -132,6 +132,7 @@ public static class ArrowConverter
         if (checkType == typeof(ulong)) return BuildUInt64(data.Cast<ulong?>());
         if (checkType == typeof(short)) return BuildInt16(data.Cast<short?>());
         if (checkType == typeof(ushort)) return BuildUInt16(data.Cast<ushort?>());
+        if (checkType == typeof(Half)) return BuildFloat16(data.Cast<Half?>());
         if (checkType == typeof(float)) return BuildFloat32(data.Cast<float?>());
         if (checkType == typeof(decimal)) return BuildDecimal(data.Cast<decimal?>());
         if (checkType == typeof(DateOnly)) return BuildDate32(data.Cast<DateOnly?>());

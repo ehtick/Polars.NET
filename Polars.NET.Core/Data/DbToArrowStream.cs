@@ -112,6 +112,7 @@ namespace Polars.NET.Core.Data
             if (typeId == ArrowTypeId.Double) return new DoubleColumnBuilder(capacity);
             if (typeId == ArrowTypeId.Boolean) return new BooleanColumnBuilder(capacity);
             if (typeId == ArrowTypeId.Float) return new FloatColumnBuilder(capacity);
+            if (typeId == ArrowTypeId.HalfFloat) return new HalfFloatColumnBuilder(capacity);
             if (typeId == ArrowTypeId.UInt8)  return new UInt8ColumnBuilder(capacity);
             if (typeId == ArrowTypeId.UInt16) return new UInt16ColumnBuilder(capacity);
             if (typeId == ArrowTypeId.UInt32) return new UInt32ColumnBuilder(capacity);
@@ -353,7 +354,69 @@ namespace Polars.NET.Core.Data
         }
         public override IArrowArray Build() { var arr = _builder.Build(); _builder.Clear(); return arr; }
     }
+    internal sealed class HalfFloatColumnBuilder : ColumnBuilder
+    {
+        // Apache.Arrow 的 Builder
+        private readonly HalfFloatArray.Builder _builder = new HalfFloatArray.Builder();
 
+        public HalfFloatColumnBuilder(int capacity) 
+        { 
+            _builder.Reserve(capacity); 
+        }
+
+        public override void AddObject(object? v) 
+        { 
+            if (v == null || v == DBNull.Value) 
+            {
+                _builder.AppendNull(); 
+            }
+            else 
+            {
+                if (v is float f) 
+                {
+                    _builder.Append((Half)f);
+                }
+                else if (v is double d) 
+                {
+                    _builder.Append((Half)d);
+                }
+                else if (v is Half h)
+                {
+                    _builder.Append(h);
+                }
+                else
+                {
+                    try 
+                    {
+                        _builder.Append((Half)Convert.ChangeType(v, typeof(float)));
+                    }
+                    catch
+                    {
+                        throw new InvalidCastException($"Cannot convert value of type {v.GetType()} to System.Half.");
+                    }
+                }
+            }
+        }
+
+        public override void Add(IDataReader reader, int ordinal) 
+        {
+            if (reader.IsDBNull(ordinal)) 
+            {
+                _builder.AppendNull();
+            }
+            else 
+            {
+                _builder.Append((Half)reader.GetFloat(ordinal));
+            }
+        }
+
+        public override IArrowArray Build() 
+        { 
+            var arr = _builder.Build(); 
+            _builder.Clear(); 
+            return arr; 
+        }
+    }
     internal sealed class FloatColumnBuilder : ColumnBuilder
     {
         public FloatColumnBuilder(int capacity) { _builder.Reserve(capacity); }

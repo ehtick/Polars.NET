@@ -172,6 +172,12 @@ pub fn read_excel_calamine(
         }
     }
 
+    let actual_height = if columns_data.is_empty() {
+        0 
+    } else {
+        columns_data[0].len()
+    };
+
     // Build Series
     let mut series_vec = Vec::with_capacity(width);
     for ((name, col_vals), override_type) in headers.into_iter().zip(columns_data.into_iter()).zip(col_type_overrides) {
@@ -192,7 +198,7 @@ pub fn read_excel_calamine(
         series_vec.push(s.into());
     }
 
-    DataFrame::new(series_vec)
+    DataFrame::new(actual_height,series_vec)
 }
 
 // ---------------------------------------------------------

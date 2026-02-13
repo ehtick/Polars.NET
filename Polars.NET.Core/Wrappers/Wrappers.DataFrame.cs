@@ -150,6 +150,7 @@ public static partial class PolarsWrapper
         PlJoinValidation validation,
         PlJoinCoalesce coalesce,
         PlJoinMaintainOrder maintainOrder,
+        PlJoinSide joinSide,
         bool nullsEqual,
         long? sliceOffset,
         ulong sliceLen)
@@ -172,6 +173,7 @@ public static partial class PolarsWrapper
                 validation,
                 coalesce,
                 maintainOrder,
+                joinSide,
                 nullsEqual,
                 offsetPtr,      
                 (UIntPtr)sliceLen
@@ -211,9 +213,9 @@ public static partial class PolarsWrapper
             }
         }
     }
-    public static DataFrameHandle Explode(DataFrameHandle df, SelectorHandle selector)
+    public static DataFrameHandle Explode(DataFrameHandle df, SelectorHandle selector, bool emptyAsNull,bool keepNulls)
     {
-       var h = NativeBindings.pl_explode(df,selector);
+       var h = NativeBindings.pl_dataframe_explode(df,selector, emptyAsNull,keepNulls);
        selector.TransferOwnership();
        return ErrorHelper.Check(h);
     } 
@@ -231,44 +233,56 @@ public static partial class PolarsWrapper
         ));
     }
     // Pivot (Eager)
-    public static DataFrameHandle Pivot(DataFrameHandle df, string[] index, string[] columns, string[] values,ExprHandle? aggExpr, PlPivotAgg aggFn,bool sortColumns,
+    public static DataFrameHandle Pivot(
+        DataFrameHandle df, 
+        SelectorHandle index, 
+        SelectorHandle columns,
+        SelectorHandle values,
+        ExprHandle? aggExpr, 
+        PlPivotAgg aggFn,
+        bool sortColumns,
+        bool maintainOrder,
         string? separator)
     {
-        IntPtr aggExprPtr = aggExpr?.TransferOwnership() ?? IntPtr.Zero;
+        IntPtr aggExprHandle = aggExpr?.TransferOwnership() ?? IntPtr.Zero;
 
-        return UseUtf8StringArray(values, vPtrs =>
-            UseUtf8StringArray(index, iPtrs =>
-                UseUtf8StringArray(columns, cPtrs =>
-                {
-                    return ErrorHelper.Check(NativeBindings.pl_pivot(
-                        df,
-                        vPtrs, (UIntPtr)vPtrs.Length, // values
-                        iPtrs, (UIntPtr)iPtrs.Length, // index
-                        cPtrs, (UIntPtr)cPtrs.Length, // columns
-                        aggFn,                   
-                        aggExprPtr,                  
-                        sortColumns,
-                        separator
-                    ));
-                })
-            )
+        var handle = NativeBindings.pl_dataframe_pivot(
+            df,
+            columns,       
+            index,         
+            values,        
+            aggExprHandle,
+            aggFn,
+            maintainOrder,
+            sortColumns,
+            separator
         );
+
+        index.TransferOwnership();
+        columns.TransferOwnership();
+        values.TransferOwnership();
+
+        return ErrorHelper.Check(handle);
     }
 
     // Unpivot (Eager)
-    public static DataFrameHandle Unpivot(DataFrameHandle df, SelectorHandle index, SelectorHandle on, string? variableName, string? valueName)
+    public static DataFrameHandle Unpivot(DataFrameHandle df, SelectorHandle index, SelectorHandle? on, string? variableName, string? valueName)
     {
-
         var h = NativeBindings.pl_unpivot(df,index,on,variableName,valueName);
         index.TransferOwnership();
-        on.TransferOwnership();
+        on?.TransferOwnership();
         return ErrorHelper.Check(h);
     }
-    public static DataFrameHandle Concat(DataFrameHandle[] handles, PlConcatType how, bool checkDuplicates)
+    public static DataFrameHandle Concat(
+        DataFrameHandle[] handles, 
+        PlConcatType how, 
+        bool checkDuplicates,
+        bool strict,
+        bool unitLengthAsScalar)
     {
         var ptrs = HandlesToPtrs(handles);
         
-        var h = NativeBindings.pl_concat(ptrs, (UIntPtr)ptrs.Length, how,checkDuplicates);
+        var h = NativeBindings.pl_dataframe_concat(ptrs, (UIntPtr)ptrs.Length, how,checkDuplicates,strict,unitLengthAsScalar);
 
         foreach (var handle in handles)
         {

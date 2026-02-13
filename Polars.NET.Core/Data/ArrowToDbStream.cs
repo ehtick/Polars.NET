@@ -353,6 +353,7 @@ namespace Polars.NET.Core.Data
                     return new Int64Accessor();
                 }
 
+                if (typeId == ArrowTypeId.HalfFloat) return new HalfFloatAccessor();
                 if (typeId == ArrowTypeId.Float) return new FloatAccessor();
                 if (typeId == ArrowTypeId.Double) return new DoubleAccessor();
                 
@@ -470,6 +471,26 @@ namespace Polars.NET.Core.Data
             public override bool IsNull(int index) => _array!.IsNull(index);
             public override decimal GetDecimal(int index) => _array!.Values[index];
             public override object GetValue(int index) => _array!.Values[index]; // returns ulong
+        }
+        internal sealed class HalfFloatAccessor : ColumnAccessor
+        {
+            private HalfFloatArray? _array;
+
+            public override Type TargetType => typeof(Half);
+
+            public override void SetBatch(IArrowArray array) => _array = (HalfFloatArray)array;
+
+            public override bool IsNull(int index) => _array!.IsNull(index);
+
+            public override float GetFloat(int index) => (float)_array!.Values[index];
+
+            public override double GetDouble(int index) => (double)_array!.Values[index];
+
+            public override decimal GetDecimal(int index) => (decimal)(float)_array!.Values[index];
+
+            public override object GetValue(int index) => _array!.Values[index];
+
+            public override string GetString(int index) => _array!.Values[index].ToString();
         }
         internal sealed class FloatAccessor : ColumnAccessor {
             private FloatArray? _array;

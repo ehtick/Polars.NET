@@ -129,6 +129,7 @@ unsafe internal partial class NativeBindings
         PlJoinValidation validation,
         PlJoinCoalesce coalesce,
         PlJoinMaintainOrder maintainOrder,
+        PlJoinSide joinSide,
         [MarshalAs(UnmanagedType.U1)] bool nullsEqual,
         IntPtr sliceOffset,
         UIntPtr sliceLen
@@ -145,31 +146,38 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool maintainOrder
     );
     [LibraryImport(LibName)] 
-    public static partial DataFrameHandle pl_explode(DataFrameHandle df, SelectorHandle selector);
+    public static partial DataFrameHandle pl_dataframe_explode(
+        DataFrameHandle df, 
+        SelectorHandle selector,
+        [MarshalAs(UnmanagedType.U1)] bool emptyAsNull,
+        [MarshalAs(UnmanagedType.U1)] bool keepNulls);
     [LibraryImport(LibName)] 
-    public static partial DataFrameHandle pl_concat(
+    public static partial DataFrameHandle pl_dataframe_concat(
         IntPtr[] dfs, 
         UIntPtr len,
         PlConcatType how,
-        [MarshalAs(UnmanagedType.U1)] bool checkDuplicates
+        [MarshalAs(UnmanagedType.U1)] bool checkDuplicates,
+        [MarshalAs(UnmanagedType.U1)] bool strict,
+        [MarshalAs(UnmanagedType.U1)] bool unitLengthAsScalar
     );
     // --- Reshaping (Eager) ---
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial DataFrameHandle pl_pivot(
+    public static partial DataFrameHandle pl_dataframe_pivot(
         DataFrameHandle df,
-        IntPtr[] values, UIntPtr valuesLen,
-        IntPtr[] index, UIntPtr indexLen,
-        IntPtr[] columns, UIntPtr columnsLen,
-        PlPivotAgg aggCode,
-        IntPtr aggExpr,
+        SelectorHandle on,      // on_ptr (columns)
+        SelectorHandle index,   // index_ptr
+        SelectorHandle values,  // values_ptr
+        IntPtr aggExpr,     // agg_expr_ptr
+        PlPivotAgg aggCode,     // agg_code
+        [MarshalAs(UnmanagedType.U1)] bool maintainOrder,
         [MarshalAs(UnmanagedType.U1)] bool sortColumns,
-        string? separator // Option<&str>
+        string? separator       // separator_ptr
     );
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_unpivot(
         DataFrameHandle df,
         SelectorHandle index, 
-        SelectorHandle on, 
+        SelectorHandle? on, // Nullable
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? varName,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? valName
     );

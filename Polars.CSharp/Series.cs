@@ -166,6 +166,8 @@ public partial class Series : IDisposable
 
         if (underlying == typeof(float)) 
             return (T?)(object?)(float?)PolarsWrapper.SeriesGetDouble(Handle, index);
+        if (underlying == typeof(Half)) 
+            return (T?)(object?)(Half?)PolarsWrapper.SeriesGetDouble(Handle, index);
 
         // 2. Boolean
         if (underlying == typeof(bool)) 
@@ -241,6 +243,7 @@ public partial class Series : IDisposable
                     DataTypeKind.Decimal => GetValue<decimal?>(index),
 
                     // float
+                    DataTypeKind.Float16 => GetValue<Half?>(index),
                     DataTypeKind.Float32 => GetValue<float?>(index),
                     DataTypeKind.Float64 => GetValue<double?>(index),
 
@@ -658,6 +661,8 @@ public partial class Series : IDisposable
     public Series(string name, UInt128?[] data) => Handle = SeriesFactory.Create(name, data);
 
     // 3. Floating Point
+    public Series(string name, Half[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, Half?[] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, float[] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, float?[] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, double[] data) => Handle = SeriesFactory.Create(name, data);
@@ -691,6 +696,7 @@ public partial class Series : IDisposable
     public Series(string name, uint[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, long[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, ulong[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, Half[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, float[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, double[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, decimal[,] data) => Handle = SeriesFactory.Create(name, data);

@@ -82,6 +82,7 @@ public static partial class PolarsWrapper
     public static ExprHandle Lit(string val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_str(val));
     public static ExprHandle Lit(double val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_f64(val));
     public static ExprHandle Lit(float val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_f32(val));
+    public static ExprHandle Lit(Half val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_f16(val));
     public static ExprHandle Lit(bool val) => ErrorHelper.Check(NativeBindings.pl_expr_lit_bool(val));
     public static ExprHandle LitNull() => ErrorHelper.Check(NativeBindings.pl_expr_lit_null());
     private static readonly int UnixEpochDayNumber = new DateOnly(1970, 1, 1).DayNumber;
@@ -662,7 +663,12 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(h);
     }
 
-    public static ExprHandle Explode(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_explode, e);
+    public static ExprHandle Explode(ExprHandle e, bool emptyAsNull,bool keepNulls)
+    {
+        var h = NativeBindings.pl_expr_explode(e,emptyAsNull,keepNulls);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    } 
     public static ExprHandle Implode(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_implode, e);
     
     public static ExprHandle ListJoin(ExprHandle e, string sep)
@@ -758,7 +764,13 @@ public static partial class PolarsWrapper
     public static ExprHandle ArrayReverse(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_reverse, e);
     public static ExprHandle ArrayArgMin(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_arg_min, e);
     public static ExprHandle ArrayArgMax(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_arg_max, e);
-    public static ExprHandle ArrayExplode(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_explode, e);
+    public static ExprHandle ArrayExplode(ExprHandle e, bool emptyAsNull,bool keepNulls)
+    {
+        var h = NativeBindings.pl_expr_array_explode(e,emptyAsNull,keepNulls);
+        e.TransferOwnership();
+        return ErrorHelper.Check(h);
+    }
+    
     public static ExprHandle ArrayToList(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_to_list, e);
     public static ExprHandle ArrayToStruct(ExprHandle e) => UnaryOp(NativeBindings.pl_expr_array_to_struct, e);
     // --- Struct ---

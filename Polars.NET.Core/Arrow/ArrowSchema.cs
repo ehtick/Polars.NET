@@ -130,6 +130,7 @@ namespace Polars.NET.Core.Arrow
             if (coreType == typeof(ushort)) return UInt16Type.Default;
             if (coreType == typeof(uint))   return UInt32Type.Default;
             if (coreType == typeof(ulong))  return UInt64Type.Default;
+            if (coreType == typeof(Half))  return  HalfFloatType.Default;
             if (coreType == typeof(float))  return FloatType.Default;
             if (coreType == typeof(double)) return DoubleType.Default;
             if (coreType == typeof(bool))   return BooleanType.Default;
@@ -245,6 +246,7 @@ namespace Polars.NET.Core.Arrow
                 UInt16Type => typeof(ushort),
                 UInt32Type => typeof(uint),
                 UInt64Type => typeof(ulong),
+                HalfFloatType => typeof(Half),
                 FloatType => typeof(float),
                 DoubleType => typeof(double),
                 BooleanType => typeof(bool),

@@ -61,6 +61,7 @@ public enum DataTypeKind
     Array=23,
     Int128 = 24,
     UInt128=25,
+    Float16=26,
     Unknown = 0,
     SameAsInput=0
 }
@@ -218,6 +219,45 @@ public enum JoinMaintainOrder: byte
     LeftRight =3,
     RightLeft =4
 }
+/// <summary>
+/// Specifies the strategy for the hash join build side.
+/// <para>
+/// In a hash join, one dataframe is loaded into memory (the "build side") to construct a hash table, 
+/// while the other is streamed (the "probe side") to find matches.
+/// </para>
+/// <para>
+/// Generally, the smaller dataframe should be the build side for optimal performance and memory usage.
+/// </para>
+/// </summary>
+public enum JoinSide : byte
+{
+    /// <summary>
+    /// Let Polars decide the best join strategy (Optimizer's choice).
+    /// </summary>
+    LetPolarsDecide = 0,
+    
+    /// <summary>
+    /// Prefer using the left side as the build side (hash table).
+    /// Optimizer may override this if the right side is significantly smaller.
+    /// </summary>
+    PreferLeft = 1,
+    
+    /// <summary>
+    /// Force using the left side as the build side.
+    /// </summary>
+    ForceLeft = 2,
+    
+    /// <summary>
+    /// Prefer using the right side as the build side (hash table).
+    /// Optimizer may override this if the left side is significantly smaller.
+    /// </summary>
+    PreferRight = 3,
+    
+    /// <summary>
+    /// Force using the right side as the build side.
+    /// </summary>
+    ForceRight = 4
+}
 
 public enum AsofStrategy: byte
 {
@@ -280,7 +320,7 @@ public enum ParquetCompression : byte
     Snappy = 1,
     Gzip = 2,
     Brotli = 3,
-    Zstd = 4,
+    ZSTD = 4,
     Lz4Raw = 5
 }
 
@@ -375,6 +415,13 @@ public enum DeltaSaveMode
     Ignore = 3
 }
 
+public enum ExternalCompression: byte
+{
+    Uncompressed = 0,
+    Gzip=1,
+    ZSTD=2
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -388,6 +435,7 @@ internal static class EnumExtensions
         DataTypeKind.UInt64 => CoreEnums.PlDataType.UInt64,
         DataTypeKind.Int128 => CoreEnums.PlDataType.Int128,
         DataTypeKind.UInt128 => CoreEnums.PlDataType.UInt128,
+        DataTypeKind.Float16 => CoreEnums.PlDataType.Float16,
         DataTypeKind.Float32 => CoreEnums.PlDataType.Float32,
         DataTypeKind.Float64 => CoreEnums.PlDataType.Float64,
         DataTypeKind.Datetime => CoreEnums.PlDataType.Datetime,
@@ -549,6 +597,15 @@ internal static class EnumExtensions
         JoinMaintainOrder.RightLeft => CoreEnums.PlJoinMaintainOrder.RightLeft,
         _ => throw new ArgumentOutOfRangeException(nameof(maintainOrder), maintainOrder, null)
     };
+    internal static CoreEnums.PlJoinSide ToNative(this JoinSide joinSide) => joinSide switch
+    {
+        JoinSide.LetPolarsDecide => CoreEnums.PlJoinSide.None,
+        JoinSide.PreferLeft => CoreEnums.PlJoinSide.PreferLeft,
+        JoinSide.ForceLeft => CoreEnums.PlJoinSide.ForceLeft,
+        JoinSide.PreferRight => CoreEnums.PlJoinSide.PreferRight,
+        JoinSide.ForceRight => CoreEnums.PlJoinSide.ForceRight,
+        _ => throw new ArgumentOutOfRangeException(nameof(joinSide), joinSide, null)
+    };
     internal static CoreEnums.PlAsofStrategy ToNative(this AsofStrategy strategy) => strategy switch
     {
         AsofStrategy.Backward => CoreEnums.PlAsofStrategy.Backward,
@@ -583,6 +640,13 @@ internal static class EnumExtensions
         IpcCompression.ZSTD => CoreEnums.PlIpcCompression.ZSTD,
         _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
     };
+    internal static CoreEnums.PlExternalCompression ToNative(this ExternalCompression compression) => compression switch
+    {
+        ExternalCompression.Uncompressed => CoreEnums.PlExternalCompression.Uncompressed,
+        ExternalCompression.Gzip => CoreEnums.PlExternalCompression.Gzip,
+        ExternalCompression.ZSTD => CoreEnums.PlExternalCompression.ZSTD,
+        _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
+    };
     internal static CoreEnums.PlSyncOnClose ToNative(this SyncOnClose syncOnClose) => syncOnClose switch
     {
         SyncOnClose.None => CoreEnums.PlSyncOnClose.None,
@@ -596,7 +660,7 @@ internal static class EnumExtensions
         ParquetCompression.Snappy => CoreEnums.PlParquetCompression.Snappy,
         ParquetCompression.Gzip => CoreEnums.PlParquetCompression.Gzip,
         ParquetCompression.Brotli => CoreEnums.PlParquetCompression.Brotli,
-        ParquetCompression.Zstd => CoreEnums.PlParquetCompression.Zstd,
+        ParquetCompression.ZSTD => CoreEnums.PlParquetCompression.ZSTD,
         ParquetCompression.Lz4Raw => CoreEnums.PlParquetCompression.Lz4Raw,
         _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
     };

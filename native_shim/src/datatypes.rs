@@ -71,7 +71,8 @@ define_pl_datatype_kind! {
         Decimal     = 22 <=> DataType::Decimal(_, _)   => DataType::Decimal(38, 0),
         Array       = 23 <=> DataType::Array(_, _)     => DataType::Array(Box::new(DataType::Null), 0),
         Int128      = 24  <=> DataType::Int128        => DataType::Int128,
-        UInt128     = 26  <=> DataType::UInt128        => DataType::UInt128
+        UInt128     = 25  <=> DataType::UInt128        => DataType::UInt128,
+        Float16     = 26  <=> DataType::Float16       => DataType:: Float16
     }
 }
 // --- Constructors ---

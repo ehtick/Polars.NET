@@ -40,6 +40,7 @@ unsafe internal partial class NativeBindings
         long high, 
         uint scale
     );
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_f16(Half val);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_f32(float val);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_null();
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_str([MarshalAs(UnmanagedType.LPUTF8Str)] string val);
@@ -326,7 +327,11 @@ unsafe internal partial class NativeBindings
     // List Ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_first(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_get(ExprHandle expr, long index);
-    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_explode(ExprHandle expr);
+    [LibraryImport(LibName)] 
+    public static partial ExprHandle pl_expr_explode(
+        ExprHandle expr,
+        [MarshalAs(UnmanagedType.U1)] bool emptyAsNull,
+        [MarshalAs(UnmanagedType.U1)] bool keepNulls);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_implode(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_join(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string sep);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_len(ExprHandle expr);
@@ -406,7 +411,10 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.I1)] bool nullOnOob
     );
     [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_array_explode(ExprHandle expr);
+    public static partial ExprHandle pl_expr_array_explode(
+        ExprHandle expr,
+        [MarshalAs(UnmanagedType.U1)] bool emptyAsNull,
+        [MarshalAs(UnmanagedType.U1)] bool keepNulls);
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_array_to_list(ExprHandle expr);
     [LibraryImport(LibName)]

@@ -476,6 +476,7 @@ namespace Polars.NET.Core.Arrow
             // 2. Floats
             if (typeof(T) == typeof(double) && array is DoubleArray dbl) { span = MemoryMarshal.Cast<double, T>(dbl.Values); return true; }
             if (typeof(T) == typeof(float) && array is FloatArray flt) { span = MemoryMarshal.Cast<float, T>(flt.Values); return true; }
+            if (typeof(T) == typeof(Half) && array is HalfFloatArray half) { span = MemoryMarshal.Cast<Half, T>(half.Values); return true; }
 
             // 3. Date/Time (Internal Int32/Int64)
             if (typeof(T) == typeof(int) && array is Date32Array d32) { span = MemoryMarshal.Cast<int, T>(d32.Values); return true; }

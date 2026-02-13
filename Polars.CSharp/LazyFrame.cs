@@ -3,7 +3,6 @@
 using System.Collections.Concurrent;
 using System.Data;
 using Apache.Arrow;
-using Apache.Arrow.Types;
 using Polars.NET.Core;
 using Polars.NET.Core.Arrow;
 using Polars.NET.Core.Data;
@@ -188,7 +187,7 @@ public class LazyFrame : IDisposable
         return new LazyFrame(handle);
     }
 
-/// <summary>
+    /// <summary>
     /// Lazily read from a parquet file or multiple files via glob patterns.
     /// </summary>
     /// <param name="path">Path to file or glob pattern (e.g. "data/*.parquet" or "s3://bucket/data.parquet").</param>
@@ -236,26 +235,7 @@ public class LazyFrame : IDisposable
         var schemaHandle = schema?.Handle;
         var hiveSchemaHandle = hivePartitionSchema?.Handle;
 
-        CloudProvider provider = CloudProvider.None;
-        nuint retries = 0;
-        ulong cacheTtl = 0;
-        string[]? keys = null;
-        string[]? values = null;
-        nuint len = 0;
-
-        if (cloudOptions != null)
-        {
-            provider = cloudOptions.Provider;
-            retries = cloudOptions.MaxRetries;
-            cacheTtl = cloudOptions.FileCacheTtl;
-            
-            if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
-            {
-                keys = cloudOptions.Credentials.Keys.ToArray();
-                values = cloudOptions.Credentials.Values.ToArray();
-                len = (nuint)keys.Length;
-            }
-        }
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
 
         var h = PolarsWrapper.ScanParquet(
             path,
@@ -275,10 +255,12 @@ public class LazyFrame : IDisposable
             tryParseHiveDates,
             provider.ToNative(),
             retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
             cacheTtl,
             keys,
-            values,
-            len
+            values
             );
 
         return new LazyFrame(h);
@@ -818,27 +800,7 @@ public class LazyFrame : IDisposable
         var schemaHandle = schema?.Handle;
         var hiveSchemaHandle = hivePartitionSchema?.Handle;
 
-        // 1. Prepare Cloud Options
-        CloudProvider provider = CloudProvider.None;
-        nuint retries = 0;
-        ulong cacheTtl = 0;
-        string[]? keys = null;
-        string[]? values = null;
-        nuint len = 0;
-
-        if (cloudOptions != null)
-        {
-            provider = cloudOptions.Provider;
-            retries = cloudOptions.MaxRetries;
-            cacheTtl = cloudOptions.FileCacheTtl;
-
-            if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
-            {
-                keys = cloudOptions.Credentials.Keys.ToArray();
-                values = cloudOptions.Credentials.Values.ToArray();
-                len = (nuint)keys.Length;
-            }
-        }
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
 
         // 2. Call Internal Wrapper
         var h = PolarsWrapper.ScanDelta(
@@ -860,58 +822,16 @@ public class LazyFrame : IDisposable
             tryParseHiveDates,
             provider.ToNative(),
             retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
             cacheTtl,
             keys,
-            values,
-            len
+            values
         );
 
         return new LazyFrame(h);
     }
-    // /// <summary>
-    // /// Write the LazyFrame to a Delta Lake table.
-    // /// </summary>
-    // /// <param name="path">Path to the Delta Lake table.</param>
-    // /// <param name="mode">Save mode (Append, Overwrite, etc.). Default is Append.</param>
-    // /// <param name="cloudOptions">Cloud storage options.</param>
-    // public void SinkDelta(
-    //     string path,
-    //     DeltaSaveMode mode = DeltaSaveMode.Append,
-    //     CloudOptions? cloudOptions = null)
-    // {
-    //     // Cloud Options logic
-    //     CloudProvider provider = CloudProvider.None;
-    //     nuint retries = 0;
-    //     ulong cacheTtl = 0;
-    //     string[]? keys = null;
-    //     string[]? values = null;
-    //     nuint len = 0;
-
-    //     if (cloudOptions != null)
-    //     {
-    //         provider = cloudOptions.Provider;
-    //         retries = cloudOptions.MaxRetries;
-    //         cacheTtl = cloudOptions.FileCacheTtl;
-    //         if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
-    //         {
-    //             keys = cloudOptions.Credentials.Keys.ToArray();
-    //             values = cloudOptions.Credentials.Values.ToArray();
-    //             len = (nuint)keys.Length;
-    //         }
-    //     }
-
-    //     PolarsWrapper.SinkDelta(
-    //         Handle,
-    //         path,
-    //         mode.ToNative(),
-    //         provider.ToNative(),
-    //         retries,
-    //         cacheTtl,
-    //         keys,
-    //         values,
-    //         len
-    //     );
-    // }
     /// <summary>
     /// Sink the LazyFrame to a Delta Lake table.
     /// </summary>
@@ -923,28 +843,11 @@ public class LazyFrame : IDisposable
         bool statistics = true,
         uint rowGroupSize = 512 * 1024,
         uint dataPageSize = 1024 * 1024,
+        int compatLevel = -1,
         bool maintainOrder = false,
         CloudOptions? cloudOptions=null)
     {
-        CloudProvider provider = CloudProvider.None;
-        nuint retries = 0;
-        ulong cacheTtl = 0;
-        string[]? keys = null;
-        string[]? values = null;
-        nuint len = 0;
-
-        if (cloudOptions != null)
-        {
-            provider = cloudOptions.Provider;
-            retries = cloudOptions.MaxRetries;
-            cacheTtl = cloudOptions.FileCacheTtl;
-            if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
-            {
-                keys = cloudOptions.Credentials.Keys.ToArray();
-                values = cloudOptions.Credentials.Values.ToArray();
-                len = (nuint)keys.Length;
-            }
-        }
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
         PolarsWrapper.SinkDelta(
             Handle,
             path,
@@ -954,13 +857,16 @@ public class LazyFrame : IDisposable
             statistics,
             rowGroupSize,
             dataPageSize,
+            compatLevel,
             maintainOrder,
             provider.ToNative(),
             retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
             cacheTtl,
             keys,
-            values,
-            len
+            values
         );
     }
     // ==========================================
@@ -1473,12 +1379,20 @@ public class LazyFrame : IDisposable
     /// Explode list-like columns into multiple rows.
     /// </summary>
     /// <param name="selector"></param>
+    /// <param name="emptyAsNull">
+    /// If <c>true</c>, empty lists are exploded into a single <c>null</c> value. 
+    /// If <c>false</c>, rows with empty lists are removed from the result.
+    /// </param>
+    /// <param name="keepNulls">
+    /// If <c>true</c>, <c>null</c> values in the column are preserved as <c>null</c> in the result. 
+    /// If <c>false</c>, rows with <c>null</c> values are removed.
+    /// </param>
     /// <returns></returns>
-    public LazyFrame Explode(Selector selector)
+    public LazyFrame Explode(Selector selector,bool emptyAsNull=true,bool keepNulls=true)
     {
         var lfClone = CloneHandle();
         var sClone = selector.CloneHandle();
-        var h = PolarsWrapper.LazyExplode(lfClone, sClone);
+        var h = PolarsWrapper.LazyExplode(lfClone, sClone,emptyAsNull,keepNulls);
         return new LazyFrame(h);
     }
     /// <summary>
@@ -1496,6 +1410,124 @@ public class LazyFrame : IDisposable
     // Reshaping
     // ==========================================
     /// <summary>
+    /// Pivot the LazyFrame.
+    /// <para>
+    /// <b>Important:</b> Lazy pivot requires an eager <paramref name="onColumns"/> DataFrame 
+    /// to determine the output schema (column names) during the planning phase.
+    /// </para>
+    /// </summary>
+    /// <param name="index">Selector for the index column(s) (the rows).</param>
+    /// <param name="columns">Selector for the column(s) to pivot (the new column headers).</param>
+    /// <param name="values">Selector for the value column(s) to populate the cells.</param>
+    /// <param name="onColumns">
+    /// An <b>Eager DataFrame</b> containing the unique values of the <paramref name="columns"/>.
+    /// <br/>This is strictly used for schema inference.
+    /// </param>
+    /// <param name="aggregateExpr">Optional expression to aggregate the values. If null, uses <paramref name="aggregateFunction"/>.</param>
+    /// <param name="aggregateFunction">Aggregation function to use if <paramref name="aggregateExpr"/> is null. Default is First.</param>
+    /// <param name="maintainOrder">Sort the result by the index column.</param>
+    /// <param name="separator">Separator used to combine column names when multiple value columns are selected.</param>
+    /// <returns>A new LazyFrame with the pivot operation applied.</returns>
+    public LazyFrame Pivot(
+        Selector index,
+        Selector columns,
+        Selector values,
+        DataFrame onColumns,
+        Expr? aggregateExpr = null,
+        PivotAgg aggregateFunction = PivotAgg.First,
+        bool maintainOrder = true,
+        string? separator = null)
+    {
+        using var indexH = index.CloneHandle();
+        using var columnsH = columns.CloneHandle(); 
+        using var valuesH = values.CloneHandle();
+        using var aggExprH = aggregateExpr?.CloneHandle();
+
+        var h = PolarsWrapper.LazyPivot(
+            Handle,
+            columnsH,   // on
+            onColumns.Handle,  // onColumns (Eager DF Handle)
+            indexH,     // index
+            valuesH,    // values
+            aggExprH,          // aggExpr (Wrapper handles null internally)
+            aggregateFunction.ToNative(),
+            maintainOrder,
+            separator
+        );
+
+        return new LazyFrame(h);
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Overload: String Array (Syntax Sugar)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Pivot the LazyFrame using column names.
+    /// </summary>
+    /// <param name="index">Column names to use as the index.</param>
+    /// <param name="columns">Column names to use for the new column headers.</param>
+    /// <param name="values">Column names to use for the values.</param>
+    /// <param name="onColumns">
+    /// An <b>Eager DataFrame</b> containing the unique values of the <paramref name="columns"/>.
+    /// </param>
+    /// <param name="aggregateFunction">Aggregation function. Default is First.</param>
+    /// <param name="maintainOrder">Sort the result by the index column.</param>
+    /// <param name="separator">Separator for generated column names.</param>
+    public LazyFrame Pivot(
+        string[] index,
+        string[] columns,
+        string[] values,
+        DataFrame onColumns,
+        PivotAgg aggregateFunction = PivotAgg.First,
+        bool maintainOrder = true,
+        string? separator = null)
+    {
+        // 构造临时 Selector
+        using var sIndex = Selector.Cols(index);
+        using var sColumns = Selector.Cols(columns);
+        using var sValues = Selector.Cols(values);
+
+        return Pivot(
+            sIndex,
+            sColumns,
+            sValues,
+            onColumns, // 透传
+            aggregateExpr: null,
+            aggregateFunction: aggregateFunction,
+            maintainOrder: maintainOrder,
+            separator: separator
+        );
+    }
+
+    /// <summary>
+    /// Pivot the LazyFrame using column names and a custom aggregation expression.
+    /// </summary>
+    public LazyFrame Pivot(
+        string[] index,
+        string[] columns,
+        string[] values,
+        DataFrame onColumns,
+        Expr aggregateExpr,
+        bool maintainOrder = true,
+        string? separator = null)
+    {
+        using var sIndex = Selector.Cols(index);
+        using var sColumns = Selector.Cols(columns);
+        using var sValues = Selector.Cols(values);
+
+        return Pivot(
+            sIndex,
+            sColumns,
+            sValues,
+            onColumns,
+            aggregateExpr: aggregateExpr,
+            aggregateFunction: PivotAgg.First, // Ignored
+            maintainOrder: maintainOrder,
+            separator: separator
+        );
+    }
+    /// <summary>
     /// Unpivot (Melt) the LazyFrame from wide to long format.
     /// </summary>
     /// <param name="index"></param>
@@ -1503,30 +1535,31 @@ public class LazyFrame : IDisposable
     /// <param name="variableName"></param>
     /// <param name="valueName"></param>
     /// <returns></returns>
-    public LazyFrame Unpivot(Selector index, Selector on, string variableName = "variable", string valueName = "value")
+    public LazyFrame Unpivot(Selector index, Selector? on, string variableName = "variable", string valueName = "value")
     {
         var lfClone = CloneHandle();
         var indexClone = index.CloneHandle();
-        var onClone = on.CloneHandle();
+        var onClone = on?.CloneHandle();
         return new LazyFrame(PolarsWrapper.LazyUnpivot(lfClone, indexClone, onClone, variableName, valueName));
     }
     /// <summary>
     /// Unpivot using column names (String Array overload).
     /// Wraps strings into Selectors automatically.
     /// </summary>
-    public LazyFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
+    public LazyFrame Unpivot(string[] index, string[]? on, string variableName = "variable", string valueName = "value")
     {
         using var sIndex = Selector.Cols(index);
-        using var sOn = Selector.Cols(on);
+        using var sOn = on is not null ? Selector.Cols(on) : null;
 
         return Unpivot(sIndex, sOn, variableName, valueName);
     }
     /// <summary>
     /// Unpivot using single column names (Convenience overload).
     /// </summary>
-    public LazyFrame Unpivot(string index, string on, string variableName = "variable", string valueName = "value")
+    public LazyFrame Unpivot(string index, string? on, string variableName = "variable", string valueName = "value")
     {
-        return Unpivot([index], [on], variableName, valueName);
+        string[]? onCols = on is null ? null : [on];
+        return Unpivot([index], onCols, variableName, valueName);
     }
     /// <summary>
     /// Melt the DataFrame from wide to long format.
@@ -1536,7 +1569,7 @@ public class LazyFrame : IDisposable
     /// <param name="variableName"></param>
     /// <param name="valueName"></param>
     /// <returns></returns>
-    public LazyFrame Melt(Selector index, Selector on, string variableName = "variable", string valueName = "value") 
+    public LazyFrame Melt(Selector index, Selector? on, string variableName = "variable", string valueName = "value") 
         => Unpivot(index, on, variableName, valueName);
     /// <summary>
     /// Lazily concatenate multiple LazyFrames.
@@ -1572,7 +1605,7 @@ public class LazyFrame : IDisposable
     /// Note: Both frames must be LazyFrames.
     /// </para>
     /// </summary>
-    /// <seealso cref="DataFrame.Join(DataFrame, Expr[], Expr[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,bool,long?,ulong)"/>
+    /// <seealso cref="DataFrame.Join(DataFrame, Expr[], Expr[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,JoinSide,bool,long?,ulong)"/>
     /// <example>
     /// <code>
     /// var lf1 = df1.Lazy();
@@ -1604,6 +1637,7 @@ public class LazyFrame : IDisposable
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1622,6 +1656,7 @@ public class LazyFrame : IDisposable
             validation.ToNative(),
             coalesce.ToNative(),
             maintainOrder.ToNative(),
+            joinSide.ToNative(),
             nullsEqual,
             sliceOffset,
             sliceLen
@@ -1638,6 +1673,7 @@ public class LazyFrame : IDisposable
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1653,6 +1689,7 @@ public class LazyFrame : IDisposable
             validation, 
             coalesce, 
             maintainOrder, 
+            joinSide,
             nullsEqual, 
             sliceOffset, 
             sliceLen
@@ -1670,6 +1707,7 @@ public class LazyFrame : IDisposable
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1683,6 +1721,7 @@ public class LazyFrame : IDisposable
             validation, 
             coalesce, 
             maintainOrder, 
+            joinSide,
             nullsEqual, 
             sliceOffset, 
             sliceLen
@@ -1732,6 +1771,7 @@ public class LazyFrame : IDisposable
     /// <param name="validation">Check if join keys are unique (mostly relevant for the 'by' columns).</param>
     /// <param name="coalesce">How to coalesce the join keys.</param>
     /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="joinSide">pecifies the strategy for the hash join build side.</param>
     /// <param name="nullsEqual">Consider nulls as equal.</param>
     /// <param name="sliceOffset">Slice the result starting at this offset (optimization).</param>
     /// <param name="sliceLen">Length of the slice to keep.</param>
@@ -1791,6 +1831,7 @@ public class LazyFrame : IDisposable
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1818,13 +1859,14 @@ public class LazyFrame : IDisposable
             validation.ToNative(),
             coalesce.ToNative(),
             maintainOrder.ToNative(),
+            joinSide.ToNative(),
             nullsEqual,
             sliceOffset,
             sliceLen
         ));
     }
     // 1. String Tolerance
-    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide ,bool, long?, ulong)"/>
     /// <param name="tolerance">
     /// Tolerance as a time duration string (e.g., "2h", "10s", "1d"). 
     /// Matches that are further away than this duration are discarded.
@@ -1833,7 +1875,7 @@ public class LazyFrame : IDisposable
         => JoinAsOf(other, leftOn, rightOn, toleranceStr: tolerance, strategy: strategy, leftBy: leftBy, rightBy: rightBy);
 
     // 2. TimeSpan Tolerance
-    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, JoinSide,bool, long?, ulong)"/>
     /// <param name="tolerance">
     /// Tolerance as a <see cref="TimeSpan"/>. 
     /// Matches that are further away than this duration are discarded.
@@ -1842,7 +1884,7 @@ public class LazyFrame : IDisposable
         => JoinAsOf(other, leftOn, rightOn, toleranceStr: DurationFormatter.ToPolarsString(tolerance), strategy: strategy, leftBy: leftBy, rightBy: rightBy);
 
     // 3. Int Tolerance (e.g. integer timestamps)
-    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     /// <param name="tolerance">
     /// Tolerance as a numeric integer (e.g., for integer-based timestamps or simple counters).
     /// </param>
@@ -1850,7 +1892,7 @@ public class LazyFrame : IDisposable
         => JoinAsOf(other, leftOn, rightOn, toleranceInt: tolerance, strategy: strategy, leftBy: leftBy, rightBy: rightBy);
 
     // 4. Double Tolerance (e.g. float keys)
-    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     /// <param name="tolerance">
     /// Tolerance as a floating point number.
     /// </param>
@@ -1996,6 +2038,7 @@ public class LazyFrame : IDisposable
     /// <param name="statistics">Write statistics to the parquet file.</param>
     /// <param name="rowGroupSize">Target row group size (in rows).</param>
     /// <param name="dataPageSize">Target data page size (in bytes).</param>
+    /// <param name="compatLevel">IPC format compatibility, -1: oldest, 0: default, 1: newest.</param>
     /// <param name="maintainOrder">Maintain the order of the data.</param>
     /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
     /// <param name="mkdir">Create parent directories if they don't exist (Local file system only).</param>
@@ -2007,31 +2050,13 @@ public class LazyFrame : IDisposable
         bool statistics = false,
         int rowGroupSize = 0,
         int dataPageSize = 0,
+        int compatLevel = -1,
         bool maintainOrder = true,
         SyncOnClose syncOnClose = SyncOnClose.None,
         bool mkdir = false,
-        CloudOptions? cloudOptions = null) 
+        CloudOptions? cloudOptions = null)
     {
-        CloudProvider provider = CloudProvider.None;
-        nuint retries = 0;
-        ulong cacheTtl = 0;
-        string[]? keys = null;
-        string[]? values = null;
-        nuint len = 0;
-
-        if (cloudOptions != null)
-        {
-            provider = cloudOptions.Provider;
-            retries = cloudOptions.MaxRetries;
-            cacheTtl = cloudOptions.FileCacheTtl;
-            
-            if (cloudOptions.Credentials != null && cloudOptions.Credentials.Count > 0)
-            {
-                keys = cloudOptions.Credentials.Keys.ToArray();
-                values = cloudOptions.Credentials.Values.ToArray();
-                len = (nuint)keys.Length;
-            }
-        }
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
 
         PolarsWrapper.SinkParquet(
             Handle,
@@ -2041,68 +2066,110 @@ public class LazyFrame : IDisposable
             statistics,
             rowGroupSize,
             dataPageSize,
+            compatLevel,
             maintainOrder,
             syncOnClose.ToNative(),
             mkdir,
             provider.ToNative(),
             retries,
+            retryTimeoutMs,      
+            retryInitBackoffMs,
+            retryMaxBackoffMs, 
             cacheTtl,
             keys,
-            values,
-            len 
+            values
         );
     }
     /// <summary>
     /// Sink the LazyFrame to an IPC (Arrow) file.
-    /// <br/>
-    /// This allows writing datasets larger than memory by streaming the results to disk.
+    /// <para>
+    /// This allows for streaming execution.
+    /// </para>
     /// </summary>
-    /// <param name="path">The output file path.</param>
-    /// <param name="compression">Compression method (None, LZ4, ZSTD). Defaults to None.</param>
-    /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
-    /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
-    /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
-    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    /// <param name="path">Path to the output file.</param>
+    /// <param name="compression">Compression method to use.</param>
+    /// <param name="compatLevel">Compatibility level (default -1 = newest).</param>
+    /// <param name="recordBatchSize">Number of rows per record batch (0 = default).</param>
+    /// <param name="recordBatchStatistics">Write statistics to the record batch header (default = true).</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
+    /// <param name="mkdir">Create parent directories if they don't exist (Local file system only).</param>
+    /// <param name="cloudOptions">Options for cloud storage.</param>
     public void SinkIpc(
         string path,
         IpcCompression compression = IpcCompression.None,
+        int compatLevel = -1,
+        int recordBatchSize = 0,
+        bool recordBatchStatistics = true,
         bool maintainOrder = true,
         SyncOnClose syncOnClose = SyncOnClose.None,
         bool mkdir = false,
-        int compatLevel = -1)
+        CloudOptions? cloudOptions = null)
     {
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
+
         PolarsWrapper.SinkIpc(
-            Handle, 
-            path, 
-            compression.ToNative(), 
-            compatLevel, 
-            maintainOrder, 
-            syncOnClose.ToNative(), 
-            mkdir
+            Handle,
+            path,
+            compression.ToNative(),
+            compatLevel,
+            recordBatchSize,
+            recordBatchStatistics,
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir,
+            // Cloud
+            provider.ToNative(),
+            retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
+            cacheTtl,
+            keys,
+            values
         );
     }
     /// <summary>
-    /// Sink the LazyFrame to a JSON file.
+    /// Sink the LazyFrame to a NDJSON (Newline Delimited JSON) file.
     /// </summary>
     /// <param name="path">Output file path.</param>
-    /// <param name="format">JSON format (Json Array or JsonLines). Defaults to Json.</param>
-    /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
-    /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
-    /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
+    /// <param name="compression">Compression method (Gzip/Zstd).</param>
+    /// <param name="compressionLevel">Compression level.</param>
+    /// <param name="checkExtension">Whether to check if the file extension matches '.json' or '.ndjson'.</param>
+    /// <param name="maintainOrder">Maintain the order of data.</param>
+    /// <param name="syncOnClose">Sync to disk on close.</param>
+    /// <param name="mkdir">Create parent directories.</param>
+    /// <param name="cloudOptions">Cloud storage options.</param>
     public void SinkJson(
         string path,
-        JsonFormat format = JsonFormat.Json,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool checkExtension = true,
         bool maintainOrder = true,
         SyncOnClose syncOnClose = SyncOnClose.None,
-        bool mkdir = false)
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
     {
+        var (provider, retries, timeout, initBackoff, maxBackoff, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
+
         PolarsWrapper.SinkJson(
             Handle,
             path,
-            format.ToNative(),
+            compression.ToNative(),
+            compressionLevel,
+            checkExtension,
             maintainOrder,
             syncOnClose.ToNative(),
-            mkdir
+            mkdir,
+            // Cloud
+            provider.ToNative(),
+            retries,
+            timeout,
+            initBackoff,
+            maxBackoff,
+            cacheTtl,
+            keys,
+            values
         );
     }
 
@@ -2111,11 +2178,15 @@ public class LazyFrame : IDisposable
     /// </summary>
     public void SinkNdJson(
         string path,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool checkExtension = true,
         bool maintainOrder = true,
         SyncOnClose syncOnClose = SyncOnClose.None,
-        bool mkdir = false)
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
     {
-        SinkJson(path, JsonFormat.JsonLines, maintainOrder, syncOnClose, mkdir);
+        SinkJson(path,compression,compressionLevel,checkExtension, maintainOrder, syncOnClose, mkdir,cloudOptions);
     }
     /// <summary>
     /// Execute the LazyFrame and sink the result to a CSV file.
@@ -2144,6 +2215,9 @@ public class LazyFrame : IDisposable
     /// <param name="dateFormat">Format string for Date columns. If null, uses ISO 8601.</param>
     /// <param name="timeFormat">Format string for Time columns. If null, uses ISO 8601.</param>
     /// <param name="datetimeFormat">Format string for Datetime columns. If null, uses ISO 8601.</param>
+    /// <param name="checkExtension">Whether to check if the file extension matches '.csv'. Defaults to true.</param>
+    /// <param name="compression">Compression method (Gzip/Zstd). Defaults to None.</param>
+    /// <param name="compressionLevel">Compression level (depends on the codec). -1 for default.</param>
     /// <param name="maintainOrder">
     /// Whether to maintain the order of the data. 
     /// Setting this to false can improve performance in streaming mode. Defaults to true.
@@ -2154,6 +2228,7 @@ public class LazyFrame : IDisposable
     /// The batch size for writing rows. 
     /// 0 means use the Polars default.
     /// </param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public void SinkCsv(
         string path,
         bool includeHeader = true,
@@ -2169,20 +2244,33 @@ public class LazyFrame : IDisposable
         string? dateFormat = null,
         string? timeFormat = null,
         string? datetimeFormat = null,
+        bool checkExtension = true,
+        ExternalCompression compression = ExternalCompression.Uncompressed, 
+        int compressionLevel = -1,
         bool maintainOrder = true,
         SyncOnClose syncOnClose = SyncOnClose.None,
         bool mkdir = false,
-        int batchSize = 0)
+        int batchSize = 0,
+        CloudOptions? cloudOptions = null)
     {
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
+
+        // 3. 调用 Wrapper
         PolarsWrapper.SinkCsv(
             Handle,
             path,
+            
+            // CSV Writer Options
             includeHeader,
             includeBom,
-            batchSize,
-            maintainOrder,
-            syncOnClose.ToNative(),
-            mkdir,
+            batchSize,       // Wrapper 会转为 nuint
+            checkExtension,  // New
+
+            // Compression
+            compression.ToNative(), // 转为 PlExternalCompression
+            compressionLevel,
+
+            // Serialize Options (顺序已变!)
             separator,
             quoteChar,
             quoteStyle.ToNative(),
@@ -2191,9 +2279,24 @@ public class LazyFrame : IDisposable
             dateFormat,
             timeFormat,
             datetimeFormat,
-            floatScientific, 
-            floatPrecision,  
-            decimalComma
+            floatScientific,
+            floatPrecision,
+            decimalComma,
+
+            // Unified Sink Options
+            maintainOrder,
+            syncOnClose.ToNative(), // Wrapper 接收 byte 或枚举
+            mkdir,
+
+            // Cloud Options
+            provider.ToNative(),
+            retries,
+            retryTimeoutMs,      // New
+            retryInitBackoffMs,  // New
+            retryMaxBackoffMs,   // New
+            cacheTtl,
+            keys,
+            values
         );
     }
     /// <summary>
@@ -2287,6 +2390,7 @@ public class LazyFrame : IDisposable
         // 5. Wait for consumer to finish writing and throw possible exceptions
         consumerTask.Wait();
     }
+
     /// <summary>
     /// Dispose the LazyFrame and release native resources.
     /// </summary>

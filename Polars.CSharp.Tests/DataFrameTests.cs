@@ -1,4 +1,5 @@
-﻿using Apache.Arrow;
+﻿using System.Linq.Expressions;
+using Apache.Arrow;
 using Apache.Arrow.Memory;
 using static Polars.CSharp.Polars;
 namespace Polars.CSharp.Tests;
@@ -413,17 +414,11 @@ HR,50";
         using var dfWithF = df.WithColumns((Col("temp") * 1.8 + 32).Alias("temp_f"));
         
         // 然后使用 Expr 重载进行透视
-        // 这里为了测试 Expr 通道是否打通，我们传入 Col("").Sum() 或者简单的聚合
-        // 注意：因为 Polars Pivot 限制，我们不能写 Col("temp_f")。
-        // 在我们的 Rust Shim 实现里，我们用 col("") 代表当前 value。
-        // 所以，要在 Pivot 里自定义聚合，我们得用 Col("") 代表 "temp_f"。
-        
+
         using var pivotedFahrenheit = dfWithF.Pivot(
             index: ["date"],
             columns: ["city"],
             values: ["temp_f"],
-            // 使用 Col("") 代表当前上下文的值(values列)
-            // 并且必须是聚合函数 (First, Sum, etc)，不能只是运算
             aggregateExpr: Col("").First(), 
             sortColumns: true
         );

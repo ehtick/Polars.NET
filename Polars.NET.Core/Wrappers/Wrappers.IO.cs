@@ -336,10 +336,13 @@ public static partial class PolarsWrapper
         bool tryParseHiveDates,
         PlCloudProvider cloudProvider,
         nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
         ulong cloudCacheTtl,
         string[]? cloudKeys,
-        string[]? cloudValues,
-        nuint cloudLen)
+        string[]? cloudValues
+        )
     {
         unsafe
         {
@@ -355,7 +358,7 @@ public static partial class PolarsWrapper
                 hivePartitionSchema != null ? [hivePartitionSchema] : null
             );
             IntPtr hiveSchemaPtr = hivePartitionSchema != null ? hiveLock.Pointers[0] : IntPtr.Zero;
-
+            nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
             var h = NativeBindings.pl_scan_parquet(
                 path,
                 nRowsPtr,
@@ -375,6 +378,9 @@ public static partial class PolarsWrapper
                 // Cloud Options
                 cloudProvider,
                 cloudRetries,
+                cloudRetryTimeoutMs,
+                cloudRetryInitBackoffMs,
+                cloudRetryMaxBackoffMs,
                 cloudCacheTtl,
                 cloudKeys,
                 cloudValues,
@@ -441,47 +447,52 @@ public static partial class PolarsWrapper
         }
     }
 
-    public static void WriteCsv(
-        DataFrameHandle df, 
-        string path,
-        bool hasHeader,
-        bool useBom,
-        int batchSize,
-        char separator,
-        char quoteChar,
-        PlQuoteStyle quoteStyle,
-        string? nullValue,
-        string? lineTerminator,
-        string? dateFormat,
-        string? timeFormat,
-        string? datetimeFormat,
-        bool? floatScientific,
-        int? floatPrecision,
-        bool decimalComma)
-    {
-        nuint bs = batchSize > 0 ? (nuint)batchSize : 0;
-        int fScientific = floatScientific switch { null => -1, false => 0, true => 1 };
-        int fPrecision = floatPrecision ?? -1;
+    // public static void WriteCsv(
+    //     DataFrameHandle df, 
+    //     string path,
+    //     bool hasHeader,
+    //     bool useBom,
+    //     int batchSize,
+    //     char separator,
+    //     char quoteChar,
+    //     PlQuoteStyle quoteStyle,
+    //     string? nullValue,
+    //     string? lineTerminator,
+    //     string? dateFormat,
+    //     string? timeFormat,
+    //     string? datetimeFormat,
+    //     bool? floatScientific,
+    //     int? floatPrecision,
+    //     bool decimalComma)
+    // {
+    //     nuint bs = batchSize > 0 ? (nuint)batchSize : 0;
+    //     int fScientific = floatScientific switch { null => -1, false => 0, true => 1 };
+    //     int fPrecision = floatPrecision ?? -1;
         
-        NativeBindings.pl_dataframe_write_csv(
-            df, path, hasHeader, useBom, bs,
-            (byte)separator, (byte)quoteChar, quoteStyle,
-            nullValue, lineTerminator,
-            dateFormat, timeFormat, datetimeFormat,
-            fScientific, fPrecision, decimalComma
-        );
+    //     NativeBindings.pl_dataframe_write_csv(
+    //         df, path, hasHeader, useBom, bs,
+    //         (byte)separator, (byte)quoteChar, quoteStyle,
+    //         nullValue, lineTerminator,
+    //         dateFormat, timeFormat, datetimeFormat,
+    //         fScientific, fPrecision, decimalComma
+    //     );
         
-        ErrorHelper.CheckVoid();
-    }
+    //     ErrorHelper.CheckVoid();
+    // }
     public static void SinkCsv(
         LazyFrameHandle lf,
         string path,
+
+        // --- CSV Writer Options ---
         bool hasHeader,
         bool useBom,
-        int batchSize,
-        bool maintainOrder,
-        PlSyncOnClose syncOnClose,
-        bool mkdir,
+        int batchSize,       
+        bool checkExtension, 
+
+        // --- Compression ---
+        PlExternalCompression compressionCode, 
+        int compressionLevel,                  
+        // --- Serialize Options ---
         char separator,
         char quoteChar,
         PlQuoteStyle quoteStyle,
@@ -492,61 +503,127 @@ public static partial class PolarsWrapper
         string? datetimeFormat,
         bool? floatScientific,
         int? floatPrecision,
-        bool decimalComma)
+        bool decimalComma,
+
+        // --- Unified Sink Options ---
+        bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir,
+
+        // --- Cloud Options ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
     {
         nuint bs = batchSize > 0 ? (nuint)batchSize : 0;
+        
+        // Float Scientific: null->-1, false->0, true->1
         int fScientific = floatScientific switch { null => -1, false => 0, true => 1 };
+        
+        // Float Precision: null->-1
         int fPrecision = floatPrecision ?? -1;
 
-        NativeBindings.pl_lazyframe_sink_csv(lf, path, hasHeader, useBom,bs,
-            maintainOrder,syncOnClose,mkdir,(byte)separator,(byte)quoteChar,quoteStyle,nullValue,
-            lineTerminator,dateFormat,timeFormat,datetimeFormat,fScientific,fPrecision,decimalComma);
+        // Cloud Length
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
+        NativeBindings.pl_lazyframe_sink_csv(
+            lf, 
+            path,
+            
+            // CSV Writer Options
+            useBom,           // include_bom
+            hasHeader,        // include_header
+            bs,               // batch_size
+            checkExtension,   // check_extension
+
+            // Compression
+            compressionCode,
+            compressionLevel,
+
+            // SerializeOptions
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            fScientific,
+            fPrecision,
+            decimalComma,
+            (byte)separator,
+            (byte)quoteChar,
+            nullValue,
+            lineTerminator,
+            quoteStyle,
+
+            // UnifiedSinkArgs
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+
+            // Cloud Options
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
     }
     public static void WriteParquet(
-        DataFrameHandle df, 
-        string path, 
-        PlParquetCompression compression, 
+        DataFrameHandle df,
+        string path,
+        PlParquetCompression compression,
         int compressionLevel,
         bool statistics,
-        int rowGroupSize, 
+        int rowGroupSize,
         int dataPageSize,
+        int compatLevel,
         bool parallel)
     {
         nuint rgs = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
         nuint dps = dataPageSize > 0 ? (nuint)dataPageSize : 0;
 
         NativeBindings.pl_dataframe_write_parquet(
-            df, 
-            path, 
-            compression, 
-            compressionLevel, 
-            statistics, 
-            rgs, 
-            dps, 
+            df,
+            path,
+            compression,
+            compressionLevel,
+            statistics,
+            rgs,
+            dps,
+            compatLevel,
             parallel
         );
-        
+
         ErrorHelper.CheckVoid();
     }
-    public static void WriteIpc(
-        DataFrameHandle df, 
-        string path, 
-        PlIpcCompression compression = PlIpcCompression.None, 
-        bool parallel = true, 
-        int compatLevel = -1)
-    {
-        NativeBindings.pl_dataframe_write_ipc(
-            df, 
-            path, 
-            compression, 
-            parallel, 
-            compatLevel
-        );
+    // public static void WriteIpc(
+    //     DataFrameHandle df, 
+    //     string path, 
+    //     PlIpcCompression compression = PlIpcCompression.None, 
+    //     bool parallel = true, 
+    //     int compatLevel = -1)
+    // {
+    //     NativeBindings.pl_dataframe_write_ipc(
+    //         df, 
+    //         path, 
+    //         compression, 
+    //         parallel, 
+    //         compatLevel
+    //     );
         
-        ErrorHelper.CheckVoid();
-    }
+    //     ErrorHelper.CheckVoid();
+    // }
 
     public static void WriteJson(DataFrameHandle df, string path, PlJsonFormat format)
     {
@@ -562,19 +639,27 @@ public static partial class PolarsWrapper
         bool statistics,
         int rowGroupSize,
         int dataPageSize,
+        int compatLevel,
         bool maintainOrder,
         PlSyncOnClose syncOnClose,
         bool mkdir,
         PlCloudProvider cloudProvider,
         nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
         ulong cloudCacheTtl,
         string[]? cloudKeys,
-        string[]? cloudValues,
-        nuint cloudLen)
+        string[]? cloudValues
+        )
     {
         nuint rgs = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
         nuint dps = dataPageSize > 0 ? (nuint)dataPageSize : 0;
+        int safeCompatLevel = compatLevel;
+        if (safeCompatLevel < -1) safeCompatLevel = -1;
+        else if (safeCompatLevel > 1) safeCompatLevel = 1;
 
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
 
         NativeBindings.pl_lazyframe_sink_parquet(
             lf, 
@@ -584,12 +669,16 @@ public static partial class PolarsWrapper
             statistics, 
             rgs, 
             dps, 
+            safeCompatLevel,
             maintainOrder, 
             syncOnClose, 
             mkdir,
             // Cloud Args
             cloudProvider,
             cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
             cloudCacheTtl,
             cloudKeys,
             cloudValues,
@@ -790,23 +879,49 @@ public static partial class PolarsWrapper
         }
     }
     public static void SinkJson(
-        LazyFrameHandle lf, 
+        LazyFrameHandle lf,
         string path,
-        PlJsonFormat format,
+        // Removed: PlJsonFormat format (Native supports NDJSON only for sink)
+        PlExternalCompression compression,
+        int compressionLevel,
+        bool checkExtension,
         bool maintainOrder,
         PlSyncOnClose syncOnClose,
-        bool mkdir)
+        bool mkdir,
+        // --- Cloud Options ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+        )
     {
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
         NativeBindings.pl_lazyframe_sink_json(
-            lf, 
-            path, 
-            format, 
-            maintainOrder, 
-            syncOnClose, 
-            mkdir
+            lf,
+            path,
+            compression,
+            compressionLevel,
+            checkExtension,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            // Cloud Args
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
         );
-        
-        lf.TransferOwnership(); 
+
+        lf.TransferOwnership();
         ErrorHelper.CheckVoid();
     }
     // ---------------------------------------------------------
@@ -973,26 +1088,51 @@ public static partial class PolarsWrapper
     /// Consumes the LazyFrame handle.
     /// </summary>
     public static void SinkIpc(
-        LazyFrameHandle lf, 
+        LazyFrameHandle lf,
         string path,
         PlIpcCompression compression,
         int compatLevel,
+        int recordBatchSize, 
+        bool recordBatchStatistics,
         bool maintainOrder,
         PlSyncOnClose syncOnClose,
-        bool mkdir)
+        bool mkdir,
+        // --- Cloud Options ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+        )
     {
+        nuint batchSize = recordBatchSize > 0 ? (nuint)recordBatchSize : 0;
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
         NativeBindings.pl_lazyframe_sink_ipc(
-            lf, 
-            path, 
-            compression, 
-            compatLevel, 
-            maintainOrder, 
-            syncOnClose, 
-            mkdir
+            lf,
+            path,
+            compression,
+            compatLevel,
+            batchSize,
+            recordBatchStatistics,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            // Cloud Args
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
         );
-        
+
         lf.TransferOwnership();
-        
         ErrorHelper.CheckVoid();
     }
     public static unsafe DataFrameHandle FromArrow(RecordBatch batch)
@@ -1121,10 +1261,12 @@ public static partial class PolarsWrapper
         bool tryParseHiveDates,
         PlCloudProvider cloudProvider,
         nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
         ulong cloudCacheTtl,
         string[]? cloudKeys,
-        string[]? cloudValues,
-        nuint cloudLen)
+        string[]? cloudValues)
     {
         long versionVal = version.GetValueOrDefault();
         IntPtr versionPtr = version.HasValue ? (IntPtr)(&versionVal) : IntPtr.Zero;
@@ -1141,7 +1283,7 @@ public static partial class PolarsWrapper
             hivePartitionSchema != null ? [hivePartitionSchema] : null
         );
         IntPtr hiveSchemaPtr = hivePartitionSchema != null ? hiveLock.Pointers[0] : IntPtr.Zero;
-        
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
         var h = NativeBindings.pl_scan_delta(
             path,
             versionPtr,
@@ -1161,6 +1303,9 @@ public static partial class PolarsWrapper
             tryParseHiveDates,
             cloudProvider,
             cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
             cloudCacheTtl,
             cloudKeys,
             cloudValues,
@@ -1205,16 +1350,21 @@ public static partial class PolarsWrapper
         bool statistics,
         nuint rowGroupSize,
         nuint dataPageSize,
+        int compatLevel,
         // Sink Options
         bool maintainOrder,
         // Cloud Options
         PlCloudProvider cloudProvider,
         nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
         ulong cloudCacheTtl,
         string[]? cloudKeys,
-        string[]? cloudValues,
-        nuint cloudLen)
+        string[]? cloudValues
+        )
     {
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
         NativeBindings.pl_sink_delta(
             lf,
             path,
@@ -1224,9 +1374,13 @@ public static partial class PolarsWrapper
             statistics,
             rowGroupSize,
             dataPageSize,
+            compatLevel,
             maintainOrder,
             cloudProvider,
             cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
             cloudCacheTtl,
             cloudKeys,
             cloudValues,

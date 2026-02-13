@@ -6,7 +6,7 @@ use std::os::raw::c_char;
 use crate::types::{DataFrameContext, DataTypeContext, SeriesContext};
 use crate::utils::*;
 use polars_arrow::datatypes::ArrowDataType;
-use polars_arrow::buffer::Buffer;
+use polars_buffer::Buffer;
 use polars_arrow::array::PrimitiveArray;
 use polars_arrow::array::BooleanArray;
 use polars_arrow::bitmap::Bitmap;
@@ -72,6 +72,7 @@ gen_series_new!(pl_series_new_i32, i32, Int32Type);
 gen_series_new!(pl_series_new_u32, u32, UInt32Type);
 gen_series_new!(pl_series_new_i64, i64, Int64Type);
 gen_series_new!(pl_series_new_u64, u64, UInt64Type);
+gen_series_new!(pl_series_new_f16, pf16, Float16Type);
 gen_series_new!(pl_series_new_f32, f32, Float32Type);
 gen_series_new!(pl_series_new_f64, f64, Float64Type);
 gen_series_new!(pl_series_new_i128, i128, Int128Type);
@@ -498,6 +499,7 @@ impl_fixed_list_ffi!(pl_series_new_array_u64, u64, ArrowDataType::UInt64);
 impl_fixed_list_ffi!(pl_series_new_array_u128, u128, ArrowDataType::UInt128);
 
 // Float
+impl_fixed_list_ffi!(pl_series_new_array_f16, pf16, ArrowDataType::Float16);
 impl_fixed_list_ffi!(pl_series_new_array_f32, f32, ArrowDataType::Float32);
 impl_fixed_list_ffi!(pl_series_new_array_f64, f64, ArrowDataType::Float64);
 
@@ -681,7 +683,7 @@ pub fn upgrade_to_large_list(array: Box<dyn Array>) -> Box<dyn Array> {
             let offsets_i64: Vec<i64> = offsets_i32.iter().map(|&x| x as i64).collect();
             
             // Convert Arrow Buffer
-            let raw_buffer = polars_arrow::buffer::Buffer::from(offsets_i64);
+            let raw_buffer = Buffer::from(offsets_i64);
             let offsets_buffer = polars_arrow::offset::OffsetsBuffer::try_from(raw_buffer).unwrap();
 
             // Deal Values Recursively
@@ -963,6 +965,7 @@ pub extern "C" fn pl_series_get_f64(s_ptr: *mut SeriesContext, idx: usize, out_v
     match ctx.series.get(idx) {
         Ok(AnyValue::Float64(v)) => { unsafe { *out_val = v }; true }
         Ok(AnyValue::Float32(v)) => { unsafe { *out_val = v as f64 }; true }
+        Ok(AnyValue::Float16(v)) => { unsafe { *out_val = f64::from(v) }; true }
         _ => false
     }
 }

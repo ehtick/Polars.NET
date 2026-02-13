@@ -84,6 +84,7 @@ unsafe internal partial class NativeBindings
         PlJoinValidation validation,
         PlJoinCoalesce coalesce,
         PlJoinMaintainOrder maintainOrder,
+        PlJoinSide joinSide,
         [MarshalAs(UnmanagedType.U1)] bool nullsEqual,
         IntPtr sliceOffset,
         UIntPtr sliceLen
@@ -110,6 +111,7 @@ unsafe internal partial class NativeBindings
         PlJoinValidation validation,
         PlJoinCoalesce coalesce,
         PlJoinMaintainOrder maintainOrder,
+        PlJoinSide joinSide,
         [MarshalAs(UnmanagedType.U1)] bool nullsEqual,
         IntPtr sliceOffset, // *const i64
         UIntPtr sliceLen
@@ -122,7 +124,11 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial LazyFrameHandle pl_lazy_limit(LazyFrameHandle lf, uint n);
     [LibraryImport(LibName)] public static partial LazyFrameHandle pl_lazy_with_columns(LazyFrameHandle lf, IntPtr[] exprs, UIntPtr len);
     [LibraryImport(LibName)] 
-    public static partial LazyFrameHandle pl_lazy_explode(LazyFrameHandle lf, SelectorHandle selector);
+    public static partial LazyFrameHandle pl_lazyframe_explode(
+        LazyFrameHandle lf,
+        SelectorHandle selector,
+        [MarshalAs(UnmanagedType.U1)] bool emptyAsNull,
+        [MarshalAs(UnmanagedType.U1)] bool keepNulls);
     // --- Reshaping (Lazy) ---
     [LibraryImport(LibName)]
     public static partial LazyFrameHandle pl_lazyframe_rename(
@@ -133,11 +139,23 @@ unsafe internal partial class NativeBindings
         UIntPtr newLen, 
         [MarshalAs(UnmanagedType.U1)] bool strict
     );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_lazyframe_pivot(
+        LazyFrameHandle lf,
+        SelectorHandle on,
+        DataFrameHandle onColumns,
+        SelectorHandle index,
+        SelectorHandle values,
+        IntPtr aggExpr,
+        PlPivotAgg aggCode, 
+        [MarshalAs(UnmanagedType.U1)] bool maintainOrder,
+        string? separator
+    );
     [LibraryImport(LibName)] 
     public static partial LazyFrameHandle pl_lazyframe_unpivot(
         LazyFrameHandle lf,
         SelectorHandle index,
-        SelectorHandle on,
+        SelectorHandle? on, // Nullable
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? varName,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string? valName
     );
