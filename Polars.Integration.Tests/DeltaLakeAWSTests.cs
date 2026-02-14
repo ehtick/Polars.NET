@@ -395,4 +395,158 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
 
         Console.WriteLine("Delta Streaming Full Cycle (Append/Overwrite/Error/Ignore) Passed!");
     }
+    [Fact]
+    [Trait("DeltaLake", "Partitioned")]
+    public void Test_Sink_And_Scan_Delta_Partitioned_Full_Cycle()
+    {
+        // ==========================================
+        // 1. 环境与鉴权准备 (复用你的 MinIO 配置)
+        // ==========================================
+        var tableName = $"delta_partitioned_{Guid.NewGuid()}";
+        // 假设 _minio 是你测试基类中配置好的 MinioFixture
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+
+        // 核心配置：MinIO 兼容性 + 原子提交支持
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+        
+        // ==========================================
+        // 2. [Mode: Append] 初始化分区写入 (Version 0)
+        // ==========================================
+        // 数据包含 'Year' 列作为分区键
+        Console.WriteLine("Step 1: Initial Partitioned Write (Append)...");
+        using (var df = DataFrame.FromColumns(new { 
+            Id = new[] { 1, 2, 3 }, 
+            Msg = new[] { "V1_2023_A", "V1_2023_B", "V1_2024_A" },
+            Year = new[] { "2023", "2023", "2024" } // 分区列
+        }))
+        {
+            // 按 Year 列分区写入
+            df.Lazy().SinkDeltaPartitioned(
+                rootUrl, 
+                partitionBy: Selector.Cols("Year"), 
+                mode: DeltaSaveMode.Append, 
+                cloudOptions: options
+            );
+        }
+
+        // 验证 V0
+        // Delta Lake 会自动识别分区列，并将其作为普通列 'Year' 加载回来
+        using var dfV0 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("Id");
+        Assert.Equal(3, dfV0.Height);
+        
+        // 验证分区列内容
+        var yearsV0 = dfV0["Year"].ToArray<string>();
+        Assert.Equal("2023", yearsV0[0]);
+        Assert.Equal("2024", yearsV0[2]);
+
+        // ==========================================
+        // 3. [Mode: Append] 追加更多分区数据 (Version 1)
+        // ==========================================
+        Console.WriteLine("Step 2: Appending Data to New & Existing Partitions...");
+        using (var df2 = DataFrame.FromColumns(new { 
+            Id = new[] { 4, 5 }, 
+            Msg = new[] { "V2_2024_B", "V2_2025_A" },
+            Year = new[] { "2024", "2025" } // 2024是现有分区，2025是新分区
+        }))
+        {
+            df2.Lazy().SinkDeltaPartitioned(
+                rootUrl, 
+                partitionBy: Selector.Cols("Year"), 
+                mode: DeltaSaveMode.Append, 
+                cloudOptions: options
+            );
+        }
+
+        // 验证 V1 (总共 5 行)
+        using var dfV1 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("Id");
+        // dfV1.Show();
+        Assert.Equal(5, dfV1.Height);
+        
+        // 检查是否包含新分区 2025
+        Assert.Contains("2025", dfV1["Year"].ToArray<string>());
+
+        // ==========================================
+        // 4. [Mode: Overwrite] 覆盖分区表 (Version 2)
+        // ==========================================
+        // 预期：之前的 5 行数据全部逻辑删除，只保留新的数据
+        // 注意：Overwrite 模式下，通常要保持分区架构一致，或者开启 schema evolution
+        Console.WriteLine("Step 3: Overwriting Partitioned Table...");
+        using (var dfOverwrite = DataFrame.FromColumns(new { 
+            Id = new[] { 999 }, 
+            Msg = new[] { "Overwrite_All" },
+            Year = new[] { "2099" } // 全新的分区
+        }))
+        {
+            dfOverwrite.Lazy().SinkDeltaPartitioned(
+                rootUrl, 
+                partitionBy: Selector.Cols("Year"), 
+                mode: DeltaSaveMode.Overwrite, 
+                cloudOptions: options
+            );
+        }
+
+        // 验证 V2 (应该只有 1 行)
+        using var dfV2 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(1, dfV2.Height);
+        Assert.Equal("2099", dfV2["Year"].ToArray<string>()[0]);
+        
+        // 验证 V2 的历史 (Time Travel Check) - 回溯到 V1
+        using var dfBackToV1 = LazyFrame.ScanDelta(rootUrl, version: 2, cloudOptions: options).Collect();
+        Assert.Equal(5, dfBackToV1.Height);
+
+        // ==========================================
+        // 5. [Mode: ErrorIfExists] 冲突检测
+        // ==========================================
+        Console.WriteLine("Step 4: Testing ErrorIfExists...");
+        using (var dfError = DataFrame.FromColumns(new { Id = new[] { 0 }, Year = new[] { "0000" } }))
+        {
+            var ex = Assert.Throws<PolarsException>(() => 
+            {
+                dfError.Lazy().SinkDeltaPartitioned(
+                    rootUrl, 
+                    partitionBy: Selector.Cols("Year"),
+                    mode: DeltaSaveMode.ErrorIfExists, 
+                    cloudOptions: options
+                );
+            });
+            Assert.Contains("Table already exists", ex.Message);
+        }
+
+        // ==========================================
+        // 6. [Mode: Ignore] 忽略写入
+        // ==========================================
+        Console.WriteLine("Step 5: Testing Ignore...");
+        using (var dfIgnore = DataFrame.FromColumns(new { 
+            Id = new[] { 888 }, 
+            Msg = new[] { "Should_Not_Exist" },
+            Year = new[] { "2099" }
+        }))
+        {
+            dfIgnore.Lazy().SinkDeltaPartitioned(
+                rootUrl, 
+                partitionBy: Selector.Cols("Year"),
+                mode: DeltaSaveMode.Ignore, 
+                cloudOptions: options
+            );
+        }
+
+        // 验证数据未变
+        using var dfFinal = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(1, dfFinal.Height);
+        Assert.DoesNotContain("Should_Not_Exist", dfFinal["Msg"].ToArray<string>());
+
+        Console.WriteLine("Delta Partitioned Full Cycle Test Passed!");
+    }
 }

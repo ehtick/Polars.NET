@@ -688,6 +688,91 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
     }
+    public static void SinkParquetPartitioned(
+        LazyFrameHandle lf,
+        string path,
+        
+        // --- Partition Params ---
+        SelectorHandle partitionBy,
+        bool includeKeys,
+        bool keysPreGrouped,
+        nuint maxRowsPerFile,
+        ulong approxBytesPerFile,
+
+        // --- Parquet Options ---
+        PlParquetCompression compression,
+        int compressionLevel,
+        bool statistics,
+        int rowGroupSize,
+        int dataPageSize,
+        int compatLevel,
+
+        // --- Unified Options ---
+        bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir,
+
+        // --- Cloud Params ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        nuint rgs = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
+        nuint dps = dataPageSize > 0 ? (nuint)dataPageSize : 0;
+        
+        int safeCompatLevel = compatLevel;
+        if (safeCompatLevel < -1) safeCompatLevel = -1;
+        else if (safeCompatLevel > 1) safeCompatLevel = 1;
+
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
+        // Call Native Binding
+        NativeBindings.pl_lazyframe_sink_parquet_partitioned(
+            lf,
+            path,
+            
+            // Partition Params
+            partitionBy,
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
+
+            // Parquet Options
+            compression,
+            compressionLevel,
+            statistics,
+            rgs,
+            dps,
+            safeCompatLevel,
+
+            // Unified Options
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+
+            // Cloud Params
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        lf.TransferOwnership();
+        
+        ErrorHelper.CheckVoid();
+    }
     // ---------------------------------------------------------
     // Read JSON (File)
     // ---------------------------------------------------------
@@ -1314,32 +1399,7 @@ public static partial class PolarsWrapper
 
         return ErrorHelper.Check(h);
     }
-    // public static void SinkDelta(
-    //     LazyFrameHandle lf,
-    //     string path,
-    //     PlDeltaSaveMode mode, 
-    //     PlCloudProvider cloudProvider,
-    //     nuint cloudRetries,
-    //     ulong cloudCacheTtl,
-    //     string[]? cloudKeys,
-    //     string[]? cloudValues,
-    //     nuint cloudLen)
-    // {
-    //     NativeBindings.pl_sink_delta(
-    //         lf,
-    //         path,
-    //         mode, 
-    //         cloudProvider,
-    //         cloudRetries,
-    //         cloudCacheTtl,
-    //         cloudKeys,
-    //         cloudValues,
-    //         cloudLen
-    //     );
-    //     lf.TransferOwnership();
 
-    //     ErrorHelper.CheckVoid();
-    // }
     public static void SinkDelta(
         LazyFrameHandle lf,
         string path,
@@ -1353,6 +1413,8 @@ public static partial class PolarsWrapper
         int compatLevel,
         // Sink Options
         bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir,
         // Cloud Options
         PlCloudProvider cloudProvider,
         nuint cloudRetries,
@@ -1376,6 +1438,8 @@ public static partial class PolarsWrapper
             dataPageSize,
             compatLevel,
             maintainOrder,
+            syncOnClose,
+            mkdir,
             cloudProvider,
             cloudRetries,
             cloudRetryTimeoutMs,
@@ -1388,6 +1452,96 @@ public static partial class PolarsWrapper
         );
         lf.TransferOwnership();
 
+        ErrorHelper.CheckVoid();
+    }
+    public static void SinkDeltaPartitioned(
+        LazyFrameHandle lf,
+        string path,
+        
+        // --- Delta Options ---
+        PlDeltaSaveMode mode,
+
+        // --- Partition Params ---
+        SelectorHandle partitionBy,
+        bool includeKeys,
+        bool keysPreGrouped,
+        nuint maxRowsPerFile,
+        ulong approxBytesPerFile,
+
+        // --- Parquet Options ---
+        PlParquetCompression compression,
+        int compressionLevel,
+        bool statistics,
+        nuint rowGroupSize,
+        nuint dataPageSize,
+        int compatLevel,
+
+        // --- Unified Options ---
+        bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir,
+
+        // --- Cloud Params ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        nuint rgs = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
+        nuint dps = dataPageSize > 0 ? (nuint)dataPageSize : 0;
+        
+        int safeCompatLevel = compatLevel;
+        if (safeCompatLevel < -1) safeCompatLevel = -1;
+        else if (safeCompatLevel > 1) safeCompatLevel = 1;
+
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
+        NativeBindings.pl_sink_delta_partitioned(
+            lf,
+            path,
+            
+            // Delta Options
+            mode,
+
+            // Partition Params
+            partitionBy,
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
+
+            // Parquet Options
+            compression,
+            compressionLevel,
+            statistics,
+            rgs,
+            dps,
+            safeCompatLevel,
+
+            // Unified Options
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+
+            // Cloud Params
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        lf.TransferOwnership();
+        
         ErrorHelper.CheckVoid();
     }
 }

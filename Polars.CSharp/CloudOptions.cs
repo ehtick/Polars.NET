@@ -44,7 +44,7 @@ public class CloudOptions
     /// See Polars documentation for supported keys for each provider.
     /// </para>
     /// </summary>
-    public Dictionary<string, string>? Credentials { get; set; }
+    public Dictionary<string, string>? Credentials { get; set; } = [];
 
     // ==========================================
     // AWS S3
@@ -109,7 +109,7 @@ public class CloudOptions
 
         if (accessKey != null) creds["azure_storage_access_key"] = accessKey;
         if (sasToken != null) creds["azure_storage_sas_token"] = sasToken;
-        if (endpoint != null) creds["azure_endpoint"] = endpoint;
+        if (endpoint != null) creds["azure_storage_endpoint"] = endpoint;
 
         return new CloudOptions
         {

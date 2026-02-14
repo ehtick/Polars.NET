@@ -82,6 +82,7 @@ public class StreamingTests
         }
     }
     [Fact]
+    [Trait("Category","Debug")]
     public void Test_Lazy_ScanArrowStream_EndToEnd()
     {
         int totalRows = 50000;

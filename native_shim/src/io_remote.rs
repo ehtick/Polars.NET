@@ -8,29 +8,29 @@ use deltalake::kernel::transaction::{CommitBuilder};
 use deltalake::parquet::arrow::arrow_reader::ArrowReaderOptions;
 use deltalake::parquet::data_type::ByteArray;
 use deltalake::parquet::file::metadata::ParquetMetaData;
-use deltalake::{DeltaTable, DeltaTableBuilder};
+use deltalake::{DeltaTable, DeltaTableBuilder, Path};
 use deltalake::protocol::{DeltaOperation, SaveMode};
 use deltalake::parquet::arrow::async_reader::{AsyncFileReader, ParquetObjectReader};
 use deltalake::parquet::file::statistics::Statistics as ParquetStatistics;
-use polars::prelude::sync_on_close::SyncOnCloseType;
 use serde_json::{json, Value};
 use polars::{error::PolarsError, prelude::*};
 use polars_buffer::Buffer;
 use tokio::runtime::Runtime;
-use crate::io::build_scan_args;
-use crate::types::SchemaContext;
-use crate::{io::{build_cloud_options,build_parquet_write_options}, types::LazyFrameContext, utils::ptr_to_str};
+use crate::io::{build_partitioned_destination, build_scan_args, build_unified_sink_args,build_parquet_write_options};
+use crate::types::{SchemaContext, SelectorContext,LazyFrameContext};
+use crate::utils::ptr_to_str;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{ffi::CStr, os::raw::c_char};
 use std::sync::OnceLock;
 use url::Url;
 use uuid::Uuid;
-use std::collections::HashMap;
+use std::collections::{HashMap};
 use deltalake::arrow::ffi::FFI_ArrowSchema as DeltaFFISchema;
-use polars_arrow::ffi::{ArrowSchema as PolarsFFISchema, export_field_to_c};
+use polars_arrow::ffi::{ArrowSchema as PolarsFFISchema};
 use polars_arrow::ffi::import_field_from_c;
-use deltalake::arrow::datatypes::{Schema as DeltaArrowSchema,Field as DeltaArrowField};
+use deltalake::arrow::datatypes::{Schema as DeltaArrowSchema};
 use deltalake::kernel::{Action, Add, Remove, StructType, transaction};
+
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
@@ -427,6 +427,67 @@ fn build_add_action(
     }
 }
 
+pub(crate) fn parse_table_url(path_str: &str) -> PolarsResult<Url> {
+    // Case A: 这是一个标准的 URL (如 s3://, abfss://, gs://)
+    if let Ok(u) = Url::parse(path_str) {
+        // 这里可以加一个额外的检查：如果它是单盘符路径 (如 "C:/tmp")，Url::parse 可能会报错或者解析出意料之外的结果
+        // 但通常带 scheme 的 (s3://) 都会在这里成功直接返回
+        if u.has_host() || u.scheme() == "file" {
+            return Ok(u);
+        }
+    }
+
+    // Case B: 这是一个本地文件路径 (如 ./data/test 或 /tmp/test 或 C:\data\test)
+    // 必须转换为绝对路径，才能生成合法的 file:// URL
+    
+    // 尝试标准化路径 (解析 . 和 ..)
+    // 注意：canonicalize 要求路径必须存在。如果是新建表，路径可能尚不存在。
+    let abs_path = std::fs::canonicalize(path_str)
+        .or_else(|_| {
+            // 如果路径不存在 (比如新建表)，尝试手动拼接当前目录
+            std::env::current_dir().map(|cwd| cwd.join(path_str))
+        })
+        .map_err(|e| PolarsError::ComputeError(format!("Invalid local path '{}': {}", path_str, e).into()))?;
+
+    // 转换为 file:// URL
+    // 注意：from_directory_path 要求必须是绝对路径
+    Url::from_directory_path(abs_path)
+        .map_err(|_| PolarsError::ComputeError(format!("Could not convert path '{}' to file URL", path_str).into()))
+}
+
+pub(crate) fn convert_to_delta_schema(pl_schema: &Schema) -> PolarsResult<StructType> {
+    // 1. Polars Schema -> Polars Arrow Schema
+    // CompatLevel::newest() 确保使用最新的 Arrow 规范
+    let pl_arrow_schema = pl_schema.to_arrow(CompatLevel::newest());
+
+    // 2. FFI 转换循环: Polars Field -> Delta Field
+    let delta_arrow_fields = pl_arrow_schema.iter_values().map(|pl_field| {
+        // A. Export: Polars Field -> Polars FFI Struct
+        // export_field_to_c 是 Polars 提供的将 Field 导出为 C 结构体的方法
+        let pl_ffi = polars_arrow::ffi::export_field_to_c(pl_field);
+        
+        // B. Cast: Polars FFI Ptr -> Delta FFI Ptr
+        //这是最关键的一步：利用 C Data Interface 的二进制兼容性进行指针强转。
+        // 我们假设 Delta (deltalake::arrow) 的 FFI_ArrowSchema 内存布局与 Polars 的一致。
+        let delta_ffi_ptr = &pl_ffi as *const _ as *const deltalake::arrow::ffi::FFI_ArrowSchema;
+
+        // C. Import: Delta FFI -> Delta Arrow Field
+        // 使用 deltalake 依赖的 arrow crate 从 FFI 指针重建 Field
+        unsafe { deltalake::arrow::datatypes::Field::try_from(&*delta_ffi_ptr) }
+            .map_err(|e| PolarsError::ComputeError(format!("FFI Import Error: {}", e).into()))
+    }).collect::<Result<Vec<deltalake::arrow::datatypes::Field>, PolarsError>>()?;
+
+    // 3. 构建 Delta (Standard) Arrow Schema
+    let delta_arrow_schema = deltalake::arrow::datatypes::Schema::new(delta_arrow_fields);
+
+    // 4. 转换为 Delta Kernel Schema (StructType)
+    // 这一步如果不提出来，就会报你刚才那个 E0277 错误，因为 Polars Schema 没有实现 TryIntoKernel
+    let delta_schema: StructType = TryIntoKernel::<StructType>::try_into_kernel(&delta_arrow_schema)
+         .map_err(|e| PolarsError::ComputeError(format!("Failed to convert to Delta Kernel Schema: {}", e).into()))?;
+
+    Ok(delta_schema)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_sink_delta(
     lf_ptr: *mut LazyFrameContext,
@@ -441,6 +502,8 @@ pub extern "C" fn pl_sink_delta(
     compat_level: i32,
     // Sink Options
     maintain_order: bool,
+    sync_on_close: u8,
+    mkdir: bool,
     // Cloud Options
     cloud_provider: u8, // Polars sink_parquet 可能会用到，这里暂时透传
     cloud_retries: usize,
@@ -455,61 +518,10 @@ pub extern "C" fn pl_sink_delta(
     ffi_try_void!({
         let mut lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         let path_str = ptr_to_str(table_path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-        // Parse URL
-        let table_url: Url = if let Ok(u) = Url::parse(path_str) {
-            // Case A: 这是一个标准的 URL (如 s3://, abfss://, gs://)
-            u
-        } else {
-            // Case B: 这是一个本地文件路径 (如 ./data/test 或 /tmp/test)
-            // 必须转换为绝对路径，才能生成合法的 file:// URL
-            
-            // 尝试标准化路径 (解析 . 和 ..)
-            // 注意：canonicalize 要求路径必须存在。如果是新建表，
-            // 通常由外层 (C#) 保证 mkdir，或者我们这里容忍它不存在并手动拼接 CurrentDir。
-            let abs_path = std::fs::canonicalize(path_str)
-                .or_else(|_| {
-                    // 如果路径不存在 (比如新建表)，尝试手动拼接当前目录
-                    std::env::current_dir().map(|cwd| cwd.join(path_str))
-                })
-                .map_err(|e| PolarsError::ComputeError(format!("Invalid local path '{}': {}", path_str, e).into()))?;
 
-            // 转换为 file:// URL
-            // 注意：from_directory_path 要求必须是绝对路径
-            Url::from_directory_path(abs_path)
-                .map_err(|_| PolarsError::ComputeError(format!("Could not convert path '{}' to file URL", path_str).into()))?
-        };
-        // 1. 准备 Cloud Options (供 Polars 使用)
-        // Polars 的 cloud options 构建逻辑 (复用你之前的 build_cloud_options)
-        let cloud_options = unsafe {
-            build_cloud_options(
-                cloud_provider,
-                cloud_retries,
-                cloud_retry_timeout_ms,      
-                cloud_retry_init_backoff_ms, 
-                cloud_retry_max_backoff_ms,
-                cloud_cache_ttl,
-                cloud_keys,
-                cloud_values,
-                cloud_len
-            )
-        };
+        let table_url = parse_table_url(path_str)?;
 
-        // 同样也需要一个 HashMap 给 Delta Lake 用
-        let mut delta_storage_options = HashMap::new();
-        if !cloud_keys.is_null() && !cloud_values.is_null() && cloud_len > 0 {
-            let keys_slice = unsafe { std::slice::from_raw_parts(cloud_keys, cloud_len) };
-            let vals_slice = unsafe { std::slice::from_raw_parts(cloud_values, cloud_len) };
-            for i in 0..cloud_len {
-                let k_ptr = keys_slice[i];
-                let v_ptr = vals_slice[i];
-                if !k_ptr.is_null() && !v_ptr.is_null() {
-                    let k = unsafe { CStr::from_ptr(k_ptr).to_string_lossy().into_owned() };
-                    let v = unsafe { CStr::from_ptr(v_ptr).to_string_lossy().into_owned() };
-                    delta_storage_options.insert(k, v);
-                }
-            }
-        }
+        let delta_storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
 
         let save_mode = map_savemode(mode);
 
@@ -535,62 +547,28 @@ pub extern "C" fn pl_sink_delta(
                 println!("[Debug] Table exists and mode is Ignore. Skipping write.");
                 return Ok(());
             },
-            _ => {} // Continue to write
+            _ => {} 
         }
         // ==========================================
-        // Step A: 提取 Schema (Arrow FFI 极致版)
+        // Step A: Get Schema
         // ==========================================
-        // 我们必须在 sink_parquet 消耗掉 LazyFrame 之前，先拿到 Schema。
         
-        // 1. 获取 Polars Schema
+        // Convert polars schema to delta schema
         let pl_schema = lf_ctx.inner.collect_schema()
             .map_err(|e| PolarsError::ComputeError(format!("Failed to resolve schema: {}", e).into()))?;
         
-        // 2. 转为 Polars Arrow Schema (这是底层 Arrow 格式)
-        let pl_arrow_schema = pl_schema.to_arrow(CompatLevel::newest());
-
-        // 3. FFI 偷渡: Polars Arrow Field -> Delta Arrow Field
-        // 引入必要的类型 (为了避免污染全局命名空间，放在块内)
-
-        let delta_arrow_fields = pl_arrow_schema.iter_values().map(|pl_field| {
-            // A. Export: Polars Field -> Polars FFI Struct
-            // export_field_to_c 会创建符合 C Data Interface 的结构体
-            let pl_ffi = export_field_to_c(pl_field);
-            
-            // B. Cast: Polars FFI -> Delta FFI
-            // 利用 C ABI 的二进制兼容性，进行指针强转。
-            // 只要两个库都遵守 Arrow C 标准，内存布局就是完全一样的。
-            let delta_ffi_ptr = &pl_ffi as *const _ as *const DeltaFFISchema;
-
-            // C. Import: Delta FFI -> Delta Arrow Field
-            // import_field_from_c 读取 C 指针构建标准 Arrow Field
-            unsafe { DeltaArrowField::try_from(&*delta_ffi_ptr) }
-                .map_err(|e| PolarsError::ComputeError(format!("FFI Import Error: {}", e).into()))
-        }).collect::<Result<Vec<DeltaArrowField>, PolarsError>>()?;
-
-        // 4. 构建 Delta (Standard) Arrow Schema
-        let delta_arrow_schema = DeltaArrowSchema::new(delta_arrow_fields);
-
-        // 5. 转换为 Delta Kernel Schema (StructType)
-        // 使用 TryIntoKernel Trait 将标准 Arrow Schema 完美转为 Delta 的 StructType
-        // 这里的 delta_schema 会被 move 到 async 闭包里使用
-        let delta_schema: StructType = TryIntoKernel::<StructType>::try_into_kernel(&delta_arrow_schema)
-             .map_err(|e| PolarsError::ComputeError(format!("Failed to convert to Delta Kernel Schema: {}", e).into()))?;
-
-        // 2. 生成文件名
-        // Delta 习惯命名: part-<part-idx>-<uuid>-<cluster-id>.c000.snappy.parquet
-        // 这里我们简化: part-<timestamp>-<uuid>.parquet
+        let delta_schema = convert_to_delta_schema(&pl_schema)?;
+        // Generate File Name
         let file_name = format!("part-{}-{}.parquet", Utc::now().timestamp_millis(), Uuid::new_v4());
         
-        // 构造完整写入路径
-        // 注意：如果是 S3 路径，Polars 和 Delta 都需要正确处理 '/'
+        // Build File Path
         let full_write_path = if path_str.ends_with('/') {
             format!("{}{}", path_str, file_name)
         } else {
             format!("{}/{}", path_str, file_name)
         };
 
-        // 3. 构建 Polars Parquet Write Options
+        // Build Polars Parquet Write Options
         let parquet_options = build_parquet_write_options(
             compression,
             compression_level,
@@ -602,20 +580,18 @@ pub extern "C" fn pl_sink_delta(
         
         let file_format = FileWriteFormat::Parquet(parquet_options);
         
-        // 4. 执行 Polars Sink (Streaming!)
-        // 这一步是真正的重活，Polars 会流式地把数据通过网络/文件系统写出去
-
-        // 这里的 sink_parquet 调用可能会阻塞，直到写完
-        // 注意：lf_ctx.inner 此时被消耗掉
+        // Polars Sink
         let target = SinkTarget::Path(PlRefPath::new(&full_write_path));
         let destination = SinkDestination::File { target };
         
-        // 注意：SinkOptions 结构体构建可能随 Polars 版本不同，请参考原有的实现
-        let unified_args = UnifiedSinkArgs {
-            maintain_order,
-            mkdir: false, // 写单个 part 文件通常不需要递归建目录，或者由外部保证
-            sync_on_close: SyncOnCloseType::None, // 或者传入你的 sync 变量
-            cloud_options: cloud_options.map(Arc::new), 
+        // Build UnifiedSinkArgs
+        let unified_args = unsafe {
+            build_unified_sink_args(
+                mkdir, maintain_order, sync_on_close,
+                cloud_provider, cloud_retries, cloud_retry_timeout_ms,
+                cloud_retry_init_backoff_ms, cloud_retry_max_backoff_ms, cloud_cache_ttl,
+                cloud_keys, cloud_values, cloud_len
+            )
         };
 
         lf_ctx.inner
@@ -653,10 +629,7 @@ pub extern "C" fn pl_sink_delta(
 
             let mut reader = ParquetObjectReader::new(object_store.clone(), path.clone())
                 .with_file_size(file_size as u64);
-            // let file_size = reader.len().await as i64;
 
-            // let file_meta = object_store.head(&path).await
-            //     .map_err(|e| PolarsError::ComputeError(format!("Failed to get file metadata: {}", e).into()))?;
             let options = ArrowReaderOptions::default();
             let metadata = reader.get_metadata(Some(&options)).await
                 .map_err(|e| PolarsError::ComputeError(format!("Failed to read Parquet Footer: {}", e).into()))?;
@@ -667,10 +640,6 @@ pub extern "C" fn pl_sink_delta(
                 num_records, file_size, stats_json.len());
 
             // 4. 构造 Add Action
-            // let add_action = build_add_action(
-            //     file_name, 
-            //     file_meta.size as i64, 
-            // );
             let add_action = build_add_action(
                 file_name, 
                 file_size,     // 物理大小
@@ -755,4 +724,307 @@ pub extern "C" fn pl_sink_delta(
 
         Ok(())
     })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_sink_delta_partitioned(
+    lf_ptr: *mut LazyFrameContext,
+    base_path_ptr: *const c_char,
+    mode: u8,
+    
+    // --- Partition Params ---
+    partition_by_ptr: *mut SelectorContext,
+    include_keys: bool,
+    keys_pre_grouped: bool,
+    max_rows_per_file: usize,
+    approx_bytes_per_file: u64,
+
+    // --- Parquet Options ---
+    compression: u8,        
+    compression_level: i32, 
+    statistics: bool,       
+    row_group_size: usize,  
+    data_page_size: usize,
+    compat_level: i32,
+     // Delta SaveMode (Append/Overwrite/...)
+    
+    // --- Unified Options ---
+    maintain_order: bool,
+    sync_on_close: u8,
+    mkdir: bool,
+    
+    // --- Cloud Params ---
+    cloud_provider: u8,
+    cloud_retries: usize,
+    cloud_retry_timeout_ms: u64,      
+    cloud_retry_init_backoff_ms: u64, 
+    cloud_retry_max_backoff_ms: u64,  
+    cloud_cache_ttl: u64,
+    cloud_keys: *const *const c_char,
+    cloud_values: *const *const c_char,
+    cloud_len: usize
+) {
+ffi_try_void!({
+        let mut lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+        let base_path_str = ptr_to_str(base_path_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+
+        // 1. 获取 Schema & 解析分区列
+        let schema = lf_ctx.inner.collect_schema()
+            .map_err(|e| PolarsError::ComputeError(format!("Failed to collect schema: {}", e).into()))?;
+
+        let partition_cols = if !partition_by_ptr.is_null() {
+            let selector_ctx = unsafe { &*partition_by_ptr };
+            let ignored = PlHashSet::new();
+            selector_ctx.inner.into_columns(&schema, &ignored)?
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<String>>()
+        } else {
+            Vec::new()
+        };
+        let rt = get_runtime();
+        let save_mode = map_savemode(mode);
+        let write_id = Uuid::new_v4(); // 本次写入的唯一 ID
+
+        // 2. 构造暂存目录路径 (Staging Path)
+        // 例如: s3://bucket/table/.tmp_write_<uuid>
+        let staging_dir_name = format!(".tmp_write_{}", write_id);
+        
+        let staging_uri = if base_path_str.contains("://") {
+            // Remote Path
+            format!("{}/{}", base_path_str.trim_end_matches('/'), staging_dir_name)
+        } else {
+            // Local Path
+            std::path::Path::new(base_path_str)
+                .join(&staging_dir_name)
+                .to_string_lossy()
+                .to_string()
+        };
+        // 3. 构建 Cloud Options & Delta Table
+        let delta_storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
+        
+        let (mut table, old_files_to_remove, should_skip) = rt.block_on(async {
+            let table_url = parse_table_url(base_path_str)?;
+            let dt = DeltaTable::try_from_url_with_storage_options(table_url.clone(), delta_storage_options.clone())
+                .await.map_err(|e| PolarsError::ComputeError(format!("Delta init error: {}", e).into()))?;
+            
+            let mut old_files = Vec::new();
+            let mut skip_write = false;
+
+            if dt.version() >= Some(0) {
+                match save_mode {
+                    // Case A: ErrorIfExists -> 直接报错
+                    SaveMode::ErrorIfExists => {
+                        return Err(PolarsError::ComputeError(format!("Table already exists at {}", table_url).into()));
+                    },
+                    // Case B: Ignore -> 标记跳过
+                    SaveMode::Ignore => {
+                        skip_write = true;
+                    },
+                    // Case C: Overwrite -> 收集旧文件
+                    SaveMode::Overwrite => {
+                        let files = dt.get_files_by_partitions(&[]).await
+                            .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))?;
+                        for p in files {
+                            old_files.push(p.to_string());
+                        }
+                    },
+                    // Case D: Append -> 正常继续
+                    _ => {} 
+                }
+            }
+            Ok::<_, PolarsError>((dt, old_files, skip_write))
+        })?;
+
+        if should_skip {
+            return Ok(());
+        }
+
+        // 4. 执行 Polars Sink -> 写入到 Staging 目录
+        let destination = unsafe {
+            build_partitioned_destination(
+                std::ffi::CString::new(staging_uri.clone()).unwrap().as_ptr(), 
+                ".parquet", 
+                &schema,
+                partition_by_ptr,
+                include_keys,
+                keys_pre_grouped,
+                max_rows_per_file,
+                approx_bytes_per_file
+            )?
+        };
+
+        let write_options_arc = build_parquet_write_options(
+            compression, compression_level, statistics, row_group_size, data_page_size, compat_level
+        )?;
+        let file_format = FileWriteFormat::Parquet(write_options_arc);
+        
+        let unified_args = unsafe {
+            build_unified_sink_args(
+                mkdir, maintain_order, sync_on_close,
+                cloud_provider, cloud_retries, cloud_retry_timeout_ms,
+                cloud_retry_init_backoff_ms, cloud_retry_max_backoff_ms, cloud_cache_ttl,
+                cloud_keys, cloud_values, cloud_len
+            )
+        };
+
+        // 执行写操作
+        lf_ctx.inner
+            .sink(destination, file_format, unified_args)?
+            .collect()?;
+            
+        // ==========================================
+
+        // 5. 扫描 Staging -> Move -> Commit
+        rt.block_on(async {
+            // A. Auto Create Table
+            if table.version() < Some(0) {
+                 let delta_schema = convert_to_delta_schema(&schema)?;
+                 table = table.create()
+                    .with_columns(delta_schema.fields().cloned())
+                    .with_partition_columns(partition_cols.clone()) 
+                    .await
+                    .map_err(|e| PolarsError::ComputeError(format!("Create table error: {}", e).into()))?;
+            }
+
+            let object_store = table.object_store();
+            let staging_path = Path::from(staging_dir_name.clone());
+
+            let mut actions = Vec::new();
+            
+            // B. 遍历 Staging 目录
+            use futures::StreamExt;
+            let mut files_stream = object_store.list(Some(&staging_path));
+            
+            while let Some(item) = files_stream.next().await {
+                let meta = item.map_err(|e| PolarsError::ComputeError(format!("List staging error: {}", e).into()))?;
+                let src_path_str = meta.location.to_string(); 
+
+                if src_path_str.ends_with(".parquet") {
+                    // C. 关键修复：先在 Staging 原地读取 Stats，确保数据一致性
+                    let file_size = meta.size as i64;
+                    let mut reader = ParquetObjectReader::new(object_store.clone(), meta.location.clone())
+                            .with_file_size(meta.size as u64);
+                    let options = ArrowReaderOptions::default();
+                    let metadata = reader.get_metadata(Some(&options)).await
+                            .map_err(|e| PolarsError::ComputeError(format!("Read footer error: {}", e).into()))?;
+                    
+                    let (_num_records, stats_json) = extract_delta_stats(&metadata)?;
+
+                    // D. 计算目标路径 (Rename)
+                    // 去掉 staging 前缀 -> Year=2024/part-0.parquet
+                    let rel_path = src_path_str.trim_start_matches(&format!("{}/", staging_dir_name));
+                    
+                    // 注入 UUID 防止覆盖 -> Year=2024/part-0-<uuid>.parquet
+                    let dest_path_str = rel_path.replace(".parquet", &format!("-{}.parquet", write_id));
+                    
+                    let src_path = Path::from(src_path_str.clone());
+                    let dest_path = Path::from(dest_path_str.clone());
+                    let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
+
+                    // E. 执行 Rename
+                    object_store.rename(&src_path, &dest_path).await
+                         .map_err(|e| PolarsError::ComputeError(format!("Failed to rename file: {}", e).into()))?;
+                    
+                    // F. 构造 Add Action (使用 dest_path，但 stats 来自 src)
+                    let add = Add {
+                        path: dest_path_str,
+                        size: file_size,
+                        partition_values,
+                        modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+                        data_change: true,
+                        stats: Some(stats_json),
+                        ..Default::default()
+                    };
+                    actions.push(Action::Add(add));
+                }
+            }
+
+            // G. 处理 Overwrite (删除旧文件)
+            if let SaveMode::Overwrite = save_mode {
+                for old_path in old_files_to_remove {
+                     let remove = Remove {
+                         path: old_path,
+                         deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
+                         data_change: true,
+                         ..Default::default()
+                     };
+                     actions.push(Action::Remove(remove));
+                }
+            }
+
+            if actions.is_empty() {
+                return Ok::<(), PolarsError>(());
+            }
+
+            // H. 提交事务
+            let operation = DeltaOperation::Write {
+                mode: save_mode,
+                partition_by: if !partition_cols.is_empty() { Some(partition_cols) } else { None },
+                predicate: None,
+            };
+
+            let _ver = transaction::CommitBuilder::default()
+                .with_actions(actions)
+                .build(
+                    table.state.as_ref().map(|s| s as &dyn transaction::TableReference), 
+                    table.log_store().clone(), 
+                    operation
+                )
+                .await
+                .map_err(|e| PolarsError::ComputeError(format!("Commit failed: {}", e).into()))?;
+            Ok(())
+        })?;
+        
+        Ok(())
+    })
+}
+
+// -------------------------------------------------------------------------
+// Helper Functions (如果尚未定义，需补充)
+// -------------------------------------------------------------------------
+
+/// 简单的 Hive 路径解析器
+/// path: "date=2023-01-01/region=US/part-xxx.parquet"
+/// cols: ["date", "region"]
+fn parse_hive_partitions(path: &str, cols: &[String]) -> HashMap<String, Option<String>> {
+    let mut map = HashMap::new();
+    if cols.is_empty() { return map; }
+    
+    let parts: Vec<&str> = path.split('/').collect();
+    for part in parts {
+        if let Some((k, v)) = part.split_once('=') {
+            if cols.contains(&k.to_string()) {
+                // 这里建议做 url decode，防止特殊字符问题
+                let decoded_v = urlencoding::decode(v).map(|c| c.into_owned()).unwrap_or(v.to_string());
+                map.insert(k.to_string(), Some(decoded_v));
+            }
+        }
+    }
+    // Delta 规范要求所有分区列必须存在
+    for col in cols {
+        map.entry(col.clone()).or_insert(None);
+    }
+    map
+}
+
+fn build_delta_storage_options_map(
+    keys: *const *const c_char,
+    values: *const *const c_char,
+    len: usize
+) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if !keys.is_null() && !values.is_null() && len > 0 {
+        let keys_slice = unsafe { std::slice::from_raw_parts(keys, len) };
+        let vals_slice = unsafe { std::slice::from_raw_parts(values, len) };
+        for i in 0..len {
+            if !keys_slice[i].is_null() && !vals_slice[i].is_null() {
+                let k = unsafe { std::ffi::CStr::from_ptr(keys_slice[i]).to_string_lossy().into_owned() };
+                let v = unsafe { std::ffi::CStr::from_ptr(vals_slice[i]).to_string_lossy().into_owned() };
+                map.insert(k, v);
+            }
+        }
+    }
+    map
 }

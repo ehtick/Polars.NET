@@ -1514,11 +1514,8 @@ pub extern "C" fn pl_lazyframe_sink_parquet_partitioned(
     ffi_try_void!({
         let mut lf_ctx = unsafe { Box::from_raw(lf_ptr) };
 
-        // 1. 获取 Schema (这是为了解析 Partition Selector)
         let schema = lf_ctx.inner.collect_schema()?;
 
-        // 2. 召唤神龙：构建 Partitioned Destination
-        // 注意传入后缀 ".parquet"
         let destination = unsafe {
             build_partitioned_destination(
                 base_path_ptr,
@@ -1532,7 +1529,6 @@ pub extern "C" fn pl_lazyframe_sink_parquet_partitioned(
             )?
         };
 
-        // 3. 构建 Parquet Format (复用)
         let write_options_arc = build_parquet_write_options(
             compression,
             compression_level,
@@ -1543,7 +1539,6 @@ pub extern "C" fn pl_lazyframe_sink_parquet_partitioned(
         )?;
         let file_format = FileWriteFormat::Parquet(write_options_arc);
 
-        // 4. 构建 Unified Args (复用)
         let unified_args = unsafe {
             build_unified_sink_args(
                 mkdir,
@@ -1561,7 +1556,6 @@ pub extern "C" fn pl_lazyframe_sink_parquet_partitioned(
             )
         };
 
-        // 5. 发射！
         let _ = lf_ctx.inner
             .sink(destination, file_format, unified_args)?
             .collect()?;

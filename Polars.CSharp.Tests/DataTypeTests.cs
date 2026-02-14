@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using static Polars.CSharp.Polars;
 namespace Polars.CSharp.Tests;
 
@@ -581,28 +582,38 @@ public class DataTypeTests
         Assert.Equal(DataTypeKind.Int32, dtype.InnerType.Kind);
     }
     [Fact]
-    public void Test_Float_vs_Double_Resolution()
+    public void Test_Float_Double_Half_Resolution()
     {
         // 1. 测试 Double (f64) - C# 默认行为
-        // 不加后缀，默认 double
         var sF64 = new Series("f64", [1.1, 2.2, null]); 
-        
-        // 验证它调用的确实是 double 版本
-        // (可以通过 GetValue<double?> 成功读取来验证)
+        Assert.Equal(DataType.Float64, sF64.DataType); // 验证类型推断
         Assert.Equal(1.1, sF64.GetValue<double?>(0));
         Assert.Null(sF64.GetValue<double?>(2));
         
         // 2. 测试 Float (f32) - 必须加 'f' 后缀
         var sF32 = new Series("f32", [1.1f, 2.2f, null]);
-        
-        // 验证精度 (Float 精度较低，但在赋值场景下应当一致)
+        Assert.Equal(DataType.Float32, sF32.DataType);
         Assert.Equal(1.1f, sF32.GetValue<float?>(0));
         Assert.Null(sF32.GetValue<float?>(2));
 
-        // 3. 验证“迷茫”情况：
-        // 下面这行代码如果解开注释，C# 编译器会直接报错，根本不会运行到 Polars
-        // 错误：无法从 double 隐式转换为 float，数组类型推断失败
-        // var sMixed = new Series("mixed", [1.1, 2.2f]); 
+        // 3. [NEW] 测试 Float16 (f16) - Polars 0.53 新特性
+        // 注意：.NET 中对应的是 System.Half
+        // C# 没有 f16 的字面量后缀，所以必须显式强转 (Half)
+        // 集合表达式会自动推断为 Half?[]
+        var sF16 = new Series("f16", [(Half)1.1f, (Half)2.2f, null]);
+
+        // 验证 Polars 是否正确识别为 Float16
+        // 前提：你的 DataType 枚举里要加上 Float16 = 12 (或者是对应的值)
+        Assert.Equal(DataType.Float16, sF16.DataType);
+
+        // 验证读取
+        // GetValue 泛型需要支持 Half?
+        Assert.Equal((Half)1.1f, sF16.GetValue<Half?>(0));
+        Assert.Equal((Half)2.2f, sF16.GetValue<Half?>(1));
+        Assert.Null(sF16.GetValue<Half?>(2));
+        
+        // 4. 验证混合类型报错机制 (Compile Time Safety)
+        // var sMixed = new Series("mixed", [1.1, (Half)2.2]); // 编译报错：无法统一类型
     }
 
     [Fact]
@@ -650,7 +661,74 @@ public class DataTypeTests
         
         Assert.Equal(hugeULong, sU64.GetValue<ulong?>(0));
     }
+    [Fact]
+    public void Test_Float16_Million_Rows_SIMD_Stress()
+    {
+        const int RowCount = 1_000_000;
+        
+        // 1. 准备数据：100万个可空 Half
+        // 模式：0, 1, 2 ... 99, 0, 1 ... (循环)
+        // 每逢整除 100 为 Null (Index 0, 100, 200...)
+        var rawData = new Half?[RowCount];
+        
+        // 数据生成不计入 Polars 耗时
+        for (int i = 0; i < RowCount; i++)
+        {
+            if (i % 100 == 0)
+                rawData[i] = null;
+            else
+                rawData[i] = (Half)(i % 100);
+        }
 
+        Console.WriteLine($"🚀 Starting ingestion of {RowCount:N0} f16 rows (SIMD Check)...");
+
+        // 2. 核心时刻：Series 构造
+        // 这一步会触发你的 SIMD 优化的 Arrow Buffer 构建逻辑 (Bitmask + Value Buffer Copy)
+        var sw = Stopwatch.StartNew();
+        
+        using var s = new Series("f16_million", rawData);
+        
+        sw.Stop();
+        
+        // 打印耗时，看看有没有跑进 5ms
+        Console.WriteLine($"✅ Ingestion took: {sw.Elapsed.TotalMilliseconds:F2} ms");
+        Console.WriteLine($"Throughput: {RowCount / sw.Elapsed.TotalSeconds / 1_000_000:F2} M rows/sec");
+
+        // 3. 验证元数据 (Sanity Check)
+        Assert.Equal(RowCount, s.Length);
+        Assert.Equal("f16_million", s.Name);
+        
+        // [关键] 必须是 Float16，不能是 Float32
+        // 这证明数据确实以 2字节/元素 的形式存在于 Rust 内存中
+        Assert.Equal(DataType.Float16, s.DataType); 
+        
+        // 验证 Null 数量 (1,000,000 / 100 = 10,000)
+        Assert.Equal(10_000, s.NullCount);
+
+        // 4. 验证数据值 (抽样检查 - 验证内存没有错位)
+        // Index 0 应该是 Null
+        Assert.Null(s.GetValue<Half?>(0));
+        
+        // Index 1 应该是 1.0
+        Assert.Equal((Half)1, s.GetValue<Half?>(1));
+        
+        // Index 99 应该是 99.0
+        Assert.Equal((Half)99, s.GetValue<Half?>(99));
+        
+        // Index 100 又是 Null
+        Assert.Null(s.GetValue<Half?>(100));
+
+        // 5. 验证计算能力 (Compute Check)
+        // 逻辑验证：
+        // 每一组 0..99 (index 0 是 null)，剩下的和是 1+2+...+99 = 4950
+        // 一共 10,000 组
+        // 预期总和 = 4950 * 10,000 = 49,500,000
+        
+        // Polars 计算 Sum 时通常会将 f16 提升为 f64 以防溢出
+        double sum = s.Cast(DataType.Float64).Sum<double>(); 
+        
+        Assert.Equal(49_500_000.0, sum);
+    }
     [Fact]
     public void Test_Edge_Case_Mixed_Numeric_Types()
     {

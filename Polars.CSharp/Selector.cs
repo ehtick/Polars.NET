@@ -157,6 +157,11 @@ namespace Polars.CSharp
             return new Selector(newHandle);
         }
         /// <summary>
+        /// Select columns by name.
+        /// </summary>
+        public static Selector Col(params string[] names)
+            => Cols(names);
+        /// <summary>
         /// Convert the selector to an Expression.
         /// This allows using selectors inside Select(), WithColumns(), etc.
         /// </summary>

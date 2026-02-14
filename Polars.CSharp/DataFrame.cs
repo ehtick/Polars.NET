@@ -2213,6 +2213,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="statistics">Compute and write column statistics. Defaults to false.</param>
     /// <param name="rowGroupSize">Number of rows per row group. 0 means use default.</param>
     /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public void WriteParquet(
         string path,
         ParquetCompression compression = ParquetCompression.Snappy,
@@ -2220,18 +2221,26 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool statistics = false,
         int rowGroupSize = 0,
         int dataPageSize = 0,
-        bool parallel = true)
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
     {
-        PolarsWrapper.WriteParquet(
-            Handle,
+        var lf = Lazy();
+
+        lf.SinkParquet(
             path,
-            compression.ToNative(),
+            compression,
             compressionLevel,
             statistics,
             rowGroupSize,
             dataPageSize,
-            0,
-            parallel
+            compatLevel,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            cloudOptions
         );
     }
     /// <summary>

@@ -802,7 +802,6 @@ public class LazyFrame : IDisposable
 
         var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
 
-        // 2. Call Internal Wrapper
         var h = PolarsWrapper.ScanDelta(
             path,
             version,
@@ -844,7 +843,9 @@ public class LazyFrame : IDisposable
         uint rowGroupSize = 512 * 1024,
         uint dataPageSize = 1024 * 1024,
         int compatLevel = -1,
-        bool maintainOrder = false,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
         CloudOptions? cloudOptions=null)
     {
         var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
@@ -859,6 +860,108 @@ public class LazyFrame : IDisposable
             dataPageSize,
             compatLevel,
             maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir,
+            provider.ToNative(),
+            retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
+            cacheTtl,
+            keys,
+            values
+        );
+    }
+    /// <summary>
+    /// Sink the LazyFrame to a Delta Lake table with partition discovery.
+    /// <para>
+    /// This operation performs a "blind write" of partitioned Parquet files (Hive-style) 
+    /// and then commits a transaction to the Delta Log, registering the new files.
+    /// </para>
+    /// </summary>
+    /// <param name="path">
+    /// Path to the root of the Delta Table. Can be local (e.g. "./data/table") 
+    /// or remote (e.g. "s3://bucket/table").
+    /// </param>
+    /// <param name="partitionBy">
+    /// The selector(s) to partition the data by. 
+    /// Directories will be created in the format "col=value".
+    /// </param>
+    /// <param name="mode">
+    /// Save mode (Append, Overwrite, ErrorIfExists, Ignore). Default is Append.
+    /// </param>
+    /// <param name="includeKeys">
+    /// Whether to include the partition keys in the Parquet files themselves. 
+    /// Default is true (recommended for Delta Lake compatibility).
+    /// </param>
+    /// <param name="keysPreGrouped">
+    /// Assert that the keys are already pre-grouped. This can speed up the operation if true.
+    /// </param>
+    /// <param name="maxRowsPerFile">Maximum number of rows per file. 0 means no limit.</param>
+    /// <param name="approxBytesPerFile">Approximate size in bytes per file. 0 means no limit.</param>
+    /// <param name="compression">Compression codec to use (Snappy, Zstd, etc.).</param>
+    /// <param name="compressionLevel">Compression level (depends on the codec).</param>
+    /// <param name="statistics">
+    /// Write statistics to the Parquet file. 
+    /// Delta Lake uses these stats for data skipping, so 'true' is highly recommended.
+    /// </param>
+    /// <param name="rowGroupSize">Target row group size (in rows).</param>
+    /// <param name="dataPageSize">Target data page size (in bytes).</param>
+    /// <param name="compatLevel">IPC format compatibility.</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
+    /// <param name="mkdir">Create parent directories if they don't exist.</param>
+    /// <param name="cloudOptions">Options for cloud storage authentication and configuration.</param>
+    public void SinkDeltaPartitioned(
+        string path,
+        Selector partitionBy,
+        DeltaSaveMode mode = DeltaSaveMode.Append,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = true, 
+        uint rowGroupSize = 0,
+        uint dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = 
+            CloudOptions.ParseCloudOptions(cloudOptions);
+
+        PolarsWrapper.SinkDeltaPartitioned(
+            Handle,
+            path,
+            
+            // --- Delta Options ---
+            mode.ToNative(), // 确保有对应的扩展方法进行转换
+
+            // --- Partition Params ---
+            partitionBy.Handle,
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile > 0 ? (nuint)maxRowsPerFile : 0,
+            approxBytesPerFile > 0 ? (ulong)approxBytesPerFile : 0,
+
+            // --- Parquet Options ---
+            compression.ToNative(),
+            compressionLevel,
+            statistics,
+            rowGroupSize > 0 ? (nuint)rowGroupSize : 0,
+            dataPageSize > 0 ? (nuint)dataPageSize : 0,
+            compatLevel, // Wrapper 内部会处理 safeCompatLevel 逻辑，或者在此处处理皆可
+
+            // --- Unified Options ---
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir,
+
+            // --- Cloud Params ---
             provider.ToNative(),
             retries,
             retryTimeoutMs,
@@ -2081,6 +2184,88 @@ public class LazyFrame : IDisposable
         );
     }
     /// <summary>
+    /// Sink the LazyFrame to a set of Parquet files, partitioned by the specified selector.
+    /// <para>
+    /// This writes the dataset to a directory, splitting the data into multiple files based on the
+    /// partition key(s) defined in <paramref name="partitionBy"/>.
+    /// </para>
+    /// </summary>
+    /// <param name="path">Base path to the output directory.</param>
+    /// <param name="partitionBy">The selector(s) to partition the data by.</param>
+    /// <param name="includeKeys">Whether to include the partition keys in the output files.</param>
+    /// <param name="keysPreGrouped">
+    /// Assert that the keys are already pre-grouped. This can speed up the operation if true.
+    /// Use with caution: if the data is not grouped, the output may be incorrect.
+    /// </param>
+    /// <param name="maxRowsPerFile">Maximum number of rows per file. 0 means no limit.</param>
+    /// <param name="approxBytesPerFile">Approximate size in bytes per file. 0 means no limit.</param>
+    /// <param name="compression">Compression codec to use.</param>
+    /// <param name="compressionLevel">Compression level (depends on the codec).</param>
+    /// <param name="statistics">Write statistics to the parquet file.</param>
+    /// <param name="rowGroupSize">Target row group size (in rows).</param>
+    /// <param name="dataPageSize">Target data page size (in bytes).</param>
+    /// <param name="compatLevel">IPC format compatibility, -1: oldest, 0: default, 1: newest.</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
+    /// <param name="mkdir">Create parent directories if they don't exist (Local file system only).</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
+    public void SinkParquetPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = false,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        // Parse cloud options using the helper
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
+
+        PolarsWrapper.SinkParquetPartitioned(
+            Handle,
+            path,
+            
+            // --- Partition Params ---
+            partitionBy.Handle, 
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile > 0 ? (nuint)maxRowsPerFile : 0,
+            approxBytesPerFile > 0 ? (ulong)approxBytesPerFile : 0,
+
+            // --- Parquet Options ---
+            compression.ToNative(),
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            compatLevel,
+
+            // --- Unified Options ---
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir,
+
+            // --- Cloud Params ---
+            provider.ToNative(),
+            retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
+            cacheTtl,
+            keys,
+            values
+        );
+    }
+    /// <summary>
     /// Sink the LazyFrame to an IPC (Arrow) file.
     /// <para>
     /// This allows for streaming execution.
@@ -2255,7 +2440,6 @@ public class LazyFrame : IDisposable
     {
         var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
 
-        // 3. 调用 Wrapper
         PolarsWrapper.SinkCsv(
             Handle,
             path,
@@ -2263,14 +2447,14 @@ public class LazyFrame : IDisposable
             // CSV Writer Options
             includeHeader,
             includeBom,
-            batchSize,       // Wrapper 会转为 nuint
-            checkExtension,  // New
+            batchSize,       
+            checkExtension,  
 
             // Compression
-            compression.ToNative(), // 转为 PlExternalCompression
+            compression.ToNative(), 
             compressionLevel,
 
-            // Serialize Options (顺序已变!)
+            // Serialize Options 
             separator,
             quoteChar,
             quoteStyle.ToNative(),
@@ -2285,15 +2469,15 @@ public class LazyFrame : IDisposable
 
             // Unified Sink Options
             maintainOrder,
-            syncOnClose.ToNative(), // Wrapper 接收 byte 或枚举
+            syncOnClose.ToNative(), 
             mkdir,
 
             // Cloud Options
             provider.ToNative(),
             retries,
-            retryTimeoutMs,      // New
-            retryInitBackoffMs,  // New
-            retryMaxBackoffMs,   // New
+            retryTimeoutMs,      
+            retryInitBackoffMs,  
+            retryMaxBackoffMs,   
             cacheTtl,
             keys,
             values

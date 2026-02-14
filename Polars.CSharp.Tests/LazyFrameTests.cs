@@ -700,11 +700,11 @@ HR,50";
     public void Test_Drop_BySelector()
     {
         // 1. Arrange
-        var df = DataFrame.From(new[]
-        {
+        var df = DataFrame.From(
+        [
             new { A = 1, B = 2.2, C = "hello" },
             new { A = 3, B = 4.4, C = "world" }
-        });
+        ]);
 
         // 2. Act: 使用 Selector API 删除
         // 假设我们不想看 'B' 列
@@ -724,13 +724,13 @@ HR,50";
     [Fact]
     public void Test_Lazy_Unique()
     {
-        var df = DataFrame.From(new[]
-        {
+        var df = DataFrame.From(
+        [
             new { A = 1, B = 1 },
             new { A = 1, B = 2 },
             new { A = 2, B = 3 },
             new { A = 1, B = 1 } // Duplicate of first row
-        });
+        ]);
 
         // 1. Test Selector (Subset=[A])
         // Keep First -> 应该保留 A=1(row0), A=2(row2)
@@ -759,5 +759,68 @@ HR,50";
         // Case C: String overload
         var res3 = lf.Unique("A", "B").Collect();
         Assert.Equal(3, res3.Height); // (1,1), (1,2), (2,3) are kept. The last (1,1) dropped.
+    }
+    [Fact]
+    public void Test_LazyPivot_With_Schema_Injection()
+    {
+        // 1. 准备原始数据 (Long Format)
+        // 典型的销售记录：日期、产品、销量
+        var df = DataFrame.FromColumns( new
+            {
+                date = new[] {"2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"},
+                product = new[] {"Apple", "Banana", "Apple", "Banana"},
+                sales = new[] {100, 200, 150, 300}
+            });
+        var lf = df.Lazy();
+
+        // 2. 准备 "剧透" DataFrame (onColumns)
+        // 这一步告诉 Lazy 引擎：
+        // "喂，虽然你还没读数据，但我告诉你，'product' 这一列透视后，
+        // 会生成两列，名字分别叫 'Apple' 和 'Banana'。"
+        // 注意：这里的顺序决定了结果列的顺序
+        var expectedColumnsDf = new Series("product", ["Banana", "Apple"]).ToFrame(); 
+
+        // 3. 执行 Lazy Pivot
+        var pivotedLf = lf.Pivot(
+            index: ["date"],          // 行索引：日期
+            columns:["product"],     // 列索引：产品
+            values: ["sales"],        // 值：销量
+            onColumns: expectedColumnsDf,// <--- 注入 Schema
+            aggregateFunction: PivotAgg.Sum, // 如果有重复，求和
+            maintainOrder: true          // 保持 onColumns 的列顺序
+        );
+
+        // 4. 验证 Schema (此时还未计算，但 Schema 应该已经有了)
+        // Lazy 模式下最神奇的就是这里，没跑数据，但已经知道有 Apple 和 Banana 了
+        var schema = pivotedLf.Schema;
+        Assert.Contains("Banana", schema.ColumnNames);
+        Assert.Contains("Apple", schema.ColumnNames);
+        
+        // 5. 触发计算
+        var result = pivotedLf.Collect();
+
+        // 6. 验证结果
+        // 应该变成了 Wide Format
+        /*
+        ┌────────────┬────────┬───────┐
+        │ date       ┆ Banana ┆ Apple │
+        │ ---        ┆ ---    ┆ ---   │
+        │ str        ┆ i32    ┆ i32   │
+        ╞════════════╪════════╪═══════╡
+        │ 2024-01-01 ┆ 200    ┆ 100   │
+        │ 2024-01-02 ┆ 300    ┆ 150   │
+        └────────────┴────────┴───────┘
+        */
+        
+        // 验证列顺序 (由 onColumns 决定，Banana 在前)
+        Assert.Equal("date", result.ColumnNames[0]);
+        Assert.Equal("Banana", result.ColumnNames[1]);
+        Assert.Equal("Apple", result.ColumnNames[2]);
+
+        // 验证数据
+        Assert.Equal(200, result["Banana"][0]); // 01-01 Banana
+        Assert.Equal(100, result["Apple"][0]);  // 01-01 Apple
+        Assert.Equal(300, result["Banana"][1]); // 01-02 Banana
+        Assert.Equal(150, result["Apple"][1]);  // 01-02 Apple
     }
 }

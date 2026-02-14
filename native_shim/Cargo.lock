@@ -2578,6 +2578,7 @@ dependencies = [
  "chrono",
  "deltalake",
  "flate2",
+ "futures",
  "mimalloc",
  "polars",
  "polars-arrow",
@@ -2589,6 +2590,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+ "urlencoding",
  "uuid",
 ]
 
