@@ -1,5 +1,6 @@
 using Polars.Integration.Tests.Fixtures;
 using Polars.CSharp;
+using static Polars.CSharp.Polars;
 using System.Text;
 using Minio;
 using Minio.DataModel.Args;
@@ -548,5 +549,663 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         Assert.DoesNotContain("Should_Not_Exist", dfFinal["Msg"].ToArray<string>());
 
         Console.WriteLine("Delta Partitioned Full Cycle Test Passed!");
+    }
+    [Fact]
+    [Trait("DeltaLake", "Delete")]
+    public void Test_Sink_And_Delete_Delta_Full_Cycle()
+    {
+        // ==========================================
+        // 1. 环境与鉴权准备
+        // ==========================================
+        var tableName = $"delta_delete_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+
+        // 核心配置：MinIO 兼容性 + 原子提交支持
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+        
+        // ==========================================
+        // 2. 初始化写入 (Version 1) - 带分区
+        // ==========================================
+        Console.WriteLine("Step 1: Initial Write (Partitioned by Year)...");
+        // 数据结构：
+        // 2023: ID 1, 2
+        // 2024: ID 3, 4, 5
+        using (var df = DataFrame.FromColumns(new { 
+            Id = new[] { 1, 2, 3, 4, 5 }, 
+            Msg = new[] { "A", "B", "C", "D", "E" },
+            Year = new[] { "2023", "2023", "2024", "2024", "2024" }
+        }))
+        {
+            df.Lazy().SinkDeltaPartitioned(
+                rootUrl, 
+                partitionBy: Selector.Cols("Year"), 
+                mode: DeltaSaveMode.Append, 
+                cloudOptions: options
+            );
+        }
+
+        // 验证 V0 (5 rows)
+        using var dfV1 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        // dfV1.Show();
+        Assert.Equal(5, dfV1.Height);
+
+        // ==========================================
+        // 3. 执行删除：部分删除 (Rewrite Test)
+        // ==========================================
+        // 目标：删除 Year='2024' 分区中 Id=4 的行。
+        // 预期：2024 分区文件被重写，Id 3 和 5 保留。
+        Console.WriteLine("Step 2: Delete Row (Id=4) - Rewrite Partition 2024...");
+        
+        // Predicate: (Year == '2024') & (Id == 4)
+        // 注意：我们必须构造一个 Expr 传给 DeleteDelta
+        var predicateRewrite = (Col("Year") == Lit("2024")) & (Col("Id")==4);
+        
+        DeleteDelta(rootUrl, predicateRewrite, cloudOptions: options);
+
+        // 验证 V2 (应该剩 4 行: 1,2,3,5)
+        using var dfV2 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("Id");
+        // dfV2.Show();
+        Assert.Equal(4, dfV2.Height);
+        Assert.DoesNotContain(4, dfV2["Id"].ToArray<int>());
+        Assert.Contains(3, dfV2["Id"].ToArray<int>());
+        Assert.Contains(5, dfV2["Id"].ToArray<int>());
+
+        // ==========================================
+        // 4. 执行删除：完全删除 (Drop Partition Test)
+        // ==========================================
+        // 目标：删除 Year='2023' 的所有行。
+        // 预期：2023 分区文件被直接 Remove，不生成新文件。
+        Console.WriteLine("Step 3: Delete Partition (Year='2023') - Drop Files...");
+        
+        var predicateDrop = Col("Year") == Lit("2023");
+        
+        DeleteDelta(rootUrl, predicateDrop, cloudOptions: options);
+
+        // 验证 V3 (应该剩 2 行: 3, 5)
+        using var dfV3 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("Id");
+        // dfV3.Show();
+        Assert.Equal(2, dfV3.Height);
+        Assert.DoesNotContain(1, dfV3["Id"].ToArray<int>());
+        Assert.DoesNotContain(2, dfV3["Id"].ToArray<int>());
+        Assert.Equal("2024", dfV3["Year"].ToArray<string>()[0]); // 只剩 2024
+
+        // ==========================================
+        // 5. 执行删除：无匹配 (No-op Test)
+        // ==========================================
+        // 目标：删除 Id=999 (不存在)。
+        // 预期：不产生新版本 (或者产生空提交)，数据不变。
+        Console.WriteLine("Step 4: Delete Non-existent (Id=999) - No-op...");
+        
+        var predicateNoOp = Col("Id") == 999;
+        
+        DeleteDelta(rootUrl, predicateNoOp, cloudOptions: options);
+
+        // 验证 V4 (数据应与 V3 一致)
+        using var dfV4 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        // dfV4.Show();
+        Assert.Equal(2, dfV4.Height);
+
+        // ==========================================
+        // 6. Time Travel 验证
+        // ==========================================
+        Console.WriteLine("Step 5: Time Travel Check...");
+        
+        // 回溯到 V1 (5 行)
+        using var dfBackV0 = LazyFrame.ScanDelta(rootUrl, version: 1, cloudOptions: options).Collect();
+        // dfBackV0.Show();
+        // Assert.Equal(5, dfBackV0.Height);
+        
+        // 回溯到 V2 (删除 Id=4 后，剩 4 行)
+        using var dfBackV1 = LazyFrame.ScanDelta(rootUrl, version: 2, cloudOptions: options).Collect();
+        // dfBackV1.Show();
+        Assert.Equal(4, dfBackV1.Height);
+        Assert.DoesNotContain(4, dfBackV1["Id"].ToArray<int>());
+
+        Console.WriteLine("Delta Delete Full Cycle Passed!");
+    }
+    [Fact]
+    [Trait("DeltaLake", "Upsert")]
+    public void Test_Upsert_Delta_Full_Cycle_Upsert()
+    {
+        // ==========================================
+        // 1. 环境与鉴权准备 (S3/MinIO)
+        // ==========================================
+        var tableName = $"delta_merge_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+        
+        // ==========================================
+        // 2. [Target] 初始化历史数据 (Version 1)
+        // ==========================================
+        Console.WriteLine("Step 1: Initial Write (Target Table)...");
+        // 场景：订单表，按 Date 分区
+        // 2024-01-01: Order 1 (Pending), Order 2 (Pending)
+        // 2024-01-02: Order 3 (Pending)
+        using (var df = DataFrame.FromColumns(new { 
+            OrderId = new[] { 1, 2, 3 }, 
+            Status = new[] { "Pending", "Pending", "Pending" },
+            Amount = new[] { 100.0, 200.0, 300.0 },
+            Date = new[] { "2024-01-01", "2024-01-01", "2024-01-02" } 
+        }))
+        {
+            df.Lazy().SinkDeltaPartitioned(
+                rootUrl, 
+                partitionBy: Selector.Cols("Date"), 
+                mode: DeltaSaveMode.Append, 
+                cloudOptions: options
+            );
+        }
+
+        // 验证 V0
+        using var dfV0 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("OrderId");
+        Assert.Equal(3, dfV0.Height);
+
+        // ==========================================
+        // 3. [Source] 构建 Upsert 数据 (Mixed Scenarios)
+        // ==========================================
+        Console.WriteLine("Step 2: Preparing Source Data for Merge...");
+        
+        // 我们构建一个 Source DataFrame，包含：
+        // 1. Update: Order 1 -> Status="Shipped" (同一分区 2024-01-01)
+        // 2. Insert (Backfill): Order 4 -> (同一分区 2024-01-01，漏录单)
+        // 3. Insert (New Partition): Order 5 -> (新分区 2024-01-03)
+        // 4. Unchanged: Order 2 和 Order 3 不在 Source 中，应保持原样
+        
+        using var sourceDf = DataFrame.FromColumns(new { 
+            OrderId = new[] { 1, 4, 5 }, 
+            Status = new[] { "Shipped", "Paid", "New" },
+            Amount = new[] { 100.0, 400.0, 500.0 }, // Amount 这里没变或有变，逻辑一样
+            Date = new[] { "2024-01-01", "2024-01-01", "2024-01-03" } 
+        });
+        // sourceDf.Show();
+        // ==========================================
+        // 4. 执行 MERGE (Upsert)
+        // ==========================================
+        Console.WriteLine("Step 3: Executing Merge (Upsert)...");
+        
+        // 调用我们封装的 MergeDelta
+        // Merge Key: "OrderId"
+        // 预期行为:
+        // - 匹配 OrderId=1 -> 更新 Status
+        // - 不匹配 (Target中无 OrderId 4, 5) -> 插入
+        sourceDf.Lazy().MergeDelta(rootUrl, mergeKeys: ["OrderId"], cloudOptions: options);
+
+        // ==========================================
+        // 5. 验证结果 (Version 1)
+        // ==========================================
+        Console.WriteLine("Step 4: Verifying Results...");
+        
+        // 强制读取最新版本
+        using var dfMerged = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("OrderId");
+        dfMerged.Show();
+        // A. 验证总行数 (3 原有 + 2 新增 = 5 行)
+        Assert.Equal(5, dfMerged.Height);
+
+        // B. 验证 Case A (Update): Order 1 应该是 "Shipped"
+        var row1 = dfMerged.Filter(Col("OrderId") == 1);
+        Assert.Equal("Shipped", row1["Status"].ToArray<string>()[0]);
+        Assert.Equal("2024-01-01", row1["Date"].ToArray<string>()[0]); // 分区保持不变
+
+        // C. 验证 Case B (Insert Backfill): Order 4 应该存在且正确
+        var row4 = dfMerged.Filter(Col("OrderId") == 4);
+        Assert.Equal("Paid", row4["Status"].ToArray<string>()[0]);
+        Assert.Equal("2024-01-01", row4["Date"].ToArray<string>()[0]);
+
+        // D. 验证 Case C (Insert New Partition): Order 5 应该存在
+        var row5 = dfMerged.Filter(Col("OrderId") == 5);
+        Assert.Equal("New", row5["Status"].ToArray<string>()[0]);
+        Assert.Equal("2024-01-03", row5["Date"].ToArray<string>()[0]);
+
+        // E. 验证 Case D (Unchanged): Order 2 和 3 应该保持原样
+        var row2 = dfMerged.Filter(Col("OrderId") ==2 );
+        Assert.Equal("Pending", row2["Status"].ToArray<string>()[0]);
+        
+        var row3 = dfMerged.Filter(Col("OrderId")==3);
+        Assert.Equal("Pending", row3["Status"].ToArray<string>()[0]);
+
+        // ==========================================
+        // 6. [高级验证] 分区剪枝验证 (Partition Pruning Check)
+        // ==========================================
+        // 理论上：
+        // Source 涉及的分区是: 2024-01-01, 2024-01-03
+        // Target 涉及的分区是: 2024-01-01, 2024-01-02
+        //
+        // 预期行为：
+        // - 2024-01-01 分区文件被重写 (包含 Order 1 的更新和 Order 4 的插入)。
+        // - 2024-01-02 分区 (Order 3) **不应该被读取或重写**。它的文件修改时间应保持在 T0。
+        // - 2024-01-03 分区是新增文件。
+        
+        // 我们可以通过 Time Travel 检查历史版本，或者检查 Log，
+        // 这里我们简单做一个 Time Travel 检查，确保旧数据还在，证明 CoW 机制生效。
+        
+        Console.WriteLine("Step 5: Time Travel Check...");
+        using var dfHistory = LazyFrame.ScanDelta(rootUrl, version: 1, cloudOptions: options).Collect().Sort("OrderId");
+        
+        // 历史版本中 Order 1 还是 Pending
+        var row1Old = dfHistory.Filter(Col("OrderId")==1);
+        Assert.Equal("Pending", row1Old["Status"].ToArray<string>()[0]);
+        
+        // 历史版本中没有 Order 4
+        Assert.Equal(0, dfHistory.Filter(Col("OrderId")==4).Height);
+
+        Console.WriteLine("Delta Merge Full Cycle Passed! 🚀");
+    }
+
+    [Fact]
+    [Trait("DeltaLake", "MergeSchemaValidation")]
+    public void Test_Merge_Delta_Schema_Validation()
+    {
+        // 测试 Schema Mismatch 场景
+        var tableName = $"delta_merge_schema_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: $"http://{_minio.Endpoint.Replace("http://", "")}"
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // Init Target
+        using (var df = DataFrame.FromColumns(new { Id = new[] { 1 }, Val = new[] { "A" } }))
+        {
+            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+        }
+
+        // Source with EXTRA column (Should Fail)
+        using var sourceDf = DataFrame.FromColumns(new { 
+            Id = new[] { 2 }, 
+            Val = new[] { "B" }, 
+            ExtraCol = new[] { "ShouldFail" } // <--- 多余列
+        });
+
+        var ex = Assert.Throws<PolarsException>(() => 
+        {
+            sourceDf.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options);
+        });
+
+        // 验证错误信息
+        Assert.Contains("Schema mismatch", ex.Message);
+        Assert.Contains("ExtraCol", ex.Message);
+        
+        Console.WriteLine("Schema Validation Test Passed!");
+    }
+    [Fact]
+    [Trait("DeltaLake", "Merge")]
+    public void Test_Merge_Delta_Full_Features_Complex_Logic()
+    {
+        // ==========================================
+        // 1. 环境准备
+        // ==========================================
+        var tableName = $"delta_merge_full_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // ==========================================
+        // 2. [Target] 初始化数据 (Version 1)
+        // ==========================================
+        // 场景：库存表
+        // ID 1: Stock=10, Status=Active   (待更新)
+        // ID 2: Stock=20, Status=Active   (待忽略更新 - 条件不足)
+        // ID 3: Stock=0,  Status=Recall   (待匹配删除 - 召回品)
+        // ID 4: Stock=0,  Status=Obsolete (待源端缺失删除 - 过期品)
+        // ID 5: Stock=50, Status=Active   (待保留 - 源端缺失但不过期)
+        
+        Console.WriteLine("Step 1: Initial Write (Target)...");
+        using (var df = DataFrame.FromColumns(new { 
+            Id = new[] { 1, 2, 3, 4, 5 }, 
+            Stock = new[] { 10, 20, 0, 0, 50 },
+            Status = new[] { "Active", "Active", "Recall", "Obsolete", "Active" },
+            Category = new[] { "A", "A", "B", "B", "A" } // Partition
+        }))
+        {
+            df.Lazy().SinkDeltaPartitioned(
+                rootUrl, 
+                partitionBy: Selector.Cols("Category"), 
+                mode: DeltaSaveMode.Append, 
+                cloudOptions: options
+            );
+        }
+
+        // ==========================================
+        // 3. [Source] 准备 Merge 数据
+        // ==========================================
+        Console.WriteLine("Step 2: Preparing Source Data...");
+        
+        // ID 1: Stock=100 (New) -> 满足 Update 条件 (New > Old)
+        // ID 2: Stock=15  (New) -> 不满足 Update 条件 (15 < 20)，应保持原值 20
+        // ID 3: Status=DeleteMe -> 满足 Matched Delete 条件
+        // ID 6: Stock=60  (New) -> 满足 Insert 条件 (Stock > 0)
+        // ID 7: Stock=0   (New) -> 不满足 Insert 条件 (Stock > 0)，应被丢弃
+        // ID 4 & 5: Source 中不存在 (Not Matched By Source)
+        
+        using var sourceDf = DataFrame.FromColumns(new { 
+            Id = new[] { 1, 2, 3, 6, 7 }, 
+            Stock = new[] { 100, 15, 0, 60, 0 },
+            Status = new[] { "Active", "Active", "DeleteMe", "New", "Bad" },
+            Category = new[] { "A", "A", "B", "C", "C" }
+        });
+
+        // ==========================================
+        // 4. 定义 MERGE 逻辑表达式
+        // ==========================================
+        // 注意：Rust 实现中，Source 列被重命名为 "{ColName}_src_tmp"
+        // 我们需要在 C# 端手动指定这些后缀，或者封装 Helper。
+        // 这里直接使用底层列名进行硬核测试。
+
+        // A. Update 条件: 只有当 Source 库存 > Target 库存时才更新
+        // A. Update 条件: 只有当 Source 库存 > Target 库存时才更新
+        // 原写法: Col("Stock_src_tmp") > Col("Stock")
+        // 新写法:
+        var updateCond = Delta.Source("Stock") > Delta.Target("Stock");
+
+        // B. Matched Delete 条件: Source Status 标记为 'DeleteMe'
+        var matchDeleteCond = Delta.Source("Status") == "DeleteMe";
+
+        // C. Insert 条件: 只有库存 > 0 才插入
+        var insertCond = Delta.Source("Stock") > 0;
+
+        // D. Source Delete (Target Only) 条件: Target Status 是 'Obsolete'
+        // 这里只需要引用 Target，因为 Source 那行不存在
+        var srcDeleteCond = Delta.Target("Status") == "Obsolete";
+
+        // ==========================================
+        // 5. 执行 Full Merge
+        // ==========================================
+        Console.WriteLine("Step 3: Executing Full Merge...");
+
+        sourceDf.Lazy().MergeDelta(
+            rootUrl,
+            mergeKeys: ["Id"],
+            matchedUpdateCond: updateCond,
+            matchedDeleteCond: matchDeleteCond,
+            notMatchedInsertCond: insertCond,
+            notMatchedBySourceDeleteCond: srcDeleteCond,
+            cloudOptions: options
+        );
+
+        // ==========================================
+        // 6. 验证结果 (Version 2)
+        // ==========================================
+        Console.WriteLine("Step 4: Verifying Results...");
+        
+        using var dfRes = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("Id");
+        dfRes.Show();
+
+        // 预期结果分析：
+        // ID 1: Updated to 100 (100 > 10)
+        // ID 2: Kept at 20 (15 < 20, Update Condition Failed)
+        // ID 3: Deleted (Matched Delete)
+        // ID 4: Deleted (Target Only & Obsolete)
+        // ID 5: Kept at 50 (Target Only & Active)
+        // ID 6: Inserted (60 > 0)
+        // ID 7: Ignored (0 !> 0)
+
+        // 验证行数: 1, 2, 5, 6 共 4 行
+        Assert.Equal(4, dfRes.Height);
+
+        // Case 1: Conditional Update
+        var row1 = dfRes.Filter(Col("Id") == 1);
+        Assert.Equal(100, row1["Stock"].ToArray<int>()[0]);
+
+        // Case 2: Conditional Update Skip (Keep Target)
+        var row2 = dfRes.Filter(Col("Id") == 2);
+        Assert.Equal(20, row2["Stock"].ToArray<int>()[0]); // 还是旧值 20
+
+        // Case 3: Matched Delete
+        Assert.Equal(0, dfRes.Filter(Col("Id") == 3).Height);
+
+        // Case 4: Not Matched By Source Delete (Pruning)
+        Assert.Equal(0, dfRes.Filter(Col("Id") == 4).Height);
+
+        // Case 5: Not Matched By Source Keep
+        var row5 = dfRes.Filter(Col("Id") == 5);
+        Assert.Equal(50, row5["Stock"].ToArray<int>()[0]);
+
+        // Case 6: Conditional Insert
+        var row6 = dfRes.Filter(Col("Id") == 6);
+        Assert.Equal(60, row6["Stock"].ToArray<int>()[0]);
+        Assert.Equal("C", row6["Category"].ToArray<string>()[0]); // 新分区
+
+        // Case 7: Conditional Insert Skip
+        Assert.Equal(0, dfRes.Filter(Col("Id") == 7).Height);
+
+        Console.WriteLine("Full Feature Merge Passed! 🚀");
+    }
+    [Fact]
+    [Trait("DeltaLake", "MergeCompositeKeys")]
+    public void Test_Merge_Delta_Composite_Keys_Full_Logic()
+    {
+        // ==========================================
+        // 1. 环境准备
+        // ==========================================
+        var tableName = $"delta_merge_composite_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: $"http://{_minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/')}"
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // ==========================================
+        // 2. [Target] 初始化数据 (Version 1)
+        // ==========================================
+        // 复合主键: [Region, StoreId]
+        Console.WriteLine("Step 1: Initial Write (Target)...");
+        
+        // Data Scenarios:
+        // 1. [North, 101]: Stock 10  -> 待更新 (Update)
+        // 2. [North, 102]: Stock 20  -> 待忽略 (Update Skip)
+        // 3. [South, 101]: Stock 5   -> 待删除 (Matched Delete) - 注意：StoreId 也是 101，测试复合键区分能力
+        // 4. [South, 999]: Obsolete  -> 待清理 (Source Delete)
+        // 5. [East,  555]: Active    -> 待保留 (Target Only Keep)
+
+        using (var df = DataFrame.FromColumns(new { 
+            Region = new[]  { "North", "North", "South", "South", "East" },
+            StoreId = new[] { 101,     102,     101,     999,     555 },
+            Stock = new[]   { 10,      20,      5,       0,       50 },
+            Status = new[]  { "Active","Active","Recall","Obsolete","Active" }
+        }))
+        {
+            // Region 既是主键一部分，也是分区键
+            df.Lazy().SinkDeltaPartitioned(
+                rootUrl, 
+                partitionBy: Selector.Cols("Region"), 
+                mode: DeltaSaveMode.Append, 
+                cloudOptions: options
+            );
+        }
+
+        // ==========================================
+        // 3. [Source] 准备 Merge 数据
+        // ==========================================
+        Console.WriteLine("Step 2: Preparing Source Data...");
+
+        // Source Logic:
+        // 1. [North, 101]: Stock 100 (New > Old) -> Update
+        // 2. [North, 102]: Stock 15  (New < Old) -> Skip Update
+        // 3. [South, 101]: Status "DeleteMe"     -> Matched Delete
+        // 4. [West,  888]: Stock 60              -> Insert (New Region)
+        // 5. [West,  999]: Stock 0               -> Skip Insert (Condition Fail)
+
+        using var sourceDf = DataFrame.FromColumns(new { 
+            Region = new[]  { "North", "North", "South", "West", "West" },
+            StoreId = new[] { 101,     102,     101,     888,     999 },
+            Stock = new[]   { 100,     15,      0,       60,      0 },
+            Status = new[]  { "Active","Active","DeleteMe","New",   "Bad" }
+        });
+
+        // ==========================================
+        // 4. 定义表达式 (使用语法糖)
+        // ==========================================
+        
+        // A. Update: Source 库存 > Target 库存
+        var updateCond = Delta.Source("Stock") > Delta.Target("Stock");
+
+        // B. Matched Delete: Source 状态标记
+        var matchDeleteCond = Delta.Source("Status") == "DeleteMe";
+
+        // C. Insert: 库存 > 0
+        var insertCond = Delta.Source("Stock") > 0;
+
+        // D. Source Delete: Target 状态为过期
+        var srcDeleteCond = Delta.Target("Status") == "Obsolete";
+
+        // ==========================================
+        // 5. 执行 Full Merge (Composite Keys)
+        // ==========================================
+        Console.WriteLine("Step 3: Executing Composite Key Merge...");
+
+        sourceDf.Lazy().MergeDelta(
+            rootUrl,
+            // 关键点：传递多列作为复合主键
+            mergeKeys:  ["Region", "StoreId"], 
+            matchedUpdateCond: updateCond,
+            matchedDeleteCond: matchDeleteCond,
+            notMatchedInsertCond: insertCond,
+            notMatchedBySourceDeleteCond: srcDeleteCond,
+            cloudOptions: options
+        );
+
+        // ==========================================
+        // 6. 验证结果
+        // ==========================================
+        Console.WriteLine("Step 4: Verifying Results...");
+        
+        using var dfRes = LazyFrame.ScanDelta(rootUrl, cloudOptions: options)
+            .Collect()
+            .Sort(["Region", "StoreId"]); // Sort for deterministic assert
+
+        dfRes.Show();
+        // using var dfBack = LazyFrame.ScanDelta(rootUrl,cloudOptions:options,version:1).Collect();
+        // dfBack.Show();
+        // 预期结果行数分析：
+        // 1. North/101: Updated (100)
+        // 2. North/102: Kept (20)
+        // 3. South/101: Deleted
+        // 4. South/999: Deleted (Obsolete)
+        // 5. East/555:  Kept (50)
+        // 6. West/888:  Inserted (60)
+        // 7. West/999:  Ignored
+        // 总计：4 行
+
+        Assert.Equal(4, dfRes.Height);
+
+        // Case 1: Composite Match Update
+        var row1 = dfRes.Filter(Col("Region") == "North" & Col("StoreId") == 101);
+        Assert.Equal(100, row1["Stock"].ToArray<int>()[0]);
+
+        // Case 2: Composite Match Skip
+        var row2 = dfRes.Filter(Col("Region") == "North" & Col("StoreId") == 102);
+        Assert.Equal(20, row2["Stock"].ToArray<int>()[0]);
+
+        // Case 3: Composite Match Delete (South/101)
+        // 关键验证：North/101 还在，但 South/101 没了，证明复合键生效
+        Assert.Equal(0, dfRes.Filter(Col("Region") == "South" & Col("StoreId") == 101).Height);
+
+        // Case 4: Not Matched By Source Delete
+        Assert.Equal(0, dfRes.Filter(Col("Region") == "South" & Col("StoreId") == 999).Height);
+
+        // Case 5: Target Only Keep
+        var rowEast = dfRes.Filter(Col("Region") == "East");
+        Assert.Equal(50, rowEast["Stock"].ToArray<int>()[0]);
+
+        // Case 6: Insert
+        var rowWest = dfRes.Filter(Col("Region") == "West" & Col("StoreId") == 888);
+        Assert.Equal(60, rowWest["Stock"].ToArray<int>()[0]);
+
+        Console.WriteLine("Composite Key Merge Passed! 🚀");
+    }
+    [Fact]
+    [Trait("DeltaLake", "MergePartialUpdate")]
+    public void Test_Merge_Delta_Partial_Update_Allowed()
+    {
+        var tableName = $"delta_merge_partial_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // Target: Id, ColA, ColB
+        using (var df = DataFrame.FromColumns(new { 
+            Id = new[] { 1 }, 
+            ColA = new[] { 10 }, 
+            ColB = new[] { 20 } 
+        }))
+        {
+            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+        }
+
+        // Source: Id, ColA (Missing ColB)
+        // 意图：只更新 ColA，ColB 保持原样
+        using var sourceDf = DataFrame.FromColumns(new { 
+            Id = new[] { 1 }, 
+            ColA = new[] { 99 }
+        });
+
+        // 应该成功，不抛异常
+        sourceDf.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options);
+
+        // 验证
+        using var res = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        
+        // ColA 变了 (10 -> 99)
+        Assert.Equal(99, res["ColA"][0]);
+        // ColB 没变 (20 -> 20)
+        Assert.Equal(20, res["ColB"][0]);
     }
 }

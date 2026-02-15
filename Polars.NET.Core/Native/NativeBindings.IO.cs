@@ -694,4 +694,40 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string[]? cloud_values,
         nuint cloud_len
     );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void pl_io_delta_delete(
+        string path,
+        ExprHandle predicate,
+        // Cloud Options
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_keys,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void pl_io_delta_merge(
+        LazyFrameHandle source_lf,
+        string path,
+        string[] merge_key,
+        nuint merge_key_len,
+        IntPtr matched_update_cond,
+        IntPtr matched_delete_cond,
+        IntPtr not_matched_insert_cond,
+        IntPtr not_matched_by_source_deleted_cond,
+        // Cloud Options
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_keys,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? cloud_values,
+        nuint cloud_len
+    );
 }

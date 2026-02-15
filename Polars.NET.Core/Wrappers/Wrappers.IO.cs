@@ -1544,4 +1544,93 @@ public static partial class PolarsWrapper
         
         ErrorHelper.CheckVoid();
     }
+    public static void DeltaDelete(
+        string path,
+        ExprHandle predicate,
+        // Cloud Options
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+        
+        NativeBindings.pl_io_delta_delete(
+            path,
+            predicate,
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        predicate.TransferOwnership();
+
+        ErrorHelper.CheckVoid();
+    }
+    public static void DeltaMerge(
+        LazyFrameHandle sourceLf,
+        string path,
+        string[] mergeKeys,
+        ExprHandle? matchedUpdateCond,
+        ExprHandle? matchedDeleteCond,
+        ExprHandle? notMatchedInsertCond,
+        ExprHandle? notMatchedBySourceDeletedCond,
+        // Cloud Options
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        if (mergeKeys == null || mergeKeys.Length == 0)
+        {
+            throw new ArgumentException("Merge keys cannot be null or empty.", nameof(mergeKeys));
+        }
+        nuint mergeKeysLen = (nuint)mergeKeys.Length;
+        IntPtr updateHandle = matchedUpdateCond?.TransferOwnership() ?? IntPtr.Zero;
+        IntPtr deleteHandle = matchedDeleteCond?.TransferOwnership() ?? IntPtr.Zero;
+        IntPtr insertHandle = notMatchedInsertCond?.TransferOwnership() ?? IntPtr.Zero;
+        IntPtr srcDeleteHandle = notMatchedBySourceDeletedCond?.TransferOwnership() ?? IntPtr.Zero;
+
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
+        NativeBindings.pl_io_delta_merge(
+            sourceLf,
+            path,
+            mergeKeys,
+            mergeKeysLen,
+            updateHandle,
+            deleteHandle,
+            insertHandle,
+            srcDeleteHandle,
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        sourceLf.TransferOwnership();
+
+        ErrorHelper.CheckVoid();
+    }
 }

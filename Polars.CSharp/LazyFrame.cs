@@ -972,6 +972,70 @@ public class LazyFrame : IDisposable
             values
         );
     }
+    /// <summary>
+    /// Merge a LazyFrame into a Delta Lake table with full SQL MERGE semantics.
+    /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// </summary>
+    /// <param name="path">Uri to the Delta Lake table (local or cloud).</param>
+    /// <param name="mergeKeys">The column names to join on (must exist in both Source and Target).</param>
+    /// <param name="matchedUpdateCond">
+    /// Condition for 'WHEN MATCHED THEN UPDATE'. 
+    /// If null, defaults to true (always update when matched).
+    /// </param>
+    /// <param name="matchedDeleteCond">
+    /// Condition for 'WHEN MATCHED THEN DELETE'. 
+    /// If null, defaults to false (never delete when matched).
+    /// </param>
+    /// <param name="notMatchedInsertCond">
+    /// Condition for 'WHEN NOT MATCHED THEN INSERT'. 
+    /// If null, defaults to true (always insert new rows).
+    /// </param>
+    /// <param name="notMatchedBySourceDeleteCond">
+    /// Condition for 'WHEN NOT MATCHED BY SOURCE THEN DELETE' (Target rows not in Source). 
+    /// If null, defaults to false (retain target-only rows).
+    /// </param>
+    /// <param name="cloudOptions">Cloud storage credentials and configuration.</param>
+    public void MergeDelta(
+        // LazyFrame sourceLf,
+        string path,
+        string[] mergeKeys,
+        Expr? matchedUpdateCond = null,
+        Expr? matchedDeleteCond = null,
+        Expr? notMatchedInsertCond = null,
+        Expr? notMatchedBySourceDeleteCond = null,
+        CloudOptions? cloudOptions = null)
+    {
+        // 1. Parse Cloud Options
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
+
+        // 2. Clone Handles
+        
+        using var clonedLf = CloneHandle();
+        
+        using var hUpdate = matchedUpdateCond?.CloneHandle();
+        using var hDelete = matchedDeleteCond?.CloneHandle();
+        using var hInsert = notMatchedInsertCond?.CloneHandle();
+        using var hSrcDelete = notMatchedBySourceDeleteCond?.CloneHandle();
+
+        // 3. Call Wrapper
+        PolarsWrapper.DeltaMerge(
+            clonedLf,
+            path,
+            mergeKeys,
+            hUpdate,
+            hDelete,
+            hInsert,
+            hSrcDelete,
+            provider.ToNative(),
+            retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
+            cacheTtl,
+            keys,
+            values
+        );
+    }
     // ==========================================
     // Meta / Inspection
     // ==========================================
