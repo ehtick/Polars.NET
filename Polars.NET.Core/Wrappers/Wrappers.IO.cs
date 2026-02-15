@@ -1400,69 +1400,69 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(h);
     }
 
-    public static void SinkDelta(
-        LazyFrameHandle lf,
-        string path,
-        PlDeltaSaveMode mode,
-        // Parquet Options
-        PlParquetCompression compression,
-        int compressionLevel,
-        bool statistics,
-        nuint rowGroupSize,
-        nuint dataPageSize,
-        int compatLevel,
-        // Sink Options
-        bool maintainOrder,
-        PlSyncOnClose syncOnClose,
-        bool mkdir,
-        // Cloud Options
-        PlCloudProvider cloudProvider,
-        nuint cloudRetries,
-        ulong cloudRetryTimeoutMs,
-        ulong cloudRetryInitBackoffMs,
-        ulong cloudRetryMaxBackoffMs,
-        ulong cloudCacheTtl,
-        string[]? cloudKeys,
-        string[]? cloudValues
-        )
-    {
-        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
-        NativeBindings.pl_sink_delta(
-            lf,
-            path,
-            mode,
-            compression,
-            compressionLevel,
-            statistics,
-            rowGroupSize,
-            dataPageSize,
-            compatLevel,
-            maintainOrder,
-            syncOnClose,
-            mkdir,
-            cloudProvider,
-            cloudRetries,
-            cloudRetryTimeoutMs,
-            cloudRetryInitBackoffMs,
-            cloudRetryMaxBackoffMs,
-            cloudCacheTtl,
-            cloudKeys,
-            cloudValues,
-            cloudLen
-        );
-        lf.TransferOwnership();
+    // public static void SinkDelta(
+    //     LazyFrameHandle lf,
+    //     string path,
+    //     PlDeltaSaveMode mode,
+    //     // Parquet Options
+    //     PlParquetCompression compression,
+    //     int compressionLevel,
+    //     bool statistics,
+    //     nuint rowGroupSize,
+    //     nuint dataPageSize,
+    //     int compatLevel,
+    //     // Sink Options
+    //     bool maintainOrder,
+    //     PlSyncOnClose syncOnClose,
+    //     bool mkdir,
+    //     // Cloud Options
+    //     PlCloudProvider cloudProvider,
+    //     nuint cloudRetries,
+    //     ulong cloudRetryTimeoutMs,
+    //     ulong cloudRetryInitBackoffMs,
+    //     ulong cloudRetryMaxBackoffMs,
+    //     ulong cloudCacheTtl,
+    //     string[]? cloudKeys,
+    //     string[]? cloudValues
+    //     )
+    // {
+    //     nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+    //     NativeBindings.pl_sink_delta(
+    //         lf,
+    //         path,
+    //         mode,
+    //         compression,
+    //         compressionLevel,
+    //         statistics,
+    //         rowGroupSize,
+    //         dataPageSize,
+    //         compatLevel,
+    //         maintainOrder,
+    //         syncOnClose,
+    //         mkdir,
+    //         cloudProvider,
+    //         cloudRetries,
+    //         cloudRetryTimeoutMs,
+    //         cloudRetryInitBackoffMs,
+    //         cloudRetryMaxBackoffMs,
+    //         cloudCacheTtl,
+    //         cloudKeys,
+    //         cloudValues,
+    //         cloudLen
+    //     );
+    //     lf.TransferOwnership();
 
-        ErrorHelper.CheckVoid();
-    }
-    public static void SinkDeltaPartitioned(
+    //     ErrorHelper.CheckVoid();
+    // }
+    public static void SinkDelta(
         LazyFrameHandle lf,
         string path,
         
         // --- Delta Options ---
         PlDeltaSaveMode mode,
-
+        bool canEvolve,
         // --- Partition Params ---
-        SelectorHandle partitionBy,
+        SelectorHandle? partitionBy,
         bool includeKeys,
         bool keysPreGrouped,
         nuint maxRowsPerFile,
@@ -1500,16 +1500,16 @@ public static partial class PolarsWrapper
         else if (safeCompatLevel > 1) safeCompatLevel = 1;
 
         nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
-
-        NativeBindings.pl_sink_delta_partitioned(
+        IntPtr partitionByHandle = partitionBy?.TransferOwnership() ?? IntPtr.Zero;
+        NativeBindings.pl_sink_delta(
             lf,
             path,
             
             // Delta Options
             mode,
-
+            canEvolve,
             // Partition Params
-            partitionBy,
+            partitionByHandle,
             includeKeys,
             keysPreGrouped,
             maxRowsPerFile,
@@ -1586,6 +1586,7 @@ public static partial class PolarsWrapper
         ExprHandle? matchedDeleteCond,
         ExprHandle? notMatchedInsertCond,
         ExprHandle? notMatchedBySourceDeletedCond,
+        bool can_evolve,
         // Cloud Options
         PlCloudProvider cloudProvider,
         nuint cloudRetries,
@@ -1618,6 +1619,7 @@ public static partial class PolarsWrapper
             deleteHandle,
             insertHandle,
             srcDeleteHandle,
+            can_evolve,
             cloudProvider,
             cloudRetries,
             cloudRetryTimeoutMs,

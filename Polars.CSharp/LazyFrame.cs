@@ -831,47 +831,47 @@ public class LazyFrame : IDisposable
 
         return new LazyFrame(h);
     }
-    /// <summary>
-    /// Sink the LazyFrame to a Delta Lake table.
-    /// </summary>
-    public void SinkDelta(
-        string path,
-        DeltaSaveMode mode = DeltaSaveMode.Append,
-        ParquetCompression compression = ParquetCompression.Snappy,
-        int compressionLevel = -1,
-        bool statistics = true,
-        uint rowGroupSize = 512 * 1024,
-        uint dataPageSize = 1024 * 1024,
-        int compatLevel = -1,
-        bool maintainOrder = true,
-        SyncOnClose syncOnClose = SyncOnClose.None,
-        bool mkdir = false,
-        CloudOptions? cloudOptions=null)
-    {
-        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
-        PolarsWrapper.SinkDelta(
-            Handle,
-            path,
-            mode.ToNative(),
-            compression.ToNative(),
-            compressionLevel,
-            statistics,
-            rowGroupSize,
-            dataPageSize,
-            compatLevel,
-            maintainOrder,
-            syncOnClose.ToNative(),
-            mkdir,
-            provider.ToNative(),
-            retries,
-            retryTimeoutMs,
-            retryInitBackoffMs,
-            retryMaxBackoffMs,
-            cacheTtl,
-            keys,
-            values
-        );
-    }
+    // /// <summary>
+    // /// Sink the LazyFrame to a Delta Lake table.
+    // /// </summary>
+    // public void SinkDelta(
+    //     string path,
+    //     DeltaSaveMode mode = DeltaSaveMode.Append,
+    //     ParquetCompression compression = ParquetCompression.Snappy,
+    //     int compressionLevel = -1,
+    //     bool statistics = true,
+    //     uint rowGroupSize = 512 * 1024,
+    //     uint dataPageSize = 1024 * 1024,
+    //     int compatLevel = -1,
+    //     bool maintainOrder = true,
+    //     SyncOnClose syncOnClose = SyncOnClose.None,
+    //     bool mkdir = false,
+    //     CloudOptions? cloudOptions=null)
+    // {
+    //     var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
+    //     PolarsWrapper.SinkDelta(
+    //         Handle,
+    //         path,
+    //         mode.ToNative(),
+    //         compression.ToNative(),
+    //         compressionLevel,
+    //         statistics,
+    //         rowGroupSize,
+    //         dataPageSize,
+    //         compatLevel,
+    //         maintainOrder,
+    //         syncOnClose.ToNative(),
+    //         mkdir,
+    //         provider.ToNative(),
+    //         retries,
+    //         retryTimeoutMs,
+    //         retryInitBackoffMs,
+    //         retryMaxBackoffMs,
+    //         cacheTtl,
+    //         keys,
+    //         values
+    //     );
+    // }
     /// <summary>
     /// Sink the LazyFrame to a Delta Lake table with partition discovery.
     /// <para>
@@ -912,10 +912,11 @@ public class LazyFrame : IDisposable
     /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
     /// <param name="mkdir">Create parent directories if they don't exist.</param>
     /// <param name="cloudOptions">Options for cloud storage authentication and configuration.</param>
-    public void SinkDeltaPartitioned(
+    public void SinkDelta(
         string path,
-        Selector partitionBy,
+        Selector? partitionBy = null,
         DeltaSaveMode mode = DeltaSaveMode.Append,
+        bool canEvolve=false,
         bool includeKeys = true,
         bool keysPreGrouped = false,
         int maxRowsPerFile = 0,
@@ -933,16 +934,16 @@ public class LazyFrame : IDisposable
     {
         var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = 
             CloudOptions.ParseCloudOptions(cloudOptions);
-
-        PolarsWrapper.SinkDeltaPartitioned(
+        using var partitionByH = partitionBy?.CloneHandle(); 
+        PolarsWrapper.SinkDelta(
             Handle,
             path,
             
             // --- Delta Options ---
             mode.ToNative(), // 确保有对应的扩展方法进行转换
-
+            canEvolve,
             // --- Partition Params ---
-            partitionBy.Handle,
+            partitionByH,
             includeKeys,
             keysPreGrouped,
             maxRowsPerFile > 0 ? (nuint)maxRowsPerFile : 0,
@@ -1003,6 +1004,7 @@ public class LazyFrame : IDisposable
         Expr? matchedDeleteCond = null,
         Expr? notMatchedInsertCond = null,
         Expr? notMatchedBySourceDeleteCond = null,
+        bool canEvolve=false,
         CloudOptions? cloudOptions = null)
     {
         // 1. Parse Cloud Options
@@ -1026,6 +1028,7 @@ public class LazyFrame : IDisposable
             hDelete,
             hInsert,
             hSrcDelete,
+            canEvolve,
             provider.ToNative(),
             retries,
             retryTimeoutMs,

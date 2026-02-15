@@ -434,7 +434,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         }))
         {
             // 按 Year 列分区写入
-            df.Lazy().SinkDeltaPartitioned(
+            df.Lazy().SinkDelta(
                 rootUrl, 
                 partitionBy: Selector.Cols("Year"), 
                 mode: DeltaSaveMode.Append, 
@@ -462,7 +462,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Year = new[] { "2024", "2025" } // 2024是现有分区，2025是新分区
         }))
         {
-            df2.Lazy().SinkDeltaPartitioned(
+            df2.Lazy().SinkDelta(
                 rootUrl, 
                 partitionBy: Selector.Cols("Year"), 
                 mode: DeltaSaveMode.Append, 
@@ -490,7 +490,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Year = new[] { "2099" } // 全新的分区
         }))
         {
-            dfOverwrite.Lazy().SinkDeltaPartitioned(
+            dfOverwrite.Lazy().SinkDelta(
                 rootUrl, 
                 partitionBy: Selector.Cols("Year"), 
                 mode: DeltaSaveMode.Overwrite, 
@@ -515,7 +515,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             var ex = Assert.Throws<PolarsException>(() => 
             {
-                dfError.Lazy().SinkDeltaPartitioned(
+                dfError.Lazy().SinkDelta(
                     rootUrl, 
                     partitionBy: Selector.Cols("Year"),
                     mode: DeltaSaveMode.ErrorIfExists, 
@@ -535,7 +535,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Year = new[] { "2099" }
         }))
         {
-            dfIgnore.Lazy().SinkDeltaPartitioned(
+            dfIgnore.Lazy().SinkDelta(
                 rootUrl, 
                 partitionBy: Selector.Cols("Year"),
                 mode: DeltaSaveMode.Ignore, 
@@ -549,6 +549,105 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         Assert.DoesNotContain("Should_Not_Exist", dfFinal["Msg"].ToArray<string>());
 
         Console.WriteLine("Delta Partitioned Full Cycle Test Passed!");
+    }
+    [Fact]
+    [Trait("DeltaLake", "SchemaEvolution")]
+    public void Test_Sink_Delta_Schema_Evolution_Cycle()
+    {
+        // 1. 准备环境
+        var tableName = $"delta_evolve_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: $"http://{_minio.Endpoint.Replace("http://", "")}"
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // ==========================================
+        // Phase 1: 初始化表 (Schema A: Id, Val)
+        // ==========================================
+        using (var dfInit = DataFrame.FromColumns(new { 
+            Id = new[] { 1 }, 
+            Val = new[] { "OldRow" } 
+        }))
+        {
+            // 初始写入，模式为 Overwrite 或 Append 均可
+            dfInit.Lazy().SinkDelta(
+                rootUrl, 
+                partitionBy: Selector.Col("Id"), 
+                mode: DeltaSaveMode.Overwrite, 
+                cloudOptions: options
+            );
+        }
+
+        // ==========================================
+        // Phase 2: 尝试写入新列 (Schema B: Id, Val, NewCol)
+        // 预期：can_evolve = false (默认)，应该报错
+        // ==========================================
+        using var dfNew = DataFrame.FromColumns(new { 
+            Id = new[] { 2 }, 
+            Val = new[] { "NewRow" }, 
+            NewCol = new[] { 999 } // <--- 新增列
+        });
+
+        var ex = Assert.Throws<PolarsException>(() => 
+        {
+            dfNew.Lazy().SinkDelta(
+                rootUrl, 
+                partitionBy: Selector.Col("Id"), 
+                mode: DeltaSaveMode.Append, 
+                canEvolve: false, // 显式禁止演变
+                cloudOptions: options
+            );
+        });
+
+        // 验证报错信息包含 Schema Mismatch 提示
+        Assert.Contains("Schema mismatch", ex.Message);
+        Assert.Contains("can_evolve", ex.Message);
+
+        // ==========================================
+        // Phase 3: 开启演变写入 (Schema Evolution)
+        // 预期：can_evolve = true，应该成功
+        // ==========================================
+        dfNew.Lazy().SinkDelta(
+            rootUrl, 
+            partitionBy: Selector.Col("Id"),
+            mode: DeltaSaveMode.Append, 
+            canEvolve: true, // <--- 开启演变！
+            cloudOptions: options
+        );
+
+        // ==========================================
+        // Phase 4: 验证读取 (Read Validation)
+        // ==========================================
+        using var resultDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options)
+            .Sort("Id", false) // 按 Id 排序方便断言
+            .Collect();
+
+        // 1. 验证列是否存在
+        var columns = resultDf.ColumnNames;
+        Assert.Contains("NewCol", columns); // 新列必须存在
+
+        // 2. 验证数据行数
+        Assert.Equal(2, resultDf.Height);
+
+        // 3. 验证数据内容
+        // Row 1 (Id=1): 旧数据，NewCol 应该是 null
+        var row1 = resultDf.Row(0); // Id=1
+        Assert.Equal(1, row1[0]); // Id
+        Assert.Null(row1[2]);     // NewCol (自动补 Null)
+
+        // Row 2 (Id=2): 新数据，NewCol 应该是 999
+        var row2 = resultDf.Row(1); // Id=2
+        Assert.Equal(2, row2[0]); // Id
+        Assert.Equal(999, row2[2]); // NewCol
+
+        Console.WriteLine("Schema Evolution Test Passed: Column 'NewCol' added successfully!");
     }
     [Fact]
     [Trait("DeltaLake", "Delete")]
@@ -588,7 +687,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Year = new[] { "2023", "2023", "2024", "2024", "2024" }
         }))
         {
-            df.Lazy().SinkDeltaPartitioned(
+            df.Lazy().SinkDelta(
                 rootUrl, 
                 partitionBy: Selector.Cols("Year"), 
                 mode: DeltaSaveMode.Append, 
@@ -675,6 +774,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
 
         Console.WriteLine("Delta Delete Full Cycle Passed!");
     }
+    
     [Fact]
     [Trait("DeltaLake", "Upsert")]
     public void Test_Upsert_Delta_Full_Cycle_Upsert()
@@ -713,7 +813,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Date = new[] { "2024-01-01", "2024-01-01", "2024-01-02" } 
         }))
         {
-            df.Lazy().SinkDeltaPartitioned(
+            df.Lazy().SinkDelta(
                 rootUrl, 
                 partitionBy: Selector.Cols("Date"), 
                 mode: DeltaSaveMode.Append, 
@@ -817,11 +917,13 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
     }
 
     [Fact]
-    [Trait("DeltaLake", "MergeSchemaValidation")]
-    public void Test_Merge_Delta_Schema_Validation()
+    [Trait("DeltaLake", "MergeSchemaEvolution")]
+    public void Test_Merge_Delta_Schema_Evolution_Full_Cycle()
     {
-        // 测试 Schema Mismatch 场景
-        var tableName = $"delta_merge_schema_{Guid.NewGuid()}";
+        // ==========================================
+        // 0. 环境准备
+        // ==========================================
+        var tableName = $"delta_merge_evolve_{Guid.NewGuid()}";
         var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
         
         var options = CloudOptions.Aws(
@@ -834,29 +936,134 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         options.Credentials!["aws_s3_force_path_style"] = "true";
         options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
 
-        // Init Target
-        using (var df = DataFrame.FromColumns(new { Id = new[] { 1 }, Val = new[] { "A" } }))
+        // ==========================================
+        // Phase 1: 初始化 Target 表 (Schema V1)
+        // ==========================================
+        // Schema: [Id: Int, Val: String]
+        // Data:   (1, "Old_A")
+        using (var dfV1 = DataFrame.FromColumns(new { 
+            Id = new[] { 1 }, 
+            Val = new[] { "Old_A" } 
+        }))
         {
-            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+            dfV1.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Overwrite, cloudOptions: options);
         }
 
-        // Source with EXTRA column (Should Fail)
+        // ==========================================
+        // Phase 2: 准备 Source 数据 (Schema V2)
+        // ==========================================
+        // Schema: [Id: Int, Val: String, NewCol: String] <--- 多了一列
+        // Data:
+        //   (1, "Updated_A", "Filled")  <-- 更新旧行 (Matched Update)
+        //   (2, "New_B",     "Filled")  <-- 插入新行 (Not Matched Insert)
         using var sourceDf = DataFrame.FromColumns(new { 
-            Id = new[] { 2 }, 
-            Val = new[] { "B" }, 
-            ExtraCol = new[] { "ShouldFail" } // <--- 多余列
+            Id = new[] { 1, 2 }, 
+            Val = new[] { "Updated_A", "New_B" }, 
+            NewCol = new[] { "Filled", "Filled" } 
         });
 
+        // ==========================================
+        // Phase 3: 默认保护测试 (Negative Test)
+        // ==========================================
+        // 预期：不传 canEvolve=true，必须报错，防止 Schema 意外污染
         var ex = Assert.Throws<PolarsException>(() => 
         {
-            sourceDf.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options);
+            sourceDf.Lazy().MergeDelta(
+                rootUrl, 
+                mergeKeys: ["Id"], 
+                cloudOptions: options
+                // canEvolve 默认为 false
+            );
         });
 
-        // 验证错误信息
         Assert.Contains("Schema mismatch", ex.Message);
-        Assert.Contains("ExtraCol", ex.Message);
+        Assert.Contains("NewCol", ex.Message);
+        Assert.Contains("can_evolve", ex.Message); // 确保提示语友好
         
-        Console.WriteLine("Schema Validation Test Passed!");
+        Console.WriteLine("[Pass] Schema Protection worked.");
+
+        // ==========================================
+        // Phase 4: 究极进化 (Evolution Test)
+        // ==========================================
+        // 预期：传入 canEvolve=true，自动修改 Metadata 并写入数据
+        sourceDf.Lazy().MergeDelta(
+            rootUrl, 
+            mergeKeys: ["Id"], 
+            cloudOptions: options,
+            canEvolve: true // <--- The Magic Switch
+        );
+        
+        Console.WriteLine("[Pass] Merge with Schema Evolution executed.");
+
+        // ==========================================
+        // Phase 5: 数据验证 (Read & Verify)
+        // ==========================================
+        using var resultDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options)
+            .Sort("Id", false)
+            .Collect();
+        // resultDf.Show();
+        // 1. 验证新列是否存在
+        var cols = resultDf.ColumnNames;
+        Assert.Contains("NewCol", cols);
+        Assert.Equal(3, cols.Length); // Id, Val, NewCol
+
+        // 2. 验证数据正确性
+        // Row 1 (Id=1): 这是一个 Update 操作
+        // 它应该同时更新 Val 和 NewCol
+        var row1 = resultDf.Row(0);
+        Assert.Equal(1, row1[0]);           // Id
+        Assert.Equal("Updated_A", row1[1]); // Val (Updated)
+        Assert.Equal("Filled", row1[2]);    // NewCol (Filled by Source)
+
+        // Row 2 (Id=2): 这是一个 Insert 操作
+        var row2 = resultDf.Row(1);
+        Assert.Equal(2, row2[0]);
+        Assert.Equal("New_B", row2[1]);
+        Assert.Equal("Filled", row2[2]);
+
+        // ==========================================
+        // Phase 6: 验证旧 Schema 兼容性 (Backfill Null Test)
+        // ==========================================
+        // 场景：模拟一个旧的业务系统（还没升级代码），它只知道 Id 和 Val，不知道有 NewCol。
+        // 它试图插入一条新数据 (Id=3)。
+        // 预期：
+        // 1. 不报错（因为 Target 有 NewCol，Source 没有，这是允许的，属于 Partial Update/Insert）。
+        // 2. 插入后，Id=3 的 NewCol 自动为 Null。
+        
+        using (var dfV1_Late = DataFrame.FromColumns(new { 
+            Id = new[] { 3 }, 
+            Val = new[] { "Late_Arrival_V1" } 
+            // 注意：这里没有 NewCol
+        }))
+        {
+            // 即使 canEvolve = false 也可以，因为我们没有“新增”列，只是“少”列
+            // 你的 Rust 代码逻辑会自动处理少列的情况 (fallback to NULL)
+            dfV1_Late.Lazy().MergeDelta(
+                rootUrl, 
+                mergeKeys: ["Id"], 
+                cloudOptions: options
+            );
+        }
+
+        // ==========================================
+        // Phase 7: 最终全量验证
+        // ==========================================
+        using var finalDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options)
+            .Sort("Id", false)
+            .Collect();
+
+        // 我们现在应该有 3 行数据，3 种状态：
+        // Id=1: 经历了 Evolution，NewCol = "Filled"
+        // Id=2: 是 Evolution 时的新增行，NewCol = "Filled"
+        // Id=3: 是 Evolution 后的 V1 数据，NewCol = null (关键验证点！)
+
+        var row3 = finalDf.Row(2); // Id=3
+        Assert.Equal(3, row3[0]);
+        Assert.Equal("Late_Arrival_V1", row3[1]);
+        Assert.Null(row3[2]); // <--- 必须是 Null
+
+        Console.WriteLine("[Pass] V1 Data Merged into V2 Table successfully (NewCol is Null).");
+
     }
     [Fact]
     [Trait("DeltaLake", "Merge")]
@@ -899,7 +1106,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Category = new[] { "A", "A", "B", "B", "A" } // Partition
         }))
         {
-            df.Lazy().SinkDeltaPartitioned(
+            df.Lazy().SinkDelta(
                 rootUrl, 
                 partitionBy: Selector.Cols("Category"), 
                 mode: DeltaSaveMode.Append, 
@@ -1053,7 +1260,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         }))
         {
             // Region 既是主键一部分，也是分区键
-            df.Lazy().SinkDeltaPartitioned(
+            df.Lazy().SinkDelta(
                 rootUrl, 
                 partitionBy: Selector.Cols("Region"), 
                 mode: DeltaSaveMode.Append, 
