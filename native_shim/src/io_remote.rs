@@ -5,6 +5,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use deltalake::kernel::engine::arrow_conversion::{TryIntoArrow, TryIntoKernel};
 use deltalake::kernel::transaction::{CommitBuilder};
+use deltalake::kernel::scalars::ScalarExt;
 use deltalake::parquet::arrow::arrow_reader::ArrowReaderOptions;
 use deltalake::parquet::data_type::ByteArray;
 use deltalake::parquet::file::metadata::ParquetMetaData;
@@ -132,6 +133,97 @@ fn extract_delta_stats(metadata: &ParquetMetaData) -> Result<(i64, String), Pola
     Ok((num_rows, stats_json.to_string()))
 }
 
+fn extract_stats_value<'a>(stats: &'a Option<serde_json::Value>, key: &str, col: &str) -> Option<&'a serde_json::Value> {
+    stats.as_ref()?
+        .get(key)? // "minValues" or "maxValues"
+        .get(col)
+}
+
+// 辅助 helper：尝试把 JSON Value 转为 i64
+// 兼容 JSON Number 和 JSON String (因为 Delta Log 有时把大整数存成字符串)
+fn as_i64_safe(v: &serde_json::Value) -> Option<i64> {
+    v.as_i64()
+     .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+}
+
+// 辅助 helper：尝试把 JSON Value 转为 f64
+fn as_f64_safe(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64()
+     .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+}
+
+// 优化版的 Overlap Check (接收 JSON Value 而不是 String)
+fn check_file_overlap_optimized(
+    stats: &Option<serde_json::Value>, 
+    col: &str, 
+    src_min: &serde_json::Value, 
+    src_max: &serde_json::Value
+) -> bool {
+    let f_min_val = extract_stats_value(stats, "minValues", col);
+    let f_max_val = extract_stats_value(stats, "maxValues", col);
+
+    if f_min_val.is_none() || f_max_val.is_none() {
+        return true;
+    }
+    let f_min = f_min_val.unwrap();
+    let f_max = f_max_val.unwrap();
+
+    match src_min {
+        // A. 数字比较 (优先 i64，兜底 f64)
+        serde_json::Value::Number(s_min_num) => {
+            if let serde_json::Value::Number(s_max_num) = src_max {
+                
+                // [Step 1]: 尝试 Integer (i64) 路径 -> 保证 ID/Timestamp 精度
+                // 只有当 source 和 target 全都能转成 i64 时才走这条路
+                let s_min_i = s_min_num.as_i64();
+                let s_max_i = s_max_num.as_i64();
+                let f_min_i = as_i64_safe(f_min);
+                let f_max_i = as_i64_safe(f_max);
+
+                if let (Some(s_min), Some(s_max), Some(f_min), Some(f_max)) = (s_min_i, s_max_i, f_min_i, f_max_i) {
+                     // 整数比较：不重叠条件
+                     if f_max < s_min || f_min > s_max {
+                        return false; 
+                     }
+                     return true; // 整数判定重叠，直接返回
+                }
+
+                // [Step 2]: 如果 i64 解析失败 (说明可能是浮点数)，Fallback 到 f64
+                let s_min_f = s_min_num.as_f64();
+                let s_max_f = s_max_num.as_f64();
+                let f_min_f = as_f64_safe(f_min);
+                let f_max_f = as_f64_safe(f_max);
+
+                if let (Some(s_min), Some(s_max), Some(f_min), Some(f_max)) = (s_min_f, s_max_f, f_min_f, f_max_f) {
+                     if f_max < s_min || f_min > s_max {
+                        return false;
+                     }
+                }
+            }
+        },
+        
+        // B. 字符串/日期/Decimal (Lexicographical Compare)
+        // 注意：Decimal 如果通过 Scalar::to_json 变成了 String，会走这里
+        // 字符串比较对于 ISO Date 是安全的，但对于 "10.0" vs "2.0" 是不安全的 (Decimal 需注意)
+        serde_json::Value::String(s_min_str) => {
+             if let serde_json::Value::String(s_max_str) = src_max {
+                 let f_min_s = f_min.as_str();
+                 let f_max_s = f_max.as_str();
+                 
+                 if let (Some(f_min), Some(f_max)) = (f_min_s, f_max_s) {
+                     if f_max < s_min_str.as_str() || f_min > s_max_str.as_str() {
+                        return false;
+                     }
+                 }
+             }
+        },
+        
+        _ => return true,
+    }
+
+    true
+}
+
 // 辅助：比较 JSON Value 大小 (简化版)
 fn is_smaller(a: &Value, b: &Value) -> bool {
     match (a, b) {
@@ -246,8 +338,6 @@ fn get_polars_schema_from_delta(table: &DeltaTable) -> PolarsResult<Schema> {
     }
 }
 
-
-/// 简单的 Hive 路径解析器
 /// path: "date=2023-01-01/region=US/part-xxx.parquet"
 /// cols: ["date", "region"]
 fn parse_hive_partitions(path: &str, cols: &[String]) -> HashMap<String, Option<String>> {
@@ -258,13 +348,11 @@ fn parse_hive_partitions(path: &str, cols: &[String]) -> HashMap<String, Option<
     for part in parts {
         if let Some((k, v)) = part.split_once('=') {
             if cols.contains(&k.to_string()) {
-                // 这里建议做 url decode，防止特殊字符问题
                 let decoded_v = urlencoding::decode(v).map(|c| c.into_owned()).unwrap_or(v.to_string());
                 map.insert(k.to_string(), Some(decoded_v));
             }
         }
     }
-    // Delta 规范要求所有分区列必须存在
     for col in cols {
         map.entry(col.clone()).or_insert(None);
     }
@@ -1193,14 +1281,13 @@ pub extern "C" fn pl_io_delta_merge(
     merge_keys_len: usize,
     
     // --- Merge Conditions (Expr) ---
-    // 允许为空指针 (null_ptr)，为空则使用默认行为 (true/false)
     matched_update_cond: *mut ExprContext,        // WHEN MATCHED AND cond THEN UPDATE
     matched_delete_cond: *mut ExprContext,        // WHEN MATCHED AND cond THEN DELETE
     not_matched_insert_cond: *mut ExprContext,    // WHEN NOT MATCHED AND cond THEN INSERT
     not_matched_by_source_delete_cond: *mut ExprContext, // WHEN NOT MATCHED BY SOURCE AND cond THEN DELETE
 
     // --- Schema Evolution Switch ---
-    can_evolve: bool, // <--- [New] 新增参数
+    can_evolve: bool, 
     // --- Cloud Args ---
     cloud_provider: u8,
     cloud_retries: usize,
@@ -1213,11 +1300,11 @@ pub extern "C" fn pl_io_delta_merge(
     cloud_len: usize
 ) {
     ffi_try_void!({
-    // 1. Unpack Basic Args
-        let path_str = ptr_to_str(target_path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        // 1. Unpack Basic Args
+        let path_str = ptr_to_str(target_path_ptr).map_err(|e| PolarsError::InvalidOperation(e.to_string().into()))?;
         let merge_keys = unsafe { ptr_to_vec_string(merge_keys_ptr, merge_keys_len) };
         if merge_keys.is_empty() {
-             return Err(PolarsError::ComputeError("Merge keys cannot be empty".into()));
+             return Err(PolarsError::InvalidOperation("Merge keys cannot be empty".into()));
         }
         let source_lf_ctx = unsafe { Box::from_raw(source_lf_ptr) };
         let mut source_lf = source_lf_ctx.inner; 
@@ -1267,19 +1354,16 @@ pub extern "C" fn pl_io_delta_merge(
             // =========================================================
             // OPTIMIZATION 1: Analyze Source Partitions
             // =========================================================
-            // 获取 Source 数据涉及的分区值集合 (HashSet<Vec<String>>)
-            // 如果表没有分区，这里返回 None 或 空集合
+            // Get Source Partition Value to prune
             let source_partitions = get_source_partition_values(&source_lf, &part_cols);
 
             // =========================================================
             // OPTIMIZATION 2: Analyze Source Key Bounds (Multi-Key)
             // =========================================================
-            // 计算 Source 数据中每个 Merge Key 的 (Min, Max) 范围
-            // 用于 Z-Order / Data Skipping
+            // For Z-Order / Data Skipping
             let mut key_bounds = HashMap::new();
             for key in &merge_keys {
                 let dtype = schema.get_field(key).map(|f| f.dtype.clone()).unwrap_or(DataType::Null);
-                // 假设 get_source_key_bounds 返回 Option<(LiteralValue, LiteralValue)>
                 if let Some(bounds) = get_source_key_bounds(&source_lf, key, &dtype) {
                     key_bounds.insert(key.clone(), bounds);
                 }
@@ -1290,55 +1374,84 @@ pub extern "C" fn pl_io_delta_merge(
             // =========================================================
             let mut remove_actions = Vec::new();
             
-            // 获取活跃文件流
+            // Get Active File Stream
             let t_scan = t.clone(); 
             let mut stream = t_scan.get_active_add_actions_by_partitions(&[]);
-            // let mut stream = t.get_active_add_actions_by_partitions(&[]);
 
             while let Some(action_res) = futures::StreamExt::next(&mut stream).await {
                 let view = action_res.map_err(|e| PolarsError::ComputeError(format!("Delta stream error: {}", e).into()))?;
-                
-                // 1. Partition Pruning (分区剪枝)
-                // 如果 Source 提供了分区信息，且当前文件不在涉及的分区内，直接跳过
+                    
+                // ==========================================
+                // 1. Partition Pruning (Optimized)
+                // ==========================================
                 if let Some(affected_set) = &source_partitions {
-                    let path_cow = view.path();
-                    let path_str = path_cow.as_ref();
                     
-                    // 解析文件路径中的分区值 (更快，避免 view.partition_values 的开销)
-                    let file_parts_map = parse_hive_partitions(path_str, &part_cols);
+                    // A. Parse Partition Value from Delta Log (StructData) 
+                    let maybe_key = view.partition_values().map(|struct_data| {
+                        let fields = struct_data.fields();
+                        let values = struct_data.values();
+                        
+                        let mut key = Vec::with_capacity(part_cols.len());
+                        
+                        for target_col_name in &part_cols {
+                            let val_str = fields.iter()
+                                .position(|f| f.name() == target_col_name)
+                                .map(|idx| &values[idx])
+                                .map(|scalar| {
+                                    if scalar.is_null() {
+                                        "__HIVE_DEFAULT_PARTITION__".to_string()
+                                    } else {
+                                        scalar.serialize()
+                                    }
+                                })
+                                .unwrap_or_else(|| {
+                                    "__HIVE_DEFAULT_PARTITION__".to_string()
+                                });
+                            
+                            key.push(val_str);
+                        }
+                        key
+                    });
+
+                    // Build file_key 
+                    let file_key = match maybe_key {
+                        Some(k) => k,
+                        None => {
+                            let path_cow = view.path();
+                            let path_str = path_cow.as_ref();
+                            let file_parts_map = parse_hive_partitions(path_str, &part_cols);
+                            
+                            let mut k = Vec::with_capacity(part_cols.len());
+                            for col_name in &part_cols {
+                                let v = file_parts_map.get(col_name).cloned().flatten()
+                                    .unwrap_or_else(|| "__HIVE_DEFAULT_PARTITION__".to_string());
+                                k.push(v);
+                            }
+                            k
+                        }
+                    };
                     
-                    // 构建分区 Key 向量，顺序必须与 part_cols 一致
-                    let mut file_key = Vec::with_capacity(part_cols.len());
-                    for col_name in &part_cols {
-                        let v = file_parts_map.get(col_name).cloned().flatten()
-                                .unwrap_or_else(|| "__HIVE_DEFAULT_PARTITION__".to_string());
-                        file_key.push(v);
-                    }
-                    
-                    // 核心检查：如果文件所在分区不在 Source 涉及的分区集合中 -> Skip
+                    // Check Pruning
                     if !affected_set.contains(&file_key) {
-                        continue; 
+                        continue; // Skip this file
                     }
                 }
 
-                // 2. Stats Pruning (统计信息剪枝 - Multi-Key Intersection)
-                // 如果文件通过了分区检查，再看它的 Min/Max 是否与 Source 重叠
-                // 逻辑：所有 Key 必须同时重叠 (Intersection)，文件才可能包含需要 Merge 的数据
+                // 2. Stats Pruning 
+                // File max&min has to intersection with key
                 let mut file_overlaps = true;
                 if !key_bounds.is_empty() {
                     let stats_json = view.stats();
                     
                     for (key, (src_min, src_max)) in &key_bounds {
-                        // 只要有任意一个 Key 的范围不重叠，这个文件就不需要读取
                         if !check_file_overlap(stats_json.as_deref(), key, src_min.clone(), src_max.clone()) {
                             file_overlaps = false;
-                            break; // 只要一个 Key 没命中，整个文件就可以判死刑
+                            break; 
                         }
                     }
                 }
 
                 // 3. Keep File
-                // 只有通过了所有剪枝策略的文件，才会被加入读取列表
                 if file_overlaps {
                     remove_actions.push(view.remove_action(true));
                 }
@@ -1352,7 +1465,7 @@ pub extern "C" fn pl_io_delta_merge(
         
         // Pure Insert or Table Empty
         let target_lf = if pruned_remove_actions.is_empty() {
-            // 使用从 Delta Snapshot 获取的 Polars Schema 构建空 DataFrame
+            // Use Polars Schema from Delta Snapshot to build DataFrame
             DataFrame::empty_with_schema(&polars_schema)
                 .lazy()
         } else {
@@ -1367,7 +1480,6 @@ pub extern "C" fn pl_io_delta_merge(
             
             // Build ScanArgs
             let mut scan_args = ScanArgsParquet::default();
-            // 必须开启 Hive 解析，否则 Polars 读不到分区列数据
             scan_args.hive_options = HiveOptions {
                 enabled: Some(true),
                 hive_start_idx: 0,
@@ -1399,15 +1511,12 @@ pub extern "C" fn pl_io_delta_merge(
         for src_col_name in source_schema.iter_names() {
             if polars_schema.get_field(src_col_name).is_none() {
                 if !can_evolve {
-                    // 如果不允许演变，必须报错
-                    return Err(PolarsError::ComputeError(
+                    return Err(PolarsError::SchemaMismatch(
                         format!("Schema mismatch: Source column '{}' is not present in target. Pass 'can_evolve=true' to allow.", src_col_name).into()
                     ));
                 }
-                // 如果允许演变，静默通过，后续逻辑会处理
             }
         }
-        // 关键：Source Key 也要改名，用于判断 "Source Exists"
         let mut source_keys_renamed_exprs = Vec::with_capacity(merge_keys.len());
         let mut target_keys_exprs = Vec::with_capacity(merge_keys.len());
 
@@ -1423,7 +1532,24 @@ pub extern "C" fn pl_io_delta_merge(
             old_names.push(name.as_str());
             new_names.push(new_name);
         }
-        let source_renamed = source_lf.clone().rename(old_names, new_names,true);
+
+        // Unique Source
+        // subset: merge_keys
+        // keep: UniqueKeepStrategy::Last 
+        let names_vec: Vec<PlSmallStr> = merge_keys.iter()
+            .map(|k| PlSmallStr::from_string(k.clone()))
+            .collect();
+            
+        let names_arc: Arc<[PlSmallStr]> = names_vec.into();
+
+        let selector = Selector::ByName {
+            names: names_arc,
+            strict: true, 
+        };
+
+        let source_renamed = source_lf.clone()
+            .unique(Some(selector), UniqueKeepStrategy::Last) 
+            .rename(old_names, new_names, true);
 
         let join_args = JoinArgs {
             how: JoinType::Full,
@@ -1435,7 +1561,8 @@ pub extern "C" fn pl_io_delta_merge(
             maintain_order: MaintainOrderJoin::None, 
             build_side: Default::default(), 
         };
-        // B. Execute Full Join
+
+        // Execute Full Join
         let joined_lf = target_lf.join(
             source_renamed,
             target_keys_exprs,         // Left On: [Key1, Key2]
@@ -1458,20 +1585,19 @@ pub extern "C" fn pl_io_delta_merge(
         let is_not_matched_by_source = is_source_exists.not().and(is_target_exists.clone()); // Target Only
 
         // =================================================================================
-        // [CRITICAL FIX]: 计算所有列 (Target U Source) 的表达式
+        // Calculate All Target U Source Expression
         // =================================================================================
         
-        // 1. 收集所有唯一的列名
-        // 为了保持列顺序美观，建议：Target 原有列顺序 + Source 新增列顺序
+        // Collect All Unique Column Name
         let mut output_columns_order = Vec::new();
         let mut seen_columns = PlHashSet::new();
 
-        // 先加入 Target 列
+        // Add Target Columns
         for name in polars_schema.iter_names() {
             output_columns_order.push(name.to_string());
             seen_columns.insert(name.to_string());
         }
-        // 再加入 Source 新增列
+        // Add Source Columns
         for name in source_schema.iter_names() {
             if !seen_columns.contains(name.as_str()) {
                 output_columns_order.push(name.to_string());
@@ -1481,23 +1607,41 @@ pub extern "C" fn pl_io_delta_merge(
 
         let mut final_exprs = Vec::new();
 
-        // 2. 遍历所有列生成表达式
+        // Iter All columns to generate expressions
         for col_name in output_columns_order {
             let src_col_alias = format!("{}_src_tmp", col_name);
             let has_source_col = source_cols_renamed.contains(&src_col_alias);
             let has_target_col = polars_schema.get_field(&col_name).is_some();
-            
-            // Source Value: 如果 Source 没这一列，Update/Insert 时用 Null
-            let source_val_expr = if has_source_col { col(&src_col_alias) } else { lit(NULL) };
 
-            // Target Value: 如果 Target 没这一列 (Schema Evolution 场景)，Keep 时用 Null
+            // Partial Update
+            // If Source has this col -> Update with Source
+            // If Source does not have this col but Target has -> Keep Target 
+            // Else -> Null
+            let update_val_expr = if has_source_col {
+                col(&src_col_alias)
+            } else if has_target_col {
+                col(&col_name) 
+            } else {
+                lit(NULL)
+            };
+
+            // Insert
+            // If Source has this col -> Insert Source 
+            // Else -> Insert Null
+            let insert_val_expr = if has_source_col { 
+                col(&src_col_alias) 
+            } else { 
+                lit(NULL) 
+            };
+            
+            // Target Value: if Target does not have col (Schema Evolution)，use Null to keep
             let target_val_expr = if has_target_col { col(&col_name) } else { lit(NULL) };
 
             final_exprs.push(
                 when(is_matched.clone().and(cond_update.clone()))
-                .then(source_val_expr.clone())
+                .then(update_val_expr) 
                 .when(is_not_matched.clone().and(cond_insert.clone()))
-                .then(source_val_expr)
+                .then(insert_val_expr) 
                 .otherwise(target_val_expr)
                 .alias(&col_name)
             );
@@ -1519,22 +1663,20 @@ pub extern "C" fn pl_io_delta_merge(
             .or(is_not_matched.clone().and(cond_insert.not())); // Insert Condition Failed
 
         let processed_lf = joined_lf
-            .with_columns(final_exprs.clone()) // 这里 final_exprs 已经包含了所有列的计算
+            .with_columns(final_exprs.clone()) 
             .filter(should_delete.not())
             .select(final_exprs.iter().map(|e| col(e.clone().meta().output_name().unwrap())).collect::<Vec<_>>());
 
         // =================================================================================
-        // [Fix Start]: 在 Sink 之前，构建包含新列的最终 Schema
+        // Build Final Schema with new cols before Sink
         // =================================================================================
         
-        // 1. 我们以 Target Schema 为基础
+        // 1. Get Target Schema 
         let mut final_schema = polars_schema.clone();
         
-        // 2. 将 Source 中有但 Target 中没有的新列加入 final_schema
-        // source_schema 之前已经 collect 过了
+        // 2. Add Source new schema
         for (name, dtype) in source_schema.iter() {
             if final_schema.get_field(name).is_none() {
-                // 这是一个新列！
                 final_schema.with_column(name.to_string().into(), dtype.clone());
             }
         }
@@ -1550,37 +1692,32 @@ pub extern "C" fn pl_io_delta_merge(
         let staging_uri = format!("{}/{}", root_trimmed, staging_dir_name);
         
         // Partition Strategy
-        // 必须与原表保持一致
-        // [Fix 1]: 显式构建分区策略 (基于 Delta Table 原有的 partition_cols)
-        // 即使 partition_cols 为空，这里也会正确生成 FileSize 策略
         let partition_strategy = if partition_cols.is_empty() {
             PartitionStrategy::FileSize
         } else {
-            // 将字符串列名转换为 Expr::Column
             let keys: Vec<Expr> = partition_cols.iter().map(|n| col(n)).collect();
             PartitionStrategy::Keyed {
                 keys,
-                include_keys: false, // Delta Lake 标准：分区键只在目录名中，不在 Parquet 文件内容里
+                include_keys: false, 
                 keys_pre_grouped: false,
             }
         };
 
-        // [Fix 2]: 手动构建 SinkDestination，绕过 build_partitioned_destination 辅助函数
+        // Build SinkDestination
         let hive_provider = HivePathProvider {
             extension: PlSmallStr::from_str(".parquet"),
         };
         let file_path_provider = Some(file_provider::FileProviderType::Hive(hive_provider));
         
-        // 注意：这里 base_path 需要引用 staging_uri，确保 staging_uri 在 sink 执行期间存活
         let destination = SinkDestination::Partitioned {
             base_path: PlRefPath::new(&staging_uri), 
             file_path_provider,
             partition_strategy,
-            max_rows_per_file: u32::MAX, // Merge 产生的临时文件通常较大，让 Polars 自己控制
+            max_rows_per_file: u32::MAX, 
             approximate_bytes_per_file: usize::MAX as u64,
         };
 
-        // 构建 Write Options
+        // Build Write Options
         let write_opts = build_parquet_write_options(
             1, // compression (Snappy)
             -1, // level
@@ -1590,10 +1727,10 @@ pub extern "C" fn pl_io_delta_merge(
             -1 // compat_level
         ).map_err(|e| PolarsError::ComputeError(format!("Options error: {}", e).into()))?;
         
-        // 构建 Unified Cloud Args
+        // Build Unified Cloud Args
         let unified_args = unsafe {
             build_unified_sink_args(
-                false, // mkdir (staging 目录通常由 writer 自动处理)
+                false, // mkdir
                 false, // maintain_order
                 0,     // sync_on_close
                 cloud_provider, cloud_retries, cloud_retry_timeout_ms,
@@ -1653,7 +1790,6 @@ pub extern "C" fn pl_io_delta_merge(
                         .map_err(|e| PolarsError::ComputeError(format!("Rename failed: {}", e).into()))?;
                     
                     // 3. Add Action
-                    // 重新解析分区值 (从目标路径)
                     let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
                     
                     adds.push(Action::Add(Add {
@@ -1672,15 +1808,14 @@ pub extern "C" fn pl_io_delta_merge(
 
         final_actions.extend(add_actions);
         // =================================================================================
-        // PHASE 7: Commit Transaction
+        // 7: Commit Transaction
         // =================================================================================
 
         if !final_actions.is_empty() {
              rt.block_on(async {
                 // -------------------------------------------------------------------------
-                // A. Construct Logic Metadata (Audit Logs)
+                // Construct Logic Metadata (Audit Logs)
                 // -------------------------------------------------------------------------
-                // 告诉 Delta Log 我们做了什么。这不会影响数据，但会影响 `DESCRIBE HISTORY` 的结果。
                 
                 let mut matched_preds = Vec::new();
                 let mut not_matched_preds = Vec::new();           // INSERT
@@ -1693,7 +1828,7 @@ pub extern "C" fn pl_io_delta_merge(
                         action_type: "UPDATE".into() 
                     });
                 } else {
-                    // 指针为空 = 默认 Upsert = 无条件 Update
+                    // => Upsert = UPDATE
                     matched_preds.push(MergePredicate { 
                         predicate: None, 
                         action_type: "UPDATE".into() 
@@ -1714,7 +1849,6 @@ pub extern "C" fn pl_io_delta_merge(
                         action_type: "INSERT".to_string(),
                     });
                 } else {
-                    // 默认无条件插入
                      not_matched_preds.push(MergePredicate {
                         predicate: None,
                         action_type: "INSERT".to_string(),
@@ -1734,8 +1868,6 @@ pub extern "C" fn pl_io_delta_merge(
                 let current_snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot: {}", e).into()))?;
                 let current_delta_schema = current_snapshot.schema();
 
-                // [Fix]: 重新构建 "新 Schema" (Logic Copy)，因为 final_schema 作用域在上面 Sink 块里
-                // 这里的逻辑必须和 Sink 前的 final_schema 保持一致
                 let mut new_pl_schema = polars_schema.clone();
                 let mut has_schema_change = false;
                 for (name, dtype) in source_schema.iter() {
@@ -1748,7 +1880,6 @@ pub extern "C" fn pl_io_delta_merge(
                 if has_schema_change {
                     let new_delta_schema = convert_to_delta_schema(&new_pl_schema)?;
 
-                    // [Fix]: 这里使用 new_delta_schema 和当前表对比
                     if current_delta_schema.as_ref() != &new_delta_schema {
                         if !can_evolve {
                              return Err(PolarsError::ComputeError("Schema mismatch detected. Pass 'can_evolve=true'.".into()));
@@ -1767,7 +1898,7 @@ pub extern "C" fn pl_io_delta_merge(
                 }
 
                 // -------------------------------------------------------------------------
-                // C. Build & Commit
+                // Build & Commit
                 // -------------------------------------------------------------------------
 
                 let join_predicate = merge_keys.iter()
@@ -1784,7 +1915,7 @@ pub extern "C" fn pl_io_delta_merge(
                 };
 
                 let _ver = CommitBuilder::default()
-                    .with_actions(final_actions) // 此时包含 Remove(Pruned) + Add(Staging) + Metadata(Evolution)
+                    .with_actions(final_actions) // Remove(Pruned) + Add(Staging) + Metadata(Evolution)
                     .build(
                         table.snapshot().ok().map(|s| s as &dyn transaction::TableReference),
                         table.log_store().clone(),

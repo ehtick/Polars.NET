@@ -721,7 +721,6 @@ pub extern "C" fn pl_dataframe_write_csv(
         let file = std::fs::File::create(path_str)
             .map_err(|e| PolarsError::ComputeError(format!("Failed to create file: {}", e).into()))?;
 
-        // 1. 构建 SerializeOptions (复用)
         let serialize_options = unsafe {
              build_serialize_options(
                 date_format_ptr, time_format_ptr, datetime_format_ptr,
@@ -730,7 +729,6 @@ pub extern "C" fn pl_dataframe_write_csv(
             )
         };
 
-        // 2. 配置 CsvWriter
         let mut writer = CsvWriter::new(file)
             .include_header(include_header)
             .include_bom(include_bom)
@@ -751,12 +749,10 @@ pub extern "C" fn pl_dataframe_write_csv(
              writer = writer.with_batch_size(std::num::NonZeroUsize::new(batch_size).unwrap());
         }
 
-        // 3. 执行
         writer.finish(&mut ctx.df)?;
         Ok(())
     })
 }
-
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazyframe_sink_csv(
@@ -837,6 +833,114 @@ pub extern "C" fn pl_lazyframe_sink_csv(
         let destination = SinkDestination::File { target };
 
         // Sink
+        let _ = lf_ctx.inner
+            .sink(destination, file_format, unified_args)?
+            .collect()?;
+
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_sink_csv_partitioned(
+    lf_ptr: *mut LazyFrameContext,
+    base_path_ptr: *const c_char,
+    
+    // --- Partition Specific Params ---
+    partition_by_ptr: *mut SelectorContext,
+    include_keys: bool,
+    keys_pre_grouped: bool,
+    max_rows_per_file: usize,     
+    approx_bytes_per_file: u64,
+
+    // --- CSV Specific Params ---
+    include_bom: bool,
+    include_header: bool,
+    batch_size: usize,
+    check_extension: bool, 
+    // Compression
+    compression_code: u8,
+    compression_level: i32,
+
+    // Serialize Options 
+    date_format: *const c_char,
+    time_format: *const c_char,
+    datetime_format: *const c_char,
+    float_scientific: i32,
+    float_precision: i32,
+    decimal_comma: bool,
+    separator: u8,
+    quote_char: u8,
+    null_value: *const c_char,
+    line_terminator: *const c_char,
+    quote_style: u8,
+
+    // --- UnifiedSinkArgs ---
+    maintain_order: bool,
+    sync_on_close: u8,
+    mkdir: bool,
+
+    // --- Cloud Params ---
+    cloud_provider: u8,
+    cloud_retries: usize,
+    cloud_retry_timeout_ms: u64,
+    cloud_retry_init_backoff_ms: u64,
+    cloud_retry_max_backoff_ms: u64,
+    cloud_cache_ttl: u64,
+    cloud_keys: *const *const c_char,
+    cloud_values: *const *const c_char,
+    cloud_len: usize
+) {
+    ffi_try_void!({
+        let mut lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+        
+        // Get Schema
+        let schema = lf_ctx.inner.collect_schema()?;
+
+        //  Partitioned Destination
+        let destination = unsafe {
+            build_partitioned_destination(
+                base_path_ptr,
+                ".csv", 
+                &schema,
+                partition_by_ptr,
+                include_keys,
+                keys_pre_grouped,
+                max_rows_per_file,
+                approx_bytes_per_file
+            )?
+        };
+
+        // Unified Args
+        let unified_args = unsafe {
+            build_unified_sink_args(
+                mkdir,
+                maintain_order,
+                sync_on_close,
+                cloud_provider,
+                cloud_retries,
+                cloud_retry_timeout_ms,
+                cloud_retry_init_backoff_ms,
+                cloud_retry_max_backoff_ms,
+                cloud_cache_ttl,
+                cloud_keys,
+                cloud_values,
+                cloud_len
+            )
+        };
+
+        // CSV Options
+        let csv_options = unsafe {
+            build_csv_writer_options(
+                include_bom, include_header, batch_size, check_extension,
+                compression_code, compression_level,
+                date_format, time_format, datetime_format,
+                float_scientific, float_precision, decimal_comma,
+                separator, quote_char, null_value, line_terminator, quote_style
+            )
+        };
+        let file_format = FileWriteFormat::Csv(csv_options);
+
         let _ = lf_ctx.inner
             .sink(destination, file_format, unified_args)?
             .collect()?;
@@ -1242,12 +1346,11 @@ pub extern "C" fn pl_dataframe_write_parquet(
     path_ptr: *const c_char,
     // --- ParquetWriteOptions ---
     compression_code: u8,
-    compression_level: i32, // C# 传入 -1 表示默认
+    compression_level: i32, 
     statistics: bool,
     row_group_size: usize,
     data_page_size: usize,
-    _compat_level: i32,     // 忽略
-    // --- UnifiedSinkArgs (Eager 忽略) ---
+    _compat_level: i32,     
     _maintain_order: bool, _sync_on_close: u8, _mkdir: bool,
     // --- Cloud Options (Eager 忽略) ---
     _cloud_provider: u8, _cloud_retries: usize, _cloud_retry_timeout_ms: u64,
@@ -1259,7 +1362,7 @@ pub extern "C" fn pl_dataframe_write_parquet(
         let ctx = unsafe { &mut *df_ptr };
         let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
 
-        // 1. 创建本地文件 (Eager 模式)
+        // Eager Mode
         let file = std::fs::File::create(path_str)
             .map_err(|e| PolarsError::ComputeError(format!("Failed to create file: {}", e).into()))?;
 
@@ -1285,12 +1388,7 @@ pub extern "C" fn pl_dataframe_write_parquet(
                 };
                 ParquetCompression::Brotli(lvl)
             },
-            4 => { // Zstd
-                // ZstdLevel 需要 i32
-                // 注意：Zstd 允许负数级别（极速模式），但在我们的 API 约定中，
-                // -1 通常作为 "Default" 哨兵值。
-                // 这里为了安全，如果传 -1 我们就用 Default。
-                // 如果用户真的想要 Zstd 级别 -1，C# 端可能需要调整逻辑，但目前保持一致性优先。
+            4 => { 
                 let lvl = if compression_level != -1 {
                     ZstdLevel::try_new(compression_level).ok()
                 } else {
@@ -1331,12 +1429,10 @@ pub extern "C" fn pl_dataframe_write_parquet(
     })
 }
 
-// 辅助函数：Eager Write 降级
-// 使用 ParquetWriteOptions 来配置 Eager Writer
 fn fallback_eager_parquet(
     lf: LazyFrame,
     path: &str,
-    options: &ParquetWriteOptions // 从 Arc 解包出来传引用
+    options: &ParquetWriteOptions
 ) -> PolarsResult<()> {
     // 1. Collect
     let mut df = lf.collect()?;
@@ -1348,15 +1444,13 @@ fn fallback_eager_parquet(
     // 3. Configure Writer
     let mut writer = ParquetWriter::new(file)
         .with_compression(options.compression)
-        .with_statistics(options.statistics.clone()) // StatisticsOptions 可能需要 clone
+        .with_statistics(options.statistics.clone())
         .set_parallel(true);
 
     if let Some(s) = options.row_group_size { writer = writer.with_row_group_size(Some(s)); }
     if let Some(s) = options.data_page_size { writer = writer.with_data_page_size(Some(s)); }
     
-    // CompatLevel 处理 (如果你的 ParquetWriter 支持 with_compat_level)
     if let Some(_compat) = options.compat_level {
-        // writer = writer.with_compat_level(compat); // 取决于 ParquetWriter 实现是否暴露
     }
 
     // 4. Write
@@ -1391,15 +1485,12 @@ pub extern "C" fn pl_lazyframe_sink_parquet(
     cloud_len: usize
 ) {
     ffi_try_void!({
-        // 1. 准备 LazyFrame
         let ctx = unsafe { Box::from_raw(lf_ptr) };
         let lf = ctx.inner;
-        let lf_clone = lf.clone(); // 克隆一份用于 Fallback
+        let lf_clone = lf.clone();
 
         let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
 
-        // 2. 构建 Parquet Options (复用 Helper)
-        // 返回 Arc<ParquetWriteOptions>
         let write_options_arc = build_parquet_write_options(
             compression,
             compression_level,
@@ -1409,9 +1500,6 @@ pub extern "C" fn pl_lazyframe_sink_parquet(
             compat_level
         )?;
         
-        // 包装进 FileWriteFormat
-        // let file_format = FileWriteFormat::Parquet(write_options_arc.clone());
-
         // 3. 构建 Unified Args (复用 Helper)
         let unified_args = unsafe {
             build_unified_sink_args(
@@ -1430,31 +1518,22 @@ pub extern "C" fn pl_lazyframe_sink_parquet(
             )
         };
 
-        // 这里的闭包需要移动 parquet_options 的克隆进去
         let options_for_stream = write_options_arc.clone();
         
         let result = catch_unwind(AssertUnwindSafe(|| {
-            // A. 构建 Destination
-            // 注意：Polars 0.53 这里使用 SinkTarget::Path(PlRefPath)
             let target = SinkTarget::Path(PlRefPath::from(path_str));
             let destination = SinkDestination::File { target };
 
-            // B. 构建 FileFormat
             let file_format = FileWriteFormat::Parquet(options_for_stream);
 
-            // E. 执行
             lf.sink(destination, file_format, unified_args)?
               .collect()
         }));
 
-        // 5. 结果处理与降级 (Fallback)
         match result {
             Ok(Ok(_)) => {
-                // 成功
             },
             Ok(Err(e)) => {
-                // Polars Error: 可能是 "AnonymousScan" 也就是 Unimplemented
-                // 如果是 Cloud 路径，Eager 没法救，直接报错
                 if cloud_provider != 0 {
                     return Err(e);
                 }
@@ -1462,7 +1541,6 @@ pub extern "C" fn pl_lazyframe_sink_parquet(
                 fallback_eager_parquet(lf_clone, path_str, &write_options_arc)?;
             },
             Err(_) => {
-                // Panic: 肯定是 AnonymousScan 导致的
                 if cloud_provider != 0 {
                     return Err(PolarsError::ComputeError("Streaming sink panicked on Cloud path (Eager fallback not supported for Cloud).".into()));
                 }

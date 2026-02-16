@@ -1136,11 +1136,6 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // ==========================================
         // 4. 定义 MERGE 逻辑表达式
         // ==========================================
-        // 注意：Rust 实现中，Source 列被重命名为 "{ColName}_src_tmp"
-        // 我们需要在 C# 端手动指定这些后缀，或者封装 Helper。
-        // 这里直接使用底层列名进行硬核测试。
-
-        // A. Update 条件: 只有当 Source 库存 > Target 库存时才更新
         // A. Update 条件: 只有当 Source 库存 > Target 库存时才更新
         // 原写法: Col("Stock_src_tmp") > Col("Stock")
         // 新写法:
@@ -1409,10 +1404,200 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
 
         // 验证
         using var res = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
-        
+        res.Show();
         // ColA 变了 (10 -> 99)
         Assert.Equal(99, res["ColA"][0]);
         // ColB 没变 (20 -> 20)
         Assert.Equal(20, res["ColB"][0]);
+    }
+    [Fact]
+    [Trait("DeltaLake", "MergeDuplicateSource")]
+    public void Test_Merge_Delta_With_Duplicate_Source_Keys()
+    {
+        var tableName = $"delta_merge_dup_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // 1. 准备 Target 数据 (Id=1, Val=10)
+        // 这是一个干净的表，主键唯一
+        using (var dfTarget = DataFrame.FromColumns(new { 
+            Id = new[] { 1 }, 
+            Val = new[] { 10 } 
+        }))
+        {
+            dfTarget.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+        }
+
+        // 2. 准备 Source 数据 (脏数据)
+        // 注意：Id=1 出现了两次！这就好比你发了两个更新请求：
+        // 请求A: 把 1 改成 88
+        // 请求B: 把 1 改成 99
+        using (var dfSource = DataFrame.FromColumns(new { 
+            Id = new[] { 1, 1 }, 
+            Val = new[] { 88, 99 }
+        }))
+        {
+            // 3. 执行 Merge
+            // 预期行为：
+            // A (严格): 抛出异常 "Multiple source rows matched the same target row" (标准 SQL 行为)
+            // B (宽容): 自动去重，保留最后一条 (Val=99)，Target 依然只有 1 行。
+            // C (灾难): 发生笛卡尔积膨胀，Target 变成 2 行 (Id=1, Val=88) 和 (Id=1, Val=99)。
+            
+            dfSource.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options);
+        }
+
+        // 4. 验证结果
+        using var res = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        
+        // 打印出来看看“灾难”现场
+        Console.WriteLine("=== Merge Result Preview ===");
+
+        // 核心断言：
+        // 无论如何，Merge 不应该导致 Target 的主键约束被破坏。
+        // 如果这里是 2，说明发生了“基数膨胀”，这是严重的 Bug。
+        Assert.Equal(1, res.Height); 
+        
+        // 进阶断言（如果实现了 Last-Win 策略）：
+        Assert.Equal(99, res["Val"][0]);
+    }
+    [Fact]
+    [Trait("DeltaLake", "MergeExplicitNull")]
+    public void Test_Merge_Delta_Explicit_Null_Overwrites_Value()
+    {
+        var tableName = $"delta_merge_null_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // 1. Target: Id=1, Val=100 (有值)
+        using (var dfTarget = DataFrame.FromColumns(new { 
+            Id = new[] { 1 }, 
+            Val = new int?[] { 100 } // 使用 int? 允许后续变 null
+        }))
+        {
+            dfTarget.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+        }
+
+        // 2. Source: Id=1, Val=null (显式 Null)
+        // 意图：把 Id=1 的 Val 清空
+        // 注意：这里必须显式构造含有 "Val" 列的 DataFrame，哪怕全是 null
+        using (var dfSource = DataFrame.FromColumns(new { 
+            Id = new[] { 1 }, 
+            Val = new int?[] { null } // <--- 关键点：列存在，值为 null
+        }))
+        {
+            // 3. Merge
+            // 预期逻辑：
+            // Rust 检查 Schema -> 发现 Source 有 "Val" 列 -> has_source_col = true
+            // update_expr = col("Val_src_tmp")
+            // 执行 Update -> 写入 null
+            dfSource.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options);
+        }
+
+        // 4. 验证
+        using var res = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        
+        Console.WriteLine("=== Explicit Null Test Result ===");
+        res.Show();
+
+        // 断言：
+        // 如果逻辑错判为“缺失列”，这里会是 100 (Keep Old Value) -> FAIL
+        // 如果逻辑正确，这里必须是 null (Overwrite with Null) -> PASS
+        Assert.Null(res["Val"][0]);
+        Assert.Equal(1, res.Height);
+    }
+    [Fact]
+    [Trait("DeltaLake", "MergeSchemaEvolution")]
+    public void Test_Merge_Delta_Schema_Evolution_Add_New_Column()
+    {
+        var tableName = $"delta_merge_evolution_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // 1. Target: Id, OldCol
+        using (var dfTarget = DataFrame.FromColumns(new { 
+            Id = new[] { 1, 2 }, 
+            OldCol = new[] { "Existing1", "Existing2" } 
+        }))
+        {
+            dfTarget.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+        }
+
+        // 2. Source: Id, NewCol (注意：没有 OldCol，这既是 Schema Evolution 也是 Partial Update)
+        // Id=1 更新 -> OldCol 保持, NewCol 写入 "NewValue"
+        // Id=3 插入 -> OldCol 为 Null, NewCol 写入 "FreshValue"
+        using (var dfSource = DataFrame.FromColumns(new { 
+            Id = new[] { 1, 3 }, 
+            NewCol = new[] { "NewValue", "FreshValue" }
+        }))
+        {
+            // 3. Merge (开启 Schema Evolution 通常是 Delta 引擎层的参数，
+            // 但 Polars Merge 只要生成了这一列，写入时由 Delta Lake 决定是否接受。
+            // 我们的目标是确保 Polars 输出了这一列。)
+            dfSource.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options,canEvolve:true);
+        }
+
+        // 4. 验证
+        using var res = LazyFrame.ScanDelta(rootUrl, cloudOptions: options)
+            .Sort("Id", false) // 按 Id 排序: 1, 2, 3
+            .Collect();
+        
+        Console.WriteLine("=== Schema Evolution Result ===");
+        res.Show();
+
+        // 断言列是否存在
+        Assert.Contains("OldCol", res.ColumnNames);
+        Assert.Contains("NewCol", res.ColumnNames); // <--- 如果 Rust 没改，这里必挂
+
+        // 验证数据行
+        // Id=1 (Matched): OldCol=Existing1 (Kept), NewCol=NewValue (Added)
+        var row1 = res.Row(0); // Id=1
+        Assert.Equal(1, row1[0]);
+        Assert.Equal("Existing1", row1[1]);
+        Assert.Equal("NewValue", row1[2]);
+
+        // Id=2 (Target Only): OldCol=Existing2, NewCol=null (Backfilled)
+        var row2 = res.Row(1); // Id=2
+        Assert.Equal(2, row2[0]);
+        Assert.Equal("Existing2", row2[1]); 
+        Assert.Null(row2[2]); // <--- 关键：旧行自动补 Null
+
+        // Id=3 (Insert): OldCol=null, NewCol=FreshValue
+        var row3 = res.Row(2); // Id=3
+        Assert.Equal(3, row3[0]);
+        Assert.Null(row3[1]);
+        Assert.Equal("FreshValue", row3[2]);
     }
 }

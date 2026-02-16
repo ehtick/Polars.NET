@@ -275,7 +275,6 @@ gen_lit_ctor!(pl_expr_lit_u64, u64);
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_expr_col(name: *const c_char) -> *mut ExprContext {
     ffi_try!({
-        // 1. 安全地将 C 字符串转换为 Rust &str
         let name_str = if name.is_null() {
             ""
         } else {
@@ -286,15 +285,12 @@ pub extern "C" fn pl_expr_col(name: *const c_char) -> *mut ExprContext {
             }
         };
 
-        // 2. 核心逻辑：特判空字符串
         let expr = if name_str.is_empty() {
             polars::lazy::dsl::Expr::Element
         } else {
-            // 正常情况：返回显式列引用 col("name")
             col(name_str)
         };
 
-        // 3. 封装返回
         Ok(Box::into_raw(Box::new(ExprContext { inner: expr })))
     })
 }
