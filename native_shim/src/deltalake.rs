@@ -2300,7 +2300,6 @@ pub extern "C" fn pl_io_delta_merge(
                 })?;
                 
                 // Update Target Schema
-                let _snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?;
                 let polars_schema = get_polars_schema_from_delta(&table)?;
                 target_schema = polars_schema.into();
             }
