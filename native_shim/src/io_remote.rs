@@ -6,13 +6,13 @@ use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use deltalake::kernel::engine::arrow_conversion::{TryIntoArrow, TryIntoKernel};
 use deltalake::kernel::transaction::{CommitBuilder};
 use deltalake::kernel::scalars::ScalarExt;
-use deltalake::parquet::arrow::arrow_reader::ArrowReaderOptions;
 use deltalake::parquet::data_type::ByteArray;
 use deltalake::parquet::file::metadata::ParquetMetaData;
 use deltalake::{DeltaTable, DeltaTableBuilder, Path};
 use deltalake::protocol::{DeltaOperation, MergePredicate, SaveMode};
 use deltalake::parquet::arrow::async_reader::{AsyncFileReader, ParquetObjectReader};
 use deltalake::parquet::file::statistics::Statistics as ParquetStatistics;
+use futures::StreamExt;
 use polars::prelude::file_provider::HivePathProvider;
 use serde_json::{json, Value};
 use polars::{error::PolarsError, prelude::*};
@@ -746,52 +746,76 @@ ffi_try_void!({
                 // 6. 注入 Metadata Action (放在最前面)
                 actions.insert(0, Action::Metadata(new_metadata_action));
             }
-            // B. 遍历 Staging 目录
+            // ==========================================
+            // Step B: Parallel Staging Processing 🚀
+            // ==========================================
+            // 1. 获取所有文件列表 (Fast Listing)
             use futures::StreamExt;
-            let mut files_stream = object_store.list(Some(&staging_path));
+            let file_metas: Vec<_> = object_store.list(Some(&staging_path))
+                .filter_map(|res| async { res.ok() }) // 过滤 List 错误
+                .filter(|meta| futures::future::ready(meta.location.to_string().ends_with(".parquet")))
+                .collect()
+                .await;
+
+            // 2. 设定并发度 (例如 64)
+            const CONCURRENCY: usize = 64;
+
+            // 3. 构建并发流
+            let stream = futures::stream::iter(file_metas)
+                .map(|meta| {
+                    // Clone 变量以移入 async block
+                    let object_store = object_store.clone();
+                    let staging_dir_name = staging_dir_name.clone();
+                    let partition_cols = partition_cols.clone();
+                    let write_id = write_id.clone();
+                    
+                    async move {
+                        let src_path_str = meta.location.to_string();
+                        let file_size = meta.size as i64;
+
+                        // C. Read Stats (Network IO)
+                        let mut reader = ParquetObjectReader::new(object_store.clone(), meta.location.clone())
+                                .with_file_size(meta.size as u64);
+                        // 注意：这里最好给 get_metadata 传 None 或者默认 options
+                        let footer = reader.get_metadata(None).await
+                                .map_err(|e| PolarsError::ComputeError(format!("Read footer error: {}", e).into()))?;
+                        let (_, stats_json) = extract_delta_stats(&footer)?;
+
+                        // D. Rename (Heavy Network IO)
+                        let rel_path = src_path_str.trim_start_matches(&format!("{}/", staging_dir_name));
+                        // 清理路径开头可能的 '/'
+                        let rel_path_clean = rel_path.trim_start_matches('/');
+                        let dest_path_str = rel_path_clean.replace(".parquet", &format!("-{}.parquet", write_id));
+                        
+                        let src_path = Path::from(src_path_str);
+                        let dest_path = Path::from(dest_path_str.clone());
+                        
+                        // 执行 Rename
+                        object_store.rename(&src_path, &dest_path).await
+                             .map_err(|e| PolarsError::ComputeError(format!("Rename failed: {}", e).into()))?;
+
+                        // E. Build Add Action (CPU)
+                        let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
+
+                        Ok::<Action, PolarsError>(Action::Add(Add {
+                            path: dest_path_str,
+                            size: file_size,
+                            partition_values,
+                            modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+                            data_change: true,
+                            stats: Some(stats_json),
+                            ..Default::default()
+                        }))
+                    }
+                })
+                .buffer_unordered(CONCURRENCY); // 🚀 乱序并发执行
+
+            // 4. 收集并发结果
+            let processed_files: Vec<Result<Action, PolarsError>> = stream.collect().await;
             
-            while let Some(item) = files_stream.next().await {
-                let meta = item.map_err(|e| PolarsError::ComputeError(format!("List staging error: {}", e).into()))?;
-                let src_path_str = meta.location.to_string(); 
-
-                if src_path_str.ends_with(".parquet") {
-                    // C. 关键修复：先在 Staging 原地读取 Stats，确保数据一致性
-                    let file_size = meta.size as i64;
-                    let mut reader = ParquetObjectReader::new(object_store.clone(), meta.location.clone())
-                            .with_file_size(meta.size as u64);
-                    let options = ArrowReaderOptions::default();
-                    let metadata = reader.get_metadata(Some(&options)).await
-                            .map_err(|e| PolarsError::ComputeError(format!("Read footer error: {}", e).into()))?;
-                    
-                    let (_num_records, stats_json) = extract_delta_stats(&metadata)?;
-
-                    // D. 计算目标路径 (Rename)
-                    // 去掉 staging 前缀 -> Year=2024/part-0.parquet
-                    let rel_path = src_path_str.trim_start_matches(&format!("{}/", staging_dir_name));
-                    
-                    // 注入 UUID 防止覆盖 -> Year=2024/part-0-<uuid>.parquet
-                    let dest_path_str = rel_path.replace(".parquet", &format!("-{}.parquet", write_id));
-                    
-                    let src_path = Path::from(src_path_str.clone());
-                    let dest_path = Path::from(dest_path_str.clone());
-                    let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
-
-                    // E. 执行 Rename
-                    object_store.rename(&src_path, &dest_path).await
-                         .map_err(|e| PolarsError::ComputeError(format!("Failed to rename file: {}", e).into()))?;
-                    
-                    // F. 构造 Add Action (使用 dest_path，但 stats 来自 src)
-                    let add = Add {
-                        path: dest_path_str,
-                        size: file_size,
-                        partition_values,
-                        modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
-                        data_change: true,
-                        stats: Some(stats_json),
-                        ..Default::default()
-                    };
-                    actions.push(Action::Add(add));
-                }
+            // 解包并将 Add Action 加入 final_actions
+            for res in processed_files {
+                actions.push(res?);
             }
 
             // G. 处理 Overwrite (删除旧文件)
@@ -1239,7 +1263,6 @@ pub extern "C" fn pl_io_delta_delete(
 
                 let new_lf = lf.filter(keep_expr).drop(drop_selector);
 
-                // ... (Writing logic matches previous implementation) ...
                 let new_name = format!("part-{}-{}.parquet", Utc::now().timestamp_millis(), Uuid::new_v4());
                 let parent_dir = std::path::Path::new(file_path_str.as_ref()) 
                     .parent()
@@ -1956,35 +1979,64 @@ pub extern "C" fn pl_io_delta_merge(
             source_keys_renamed_exprs, // Right On: [Key1_tmp, Key2_tmp]
             join_args 
         );
+        // =================================================================================
+        // C. Define State & Action Constants
+        // =================================================================================
+        // 0=KEEP (Target Only / Matched but condition failed)
+        // 1=INSERT
+        // 2=UPDATE
+        // 3=DELETE (Matched Delete / NotMatchedBySource Delete)
+        // 4=IGNORE (Source Only but Insert condition failed)
+        let act_keep = lit(0);
+        let act_insert = lit(1);
+        let act_update = lit(2);
+        let act_delete = lit(3);
+        let act_ignore = lit(4);
 
-        // C. Define Status Expressions
-        // Source Exists if ANY key is not null? 
-        // In a proper Full Join on keys, if the row exists in Source, ALL key columns should be non-null.
-        // We can check the first key for performance.
+        // Define Row State (准确定义三种状态)
+        // 假设我们 Join 时把 source columns 重命名为了 {col}_src_tmp
+        // 通过检查 Source 的主键是否为 Null 来判断 Source 是否存在
         let first_src_key = format!("{}_src_tmp", merge_keys[0]);
         let first_tgt_key = &merge_keys[0];
 
-        let is_source_exists = col(&first_src_key).is_not_null();
-        let is_target_exists = col(first_tgt_key).is_not_null();
+        let src_exists = col(&first_src_key).is_not_null();
+        let tgt_exists = col(first_tgt_key).is_not_null();
 
-        let is_matched = is_source_exists.clone().and(is_target_exists.clone());
-        let is_not_matched = is_source_exists.clone().and(is_target_exists.clone().not());     // Insert
-        let is_not_matched_by_source = is_source_exists.not().and(is_target_exists.clone()); // Target Only
+        let is_matched = src_exists.clone().and(tgt_exists.clone());
+        let is_source_only = src_exists.clone().and(tgt_exists.clone().not()); // 新增行
+        let is_target_only = src_exists.not().and(tgt_exists.clone());         // 存量行
 
         // =================================================================================
-        // Calculate All Target U Source Expression
+        // D. Calculate Action Column (The Logic Core 🧠)
+        // =================================================================================
+        // 这里集中处理所有优先级逻辑，只生成一个表达式，效率极高
+        let action_expr = polars::prelude::when(is_matched.clone().and(cond_match_delete.clone()))
+            .then(act_delete.clone()) // 优先级最高：匹配且满足删除条件
+            .when(is_matched.clone().and(cond_update.clone()))
+            .then(act_update.clone()) // 其次：匹配且满足更新条件
+            .when(is_source_only.clone().and(cond_insert.clone()))
+            .then(act_insert.clone()) // 新增：满足插入条件
+            .when(is_source_only.clone())
+            .then(act_ignore.clone()) // 新增：但不满足插入条件 -> 丢弃
+            .when(is_target_only.clone().and(cond_source_delete.clone()))
+            .then(act_delete.clone()) // 目标独有：满足 NotMatchedBySource Delete
+            .otherwise(act_keep) // 其他情况（如更新条件失败、目标独有且不删） -> 保持原样
+            .alias("_merge_action");
+
+        // =================================================================================
+        // E. Generate Column Expressions (Support Partial Update)
         // =================================================================================
         
-        // Collect All Unique Column Name
+        // 1. 收集所有列名 (Union)
         let mut output_columns_order = Vec::new();
         let mut seen_columns = PlHashSet::new();
-
-        // Add Target Columns
+        
+        // Target Cols
         for name in polars_schema.iter_names() {
             output_columns_order.push(name.to_string());
             seen_columns.insert(name.to_string());
         }
-        // Add Source Columns
+        // Source Cols (Schema Evolution)
         for name in source_schema.iter_names() {
             if !seen_columns.contains(name.as_str()) {
                 output_columns_order.push(name.to_string());
@@ -1994,65 +2046,50 @@ pub extern "C" fn pl_io_delta_merge(
 
         let mut final_exprs = Vec::new();
 
-        // Iter All columns to generate expressions
         for col_name in output_columns_order {
             let src_col_alias = format!("{}_src_tmp", col_name);
             let has_source_col = source_cols_renamed.contains(&src_col_alias);
             let has_target_col = polars_schema.get_field(&col_name).is_some();
 
-            // Partial Update
-            // If Source has this col -> Update with Source
-            // If Source does not have this col but Target has -> Keep Target 
-            // Else -> Null
-            let update_val_expr = if has_source_col {
-                col(&src_col_alias)
-            } else if has_target_col {
-                col(&col_name) 
-            } else {
-                lit(NULL)
-            };
+            // 定义基础值
+            let src_val = if has_source_col { col(&src_col_alias) } else { lit(NULL) };
+            let tgt_val = if has_target_col { col(&col_name) } else { lit(NULL) };
 
-            // Insert
-            // If Source has this col -> Insert Source 
-            // Else -> Insert Null
-            let insert_val_expr = if has_source_col { 
-                col(&src_col_alias) 
-            } else { 
-                lit(NULL) 
+            // 🌟 核心修复逻辑 🌟
+            let final_col_expr = if has_source_col {
+                // 场景 A: Source 有这个列 (Full Update / New Data)
+                // 逻辑: 只要是 Insert 或 Update，都由 Source 说了算
+                polars::prelude::when(
+                    col("_merge_action").eq(act_insert.clone())
+                    .or(col("_merge_action").eq(act_update.clone()))
+                )
+                .then(src_val)      // 用 Source 覆盖
+                .otherwise(tgt_val) // Keep 用 Target
+            } else {
+                // 场景 B: Source 没有这个列 (Partial Update / Missing Data)
+                // 逻辑: 
+                // - 如果是 Insert (新行): 没办法，只能是 Null
+                // - 如果是 Update (旧行): Source 没给值，所以**必须保留 Target 原值** (Partial Update)
+                // - 如果是 Keep: 也是 Target 原值
+                // 结论: 只有 Insert 才是 Null，其他情况都是 Target
+                polars::prelude::when(col("_merge_action").eq(act_insert.clone()))
+                    .then(lit(NULL)) 
+                    .otherwise(tgt_val) // <--- 这里救了 ColB！Update 时会走到这里
             };
             
-            // Target Value: if Target does not have col (Schema Evolution)，use Null to keep
-            let target_val_expr = if has_target_col { col(&col_name) } else { lit(NULL) };
-
-            final_exprs.push(
-                when(is_matched.clone().and(cond_update.clone()))
-                .then(update_val_expr) 
-                .when(is_not_matched.clone().and(cond_insert.clone()))
-                .then(insert_val_expr) 
-                .otherwise(target_val_expr)
-                .alias(&col_name)
-            );
+            final_exprs.push(final_col_expr.alias(&col_name));
         }
 
-        // E. Filter Rows (Delete Logic)
-        // We want to KEEP the row if:
-        // 1. It was Updated/Inserted (and not Deleted)
-        // 2. It was Kept (Target Only) (and not Deleted)
-        
-        // Reverse Logic: Drop if...
-        // 1. Matched AND DeleteCond
-        // 2. NotMatchedBySource AND DeleteSourceCond
-        // 3. NotMatched AND !InsertCond (Ignore new row)
-        
-        let should_delete = 
-            (is_matched.clone().and(cond_match_delete.clone())) // Matched Delete
-            .or(is_not_matched_by_source.clone().and(cond_source_delete.clone())) // Source Delete
-            .or(is_not_matched.clone().and(cond_insert.not())); // Insert Condition Failed
-
+        // =================================================================================
+        // F. Execute: Inject Action -> Filter -> Project
+        // =================================================================================
         let processed_lf = joined_lf
-            .with_columns(final_exprs.clone()) 
-            .filter(should_delete.not())
-            .select(final_exprs.iter().map(|e| col(e.clone().meta().output_name().unwrap())).collect::<Vec<_>>());
+            .with_column(action_expr) // 1. 先打标
+            .filter(
+                col("_merge_action").neq(act_delete)
+                .and(col("_merge_action").neq(act_ignore))
+            ) // 2. 根据标记过滤 (Delete & Ignore)
+            .select(final_exprs); // 3. 投影最终列 (内部会自动应用取值逻辑)
 
         // =================================================================================
         // Build Final Schema with new cols before Sink
@@ -2142,55 +2179,80 @@ pub extern "C" fn pl_io_delta_merge(
             final_actions.push(Action::Remove(remove_action));
         }
 
-        // B. Add New Files (From Staging)
+        // B. Add New Files (From Staging) - 🚀 Parallel Optimized
         let add_actions = rt.block_on(async {
-            let mut adds = Vec::new();
             let staging_path = Path::from(staging_dir_name.clone());
             
-            use futures::StreamExt;
-            let mut files_stream = object_store.list(Some(&staging_path));
+            // 1. 获取文件列表 (Listing is fast)
+            // 这里的 list 还是线性的，没问题
+            let file_metas: Vec<_> = object_store.list(Some(&staging_path))
+                .filter_map(|res| async { res.ok() }) // 过滤错误
+                .filter(|meta| futures::future::ready(meta.location.to_string().ends_with(".parquet")))
+                .collect()
+                .await;
 
-            while let Some(item) = files_stream.next().await {
-                let meta = item.map_err(|e| PolarsError::ComputeError(format!("List staging error: {}", e).into()))?;
-                let src_path_str = meta.location.to_string();
+            // 2. 并发处理 (Read Stats + Rename) 
+            // 设定并发度，比如 50 或 100，避免把 S3 客户端打挂
+            const CONCURRENCY: usize = 64; 
 
-                if src_path_str.ends_with(".parquet") {
-                    // 1. Read Stats
-                    let file_size = meta.size as i64;
-                    let mut reader = ParquetObjectReader::new(object_store.clone(), meta.location.clone())
+            let stream = futures::stream::iter(file_metas)
+                .map(|meta| {
+                    // Clone 需要的变量以移入 async block
+                    let object_store = object_store.clone();
+                    let staging_dir_name = staging_dir_name.clone();
+                    let partition_cols = partition_cols.clone();
+                    let write_id = write_id.clone();
+
+                    async move {
+                        let src_path_str = meta.location.to_string();
+                        let file_size = meta.size as i64;
+
+                        // A. Read Stats (IO)
+                        let mut reader = ParquetObjectReader::new(object_store.clone(), meta.location.clone())
                             .with_file_size(meta.size as u64);
-                    let footer = reader.get_metadata(None).await
+                        let footer = reader.get_metadata(None).await
                             .map_err(|e| PolarsError::ComputeError(format!("Read footer error: {}", e).into()))?;
-                    let (_, stats_json) = extract_delta_stats(&footer)?;
+                        let (_, stats_json) = extract_delta_stats(&footer)?;
 
-                    // 2. Rename (Move out of staging)
-                    // src: table/.merge_staging_xxx/year=2024/part-0.parquet
-                    // dest: table/year=2024/part-0-<uuid>.parquet
-                    
-                    let rel_path = src_path_str.trim_start_matches(&format!("{}/", staging_dir_name));
-                    let dest_path_str = rel_path.replace(".parquet", &format!("-{}.parquet", write_id));
-                    
-                    let src_path = Path::from(src_path_str);
-                    let dest_path = Path::from(dest_path_str.clone());
-                    
-                    object_store.rename(&src_path, &dest_path).await
-                        .map_err(|e| PolarsError::ComputeError(format!("Rename failed: {}", e).into()))?;
-                    
-                    // 3. Add Action
-                    let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
-                    
-                    adds.push(Action::Add(Add {
-                        path: dest_path_str,
-                        size: file_size,
-                        partition_values,
-                        modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
-                        data_change: true,
-                        stats: Some(stats_json),
-                        ..Default::default()
-                    }));
-                }
+                        // B. Rename (Heavy IO)
+                        let rel_path = src_path_str.trim_start_matches(&format!("{}/", staging_dir_name));
+                        // 注意处理路径分隔符，防止 trim 后剩下 /
+                        let rel_path_clean = rel_path.trim_start_matches('/');
+                        let dest_path_str = rel_path_clean.replace(".parquet", &format!("-{}.parquet", write_id));
+                        
+                        let src_path = Path::from(src_path_str.clone());
+                        let dest_path = Path::from(dest_path_str.clone());
+
+                        object_store.rename(&src_path, &dest_path).await
+                            .map_err(|e| PolarsError::ComputeError(format!("Rename failed: {}", e).into()))?;
+
+                        // C. Build Action (CPU)
+                        // 记得这里要 URL Decode!
+                        let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
+
+                        Ok::<Action, PolarsError>(Action::Add(Add {
+                            path: dest_path_str.into(),
+                            size: file_size,
+                            partition_values,
+                            modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+                            data_change: true,
+                            stats: Some(stats_json),
+                            ..Default::default()
+                        }))
+                    }
+                })
+                .buffer_unordered(CONCURRENCY); // 🚀 关键：乱序并发执行
+
+            // 3. 收集结果
+            let results: Vec<Result<Action, PolarsError>> = stream.collect().await;
+            
+            // 解包 Result，如果有任何一个失败，整体失败
+            let mut final_actions = Vec::with_capacity(results.len());
+            for res in results {
+                final_actions.push(res?);
             }
-            Ok::<Vec<Action>, PolarsError>(adds)
+
+            Ok::<Vec<Action>, PolarsError>(final_actions)
         })?;
 
         final_actions.extend(add_actions);
