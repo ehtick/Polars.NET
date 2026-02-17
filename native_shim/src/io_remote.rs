@@ -34,7 +34,7 @@ use deltalake::arrow::datatypes::{Schema as DeltaArrowSchema};
 use deltalake::kernel::{Action, Add, Remove, StructType, transaction};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
-
+const MAX_FULL_JOB_RETRIES: usize = 5;
 // -------------------------------------------------------------------------
 // Helper Functions
 // -------------------------------------------------------------------------
@@ -1466,10 +1466,881 @@ fn get_source_key_bounds(lf: &LazyFrame, key: &str, dtype: &DataType) -> Option<
     Some((min_val, max_val))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum PruningCandidates {
-    Integers(Vec<i64>), // 针对 Int, BigInt, TinyInt
-    Strings(Vec<String>), // 针对 String, Date (ISO格式), Timestamp
+    Integers(Vec<i64>), 
+    Strings(Vec<String>), 
+}
+
+const MAX_PRUNING_CANDIDATES: usize = 100_000;
+
+struct MergeContext {
+    pub merge_keys: Vec<String>,
+    pub table_url: Url,
+    pub storage_options: HashMap<String, String>,
+    pub can_evolve: bool,
+    // Conditions (Owned Exprs)
+    pub cond_update: Option<Expr>,     // Default: true
+    pub cond_delete: Option<Expr>,     // Default: false
+    pub cond_insert: Option<Expr>,     // Default: true
+    pub cond_src_delete: Option<Expr>, // Default: false
+}
+
+#[derive(Clone, Copy)]
+pub struct RawCloudArgs {
+    pub provider: u8,
+    pub retries: usize,
+    pub retry_timeout_ms: u64,      
+    pub retry_init_backoff_ms: u64, 
+    pub retry_max_backoff_ms: u64, 
+    pub cache_ttl: u64,
+    pub keys: *const *const c_char,
+    pub values: *const *const c_char,
+    pub len: usize,
+}
+
+/// Phase 1: Pruning
+/// Partition Pruning, Z-Order Bounds Pruning, Discrete Candidates Pruning
+async fn phase_1_load_table(
+    ctx: &MergeContext,
+) -> PolarsResult<(DeltaTable, Vec<String>, SchemaRef)> {
+    let table = DeltaTable::try_from_url_with_storage_options(
+        ctx.table_url.clone(),
+        ctx.storage_options.clone()
+    ).await.map_err(|e| PolarsError::ComputeError(format!("Delta load error: {}", e).into()))?;
+
+    let polars_schema = get_polars_schema_from_delta(&table)?;
+    let snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot: {}", e).into()))?;
+    let part_cols = snapshot.metadata().partition_columns().clone();
+
+    Ok((table, part_cols, polars_schema.into()))
+}
+// =========================================================
+// Step 2: Analyze Source (Sync - Pure CPU/Polars)
+// =========================================================
+fn phase_1_analyze_source(
+    ctx: &MergeContext,
+    source_lf: &LazyFrame,
+    polars_schema: &Schema,
+    part_cols: &[String],
+) -> PolarsResult<(Option<HashSet<Vec<String>>>, HashMap<String, (serde_json::Value, serde_json::Value)>, Option<PruningCandidates>)> {
+    
+    // A. Partition Values
+    let source_partitions = get_source_partition_values(source_lf, part_cols);
+
+    // B. Key Bounds
+    let mut key_bounds_json = HashMap::new(); 
+    for key in &ctx.merge_keys {
+        let dtype = polars_schema.get_field(key).map(|f| f.dtype.clone()).unwrap_or(DataType::Null);
+        if let Some((min_lit, max_lit)) = get_source_key_bounds(source_lf, key, &dtype) {
+            let min_json = bound_to_json(&min_lit);
+            let max_json = bound_to_json(&max_lit);
+            key_bounds_json.insert(key.clone(), (min_json, max_json));
+        }
+    }
+
+    // C. Discrete Candidates
+    let mut pruning_candidates: Option<PruningCandidates> = None;
+    if ctx.merge_keys.len() == 1 {
+        let key_col = &ctx.merge_keys[0];
+        let distinct_lf = source_lf.clone()
+            .select([col(key_col)])
+            .unique(None, UniqueKeepStrategy::Any)
+            .limit((MAX_PRUNING_CANDIDATES + 1) as u32);
+
+        if let Ok(df) = distinct_lf.collect_with_engine(Engine::Streaming) {
+            if df.height() <= MAX_PRUNING_CANDIDATES {
+                let s = df.column(key_col).unwrap();
+                let dtype = s.dtype();
+                if dtype.is_integer() {
+                    if let Ok(s_cast) = s.cast(&DataType::Int64) {
+                        if let Ok(ca) = s_cast.i64() {
+                            let mut keys: Vec<i64> = ca.into_iter().flatten().collect();
+                            keys.sort_unstable();
+                            if !keys.is_empty() { pruning_candidates = Some(PruningCandidates::Integers(keys)); }
+                        }
+                    }
+                } else if dtype == &DataType::String {
+                     if let Ok(ca) = s.str() {
+                         let mut keys: Vec<String> = ca.into_iter().flatten().map(|v| v.to_string()).collect();
+                         keys.sort_unstable();
+                         if !keys.is_empty() { pruning_candidates = Some(PruningCandidates::Strings(keys)); }
+                     }
+                }
+            }
+        }
+    }
+
+    Ok((source_partitions, key_bounds_json, pruning_candidates))
+}
+async fn phase_1_scan_and_prune(
+    table: &DeltaTable,
+    part_cols: &[String],
+    source_partitions: Option<HashSet<Vec<String>>>,
+    key_bounds_json: HashMap<String, (serde_json::Value, serde_json::Value)>,
+    pruning_candidates: Option<PruningCandidates>,
+    merge_keys_0: Option<&String>,
+) -> PolarsResult<Vec<Remove>> {
+    
+    let mut remove_actions = Vec::new();
+    let t_scan = table.clone(); 
+    let mut stream = t_scan.get_active_add_actions_by_partitions(&[]);
+
+    while let Some(action_res) = stream.next().await {
+        let view = action_res.map_err(|e| PolarsError::ComputeError(format!("Delta stream error: {}", e).into()))?;
+        
+        // --- Filter 1: Partition Pruning ---
+        if let Some(affected_set) = &source_partitions {
+            let maybe_key = view.partition_values().map(|struct_data| {
+                 let fields = struct_data.fields();
+                 let values = struct_data.values();
+                 let mut key = Vec::with_capacity(part_cols.len());
+                 for target_col_name in part_cols {
+                    let val_str = fields.iter().zip(values.iter())
+                        .find(|(f, _)| f.name() == target_col_name)
+                        .map(|(_, v)| if v.is_null() { "__HIVE_DEFAULT_PARTITION__".to_string() } else { v.serialize() })
+                        .unwrap_or_else(|| "__HIVE_DEFAULT_PARTITION__".to_string());
+                    key.push(val_str);
+                 }
+                 key
+            });
+
+            let file_key = match maybe_key {
+                Some(k) => k,
+                None => {
+                    let path_str = view.path();
+                    let file_parts_map = parse_hive_partitions(path_str.as_ref(), part_cols);
+                    part_cols.iter().map(|c| file_parts_map.get(c).cloned().flatten().unwrap_or_else(|| "__HIVE_DEFAULT_PARTITION__".to_string())).collect()
+                }
+            };
+            
+            if !affected_set.contains(&file_key) { continue; }
+        }
+
+        // --- Filter 2: Stats Pruning ---
+        let mut file_overlaps = true;
+        let stats_json_str = view.stats();
+        let stats_struct: Option<serde_json::Value> = stats_json_str
+            .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null));
+
+        if !key_bounds_json.is_empty() {
+            for (key, (src_min, src_max)) in &key_bounds_json {
+                if !check_file_overlap_optimized(&stats_struct, key, src_min, src_max) {
+                     file_overlaps = false; break;
+                }
+            }
+        }
+
+        // --- Filter 3: Discrete Candidates ---
+        if file_overlaps && pruning_candidates.is_some() {
+            if let Some(key_col) = merge_keys_0 {
+                let candidates = pruning_candidates.as_ref().unwrap();
+                let f_min_opt = extract_stats_value(&stats_struct, "minValues", key_col);
+                let f_max_opt = extract_stats_value(&stats_struct, "maxValues", key_col);
+
+                if let (Some(f_min_val), Some(f_max_val)) = (f_min_opt, f_max_opt) {
+                    let hit = match candidates {
+                        PruningCandidates::Integers(sorted_keys) => {
+                            let f_min_i = as_i64_safe(f_min_val);
+                            let f_max_i = as_i64_safe(f_max_val);
+                            if let (Some(mn), Some(mx)) = (f_min_i, f_max_i) {
+                                let idx = sorted_keys.partition_point(|&x| x < mn);
+                                idx < sorted_keys.len() && sorted_keys[idx] <= mx
+                            } else { true }
+                        },
+                        PruningCandidates::Strings(sorted_keys) => {
+                             let f_min_s = f_min_val.as_str();
+                             let f_max_s = f_max_val.as_str();
+                             if let (Some(mn), Some(mx)) = (f_min_s, f_max_s) {
+                                 let idx = sorted_keys.partition_point(|x| x.as_str() < mn);
+                                 idx < sorted_keys.len() && sorted_keys[idx].as_str() <= mx
+                             } else { true }
+                        }
+                    };
+                    if !hit { file_overlaps = false; }
+                }
+            }
+        }
+
+        if file_overlaps {
+            remove_actions.push(view.remove_action(true));
+        }
+    }
+    Ok(remove_actions)
+}
+
+fn phase_validation(
+    ctx: &MergeContext,
+    source_lf: &mut LazyFrame,
+    target_schema: &Schema,
+) -> PolarsResult<()> {
+    
+    // =========================================================
+    // Schema Compatibility Check (Metadata Level)
+    // =========================================================
+    let src_schema = source_lf.collect_schema()
+        .map_err(|e| PolarsError::ComputeError(format!("Failed to get source schema: {}", e).into()))?;
+
+    // A. Merge Key Checks
+    for key in &ctx.merge_keys {
+        // 1. Check Source Existence
+        let src_field = src_schema.get(key)
+            .ok_or_else(|| PolarsError::ComputeError(format!(
+                "Merge Key '{}' not found in SOURCE table schema.", key
+            ).into()))?;
+
+        // 2. Check Target Existence
+        let tgt_field = target_schema.get_field(key)
+            .ok_or_else(|| PolarsError::ComputeError(format!(
+                "Merge Key '{}' not found in TARGET table schema.", key
+            ).into()))?;
+
+        // 3. Strict Type Check
+        if src_field != &tgt_field.dtype {
+             return Err(PolarsError::SchemaMismatch(format!(
+                "Merge Key Type Mismatch for column '{}'! \n\
+                 Source: {:?} \n\
+                 Target: {:?} \n\
+                 Merge Keys must have identical types.", 
+                key, src_field, tgt_field.dtype
+            ).into()));
+        }
+    }
+
+    // Extra Column Check (Schema Evolution Guard)
+    if !ctx.can_evolve {
+        for name in src_schema.iter_names() {
+            if target_schema.get_field(name).is_none() {
+                return Err(PolarsError::SchemaMismatch(
+                    format!("Schema mismatch: Source column '{}' is not present in target. Pass 'can_evolve=true' to allow.", name).into()
+                ));
+            }
+        }
+    }
+
+    // =========================================================
+    // 2. Data Quality Check (Execution Level)
+    // =========================================================
+    let partition_exprs: Vec<Expr> = ctx.merge_keys.iter().map(|k| col(k)).collect();
+    
+    let has_null_expr = polars::prelude::any_horizontal(
+         ctx.merge_keys.iter().map(|k| col(k).is_null()).collect::<Vec<_>>()
+    )?.alias("has_null_key");
+
+    let check_lf = source_lf.clone()
+        .select([
+            len().over(partition_exprs.clone()).alias("group_count"),
+            has_null_expr
+        ])
+        .filter(
+            col("group_count").gt(lit(1)) // Duplicated
+            .or(col("has_null_key"))      // Null Key Found
+        )
+        .limit(1); 
+
+    let check_df = check_lf.collect_with_engine(Engine::Streaming)?;
+
+    // =========================================================
+    // Error Reporting
+    // =========================================================
+    if check_df.height() > 0 {
+        // Null or Duplicate
+        let is_null_error = check_df.column("has_null_key")?.bool()?.get(0).unwrap_or(false);
+
+        if is_null_error {
+             let msg = format!(
+                "CRITICAL ERROR: Null values detected in Merge Keys! \n\
+                 Merge Keys: {:?}", 
+                ctx.merge_keys
+            );
+            return Err(PolarsError::ComputeError(msg.into()));
+        } else {
+            let example_dupes = source_lf.clone()
+                .group_by(partition_exprs) 
+                .agg([len().alias("duplicate_count")]) 
+                .filter(col("duplicate_count").gt(lit(1))) 
+                .sort(["duplicate_count"], SortMultipleOptions { 
+                    descending: vec![true], 
+                    ..Default::default() 
+                }) 
+                .limit(5) 
+                .collect()?; 
+
+            let msg = format!(
+                "CRITICAL ERROR: Duplicate keys detected in SOURCE table!\n\
+                 Merge expects unique source keys per checking round.\n\
+                 [Merge Keys]: {:?}\n\
+                 --- Duplicate Key Examples (Top 5) ---\n\
+                 {}", 
+                ctx.merge_keys, 
+                example_dupes
+            );
+            
+            return Err(PolarsError::Duplicate(msg.into()));
+        }
+    }
+
+    Ok(())
+}
+
+fn construct_target_lf(
+    ctx: &MergeContext,
+    remove_actions: &[Remove],
+    target_schema: &Schema,
+    cloud_args: &RawCloudArgs,
+) -> PolarsResult<LazyFrame> {
+    
+    if remove_actions.is_empty() {
+        return Ok(DataFrame::empty_with_schema(target_schema).lazy());
+    }
+
+    // Build FileName list
+    // table_url e.g., "s3://bucket/table/" -> trim -> "s3://bucket/table"
+    let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
+    
+    let full_paths: Vec<PlRefPath> = remove_actions.iter()
+        .map(|r| {
+            let full = format!("{}/{}", root_trimmed, r.path);
+            PlRefPath::new(full)
+        })
+        .collect();
+    
+    let paths_buffer = Buffer::from(full_paths);
+
+    // Build ScanArgs
+    let mut scan_args = ScanArgsParquet::default();
+    
+    // Build HiveOptions
+    scan_args.hive_options = HiveOptions {
+        enabled: Some(true),
+        hive_start_idx: 0,
+        schema: None,
+        try_parse_dates: true,
+    };
+
+    // Build Cloud Options 
+    scan_args.cloud_options = unsafe {
+        build_cloud_options(
+            cloud_args.provider,
+            cloud_args.retries,
+            cloud_args.retry_timeout_ms,
+            cloud_args.retry_init_backoff_ms,
+            cloud_args.retry_max_backoff_ms,
+            cloud_args.cache_ttl,
+            cloud_args.keys,
+            cloud_args.values,
+            cloud_args.len,
+        )
+    };
+
+    // return LazyFrame
+    LazyFrame::scan_parquet_files(paths_buffer, scan_args)
+}
+
+/// Phase 3: Planning
+fn phase_planning(
+    ctx: &MergeContext,
+    target_lf: LazyFrame,
+    mut source_lf: LazyFrame,
+    target_schema: &Schema, 
+) -> PolarsResult<LazyFrame> {
+
+    // =========================================================
+    // 1. Rename Source Columns (Avoid Collision)
+    // =========================================================
+    let src_schema = source_lf.collect_schema()
+        .map_err(|e| PolarsError::ComputeError(format!("Source schema error: {}", e).into()))?;
+    
+    let mut rename_old = Vec::new();
+    let mut rename_new = Vec::new();
+    let mut source_cols_set = HashSet::new();
+
+    for name in src_schema.iter_names() {
+        rename_old.push(name.as_str());
+        rename_new.push(format!("{}_src_tmp", name)); 
+        source_cols_set.insert(name.to_string());
+    }
+
+    let source_renamed = source_lf.rename(rename_old, rename_new, true);
+
+    // =========================================================
+    // Execute Full Outer Join
+    // =========================================================
+    let left_on: Vec<Expr> = ctx.merge_keys.iter().map(|k| col(k)).collect();
+    let right_on: Vec<Expr> = ctx.merge_keys.iter().map(|k| col(&format!("{}_src_tmp", k))).collect();
+
+    let join_args = JoinArgs {
+        how: JoinType::Full,
+        validation: JoinValidation::ManyToMany, 
+        coalesce: JoinCoalesce::KeepColumns,    
+        maintain_order: MaintainOrderJoin::None,
+        ..Default::default()
+    };
+
+    let joined_lf = target_lf.join(source_renamed, left_on, right_on, join_args);
+
+    // =========================================================
+    // 3. Define Logic Constants & State
+    // =========================================================
+    // Action Constants
+    let act_keep   = lit(0); // Keep Target
+    let act_insert = lit(1); // Insert new value in Source 
+    let act_update = lit(2); // Update Target with Source 
+    let act_delete = lit(3); // Marked as delete
+    let act_ignore = lit(4); // Ignore
+
+    // Row State 
+    let first_key = &ctx.merge_keys[0];
+    let src_key_col = format!("{}_src_tmp", first_key);
+    
+    let src_exists = col(&src_key_col).is_not_null();
+    let tgt_exists = col(first_key).is_not_null();
+
+    // Three Status
+    let is_matched     = src_exists.clone().and(tgt_exists.clone());
+    let is_source_only = src_exists.clone().and(tgt_exists.clone().not());
+    let is_target_only = src_exists.not().and(tgt_exists);
+    let expr_update = ctx.cond_update.clone().unwrap_or(lit(true));
+    let expr_delete = ctx.cond_delete.clone().unwrap_or(lit(false));
+    let expr_insert = ctx.cond_insert.clone().unwrap_or(lit(true));
+    let expr_src_del = ctx.cond_src_delete.clone().unwrap_or(lit(false));
+    // =========================================================
+    // Calculate Action Column
+    // =========================================================
+    // Delete > Update > Insert > Ignore/Keep
+    let action_expr = when(is_matched.clone().and(expr_delete))
+        .then(act_delete.clone())
+        .when(is_matched.and(expr_update))
+        .then(act_update.clone())
+        .when(is_source_only.clone().and(expr_insert))
+        .then(act_insert.clone())
+        .when(is_source_only)
+        .then(act_ignore.clone()) 
+        .when(is_target_only.and(expr_src_del))
+        .then(act_delete.clone()) 
+        .otherwise(act_keep)      
+        .alias("_merge_action");
+
+    // =========================================================
+    // 5. Generate Column Expressions (Projection & Evolution)
+    // =========================================================
+    let mut final_exprs = Vec::new();
+
+    // Target Schema + New Source Columns
+    let mut output_cols = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Add Target Columns
+    for name in target_schema.iter_names() {
+        output_cols.push(name.to_string());
+        seen.insert(name.to_string());
+    }
+    // 再加入 Source 新增列 (Schema Evolution)
+    for name in src_schema.iter_names() {
+        if !seen.contains(name.as_str()) {
+            output_cols.push(name.to_string());
+        }
+    }
+
+    // B. 构建每一列的取值逻辑
+    for col_name in output_cols {
+        let src_col_alias = format!("{}_src_tmp", col_name);
+        let has_source = source_cols_set.contains(&col_name);
+        let has_target = target_schema.get_field(&col_name).is_some();
+
+        // 基础值引用
+        let src_val = if has_source { col(&src_col_alias) } else { lit(NULL) };
+        let tgt_val = if has_target { col(&col_name) } else { lit(NULL) };
+
+        let col_expr = if has_source {
+            // Case 1: Source 有这一列 (Full Update / New Data)
+            // 逻辑: 如果是 Insert 或 Update，取 Source；否则取 Target
+            when(col("_merge_action").eq(act_insert.clone())
+                .or(col("_merge_action").eq(act_update.clone())))
+            .then(src_val)
+            .otherwise(tgt_val)
+        } else {
+            // Case 2: Source 没有这一列 (Partial Update / Evolution Old Rows)
+            // 逻辑: 
+            // - 如果是 Insert (新行): 必须是 Null (因为 Source 没给值)
+            // - 如果是 Update (旧行): 必须保持 Target 原值 (Partial Update 语义)
+            // - 如果是 Keep: 保持 Target 原值
+            when(col("_merge_action").eq(act_insert.clone()))
+            .then(lit(NULL))
+            .otherwise(tgt_val)
+        };
+
+        final_exprs.push(col_expr.alias(&col_name));
+    }
+
+    // =========================================================
+    // 6. Final Assemble
+    // =========================================================
+    let processed_lf = joined_lf
+        .with_column(action_expr) // 注入裁决列
+        .filter(
+            col("_merge_action").neq(act_delete.clone()) // 过滤掉标记删除的行
+            .and(col("_merge_action").neq(act_ignore))   // 过滤掉被忽略的新行
+        )
+        .select(final_exprs); // 应用投影逻辑
+
+    Ok(processed_lf)
+}
+
+/// Phase 4: Execution (行动阶段)
+/// 职责：配置 Writer、生成 Staging 目录、执行流式写入
+/// 返回：(Staging目录名, Write ID) -> 供 Commit 阶段使用
+fn phase_execution(
+    ctx: &MergeContext,
+    processed_lf: LazyFrame,
+    partition_cols: &[String],
+    cloud_args: &RawCloudArgs,
+) -> PolarsResult<(String, Uuid)> {
+    
+    // 1. Generate Identity
+    let write_id = Uuid::new_v4();
+    let staging_dir_name = format!(".merge_staging_{}", write_id);
+    
+    // table_url: s3://bucket/table -> trim -> s3://bucket/table
+    let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
+    let staging_uri = format!("{}/{}", root_trimmed, staging_dir_name);
+
+    // 2. Configure Partition Strategy
+    // 如果 Delta 表是分区的，Staging 文件也必须按同样的结构分区写入
+    let partition_strategy = if partition_cols.is_empty() {
+        PartitionStrategy::FileSize
+    } else {
+        let keys: Vec<Expr> = partition_cols.iter().map(|n| col(n)).collect();
+        PartitionStrategy::Keyed {
+            keys,
+            include_keys: false,
+            keys_pre_grouped: false,
+        }
+    };
+
+    // 3. Configure Sink Destination (Hive Style)
+    let hive_provider = HivePathProvider {
+        extension: PlSmallStr::from_str(".parquet"),
+    };
+    
+    let destination = SinkDestination::Partitioned {
+        base_path: PlRefPath::new(&staging_uri), 
+        file_path_provider: Some(file_provider::FileProviderType::Hive(hive_provider)),
+        partition_strategy,
+        max_rows_per_file: u32::MAX, 
+        approximate_bytes_per_file: usize::MAX as u64,
+    };
+
+    // 4. Configure Parquet Options
+    let write_opts = build_parquet_write_options(
+        1,  // compression: Snappy (Delta 标准)
+        -1, // compression level: Default
+        true, // statistics: 必须开启，Delta 依赖这个做 Data Skipping
+        0,  // row_group_size: Default
+        0,  // data_page_size: Default
+        -1  // created_by: Default
+    ).map_err(|e| PolarsError::ComputeError(format!("Options error: {}", e).into()))?;
+
+    // 5. Re-build Cloud Args (Unsafe FFI)
+    // Sink 需要一套统一的 IO 参数
+    let unified_args = unsafe {
+        build_unified_sink_args(
+            false, // mkdir: Staging 目录通常不需要显式创建，写入时会自动创建
+            false, // maintain_order: 不需要
+            0,     // sync_on_close: Default
+            cloud_args.provider,
+            cloud_args.retries,
+            cloud_args.retry_timeout_ms,
+            cloud_args.retry_init_backoff_ms,
+            cloud_args.retry_max_backoff_ms,
+            cloud_args.cache_ttl,
+            cloud_args.keys,
+            cloud_args.values,
+            cloud_args.len,
+        )
+    };
+
+    // 6. Execute! (The Heavy Lifting)
+    // 这里会触发真正的计算和 IO
+    processed_lf
+        .sink(destination, FileWriteFormat::Parquet(write_opts), unified_args)?
+        .collect_with_engine(Engine::Streaming)?;
+
+    Ok((staging_dir_name, write_id))
+}
+
+/// Phase 5-A: Process Staging Files (收割阶段)
+/// 职责：扫描 Staging、读取 Stats、移动文件、生成 Add Actions
+/// 返回：Add Actions 列表 (准备提交)
+pub async fn phase_process_staging(
+    table: &DeltaTable,
+    staging_dir_name: &str,
+    partition_cols: &[String],
+    write_id: Uuid,
+) -> PolarsResult<Vec<Action>> {
+    
+    let object_store = table.object_store();
+    let staging_path = Path::from(staging_dir_name);
+
+    // 1. List Files (Listing is usually fast and linear)
+    // 获取 Staging 目录下所有的 .parquet 文件
+    let file_metas: Vec<_> = object_store.list(Some(&staging_path))
+        .filter_map(|res| async { res.ok() }) // 忽略 list 错误
+        .filter(|meta| futures::future::ready(meta.location.to_string().ends_with(".parquet")))
+        .collect()
+        .await;
+
+    if file_metas.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 2. Parallel Processing (Read Stats + Rename)
+    // 设定并发度，避免把 S3/MinIO 打挂
+    const CONCURRENCY: usize = 64; 
+
+    let stream = futures::stream::iter(file_metas)
+        .map(|meta| {
+            // Clone 必要的上下文以移入 async block
+            let object_store = object_store.clone();
+            let staging_dir_name = staging_dir_name.to_string();
+            let partition_cols = partition_cols.to_vec();
+            let write_id = write_id;
+
+            async move {
+                let src_path_str = meta.location.to_string();
+                let file_size = meta.size as i64;
+
+                // ---------------------------------------------------------
+                // A. Read Parquet Footer (IO - Small Read)
+                // ---------------------------------------------------------
+                // 我们使用 deltalake 提供的 ParquetObjectReader，它能很好地配合 object_store 工作
+                let mut reader = ParquetObjectReader::new(object_store.clone(), meta.location.clone())
+                    .with_file_size(meta.size as u64);
+                
+                let footer = reader.get_metadata(None).await
+                    .map_err(|e| PolarsError::ComputeError(format!("Read parquet footer error: {}", e).into()))?;
+                
+                // 提取 Stats (这一步会解析 Row Groups 的统计信息并合并)
+                // extract_delta_stats 是一个假设存在的 Helper，复用之前的逻辑
+                let (_, stats_json) = extract_delta_stats(&footer)?;
+
+                // ---------------------------------------------------------
+                // B. Rename & Promote (IO - Metadata Operation)
+                // ---------------------------------------------------------
+                // 原始路径: .merge_staging_xxx/region=A/part-001.parquet
+                // 目标路径: region=A/part-001-<uuid>.parquet
+                
+                // 1. 去掉 Staging 前缀
+                let rel_path = src_path_str.trim_start_matches(&format!("{}/", staging_dir_name));
+                // 2. 注入 Write ID (防止文件名冲突，且用于 Lineage 追踪)
+                let dest_path_str = rel_path.replace(".parquet", &format!("-{}.parquet", write_id));
+                
+                let src_path = Path::from(src_path_str);
+                let dest_path = Path::from(dest_path_str.clone());
+
+                // 执行重命名 (S3 上通常是 Copy + Delete，Azure/HDFS 是原子 Rename)
+                object_store.rename(&src_path, &dest_path).await
+                    .map_err(|e| PolarsError::ComputeError(format!("Rename failed: {}", e).into()))?;
+
+                // ---------------------------------------------------------
+                // C. Build Add Action (CPU)
+                // ---------------------------------------------------------
+                // 从目标路径中解析分区值 (因为 Polars 已经按照 Hive 结构写好了)
+                let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
+
+                Ok::<Action, PolarsError>(Action::Add(Add {
+                    path: dest_path_str,
+                    size: file_size,
+                    partition_values,
+                    modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+                    data_change: true, // Merge 操作产生的都是数据变更
+                    stats: Some(stats_json),
+                    tags: None,
+                    deletion_vector: None,
+                    base_row_id: None,
+                    default_row_commit_version: None,
+                    clustering_provider: None,
+                }))
+            }
+        })
+        .buffer_unordered(CONCURRENCY); // 🚀 关键：乱序并发执行，榨干网络带宽
+
+    // 3. Collect Results
+    let results: Vec<Result<Action, PolarsError>> = stream.collect().await;
+
+    // 解包 Result，如果有任何一个文件处理失败，整个操作必须失败 (并在外层触发 Cleanup)
+    let mut add_actions = Vec::with_capacity(results.len());
+    for res in results {
+        add_actions.push(res?);
+    }
+
+    Ok(add_actions)
+}
+
+/// Phase 5-B: Commit Transaction (签字画押)
+/// 职责：构建 Merge Predicates, 处理 Schema 演化, 提交事务, 清理 Staging
+async fn phase_commit(
+    ctx: &MergeContext,
+    table: &mut DeltaTable,
+    mut actions: Vec<Action>, // Including Add(New) and Remove(Old)
+    staging_dir_name: &str,
+    source_schema: &Schema,   // Polars Source Schema
+    target_schema: &Schema,   // Polars Target Schema
+) -> PolarsResult<()> {
+
+    // =========================================================
+    // 1. Construct Logic Metadata (Audit Logs)
+    // =========================================================
+    let mut matched_preds = Vec::new();
+    let mut not_matched_preds = Vec::new();           
+    let mut not_matched_by_source_preds = Vec::new(); 
+
+    // A. Matched (Update/Delete)
+    if ctx.cond_delete.is_some() {
+        matched_preds.push(MergePredicate {
+            predicate: Some("matched_delete_condition".into()),
+            action_type: "DELETE".into(),
+        });
+    }
+
+    // Update 
+    if ctx.cond_update.is_some() {
+        // Update Cond -> Predicate
+        matched_preds.push(MergePredicate { 
+            predicate: Some("custom_update_condition".into()), 
+            action_type: "UPDATE".into() 
+        });
+    } else {
+        // 用户没提供 -> 默认 Upsert -> 无 Predicate
+        matched_preds.push(MergePredicate { 
+            predicate: None, 
+            action_type: "UPDATE".into() 
+        });
+    }
+
+    // B. Not Matched (Insert)
+    if ctx.cond_insert.is_some() {
+        not_matched_preds.push(MergePredicate {
+            predicate: Some("not_matched_insert_condition".into()),
+            action_type: "INSERT".into(),
+        });
+    } else {
+        not_matched_preds.push(MergePredicate {
+            predicate: None,
+            action_type: "INSERT".into(),
+        });
+    }
+
+    // C. Not Matched By Source (Target Delete)
+    if ctx.cond_src_delete.is_some() {
+        not_matched_by_source_preds.push(MergePredicate {
+            predicate: Some("not_matched_by_source_delete_condition".into()),
+            action_type: "DELETE".into(),
+        });
+    }
+
+    // =========================================================
+    // 2. Schema Evolution (Metadata Action)
+    // =========================================================
+    // 检查是否有新列需要更新到 Delta Log
+    
+    // 构建新的 Polars Schema (Target + Source New Cols)
+    let mut new_pl_schema = target_schema.clone();
+    let mut has_schema_change = false;
+    
+    for (name, dtype) in source_schema.iter() {
+        if new_pl_schema.get_field(name).is_none() {
+            new_pl_schema.with_column(name.to_string().into(), dtype.clone());
+            has_schema_change = true;
+        }
+    }
+
+    if has_schema_change {
+        // 转换回 Delta Schema
+        let new_delta_schema = convert_to_delta_schema(&new_pl_schema)?;
+        
+        let current_snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot error: {}", e).into()))?;
+        let current_delta_schema = current_snapshot.schema();
+
+        // 只有当 Delta Schema 真的变了才提交 Metadata Action
+        if current_delta_schema.as_ref() != &new_delta_schema {
+            if !ctx.can_evolve {
+                return Err(PolarsError::SchemaMismatch("Schema mismatch detected. Pass 'can_evolve=true'.".into()));
+            }
+            
+            // 1. 获取当前 Metadata 并序列化为 JSON Value
+            let current_metadata = current_snapshot.metadata();
+            let mut meta_json = serde_json::to_value(current_metadata)
+                .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize metadata: {}", e).into()))?;
+
+            // 2. 将新的 Schema 序列化为字符串
+            let new_schema_string = serde_json::to_string(&new_delta_schema)
+                .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize new schema: {}", e).into()))?;
+
+            // 3. 在 JSON 对象中强行替换 "schemaString" 字段
+            // 这样会自动保留 id, partitionColumns, createdTime 等所有私有/公有字段
+            if let Some(obj) = meta_json.as_object_mut() {
+                obj.insert("schemaString".to_string(), serde_json::Value::String(new_schema_string));
+            } else {
+                return Err(PolarsError::ComputeError("Metadata is not a JSON object".into()));
+            }
+
+            // 4. 反序列化回 Metadata Action
+            let new_metadata_action: deltalake::kernel::Metadata = serde_json::from_value(meta_json)
+                .map_err(|e| PolarsError::ComputeError(format!("Failed to deserialize modified metadata: {}", e).into()))?;
+
+            // 5. 插入到 Actions 列表的最前面 (必须是第一个)
+            actions.insert(0, Action::Metadata(new_metadata_action));
+        }
+    }
+
+    // =========================================================
+    // 3. Commit Transaction
+    // =========================================================
+    
+    // 构建 SQL 风格的 Predicate 用于显示 (e.g. "source.id = target.id")
+    let join_predicate = ctx.merge_keys.iter()
+        .map(|k| format!("source.{} = target.{}", k, k))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+
+    let operation = DeltaOperation::Merge {
+        predicate: Some(join_predicate.clone()),
+        merge_predicate: Some(join_predicate), 
+        matched_predicates: matched_preds,
+        not_matched_predicates: not_matched_preds,
+        not_matched_by_source_predicates: not_matched_by_source_preds,
+    };
+
+    // =========================================================
+    // 3. Strict Commit (No Internal Retry)
+    // =========================================================
+    
+    // ⚡️ 核心修改：移除 loop，禁用 delta-rs 内部重试
+    // 我们要求：如果你提交时的 Snapshot 版本不是最新的，立刻报错！
+    // 这样外层的 "Grand Retry Loop" 才能捕获错误，并触发 Re-Scan 和 Re-Plan。
+    let commit_res = CommitBuilder::default()
+        .with_actions(actions)
+        .with_max_retries(0) // <--- 关键！禁止它是自作聪明地 Blind Append
+        .build(
+            Some(table.snapshot().map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?), 
+            table.log_store().clone(),
+            operation
+        )
+        .await;
+
+    // 直接透传结果
+    // 如果失败，外层 pl_io_delta_merge 的 Loop 会捕获它
+    commit_res.map_err(|e| PolarsError::ComputeError(format!("Commit failed (Strict Mode): {}", e).into()))?;
+
+    // =========================================================
+    // 4. Cleanup
+    // =========================================================
+    let object_store = table.object_store();
+    let staging_path = Path::from(staging_dir_name);
+    let _ = object_store.delete(&staging_path).await;
+    
+    Ok(())
 }
 
 #[unsafe(no_mangle)]
@@ -1499,889 +2370,214 @@ pub extern "C" fn pl_io_delta_merge(
     cloud_len: usize
 ) {
     ffi_try_void!({
-        // 1. Unpack Basic Args
-        let path_str = ptr_to_str(target_path_ptr).map_err(|e| PolarsError::InvalidOperation(e.to_string().into()))?;
+        // -------------------------------------------------------------------------
+        // Step 0: Unpack Arguments & Initialize Context
+        // -------------------------------------------------------------------------
+        
+        // 1. Parse Basic Args
+        let path_str = ptr_to_str(target_path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         let merge_keys = unsafe { ptr_to_vec_string(merge_keys_ptr, merge_keys_len) };
+        let table_url = parse_table_url(path_str)?;
         if merge_keys.is_empty() {
-             return Err(PolarsError::InvalidOperation("Merge keys cannot be empty".into()));
+             return Err(PolarsError::ComputeError("Merge keys cannot be empty".into()));
         }
+
+        // 2. Consume Source LazyFrame
         let source_lf_ctx = unsafe { Box::from_raw(source_lf_ptr) };
         let mut source_lf = source_lf_ctx.inner; 
 
-        let table_url = parse_table_url(path_str)?;
-        let delta_storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
-
+        // 3. Consume Conditions (Handle Defaults for Upsert Logic)
         let cond_update = if !matched_update_cond.is_null() { 
-            unsafe { *Box::from_raw(matched_update_cond) }.inner 
+            Some(unsafe { *Box::from_raw(matched_update_cond) }.inner)
         } else { 
-            lit(true) 
+            None 
         };
 
-        let cond_match_delete = if !matched_delete_cond.is_null() { 
-            unsafe { *Box::from_raw(matched_delete_cond) }.inner 
+        let cond_delete = if !matched_delete_cond.is_null() { 
+            Some(unsafe { *Box::from_raw(matched_delete_cond) }.inner)
         } else { 
-            lit(false) 
+            None 
         };
 
         let cond_insert = if !not_matched_insert_cond.is_null() { 
-            unsafe { *Box::from_raw(not_matched_insert_cond) }.inner 
+            Some(unsafe { *Box::from_raw(not_matched_insert_cond) }.inner)
         } else { 
-            lit(true) 
+            None
         };
 
-        let cond_source_delete = if !not_matched_by_source_delete_cond.is_null() { 
-            unsafe { *Box::from_raw(not_matched_by_source_delete_cond) }.inner 
+        let cond_src_delete = if !not_matched_by_source_delete_cond.is_null() { 
+            Some(unsafe { *Box::from_raw(not_matched_by_source_delete_cond) }.inner)
         } else { 
-            lit(false) 
+            None
+        };
+
+        // 4. Build Cloud Options Map (For Delta-RS)
+        let delta_storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
+
+        // 5. Pack Context
+        let ctx = MergeContext {
+            table_url,
+            merge_keys,
+            storage_options: delta_storage_options,
+            can_evolve,
+            cond_update,
+            cond_delete,
+            cond_insert,
+            cond_src_delete,
+        };
+
+        // 6. Pack Raw Cloud Args (For Polars Scan/Sink later)
+        let cloud_args = RawCloudArgs {
+            provider: cloud_provider,
+            retries: cloud_retries,
+            retry_timeout_ms: cloud_retry_timeout_ms,
+            retry_init_backoff_ms: cloud_retry_init_backoff_ms,
+            retry_max_backoff_ms: cloud_retry_max_backoff_ms,
+            cache_ttl: cloud_cache_ttl,
+            keys: cloud_keys,
+            values: cloud_values,
+            len: cloud_len,
         };
 
         let rt = get_runtime();
 
-        // 2. Load Target Delta Table & Prune Files (Multi-Key + Partition Aware)
-        let (table, partition_cols, pruned_remove_actions, polars_schema) = rt.block_on(async {
-            // A. Load Table
-            let t = DeltaTable::try_from_url_with_storage_options(table_url.clone(), delta_storage_options.clone())
-                .await.map_err(|e| PolarsError::ComputeError(format!("Delta load error: {}", e).into()))?;
-            
-            // B. Get Polars Schema
-            let schema = get_polars_schema_from_delta(&t)?;
-
-            // C. Get Partition Cols metadata
-            let snapshot = t.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot error: {}", e).into()))?;
-            let part_cols = snapshot.metadata().partition_columns().clone();
-
-            // =========================================================
-            // OPTIMIZATION 1: Analyze Source Partitions
-            // =========================================================
-            // Get Source Partition Value to prune
-            let source_partitions = get_source_partition_values(&source_lf, &part_cols);
-
-            // =========================================================
-            // OPTIMIZATION 2: Analyze Source Key Bounds (Multi-Key)
-            // =========================================================
-            // For Z-Order / Data Skipping
-            let mut key_bounds = HashMap::new();
-            for key in &merge_keys {
-                let dtype = schema.get_field(key).map(|f| f.dtype.clone()).unwrap_or(DataType::Null);
-                if let Some(bounds) = get_source_key_bounds(&source_lf, key, &dtype) {
-                    key_bounds.insert(key.clone(), bounds);
-                }
-            }
-
-            // =========================================================
-            // D. Iterate & Prune Active Files
-            // =========================================================
-            let mut remove_actions = Vec::new();
-            // ==========================================
-            // 0. Pre-computation: Discrete Pruning Candidates
-            // ==========================================
-            let mut pruning_candidates: Option<PruningCandidates> = None;
-
-            // 仅针对单列主键进行优化 (复合主键逻辑太复杂，暂跳过)
-            if merge_keys.len() == 1 {
-                let key_col_name = &merge_keys[0];
-                // 设定阈值：如果 Source Key 太多，构建 Vec 的开销 > 收益，就降级
-                let max_candidates = 100_000; 
-
-                // 1. 提取去重后的 Keys
-                // 使用 LazyFrame 的优化查询
-                if let Ok(df) = source_lf.clone()
-                    .select(&[col(key_col_name)])
-                    .unique(None, UniqueKeepStrategy::Any)
-                    .limit(max_candidates as u32 + 1) // 多取一个用于判断是否超限
-                    .collect() 
-                {
-                    if df.height() <= max_candidates {
-                        let s = df.column(key_col_name).unwrap();
-                        let dtype = s.dtype();
-
-                        if dtype.is_integer() {
-                            // A. 整数路径 (转 i64 -> 排序)
-                            if let Ok(s_cast) = s.cast(&DataType::Int64) {
-                                let mut keys: Vec<i64> = s_cast.i64().unwrap()
-                                    .into_iter().flatten().collect();
-                                keys.sort_unstable(); // 必须排序才能二分查找
-                                pruning_candidates = Some(PruningCandidates::Integers(keys));
-                            }
-                        } else {
-                            // B. 字符串/日期路径 (序列化为 String -> 排序)
-                            // 对于 Date/Timestamp，Delta Stats 存的是 String，所以这里也要转 String
-                            // Polars 的 cast(String) 对于 Date 会生成 ISO 格式，正好匹配
-                            if let Ok(s_cast) = s.cast(&DataType::String) {
-                                let mut keys: Vec<String> = s_cast.str().unwrap()
-                                    .into_iter().flatten().map(|v| v.to_string()).collect();
-                                keys.sort_unstable();
-                                pruning_candidates = Some(PruningCandidates::Strings(keys));
-                            }
-                        }
-                    }
-                }
-            }
-            // Get Active File Stream
-            let t_scan = t.clone(); 
-            let mut stream = t_scan.get_active_add_actions_by_partitions(&[]);
-
-            while let Some(action_res) = futures::StreamExt::next(&mut stream).await {
-                let view = action_res.map_err(|e| PolarsError::ComputeError(format!("Delta stream error: {}", e).into()))?;
-                    
-                // ==========================================
-                // 1. Partition Pruning (Optimized)
-                // ==========================================
-                if let Some(affected_set) = &source_partitions {
-                    
-                    // A. Parse Partition Value from Delta Log (StructData) 
-                    let maybe_key = view.partition_values().map(|struct_data| {
-                        let fields = struct_data.fields();
-                        let values = struct_data.values();
-                        
-                        let mut key = Vec::with_capacity(part_cols.len());
-                        
-                        for target_col_name in &part_cols {
-                            let val_str = fields.iter()
-                                .position(|f| f.name() == target_col_name)
-                                .map(|idx| &values[idx])
-                                .map(|scalar| {
-                                    if scalar.is_null() {
-                                        "__HIVE_DEFAULT_PARTITION__".to_string()
-                                    } else {
-                                        scalar.serialize()
-                                    }
-                                })
-                                .unwrap_or_else(|| {
-                                    "__HIVE_DEFAULT_PARTITION__".to_string()
-                                });
-                            
-                            key.push(val_str);
-                        }
-                        key
-                    });
-
-                    // Build file_key 
-                    let file_key = match maybe_key {
-                        Some(k) => k,
-                        None => {
-                            let path_cow = view.path();
-                            let path_str = path_cow.as_ref();
-                            let file_parts_map = parse_hive_partitions(path_str, &part_cols);
-                            
-                            let mut k = Vec::with_capacity(part_cols.len());
-                            for col_name in &part_cols {
-                                let v = file_parts_map.get(col_name).cloned().flatten()
-                                    .unwrap_or_else(|| "__HIVE_DEFAULT_PARTITION__".to_string());
-                                k.push(v);
-                            }
-                            k
-                        }
-                    };
-                    
-                    // Check Pruning
-                    if !affected_set.contains(&file_key) {
-                        continue; // Skip this file
-                    }
-                }
-
-                // ==========================================
-                // 2. Stats Pruning (Global + Discrete)
-                // ==========================================
-                let mut file_overlaps = true;
-                
-                if !key_bounds.is_empty() {
-                    let stats_json = view.stats();
-                    // 提前解析 Stats JSON，供两步使用
-                    let stats_struct: Option<serde_json::Value> = stats_json
-                        .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null));
-
-                    // ---------------------------------------------------
-                    // Step A: Global Range Check (粗筛)
-                    // ---------------------------------------------------
-                    for (key, (src_min, src_max)) in &key_bounds {
-                         // 使用之前定义的 check_file_overlap_optimized
-                        let src_min_json = bound_to_json(src_min);
-                        let src_max_json = bound_to_json(src_max);
-
-                         if !check_file_overlap_optimized(&stats_struct, key, &src_min_json, &src_max_json) {
-                            file_overlaps = false;
-                            break;
-                         }
-                    }
-
-                    // ---------------------------------------------------
-                    // Step B: Discrete Candidates Check (细筛 - DFP)
-                    // 只有当粗筛通过，且有候选集时才执行
-                    // ---------------------------------------------------
-                    if file_overlaps {
-                        if let Some(candidates) = &pruning_candidates {
-                             let key_col = &merge_keys[0];
-                             
-                             // 尝试提取文件级的 Min/Max
-                             let f_min_opt = extract_stats_value(&stats_struct, "minValues", key_col);
-                             let f_max_opt = extract_stats_value(&stats_struct, "maxValues", key_col);
-
-                             if let (Some(f_min_val), Some(f_max_val)) = (f_min_opt, f_max_opt) {
-                                 let hit = match candidates {
-                                     // 整数二分查找
-                                     PruningCandidates::Integers(sorted_keys) => {
-                                         // 尝试解析 Stats 为 i64
-                                         let f_min_i = as_i64_safe(f_min_val);
-                                         let f_max_i = as_i64_safe(f_max_val);
-                                         
-                                         if let (Some(min_i), Some(max_i)) = (f_min_i, f_max_i) {
-                                             // 1. 找到第一个 >= FileMin 的位置
-                                             let idx = sorted_keys.partition_point(|&x| x < min_i);
-                                             // 2. 检查该位置的值是否 <= FileMax
-                                             // 如果 idx 越界，或者 key > max_i，说明文件范围内没有 key
-                                             if idx < sorted_keys.len() && sorted_keys[idx] <= max_i {
-                                                 true // 命中！
-                                             } else {
-                                                 false // 没命中，可以剪枝
-                                             }
-                                         } else {
-                                             true // 解析失败，保守保留
-                                         }
-                                     },
-                                     // 字符串二分查找
-                                     PruningCandidates::Strings(sorted_keys) => {
-                                         let f_min_s = f_min_val.as_str();
-                                         let f_max_s = f_max_val.as_str();
-                                         
-                                         if let (Some(min_s), Some(max_s)) = (f_min_s, f_max_s) {
-                                             let idx = sorted_keys.partition_point(|x| x.as_str() < min_s);
-                                             if idx < sorted_keys.len() && sorted_keys[idx].as_str() <= max_s {
-                                                 true
-                                             } else {
-                                                 false
-                                             }
-                                         } else {
-                                             true
-                                         }
-                                     }
-                                 };
-
-                                 if !hit {
-                                     file_overlaps = false; // 🔪 剪枝成功！
-                                 }
-                             }
-                        }
-                    }
-                }
-
-                // 3. Keep File
-                if file_overlaps {
-                    remove_actions.push(view.remove_action(true));
-                }
-            }
-            
-            Ok::<_, PolarsError>((t, part_cols, remove_actions, schema))
-        })?;
-
-        let table_root = table.table_url().to_string(); // e.g. "s3://bucket/table"
-        let root_trimmed = table_root.trim_end_matches('/');
+        // =========================================================
+        // Phase 1: Pruning (Async Context 1)
+        // =========================================================
+        let (mut table, partition_cols,mut target_schema) = rt.block_on(
+            phase_1_load_table(&ctx)
+        )?;
         
-        // Pure Insert or Table Empty
-        let target_lf = if pruned_remove_actions.is_empty() {
-            // Use Polars Schema from Delta Snapshot to build DataFrame
-            DataFrame::empty_with_schema(&polars_schema)
-                .lazy()
-        } else {
-            let full_paths: Vec<PlRefPath> = pruned_remove_actions.iter()
-                .map(|r| {
-                    let full = format!("{}/{}", root_trimmed, r.path);
-                    PlRefPath::new(full)
-                })
-                .collect();
+        let (source_partitions, key_bounds, candidates) = phase_1_analyze_source(
+            &ctx, 
+            &source_lf, 
+            &target_schema, 
+            &partition_cols
+        )?;
+        // =========================================================================
+        // 🔄 THE GRAND RETRY LOOP (全链路重算循环)
+        // =========================================================================
+        let mut attempt = 0;
+        
+        loop {
+            attempt += 1;
             
-            let paths_buffer = Buffer::from(full_paths);
-            
-            // Build ScanArgs
-            let mut scan_args = ScanArgsParquet::default();
-            scan_args.hive_options = HiveOptions {
-                enabled: Some(true),
-                hive_start_idx: 0,
-                schema: None,
-                try_parse_dates: true,
-            };
-            scan_args.cloud_options = unsafe {
-                build_cloud_options(
-                    cloud_provider, cloud_retries, cloud_retry_timeout_ms,
-                    cloud_retry_init_backoff_ms, cloud_retry_max_backoff_ms, cloud_cache_ttl,
-                    cloud_keys, cloud_values, cloud_len
+            // 如果不是第一次尝试，说明发生了冲突，需要重新加载 Table 的最新状态
+                if attempt > 1 {
+                println!("[Delta-RS] Conflict detected. Starting Full Retry attempt {}/{}...", attempt, MAX_FULL_JOB_RETRIES);
+                
+                // [Fix]: table.update() 是 async 的，必须在 Runtime 中执行
+                rt.block_on(async {
+                    table.update_state().await
+                        .map_err(|e| PolarsError::ComputeError(format!("Reload table failed: {}", e).into()))
+                })?;
+                
+                
+                // Update Target Schema (Schema 可能也被别人改了)
+                // table.snapshot() 是同步方法，可以直接调
+                let _snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?;
+                let polars_schema = get_polars_schema_from_delta(&table)?;
+                target_schema = polars_schema.into();
+            }
+
+            // ---------------------------------------------------------------------
+            // Phase 1-C: Scan & Prune (基于最新的 Table Snapshot)
+            // ---------------------------------------------------------------------
+            // 这一步必须重做，因为别人可能删除了我们正要 Update 的文件
+            let remove_actions = rt.block_on(
+                phase_1_scan_and_prune(
+                    &table, 
+                    &partition_cols, 
+                    source_partitions.clone(), 
+                    key_bounds.clone(), 
+                    candidates.clone(),
+                    ctx.merge_keys.get(0)
                 )
-            };
+            )?;
+
+            // ---------------------------------------------------------------------
+            // Phase 2, 3: Validation & Planning (Polars)
+            // ---------------------------------------------------------------------
+            // Clone source_lf_plan，因为每次 loop 都要消费它
+            let mut current_source_lf = source_lf.clone(); 
             
-            LazyFrame::scan_parquet_files(paths_buffer, scan_args)?
-        };
+            phase_validation(&ctx, &mut current_source_lf, &target_schema)?;
 
-        // =================================================================================
-        // 4. The Grand Join (Full Merge Logic)
-        // =================================================================================
-
-        // A. Rename Source (Add Suffix)
-        let source_schema = source_lf.collect_schema()?;
-        let mut source_cols_renamed = Vec::new();
-        let mut old_names = Vec::new();
-        let mut new_names = Vec::new();
-
-        // [New]: Schema Validation Logic with can_evolve
-        for src_col_name in source_schema.iter_names() {
-            if polars_schema.get_field(src_col_name).is_none() {
-                if !can_evolve {
-                    return Err(PolarsError::SchemaMismatch(
-                        format!("Schema mismatch: Source column '{}' is not present in target. Pass 'can_evolve=true' to allow.", src_col_name).into()
-                    ));
-                }
-            }
-        }
-        let mut source_keys_renamed_exprs = Vec::with_capacity(merge_keys.len());
-        let mut target_keys_exprs = Vec::with_capacity(merge_keys.len());
-
-        for key in &merge_keys {
-            let renamed = format!("{}_src_tmp", key);
-            source_keys_renamed_exprs.push(col(&renamed));
-            target_keys_exprs.push(col(key));
-        }
-        
-        for name in source_schema.iter_names() {
-            let new_name = format!("{}_src_tmp", name);
-            source_cols_renamed.push(new_name.clone());
-            old_names.push(name.as_str());
-            new_names.push(new_name);
-        }
-        // -------------------------------------------------------------------------
-        // 0. Schema Validation (Existence & Type Compatibility)
-        // -------------------------------------------------------------------------
-        
-        // 获取 Source 的 Schema (LazyFrame 获取 Schema 是瞬时的)
-        let src_schema = source_lf.collect_schema()
-            .map_err(|e| PolarsError::ComputeError(format!("Failed to get source schema: {}", e).into()))?;
-        
-        // 这里的 polars_schema 是 Target Table (Delta) 的 Schema
-        for key in &merge_keys {
-            // A. 检查 Source 是否存在 Key
-            let src_field = src_schema.get(key)
-                .ok_or_else(|| PolarsError::ComputeError(format!(
-                    "Merge Key '{}' not found in SOURCE table schema.", key
-                ).into()))?;
-
-            // B. 检查 Target 是否存在 Key
-            let tgt_field = polars_schema.get_field(key)
-                .ok_or_else(|| PolarsError::ComputeError(format!(
-                    "Merge Key '{}' not found in TARGET table schema.", key
-                ).into()))?;
-
-            // C. 严格类型检查 (Strict Type Match)
-            // 防止 Int32 vs Int64，或者 String vs LargeString 导致的 Join/Pruning 失败
-            if src_field != &tgt_field.dtype {
-                 return Err(PolarsError::SchemaMismatch(format!(
-                    "Merge Key Type Mismatch for column '{}'! \n\
-                     Source: {:?} \n\
-                     Target: {:?} \n\
-                     Merge Keys must have identical types to ensure pruning and join correctness. \
-                     Please cast your source column.", 
-                    key, src_field, tgt_field.dtype
-                ).into()));
-            }
-        }
-        // -------------------------------------------------------------------------
-        // 1. Strict Data Quality Check (Duplicates & Nulls)
-        // -------------------------------------------------------------------------
-        // 我们不希望静默去重，而是希望在上游数据有问题时直接炸掉，
-        // 迫使开发者去修复数据源，而不是掩盖问题。
-        
-        // [Fix]: 1. 将 String 转换为 Expr (col("key"))
-        // over() 需要的是 Vec<Expr>，而不是 Selector
-        let partition_exprs: Vec<Expr> = merge_keys.iter()
-            .map(|k| col(k)) 
-            .collect();
-
-        let has_null_expr = polars::prelude::any_horizontal(
-             merge_keys.iter().map(|k| col(k).is_null()).collect::<Vec<_>>()
-        )?.alias("has_null_key"); // <--- 注意这里的 ?
-
-        let quality_check_lf = source_lf.clone()
-            .select([
-                // 检查 A: 重复 (Window Function)
-                len().over(partition_exprs.clone()).alias("group_count"),
-                // 检查 B: Nulls (只要任意一个 Key 列是 Null)
-                // 我们可以生成一个 boolean 列 "has_null_key"
-            has_null_expr
-            ])
-            .filter(
-                col("group_count").gt(lit(1)) // 有重复
-                .or(col("has_null_key"))      // 或者 有 Null
-            )
-            .limit(1); // 同样，只要发现一个坏蛋就立刻报警
-
-        let check_df = quality_check_lf.collect_with_engine(Engine::Streaming)?;
-
-        if check_df.height() > 0 {
-            // 🚨 3. 发现重复！抓取“犯罪现场”证据 (Error Reporting Path)
-            // 既然已经出错了，这里多花一点点时间做个 GroupBy 是值得的
-            // 我们提取出 Top 5 组重复的主键及其重复次数，打印给用户看
-            let null_row = check_df.column("has_null_key")?.bool()?.get(0).unwrap_or(false);
-            if null_row {
-                 let msg = format!(
-                    "CRITICAL ERROR: Null values detected in Merge Keys! \n\
-                     Merge Keys cannot contain NULLs as they are used for identification. \n\
-                     Merge Keys: {:?}", 
-                    merge_keys
-                );
-                return Err(PolarsError::ComputeError(msg.into()));
-            } else {
-                let example_dupes = source_lf.clone()
-                    .group_by(partition_exprs.clone()) // 按主键分组
-                    .agg([len().alias("duplicate_count")]) // 统计每组数量
-                    .filter(col("duplicate_count").gt(lit(1))) // 只看重复的
-                    .sort(["duplicate_count"], SortMultipleOptions { 
-                        descending: vec![true], 
-                        ..Default::default() 
-                    }) // 甚至可以贴心地按重复次数倒序，把重复最严重的放前面
-                    .limit(5) // 只取前 5 个例子，防止报错信息炸屏
-                    .collect_with_engine(Engine::Streaming)?;
-
-                // 4. 构造包含表格的精美报错信息
-                let msg = format!(
-                    "CRITICAL ERROR: Duplicate keys detected in SOURCE table!\n\
-                    Merge expects unique source keys per checking round.\n\
-                    Please dedup your source data before merging.\n\
-                    \n\
-                    [Merge Keys]: {:?}\n\
-                    \n\
-                    --- Duplicate Key Examples (Top 5) ---\n\
-                    {}", 
-                    merge_keys, 
-                    example_dupes // Polars DataFrame 实现了 Display，直接打印就是一张漂亮的表
-                );
-                
-                // 使用 PolarsError::Duplicate (如果你的 Polars 版本有这个变体)，或者 ComputeError
-                return Err(PolarsError::Duplicate(msg.into()));
-            }
-        }
-
-        let source_renamed = source_lf.clone()
-            // .unique(Some(selector), UniqueKeepStrategy::Last) 
-            .rename(old_names, new_names, true);
-
-        let join_args = JoinArgs {
-            how: JoinType::Full,
-            validation: JoinValidation::ManyToMany, 
-            suffix: None, 
-            slice: None,
-            nulls_equal: false, 
-            coalesce: JoinCoalesce::KeepColumns, 
-            maintain_order: MaintainOrderJoin::None, 
-            build_side: Default::default(), 
-        };
-
-        // Execute Full Join
-        let joined_lf = target_lf.join(
-            source_renamed,
-            target_keys_exprs,         // Left On: [Key1, Key2]
-            source_keys_renamed_exprs, // Right On: [Key1_tmp, Key2_tmp]
-            join_args 
-        );
-        // =================================================================================
-        // C. Define State & Action Constants
-        // =================================================================================
-        // 0=KEEP (Target Only / Matched but condition failed)
-        // 1=INSERT
-        // 2=UPDATE
-        // 3=DELETE (Matched Delete / NotMatchedBySource Delete)
-        // 4=IGNORE (Source Only but Insert condition failed)
-        let act_keep = lit(0);
-        let act_insert = lit(1);
-        let act_update = lit(2);
-        let act_delete = lit(3);
-        let act_ignore = lit(4);
-
-        // Define Row State (准确定义三种状态)
-        // 假设我们 Join 时把 source columns 重命名为了 {col}_src_tmp
-        // 通过检查 Source 的主键是否为 Null 来判断 Source 是否存在
-        let first_src_key = format!("{}_src_tmp", merge_keys[0]);
-        let first_tgt_key = &merge_keys[0];
-
-        let src_exists = col(&first_src_key).is_not_null();
-        let tgt_exists = col(first_tgt_key).is_not_null();
-
-        let is_matched = src_exists.clone().and(tgt_exists.clone());
-        let is_source_only = src_exists.clone().and(tgt_exists.clone().not()); // 新增行
-        let is_target_only = src_exists.not().and(tgt_exists.clone());         // 存量行
-
-        // =================================================================================
-        // D. Calculate Action Column (The Logic Core 🧠)
-        // =================================================================================
-        // 这里集中处理所有优先级逻辑，只生成一个表达式，效率极高
-        let action_expr = polars::prelude::when(is_matched.clone().and(cond_match_delete.clone()))
-            .then(act_delete.clone()) // 优先级最高：匹配且满足删除条件
-            .when(is_matched.clone().and(cond_update.clone()))
-            .then(act_update.clone()) // 其次：匹配且满足更新条件
-            .when(is_source_only.clone().and(cond_insert.clone()))
-            .then(act_insert.clone()) // 新增：满足插入条件
-            .when(is_source_only.clone())
-            .then(act_ignore.clone()) // 新增：但不满足插入条件 -> 丢弃
-            .when(is_target_only.clone().and(cond_source_delete.clone()))
-            .then(act_delete.clone()) // 目标独有：满足 NotMatchedBySource Delete
-            .otherwise(act_keep) // 其他情况（如更新条件失败、目标独有且不删） -> 保持原样
-            .alias("_merge_action");
-
-        // =================================================================================
-        // E. Generate Column Expressions (Support Partial Update)
-        // =================================================================================
-        
-        // 1. 收集所有列名 (Union)
-        let mut output_columns_order = Vec::new();
-        let mut seen_columns = PlHashSet::new();
-        
-        // Target Cols
-        for name in polars_schema.iter_names() {
-            output_columns_order.push(name.to_string());
-            seen_columns.insert(name.to_string());
-        }
-        // Source Cols (Schema Evolution)
-        for name in source_schema.iter_names() {
-            if !seen_columns.contains(name.as_str()) {
-                output_columns_order.push(name.to_string());
-                seen_columns.insert(name.to_string());
-            }
-        }
-
-        let mut final_exprs = Vec::new();
-
-        for col_name in output_columns_order {
-            let src_col_alias = format!("{}_src_tmp", col_name);
-            let has_source_col = source_cols_renamed.contains(&src_col_alias);
-            let has_target_col = polars_schema.get_field(&col_name).is_some();
-
-            // 定义基础值
-            let src_val = if has_source_col { col(&src_col_alias) } else { lit(NULL) };
-            let tgt_val = if has_target_col { col(&col_name) } else { lit(NULL) };
-
-            // 🌟 核心修复逻辑 🌟
-            let final_col_expr = if has_source_col {
-                // 场景 A: Source 有这个列 (Full Update / New Data)
-                // 逻辑: 只要是 Insert 或 Update，都由 Source 说了算
-                polars::prelude::when(
-                    col("_merge_action").eq(act_insert.clone())
-                    .or(col("_merge_action").eq(act_update.clone()))
-                )
-                .then(src_val)      // 用 Source 覆盖
-                .otherwise(tgt_val) // Keep 用 Target
-            } else {
-                // 场景 B: Source 没有这个列 (Partial Update / Missing Data)
-                // 逻辑: 
-                // - 如果是 Insert (新行): 没办法，只能是 Null
-                // - 如果是 Update (旧行): Source 没给值，所以**必须保留 Target 原值** (Partial Update)
-                // - 如果是 Keep: 也是 Target 原值
-                // 结论: 只有 Insert 才是 Null，其他情况都是 Target
-                polars::prelude::when(col("_merge_action").eq(act_insert.clone()))
-                    .then(lit(NULL)) 
-                    .otherwise(tgt_val) // <--- 这里救了 ColB！Update 时会走到这里
-            };
+            let target_lf = construct_target_lf(&ctx, &remove_actions, &target_schema, &cloud_args)?;
             
-            final_exprs.push(final_col_expr.alias(&col_name));
-        }
+            // Join 逻辑可能会因为 Target 数据的变化而产生不同的结果
+            let processed_lf = phase_planning(&ctx, target_lf, current_source_lf, &target_schema)?;
 
-        // =================================================================================
-        // F. Execute: Inject Action -> Filter -> Project
-        // =================================================================================
-        let processed_lf = joined_lf
-            .with_column(action_expr) // 1. 先打标
-            .filter(
-                col("_merge_action").neq(act_delete)
-                .and(col("_merge_action").neq(act_ignore))
-            ) // 2. 根据标记过滤 (Delete & Ignore)
-            .select(final_exprs); // 3. 投影最终列 (内部会自动应用取值逻辑)
+            // ---------------------------------------------------------------------
+            // Phase 4: Execution (IO - Write NEW Staging Files)
+            // ---------------------------------------------------------------------
+            // 每次重试都会生成一个新的 write_id 和新的 staging 目录，绝对隔离
+            let (staging_dir, write_id) = phase_execution(&ctx, processed_lf, &partition_cols, &cloud_args)?;
+            let staging_dir_for_commit = staging_dir.clone();
+            // ---------------------------------------------------------------------
+            // Phase 5: Commit (Try to finalize)
+            // ---------------------------------------------------------------------
+            let commit_result = rt.block_on(async {
+                let add_actions = phase_process_staging(&table, &staging_dir, &partition_cols, write_id).await?;
 
-        // =================================================================================
-        // Build Final Schema with new cols before Sink
-        // =================================================================================
-        
-        // 1. Get Target Schema 
-        let mut final_schema = polars_schema.clone();
-        
-        // 2. Add Source new schema
-        for (name, dtype) in source_schema.iter() {
-            if final_schema.get_field(name).is_none() {
-                final_schema.with_column(name.to_string().into(), dtype.clone());
-            }
-        }
+                let mut final_actions = Vec::with_capacity(remove_actions.len() + add_actions.len());
+                for r in remove_actions { final_actions.push(Action::Remove(r)); }
+                final_actions.extend(add_actions);
 
-        // =================================================================================
-        // 5. Sink to Staging (Write New Files)
-        // =================================================================================
-        
-        let write_id = Uuid::new_v4();
-        let staging_dir_name = format!(".merge_staging_{}", write_id);
-        
-        // Staging URI: s3://bucket/table/.merge_staging_xxx
-        let staging_uri = format!("{}/{}", root_trimmed, staging_dir_name);
-        
-        // Partition Strategy
-        let partition_strategy = if partition_cols.is_empty() {
-            PartitionStrategy::FileSize
-        } else {
-            let keys: Vec<Expr> = partition_cols.iter().map(|n| col(n)).collect();
-            PartitionStrategy::Keyed {
-                keys,
-                include_keys: false, 
-                keys_pre_grouped: false,
-            }
-        };
-
-        // Build SinkDestination
-        let hive_provider = HivePathProvider {
-            extension: PlSmallStr::from_str(".parquet"),
-        };
-        let file_path_provider = Some(file_provider::FileProviderType::Hive(hive_provider));
-        
-        let destination = SinkDestination::Partitioned {
-            base_path: PlRefPath::new(&staging_uri), 
-            file_path_provider,
-            partition_strategy,
-            max_rows_per_file: u32::MAX, 
-            approximate_bytes_per_file: usize::MAX as u64,
-        };
-
-        // Build Write Options
-        let write_opts = build_parquet_write_options(
-            1, // compression (Snappy)
-            -1, // level
-            true, // stats
-            0, // row_group_size
-            0, // data_page_size
-            -1 // compat_level
-        ).map_err(|e| PolarsError::ComputeError(format!("Options error: {}", e).into()))?;
-        
-        // Build Unified Cloud Args
-        let unified_args = unsafe {
-            build_unified_sink_args(
-                false, // mkdir
-                false, // maintain_order
-                0,     // sync_on_close
-                cloud_provider, cloud_retries, cloud_retry_timeout_ms,
-                cloud_retry_init_backoff_ms, cloud_retry_max_backoff_ms, cloud_cache_ttl,
-                cloud_keys, cloud_values, cloud_len
-            )
-        };
-
-        // Execute Write
-        processed_lf.sink(destination, FileWriteFormat::Parquet(write_opts), unified_args)?
-            .collect_with_engine(Engine::Streaming)?;
-
-        // =================================================================================
-        // 6. Scan Staging, Rename & Build Actions
-        // =================================================================================
-        
-        let object_store = table.object_store();
-        let mut final_actions = Vec::new();
-
-        // A. Remove Old Files
-        for remove_action in pruned_remove_actions {
-            final_actions.push(Action::Remove(remove_action));
-        }
-
-        // B. Add New Files (From Staging) - 🚀 Parallel Optimized
-        let add_actions = rt.block_on(async {
-            let staging_path = Path::from(staging_dir_name.clone());
-            
-            // 1. 获取文件列表 (Listing is fast)
-            // 这里的 list 还是线性的，没问题
-            let file_metas: Vec<_> = object_store.list(Some(&staging_path))
-                .filter_map(|res| async { res.ok() }) // 过滤错误
-                .filter(|meta| futures::future::ready(meta.location.to_string().ends_with(".parquet")))
-                .collect()
-                .await;
-
-            // 2. 并发处理 (Read Stats + Rename) 
-            // 设定并发度，比如 50 或 100，避免把 S3 客户端打挂
-            const CONCURRENCY: usize = 64; 
-
-            let stream = futures::stream::iter(file_metas)
-                .map(|meta| {
-                    // Clone 需要的变量以移入 async block
-                    let object_store = object_store.clone();
-                    let staging_dir_name = staging_dir_name.clone();
-                    let partition_cols = partition_cols.clone();
-                    let write_id = write_id.clone();
-
-                    async move {
-                        let src_path_str = meta.location.to_string();
-                        let file_size = meta.size as i64;
-
-                        // A. Read Stats (IO)
-                        let mut reader = ParquetObjectReader::new(object_store.clone(), meta.location.clone())
-                            .with_file_size(meta.size as u64);
-                        let footer = reader.get_metadata(None).await
-                            .map_err(|e| PolarsError::ComputeError(format!("Read footer error: {}", e).into()))?;
-                        let (_, stats_json) = extract_delta_stats(&footer)?;
-
-                        // B. Rename (Heavy IO)
-                        let rel_path = src_path_str.trim_start_matches(&format!("{}/", staging_dir_name));
-                        // 注意处理路径分隔符，防止 trim 后剩下 /
-                        let rel_path_clean = rel_path.trim_start_matches('/');
-                        let dest_path_str = rel_path_clean.replace(".parquet", &format!("-{}.parquet", write_id));
-                        
-                        let src_path = Path::from(src_path_str.clone());
-                        let dest_path = Path::from(dest_path_str.clone());
-
-                        object_store.rename(&src_path, &dest_path).await
-                            .map_err(|e| PolarsError::ComputeError(format!("Rename failed: {}", e).into()))?;
-
-                        // C. Build Action (CPU)
-                        // 记得这里要 URL Decode!
-                        let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
-
-                        Ok::<Action, PolarsError>(Action::Add(Add {
-                            path: dest_path_str.into(),
-                            size: file_size,
-                            partition_values,
-                            modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
-                            data_change: true,
-                            stats: Some(stats_json),
-                            ..Default::default()
-                        }))
-                    }
-                })
-                .buffer_unordered(CONCURRENCY); // 🚀 关键：乱序并发执行
-
-            // 3. 收集结果
-            let results: Vec<Result<Action, PolarsError>> = stream.collect().await;
-            
-            // 解包 Result，如果有任何一个失败，整体失败
-            let mut final_actions = Vec::with_capacity(results.len());
-            for res in results {
-                final_actions.push(res?);
-            }
-
-            Ok::<Vec<Action>, PolarsError>(final_actions)
-        })?;
-
-        final_actions.extend(add_actions);
-        // =================================================================================
-        // 7: Commit Transaction
-        // =================================================================================
-
-        if !final_actions.is_empty() {
-             rt.block_on(async {
-                // -------------------------------------------------------------------------
-                // Construct Logic Metadata (Audit Logs)
-                // -------------------------------------------------------------------------
-                
-                let mut matched_preds = Vec::new();
-                let mut not_matched_preds = Vec::new();           // INSERT
-                let mut not_matched_by_source_preds = Vec::new(); // DELETE (Target Only)
-
-                // 1. Matched Logic
-                if !matched_update_cond.is_null() {
-                    matched_preds.push(MergePredicate { 
-                        predicate: Some("custom_update_condition".into()), 
-                        action_type: "UPDATE".into() 
-                    });
+                if !final_actions.is_empty() {
+                    let src_schema = source_lf.collect_schema().unwrap();
+                    
+                    phase_commit(
+                        &ctx, 
+                        &mut table, 
+                        final_actions, 
+                        &staging_dir, 
+                        &src_schema,
+                        &target_schema
+                    ).await?;
                 } else {
-                    // => Upsert = UPDATE
-                    matched_preds.push(MergePredicate { 
-                        predicate: None, 
-                        action_type: "UPDATE".into() 
-                    });
+                     let object_store = table.object_store();
+                     let _ = object_store.delete(&Path::from(staging_dir)).await;
                 }
-                
-                if !matched_delete_cond.is_null() {
-                    matched_preds.push(MergePredicate {
-                        predicate: Some("matched_delete_condition".to_string()),
-                        action_type: "DELETE".to_string(),
-                    });
-                }
-
-                // 2. Not Matched (Source Only) -> INSERT
-                if !not_matched_insert_cond.is_null() {
-                    not_matched_preds.push(MergePredicate {
-                        predicate: Some("not_matched_insert_condition".to_string()),
-                        action_type: "INSERT".to_string(),
-                    });
-                } else {
-                     not_matched_preds.push(MergePredicate {
-                        predicate: None,
-                        action_type: "INSERT".to_string(),
-                    });
-                }
-
-                // 3. Not Matched By Source (Target Only) -> DELETE
-                if !not_matched_by_source_delete_cond.is_null() {
-                    not_matched_by_source_preds.push(MergePredicate {
-                        predicate: Some("not_matched_by_source_delete_condition".to_string()),
-                        action_type: "DELETE".to_string(),
-                    });
-                }
-
-                // --- Schema Evolution Logic (Corrected Variable Scope) ---
-                
-                let current_snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot: {}", e).into()))?;
-                let current_delta_schema = current_snapshot.schema();
-
-                let mut new_pl_schema = polars_schema.clone();
-                let mut has_schema_change = false;
-                for (name, dtype) in source_schema.iter() {
-                    if new_pl_schema.get_field(name).is_none() {
-                        new_pl_schema.with_column(name.to_string().into(), dtype.clone());
-                        has_schema_change = true;
-                    }
-                }
-
-                if has_schema_change {
-                    let new_delta_schema = convert_to_delta_schema(&new_pl_schema)?;
-
-                    if current_delta_schema.as_ref() != &new_delta_schema {
-                        if !can_evolve {
-                             return Err(PolarsError::ComputeError("Schema mismatch detected. Pass 'can_evolve=true'.".into()));
-                        }
-
-                        let current_metadata = current_snapshot.metadata();
-                        let mut meta_json = serde_json::to_value(current_metadata).map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?;
-                        let new_schema_string = serde_json::to_string(&new_delta_schema).map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?;
-
-                        if let Some(obj) = meta_json.as_object_mut() {
-                            obj.insert("schemaString".to_string(), serde_json::Value::String(new_schema_string));
-                        }
-                        let new_metadata_action: deltalake::kernel::Metadata = serde_json::from_value(meta_json).map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?;
-                        final_actions.insert(0, Action::Metadata(new_metadata_action));
-                    }
-                }
-
-                // -------------------------------------------------------------------------
-                // Build & Commit
-                // -------------------------------------------------------------------------
-
-                let join_predicate = merge_keys.iter()
-                    .map(|k| format!("source.{} = target.{}", k, k))
-                    .collect::<Vec<_>>()
-                    .join(" AND ");
-
-                let operation = DeltaOperation::Merge {
-                    predicate: Some(join_predicate.clone()),
-                    merge_predicate: Some(join_predicate), 
-                    matched_predicates: matched_preds,
-                    not_matched_predicates: not_matched_preds,
-                    not_matched_by_source_predicates: not_matched_by_source_preds,
-                };
-
-                let _ver = CommitBuilder::default()
-                    .with_actions(final_actions) // Remove(Pruned) + Add(Staging) + Metadata(Evolution)
-                    .build(
-                        table.snapshot().ok().map(|s| s as &dyn transaction::TableReference),
-                        table.log_store().clone(),
-                        operation
-                    )
-                    .await
-                    .map_err(|e| PolarsError::ComputeError(format!("Commit failed: {}", e).into()))?;
-                
-                // -------------------------------------------------------------------------
-                // D. Cleanup
-                // -------------------------------------------------------------------------
-                let _ = object_store.delete(&Path::from(staging_dir_name)).await;
-                
                 Ok::<(), PolarsError>(())
-            })?;
-        }
-       
+            });
+
+            // ---------------------------------------------------------------------
+            // Error Handling & Retry Decision
+            // ---------------------------------------------------------------------
+            match commit_result {
+                Ok(_) => {
+                    break;
+                },
+                Err(e) => {
+                    let err_msg = format!("{:?}", e);
+                    
+                    let is_conflict = err_msg.contains("Transaction") || 
+                                      err_msg.contains("Conflict") || 
+                                      err_msg.contains("VersionMismatch"); 
+
+                    if is_conflict && attempt < MAX_FULL_JOB_RETRIES {
+                        rt.block_on(async {
+                            let object_store = table.object_store();
+                            let _ = object_store.delete(&Path::from(staging_dir_for_commit)).await;
+                        });
+                        
+                        let base_backoff = 100 * 2_u64.pow(attempt as u32);
+
+                        // 加入 0~50% 的随机抖动
+                        let jitter = rand::Rng::random_range(&mut rand::rng(), 0..base_backoff/2); 
+                        let final_backoff = base_backoff + jitter;
+
+                        std::thread::sleep(std::time::Duration::from_millis(final_backoff));
+                        
+                        continue; 
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        } // End Loop
+
         Ok(())
     })
 }

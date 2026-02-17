@@ -1584,4 +1584,91 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         Assert.Null(row3[1]);
         Assert.Equal("FreshValue", row3[2]);
     }
+    [Fact]
+    [Trait("DeltaLake", "Concurrent")]
+    public async Task Test_Concurrent_Merge_Stress_TestAsync()
+    {
+        // 1. Setup: 初始化一张表，有一行基础数据
+        var tableName = $"delta_concurrent_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // 初始数据: Id=1, Value=0
+        using (var dfInit = DataFrame.FromColumns(new { Id = new[] { 1 }, Value = new[] { 0 } }))
+        {
+            dfInit.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Overwrite, cloudOptions: options);
+        }
+
+        // 2. 准备并发任务
+        // 我们启动 5 个 Task，每个 Task 试图把 Value 更新为自己的 TaskId
+        // 这一定会触发 Conflict，因为大家都在争抢 Version 1
+        int concurrency = 5;
+        var tasks = new List<Task>();
+
+        for (int i = 0; i < concurrency; i++)
+        {
+            int workerId = i + 1;
+            tasks.Add(Task.Run(() =>
+            {
+                try 
+                {
+                    // 每个 Worker 都有自己的 Source
+                    // 逻辑：把 Id=1 的 Value 更新为 workerId
+                    // 同时插入一条新数据 Id = 100 + workerId
+                    using var sourceDf = DataFrame.FromColumns(new 
+                    { 
+                        Id = new[] { 1, 100 + workerId }, 
+                        Value = new[] { workerId, workerId } 
+                    });
+
+                    Console.WriteLine($"[Worker {workerId}] Starting Merge...");
+                    
+                    // 执行 Merge
+                    sourceDf.Lazy().MergeDelta(
+                        rootUrl, 
+                        mergeKeys: new[] { "Id" }, 
+                        cloudOptions: options
+                    );
+                    
+                    Console.WriteLine($"[Worker {workerId}] Success!");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Worker {workerId}] FAILED: {ex.Message}");
+                    throw; // 测试应该失败
+                }
+            }));
+        }
+
+        // 3. 等待所有任务完成
+        // 如果你的 Retry 逻辑有效，这里应该全部 Pass。
+        // 如果没有 Retry，大概率只有 1 个成功，4 个抛出 "DeltaProtocolError: Transaction conflict"
+        await Task.WhenAll(tasks);
+
+    using var result = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+    // 3. 修复 "取消装箱可能为 null 的值"
+    // GetColumn 返回的是 object，直接强转 int 在数据为空时会炸
+    result.Show();
+
+    // 验证 A: Id=1 的行，Value 应该是某一个 workerId (最后胜出的那个)
+    int finalValue = (int)result.Filter(Col("Id") ==1)["Value"][0]!;
+    Assert.True(finalValue > 0, "Id=1 should be updated by someone");
+
+    // 验证 B: 所有的新增行 (Id > 100) 都应该存在
+    // 因为 Insert 通常不会冲突 (除非 Id 重复)，但在全链路重试中，
+    // 我们要确保 Retry 之后，Insert 逻辑也被正确重新执行了。
+    var countNewRows = result.Filter(Col("Id") > 100).Height;
+    Assert.Equal(concurrency, countNewRows);
+    }
 }
