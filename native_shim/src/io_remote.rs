@@ -1823,9 +1823,43 @@ pub extern "C" fn pl_io_delta_merge(
             old_names.push(name.as_str());
             new_names.push(new_name);
         }
-
         // -------------------------------------------------------------------------
-        // 1. Strict Duplicate Check (Fail Fast)
+        // 0. Schema Validation (Existence & Type Compatibility)
+        // -------------------------------------------------------------------------
+        
+        // 获取 Source 的 Schema (LazyFrame 获取 Schema 是瞬时的)
+        let src_schema = source_lf.collect_schema()
+            .map_err(|e| PolarsError::ComputeError(format!("Failed to get source schema: {}", e).into()))?;
+        
+        // 这里的 polars_schema 是 Target Table (Delta) 的 Schema
+        for key in &merge_keys {
+            // A. 检查 Source 是否存在 Key
+            let src_field = src_schema.get(key)
+                .ok_or_else(|| PolarsError::ComputeError(format!(
+                    "Merge Key '{}' not found in SOURCE table schema.", key
+                ).into()))?;
+
+            // B. 检查 Target 是否存在 Key
+            let tgt_field = polars_schema.get_field(key)
+                .ok_or_else(|| PolarsError::ComputeError(format!(
+                    "Merge Key '{}' not found in TARGET table schema.", key
+                ).into()))?;
+
+            // C. 严格类型检查 (Strict Type Match)
+            // 防止 Int32 vs Int64，或者 String vs LargeString 导致的 Join/Pruning 失败
+            if src_field != &tgt_field.dtype {
+                 return Err(PolarsError::SchemaMismatch(format!(
+                    "Merge Key Type Mismatch for column '{}'! \n\
+                     Source: {:?} \n\
+                     Target: {:?} \n\
+                     Merge Keys must have identical types to ensure pruning and join correctness. \
+                     Please cast your source column.", 
+                    key, src_field, tgt_field.dtype
+                ).into()));
+            }
+        }
+        // -------------------------------------------------------------------------
+        // 1. Strict Data Quality Check (Duplicates & Nulls)
         // -------------------------------------------------------------------------
         // 我们不希望静默去重，而是希望在上游数据有问题时直接炸掉，
         // 迫使开发者去修复数据源，而不是掩盖问题。
@@ -1836,29 +1870,68 @@ pub extern "C" fn pl_io_delta_merge(
             .map(|k| col(k)) 
             .collect();
 
-        // B. 计算重复
-        // limit(1) 极大优化：只要发现哪怕 1 组重复，立刻停止计算并报错
-        let count_df = source_lf.clone()
-            .select([
-                // 使用窗口函数 over(partition_exprs)
-                len().over(partition_exprs).alias("group_count") 
-            ])
-            .filter(col("group_count").gt(lit(1))) // 筛选出 count > 1 的行
-            .limit(1) 
-            .collect_with_engine(Engine::Streaming)?;
+        let has_null_expr = polars::prelude::any_horizontal(
+             merge_keys.iter().map(|k| col(k).is_null()).collect::<Vec<_>>()
+        )?.alias("has_null_key"); // <--- 注意这里的 ?
 
-        if count_df.height() > 0 {
-            // C. 发现重复！构造详细报错信息
-            // 为了方便调试，我们可以尝试提取出具体的重复 Key (可选)
-            // 这里简单起见，直接报错
-            let msg = format!(
-                "CRITICAL ERROR: Duplicate keys detected in SOURCE table! \
-                 Merge expects unique source keys. \
-                 Please dedup your source data before merging. \
-                 Merge Keys: {:?}", 
-                merge_keys
-            );
-            return Err(PolarsError::Duplicate(msg.into()));
+        let quality_check_lf = source_lf.clone()
+            .select([
+                // 检查 A: 重复 (Window Function)
+                len().over(partition_exprs.clone()).alias("group_count"),
+                // 检查 B: Nulls (只要任意一个 Key 列是 Null)
+                // 我们可以生成一个 boolean 列 "has_null_key"
+            has_null_expr
+            ])
+            .filter(
+                col("group_count").gt(lit(1)) // 有重复
+                .or(col("has_null_key"))      // 或者 有 Null
+            )
+            .limit(1); // 同样，只要发现一个坏蛋就立刻报警
+
+        let check_df = quality_check_lf.collect_with_engine(Engine::Streaming)?;
+
+        if check_df.height() > 0 {
+            // 🚨 3. 发现重复！抓取“犯罪现场”证据 (Error Reporting Path)
+            // 既然已经出错了，这里多花一点点时间做个 GroupBy 是值得的
+            // 我们提取出 Top 5 组重复的主键及其重复次数，打印给用户看
+            let null_row = check_df.column("has_null_key")?.bool()?.get(0).unwrap_or(false);
+            if null_row {
+                 let msg = format!(
+                    "CRITICAL ERROR: Null values detected in Merge Keys! \n\
+                     Merge Keys cannot contain NULLs as they are used for identification. \n\
+                     Merge Keys: {:?}", 
+                    merge_keys
+                );
+                return Err(PolarsError::ComputeError(msg.into()));
+            } else {
+                let example_dupes = source_lf.clone()
+                    .group_by(partition_exprs.clone()) // 按主键分组
+                    .agg([len().alias("duplicate_count")]) // 统计每组数量
+                    .filter(col("duplicate_count").gt(lit(1))) // 只看重复的
+                    .sort(["duplicate_count"], SortMultipleOptions { 
+                        descending: vec![true], 
+                        ..Default::default() 
+                    }) // 甚至可以贴心地按重复次数倒序，把重复最严重的放前面
+                    .limit(5) // 只取前 5 个例子，防止报错信息炸屏
+                    .collect_with_engine(Engine::Streaming)?;
+
+                // 4. 构造包含表格的精美报错信息
+                let msg = format!(
+                    "CRITICAL ERROR: Duplicate keys detected in SOURCE table!\n\
+                    Merge expects unique source keys per checking round.\n\
+                    Please dedup your source data before merging.\n\
+                    \n\
+                    [Merge Keys]: {:?}\n\
+                    \n\
+                    --- Duplicate Key Examples (Top 5) ---\n\
+                    {}", 
+                    merge_keys, 
+                    example_dupes // Polars DataFrame 实现了 Display，直接打印就是一张漂亮的表
+                );
+                
+                // 使用 PolarsError::Duplicate (如果你的 Polars 版本有这个变体)，或者 ComputeError
+                return Err(PolarsError::Duplicate(msg.into()));
+            }
         }
 
         let source_renamed = source_lf.clone()
