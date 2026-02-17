@@ -2,39 +2,40 @@
 // Delta Lake Support
 // ==========================================
 
-use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+use deltalake::{DeltaTable, DeltaTableBuilder, Path};
 use deltalake::kernel::engine::arrow_conversion::{TryIntoArrow, TryIntoKernel};
-use deltalake::kernel::transaction::{CommitBuilder};
+use deltalake::kernel::transaction::CommitBuilder;
 use deltalake::kernel::scalars::ScalarExt;
 use deltalake::parquet::data_type::ByteArray;
 use deltalake::parquet::file::metadata::ParquetMetaData;
-use deltalake::{DeltaTable, DeltaTableBuilder, Path};
-use deltalake::protocol::{DeltaOperation, MergePredicate, SaveMode};
 use deltalake::parquet::arrow::async_reader::{AsyncFileReader, ParquetObjectReader};
 use deltalake::parquet::file::statistics::Statistics as ParquetStatistics;
-use futures::StreamExt;
+use deltalake::arrow::datatypes::Schema as DeltaArrowSchema;
+use deltalake::arrow::ffi::FFI_ArrowSchema as DeltaFFISchema;
+use deltalake::kernel::{Action, Add, Remove, StructType, transaction};
+use deltalake::protocol::{DeltaOperation, MergePredicate, SaveMode};
 use polars::prelude::file_provider::HivePathProvider;
-use serde_json::{json, Value};
 use polars::{error::PolarsError, prelude::*};
 use polars_buffer::Buffer;
+use polars_arrow::ffi::{import_field_from_c,ArrowSchema as PolarsFFISchema};
 use tokio::runtime::Runtime;
-use crate::io::{build_cloud_options, build_parquet_write_options, build_partitioned_destination, build_scan_args, build_unified_sink_args};
-use crate::types::{ExprContext, LazyFrameContext, SchemaContext, SelectorContext};
-use crate::utils::{ptr_to_str, ptr_to_vec_string};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::raw::c_char;
 use std::sync::OnceLock;
+use std::collections::{HashMap, HashSet};
 use url::Url;
 use uuid::Uuid;
-use std::collections::{HashMap, HashSet};
-use deltalake::arrow::ffi::FFI_ArrowSchema as DeltaFFISchema;
-use polars_arrow::ffi::{ArrowSchema as PolarsFFISchema};
-use polars_arrow::ffi::import_field_from_c;
-use deltalake::arrow::datatypes::{Schema as DeltaArrowSchema};
-use deltalake::kernel::{Action, Add, Remove, StructType, transaction};
+use serde_json::{json, Value};
+use futures::StreamExt;
+use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+
+use crate::io::{build_cloud_options, build_parquet_write_options, build_partitioned_destination, build_scan_args, build_unified_sink_args};
+use crate::types::{ExprContext, LazyFrameContext, SchemaContext, SelectorContext};
+use crate::utils::{ptr_to_str, ptr_to_vec_string};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 const MAX_FULL_JOB_RETRIES: usize = 5;
+const MAX_PRUNING_CANDIDATES: usize = 100_000;
 // -------------------------------------------------------------------------
 // Helper Functions
 // -------------------------------------------------------------------------
@@ -49,13 +50,13 @@ fn get_runtime() -> &'static Runtime {
     })
 }
 
-/// 提取 Parquet 统计信息并转换为 Delta JSON 格式
-/// 返回: (num_records, stats_json_string)
+/// Extract Parquet Stat then convert to Delta JSON format
+/// Return: (num_records, stats_json_string)
 fn extract_delta_stats(metadata: &ParquetMetaData) -> Result<(i64, String), PolarsError> {
     let file_metadata = metadata.file_metadata();
     let num_rows = file_metadata.num_rows();
     
-    // Delta Stats 结构
+    // Delta Stats Struct
     // {
     //   "numRecords": 100,
     //   "minValues": { "col1": 1, "col2": "a" },
@@ -69,12 +70,11 @@ fn extract_delta_stats(metadata: &ParquetMetaData) -> Result<(i64, String), Pola
 
     let schema_descr = file_metadata.schema_descr();
 
-    // 遍历所有列
+    // Iter all columns
     for (col_idx, column_descr) in schema_descr.columns().iter().enumerate() {
         let col_name = column_descr.name();
-        // let col_path = column_descr.path().string(); // 处理嵌套列名 a.b.c
 
-        // 聚合该列在所有 RowGroups 中的统计信息
+        // Agg RowGroups Stats
         let mut global_min: Option<Value> = None;
         let mut global_max: Option<Value> = None;
         let mut global_nulls: i64 = 0;
@@ -85,7 +85,7 @@ fn extract_delta_stats(metadata: &ParquetMetaData) -> Result<(i64, String), Pola
                 has_stats = true;
                 global_nulls += col_chunk.null_count_opt().unwrap_or(0) as i64;
 
-                // 转换 Min/Max
+                // Convert Min/Max
                 let (min_val, max_val) = parquet_stats_to_json(col_chunk);
                 
                 // Aggregation: Min
@@ -93,8 +93,6 @@ fn extract_delta_stats(metadata: &ParquetMetaData) -> Result<(i64, String), Pola
                     match global_min {
                         None => global_min = Some(v),
                         Some(ref current) => {
-                            // 简单的比较逻辑，这里假设类型一致。
-                            // 实际上 JSON Value 比较可能不够精确，但在 Delta 场景下通常够用
                             if is_smaller(&v, current) {
                                 global_min = Some(v);
                             }
@@ -139,20 +137,19 @@ fn extract_stats_value<'a>(stats: &'a Option<serde_json::Value>, key: &str, col:
         .get(col)
 }
 
-// 辅助 helper：尝试把 JSON Value 转为 i64
-// 兼容 JSON Number 和 JSON String (因为 Delta Log 有时把大整数存成字符串)
+// Convert JSON Value to i64
 fn as_i64_safe(v: &serde_json::Value) -> Option<i64> {
     v.as_i64()
      .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
 }
 
-// 辅助 helper：尝试把 JSON Value 转为 f64
+// Convert JSON Value to f64
 fn as_f64_safe(v: &serde_json::Value) -> Option<f64> {
     v.as_f64()
      .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
 }
 
-// 优化版的 Overlap Check (接收 JSON Value 而不是 String)
+// Overlap Check
 fn check_file_overlap_optimized(
     stats: &Option<serde_json::Value>, 
     col: &str, 
@@ -169,26 +166,25 @@ fn check_file_overlap_optimized(
     let f_max = f_max_val.unwrap();
 
     match src_min {
-        // A. 数字比较 (优先 i64，兜底 f64)
+        // A. Compare Number 
         serde_json::Value::Number(s_min_num) => {
             if let serde_json::Value::Number(s_max_num) = src_max {
                 
-                // [Step 1]: 尝试 Integer (i64) 路径 -> 保证 ID/Timestamp 精度
-                // 只有当 source 和 target 全都能转成 i64 时才走这条路
+                // [Step 1]: Integer (i64) 
                 let s_min_i = s_min_num.as_i64();
                 let s_max_i = s_max_num.as_i64();
                 let f_min_i = as_i64_safe(f_min);
                 let f_max_i = as_i64_safe(f_max);
 
                 if let (Some(s_min), Some(s_max), Some(f_min), Some(f_max)) = (s_min_i, s_max_i, f_min_i, f_max_i) {
-                     // 整数比较：不重叠条件
+                     // Not Overlap
                      if f_max < s_min || f_min > s_max {
                         return false; 
                      }
-                     return true; // 整数判定重叠，直接返回
+                     return true; // Overlap
                 }
 
-                // [Step 2]: 如果 i64 解析失败 (说明可能是浮点数)，Fallback 到 f64
+                // [Step 2]: Fallback to f64
                 let s_min_f = s_min_num.as_f64();
                 let s_max_f = s_max_num.as_f64();
                 let f_min_f = as_f64_safe(f_min);
@@ -202,9 +198,7 @@ fn check_file_overlap_optimized(
             }
         },
         
-        // B. 字符串/日期/Decimal (Lexicographical Compare)
-        // 注意：Decimal 如果通过 Scalar::to_json 变成了 String，会走这里
-        // 字符串比较对于 ISO Date 是安全的，但对于 "10.0" vs "2.0" 是不安全的 (Decimal 需注意)
+        // B. String/Date/Decimal (Lexicographical Compare)
         serde_json::Value::String(s_min_str) => {
              if let serde_json::Value::String(s_max_str) = src_max {
                  let f_min_s = f_min.as_str();
@@ -224,7 +218,7 @@ fn check_file_overlap_optimized(
     true
 }
 
-// 辅助：比较 JSON Value 大小 (简化版)
+// Compare JSON Value
 fn is_smaller(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Number(n1), Value::Number(n2)) => {
@@ -233,7 +227,7 @@ fn is_smaller(a: &Value, b: &Value) -> bool {
              else { false }
         },
         (Value::String(s1), Value::String(s2)) => s1 < s2,
-        _ => false // 其他类型暂时忽略比较
+        _ => false 
     }
 }
 
@@ -249,7 +243,7 @@ fn is_larger(a: &Value, b: &Value) -> bool {
     }
 }
 
-// 辅助：将 Parquet 原始 Stats 转为 JSON Value
+// Convert Parquet raw Stats to JSON Value
 fn parquet_stats_to_json(stats: &ParquetStatistics) -> (Option<Value>, Option<Value>) {
     match stats {
         // Boolean
@@ -278,7 +272,6 @@ fn parquet_stats_to_json(stats: &ParquetStatistics) -> (Option<Value>, Option<Va
             s.max_opt().map(|&v| json!(v))
         ),
         // ByteArray (String / Binary)
-        // Delta Lake 要求 String 列的 Stats 必须是 UTF-8 字符串
         ParquetStatistics::ByteArray(s) => {
             let convert = |bytes: &ByteArray| -> Option<Value> {
                 std::str::from_utf8(bytes.data()).ok().map(|s| json!(s))
@@ -289,12 +282,9 @@ fn parquet_stats_to_json(stats: &ParquetStatistics) -> (Option<Value>, Option<Va
             )
         },
         // Int96 (Legacy Timestamp)
-        // 很难直接转为 JSON 可读格式，且已被废弃，暂时忽略
         ParquetStatistics::Int96(_) => (None, None),
         
-        // FixedLenByteArray (通常是 Decimal)
-        // 需要 Schema 中的 Precision/Scale 才能正确反序列化，
-        // 这里没有 Schema 上下文，盲目转换会导致数值错误，安全起见忽略。
+        // FixedLenByteArray (usually Decimal)
         ParquetStatistics::FixedLenByteArray(_) => (None, None),
     }
 }
@@ -391,7 +381,6 @@ pub extern "C" fn pl_scan_delta(
     low_memory: bool,
     use_statistics: bool,
     glob: bool,
-    // allow_missing_columns: bool, // <--- 这一点至关重要，必须为 true
     rechunk: bool, 
     cache: bool,   
     // --- Optional Names ---
@@ -399,7 +388,7 @@ pub extern "C" fn pl_scan_delta(
     row_index_offset: u32,
     include_path_col_ptr: *const c_char,
     // --- Schema ---
-    schema_ptr: *mut SchemaContext, // 用户手动传的 Schema (优先级最高)
+    schema_ptr: *mut SchemaContext, 
     hive_schema_ptr: *mut SchemaContext,
     try_parse_hive_dates: bool,
     // --- Cloud Options ---
@@ -442,7 +431,6 @@ pub extern "C" fn pl_scan_delta(
 
         let allow_missing_columns = true;
         // 4. Build Basic Polars Scan Args
-        // 这里我们先用 build_scan_args 构建基础参数
         let mut args = build_scan_args(
             n_rows, parallel_code, low_memory, use_statistics, 
             glob, allow_missing_columns, 
@@ -456,11 +444,8 @@ pub extern "C" fn pl_scan_delta(
             cloud_keys, cloud_values, cloud_len
         );
 
-        // 5. Inject Delta Schema (如果是自动 Schema 模式)
-        // 如果用户没有显式传入 Schema (args.schema.is_none())，
-        // 我们就把从 Delta Log 里拿到的 Schema 塞进去。
+        // 5. Inject Delta Schema 
         if args.schema.is_none() {
-            // polars_schema 已经是 Schema 类型了，直接装箱
             args.schema = Some(Arc::new(polars_schema));
         }
         
@@ -474,60 +459,48 @@ pub extern "C" fn pl_scan_delta(
 }
 
 pub(crate) fn parse_table_url(path_str: &str) -> PolarsResult<Url> {
-    // Case A: 这是一个标准的 URL (如 s3://, abfss://, gs://)
+    // Case A: Normal Url (如 s3://, abfss://, gs://)
     if let Ok(u) = Url::parse(path_str) {
-        // 这里可以加一个额外的检查：如果它是单盘符路径 (如 "C:/tmp")，Url::parse 可能会报错或者解析出意料之外的结果
-        // 但通常带 scheme 的 (s3://) 都会在这里成功直接返回
         if u.has_host() || u.scheme() == "file" {
             return Ok(u);
         }
     }
 
-    // Case B: 这是一个本地文件路径 (如 ./data/test 或 /tmp/test 或 C:\data\test)
-    // 必须转换为绝对路径，才能生成合法的 file:// URL
-    
-    // 尝试标准化路径 (解析 . 和 ..)
-    // 注意：canonicalize 要求路径必须存在。如果是新建表，路径可能尚不存在。
+    // Case B: Local Disk (./data/test or /tmp/test or C:\data\test)
     let abs_path = std::fs::canonicalize(path_str)
         .or_else(|_| {
-            // 如果路径不存在 (比如新建表)，尝试手动拼接当前目录
+            // If path is absent, try to join to current folder
             std::env::current_dir().map(|cwd| cwd.join(path_str))
         })
         .map_err(|e| PolarsError::ComputeError(format!("Invalid local path '{}': {}", path_str, e).into()))?;
 
-    // 转换为 file:// URL
-    // 注意：from_directory_path 要求必须是绝对路径
+    // Convert to file:// URL
     Url::from_directory_path(abs_path)
         .map_err(|_| PolarsError::ComputeError(format!("Could not convert path '{}' to file URL", path_str).into()))
 }
 
 pub(crate) fn convert_to_delta_schema(pl_schema: &Schema) -> PolarsResult<StructType> {
     // 1. Polars Schema -> Polars Arrow Schema
-    // CompatLevel::newest() 确保使用最新的 Arrow 规范
     let pl_arrow_schema = pl_schema.to_arrow(CompatLevel::newest());
 
-    // 2. FFI 转换循环: Polars Field -> Delta Field
+    // 2. FFI Convert cycle: Polars Field -> Delta Field
     let delta_arrow_fields = pl_arrow_schema.iter_values().map(|pl_field| {
         // A. Export: Polars Field -> Polars FFI Struct
-        // export_field_to_c 是 Polars 提供的将 Field 导出为 C 结构体的方法
         let pl_ffi = polars_arrow::ffi::export_field_to_c(pl_field);
         
         // B. Cast: Polars FFI Ptr -> Delta FFI Ptr
-        //这是最关键的一步：利用 C Data Interface 的二进制兼容性进行指针强转。
-        // 我们假设 Delta (deltalake::arrow) 的 FFI_ArrowSchema 内存布局与 Polars 的一致。
+        // Arrow C Data Interface is ABI compatiable
         let delta_ffi_ptr = &pl_ffi as *const _ as *const deltalake::arrow::ffi::FFI_ArrowSchema;
 
         // C. Import: Delta FFI -> Delta Arrow Field
-        // 使用 deltalake 依赖的 arrow crate 从 FFI 指针重建 Field
         unsafe { deltalake::arrow::datatypes::Field::try_from(&*delta_ffi_ptr) }
             .map_err(|e| PolarsError::ComputeError(format!("FFI Import Error: {}", e).into()))
     }).collect::<Result<Vec<deltalake::arrow::datatypes::Field>, PolarsError>>()?;
 
-    // 3. 构建 Delta (Standard) Arrow Schema
+    // 3. Build Delta (Standard) Arrow Schema
     let delta_arrow_schema = deltalake::arrow::datatypes::Schema::new(delta_arrow_fields);
 
-    // 4. 转换为 Delta Kernel Schema (StructType)
-    // 这一步如果不提出来，就会报你刚才那个 E0277 错误，因为 Polars Schema 没有实现 TryIntoKernel
+    // 4. Convert to Delta Kernel Schema (StructType)
     let delta_schema: StructType = TryIntoKernel::<StructType>::try_into_kernel(&delta_arrow_schema)
          .map_err(|e| PolarsError::ComputeError(format!("Failed to convert to Delta Kernel Schema: {}", e).into()))?;
 
@@ -554,7 +527,6 @@ pub extern "C" fn pl_sink_delta(
     row_group_size: usize,  
     data_page_size: usize,
     compat_level: i32,
-     // Delta SaveMode (Append/Overwrite/...)
     
     // --- Unified Options ---
     maintain_order: bool,
@@ -577,7 +549,7 @@ ffi_try_void!({
         let base_path_str = ptr_to_str(base_path_ptr)
             .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
 
-        // 1. 获取 Schema & 解析分区列
+        // 1. Get Schema & Parse Partition Column
         let schema = lf_ctx.inner.collect_schema()
             .map_err(|e| PolarsError::ComputeError(format!("Failed to collect schema: {}", e).into()))?;
 
@@ -593,10 +565,10 @@ ffi_try_void!({
         };
         let rt = get_runtime();
         let save_mode = map_savemode(mode);
-        let write_id = Uuid::new_v4(); // 本次写入的唯一 ID
+        let write_id = Uuid::new_v4(); 
 
-        // 2. 构造暂存目录路径 (Staging Path)
-        // 例如: s3://bucket/table/.tmp_write_<uuid>
+        // 2. Build Staging Path
+        // Example: s3://bucket/table/.tmp_write_<uuid>
         let staging_dir_name = format!(".tmp_write_{}", write_id);
         
         let staging_uri = if base_path_str.contains("://") {
@@ -609,7 +581,7 @@ ffi_try_void!({
                 .to_string_lossy()
                 .to_string()
         };
-        // 3. 构建 Cloud Options & Delta Table
+        // 3. Build Cloud Options & Delta Table
         let delta_storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
         
         let (mut table, old_files_to_remove, should_skip) = rt.block_on(async {
@@ -622,15 +594,15 @@ ffi_try_void!({
 
             if dt.version() >= Some(0) {
                 match save_mode {
-                    // Case A: ErrorIfExists -> 直接报错
+                    // Case A: ErrorIfExists -> Throw Exception
                     SaveMode::ErrorIfExists => {
                         return Err(PolarsError::ComputeError(format!("Table already exists at {}", table_url).into()));
                     },
-                    // Case B: Ignore -> 标记跳过
+                    // Case B: Ignore -> Set as skip
                     SaveMode::Ignore => {
                         skip_write = true;
                     },
-                    // Case C: Overwrite -> 收集旧文件
+                    // Case C: Overwrite -> Collect old files
                     SaveMode::Overwrite => {
                         let files = dt.get_files_by_partitions(&[]).await
                             .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))?;
@@ -638,7 +610,7 @@ ffi_try_void!({
                             old_files.push(p.to_string());
                         }
                     },
-                    // Case D: Append -> 正常继续
+                    // Case D: Append -> Continue
                     _ => {} 
                 }
             }
@@ -649,7 +621,7 @@ ffi_try_void!({
             return Ok(());
         }
 
-        // 4. 执行 Polars Sink -> 写入到 Staging 目录
+        // 4. Polars Sink -> Staging Folder
         let destination = unsafe {
             build_partitioned_destination(
                 std::ffi::CString::new(staging_uri.clone()).unwrap().as_ptr(), 
@@ -682,9 +654,7 @@ ffi_try_void!({
             .sink(destination, file_format, unified_args)?
             .collect_with_engine(Engine::Streaming)?;
             
-        // ==========================================
-
-        // 5. 扫描 Staging -> Move -> Commit
+        // 5. Staging -> Move -> Commit
         rt.block_on(async {
             // A. Auto Create Table
             if table.version() < Some(0) {
@@ -697,21 +667,20 @@ ffi_try_void!({
             }
 
             let object_store = table.object_store();
-            let staging_path = Path::from(staging_dir_name.clone());
 
             let mut actions = Vec::new();
             // ==========================================
-            // OPTIMIZATION: Schema Evolution Check
+            // Schema Evolution Check
             // ==========================================
-            // 1. 获取当前表的 Schema (从最新 Snapshot)
+            // 1. Get Newest Schema
             let current_snapshot = table.snapshot()
                 .map_err(|e| PolarsError::ComputeError(format!("Failed to get snapshot: {}", e).into()))?;
             let current_delta_schema = current_snapshot.schema();
             
-            // 2. 将当前的 Polars Schema 转为 Delta Schema
+            // Convert Polars Schema to Delta Schema
             let new_delta_schema = convert_to_delta_schema(&schema)?;
 
-            // 3. 对比 Schema 是否发生变化
+            // Compare Schema 
             if current_delta_schema.as_ref() != &new_delta_schema {
                 if !can_evolve {
                     return Err(PolarsError::ComputeError(
@@ -719,106 +688,42 @@ ffi_try_void!({
                     ));
                 }
 
-                // 4. 构造 Metadata Action 进行演变
-                // 我们保留原有的 configuration 和 created_time，只更新 schema
+                // Build Metadata Action 
                 let current_metadata = current_snapshot.metadata();
 
-                // 2. 序列化为 JSON Value (保留 ID, Config, Partitions 等所有旧状态)
+                // Serlize JSON Value
                 let mut meta_json = serde_json::to_value(current_metadata)
                     .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize metadata: {}", e).into()))?;
 
-                // 3. 生成新的 Schema JSON String
+                // Generate New Schema JSON String
                 let new_schema_string = serde_json::to_string(&new_delta_schema)
                     .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize new schema: {}", e).into()))?;
 
-                // 4. 修改 JSON 对象中的 "schemaString" 字段
-                // 注意：Delta Protocol 定义的 JSON Key 是 "schemaString" (CamelCase)，不是 Rust 字段名 schema_string
+                // Modify JSON "schemaString" field
                 if let Some(obj) = meta_json.as_object_mut() {
                     obj.insert("schemaString".to_string(), Value::String(new_schema_string));
                 } else {
                     return Err(PolarsError::ComputeError("Metadata is not a JSON object".into()));
                 }
 
-                // 5. 反序列化回 Metadata 结构体
+                // Deserilize to Metadata struct
                 let new_metadata_action: deltalake::kernel::Metadata = serde_json::from_value(meta_json)
                     .map_err(|e| PolarsError::ComputeError(format!("Failed to recreate metadata: {}", e).into()))?;
 
-                // 6. 注入 Metadata Action (放在最前面)
+                // Inject Metadata Action
                 actions.insert(0, Action::Metadata(new_metadata_action));
             }
             // ==========================================
-            // Step B: Parallel Staging Processing 🚀
+            // Step B: Parallel Staging Processing
             // ==========================================
-            // 1. 获取所有文件列表 (Fast Listing)
-            use futures::StreamExt;
-            let file_metas: Vec<_> = object_store.list(Some(&staging_path))
-                .filter_map(|res| async { res.ok() }) // 过滤 List 错误
-                .filter(|meta| futures::future::ready(meta.location.to_string().ends_with(".parquet")))
-                .collect()
-                .await;
-
-            // 2. 设定并发度 (例如 64)
-            const CONCURRENCY: usize = 64;
-
-            // 3. 构建并发流
-            let stream = futures::stream::iter(file_metas)
-                .map(|meta| {
-                    // Clone 变量以移入 async block
-                    let object_store = object_store.clone();
-                    let staging_dir_name = staging_dir_name.clone();
-                    let partition_cols = partition_cols.clone();
-                    let write_id = write_id.clone();
-                    
-                    async move {
-                        let src_path_str = meta.location.to_string();
-                        let file_size = meta.size as i64;
-
-                        // C. Read Stats (Network IO)
-                        let mut reader = ParquetObjectReader::new(object_store.clone(), meta.location.clone())
-                                .with_file_size(meta.size as u64);
-                        // 注意：这里最好给 get_metadata 传 None 或者默认 options
-                        let footer = reader.get_metadata(None).await
-                                .map_err(|e| PolarsError::ComputeError(format!("Read footer error: {}", e).into()))?;
-                        let (_, stats_json) = extract_delta_stats(&footer)?;
-
-                        // D. Rename (Heavy Network IO)
-                        let rel_path = src_path_str.trim_start_matches(&format!("{}/", staging_dir_name));
-                        // 清理路径开头可能的 '/'
-                        let rel_path_clean = rel_path.trim_start_matches('/');
-                        let dest_path_str = rel_path_clean.replace(".parquet", &format!("-{}.parquet", write_id));
-                        
-                        let src_path = Path::from(src_path_str);
-                        let dest_path = Path::from(dest_path_str.clone());
-                        
-                        // 执行 Rename
-                        object_store.rename(&src_path, &dest_path).await
-                             .map_err(|e| PolarsError::ComputeError(format!("Rename failed: {}", e).into()))?;
-
-                        // E. Build Add Action (CPU)
-                        let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
-
-                        Ok::<Action, PolarsError>(Action::Add(Add {
-                            path: dest_path_str,
-                            size: file_size,
-                            partition_values,
-                            modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
-                            data_change: true,
-                            stats: Some(stats_json),
-                            ..Default::default()
-                        }))
-                    }
-                })
-                .buffer_unordered(CONCURRENCY); // 🚀 乱序并发执行
-
-            // 4. 收集并发结果
-            let processed_files: Vec<Result<Action, PolarsError>> = stream.collect().await;
+            // Fast Listing
+            let add_actions = phase_process_staging(&table, &staging_dir_name, &partition_cols, write_id).await?;
             
-            // 解包并将 Add Action 加入 final_actions
-            for res in processed_files {
-                actions.push(res?);
+            for res in add_actions {
+                actions.push(res);
             }
 
-            // G. 处理 Overwrite (删除旧文件)
+            // Handle Overwrite
             if let SaveMode::Overwrite = save_mode {
                 for old_path in old_files_to_remove {
                      let remove = Remove {
@@ -835,7 +740,7 @@ ffi_try_void!({
                 return Ok::<(), PolarsError>(());
             }
 
-            // H. 提交事务
+            // Commit
             let operation = DeltaOperation::Write {
                 mode: save_mode,
                 partition_by: if !partition_cols.is_empty() { Some(partition_cols) } else { None },
@@ -862,61 +767,50 @@ ffi_try_void!({
 // ==========================================
 // Delete Implementation
 // ==========================================
-// 定义我们内部的 Bound Map
 type PruningMap = HashMap<String, (serde_json::Value, serde_json::Value)>;
 
-// 递归提取 Expr 中的等于条件 (Col == Lit)
+// Extract Expr (Col == Lit)
 fn extract_bounds_from_expr(expr: &Expr, map: &mut PruningMap) {
     match expr {
-        // 处理 (A == B) & (C == D) 的情况：递归左右
+        // (A == B) & (C == D) 
         Expr::BinaryExpr { left, op: Operator::And, right } => {
             extract_bounds_from_expr(left, map);
             extract_bounds_from_expr(right, map);
         },
         
-        // 处理 Col("A") == Lit(10)
+        // Col("A") == Lit(10)
         Expr::BinaryExpr { left, op: Operator::Eq, right } => {
-            // 检查 left 是否是 Col, right 是否是 Lit
             if let (Expr::Column(name), Expr::Literal(lit_val)) = (left.as_ref(), right.as_ref()) {
                 insert_bound(map, name.as_str(), lit_val);
             } 
-            // 反过来也行：Lit(10) == Col("A")
             else if let (Expr::Literal(lit_val), Expr::Column(name)) = (left.as_ref(), right.as_ref()) {
                 insert_bound(map, name.as_str(), lit_val);
             }
         },
         
-        // 处理 Alias (有些 Expr 会被 alias 包裹)
+        // Handle Alias
         Expr::Alias(inner, _) => {
             extract_bounds_from_expr(inner, map);
         },
         
-        // 其他复杂 Expr (Gt, Lt, Or, Function) 暂时忽略，不做剪枝
         _ => {}
     }
 }
 
 fn insert_bound(map: &mut PruningMap, col_name: &str, lit: &LiteralValue) {
-    // 调用下面的转换函数
     if let Some(json_val) = polars_literal_to_json(lit) {
-        // 对于 (Col == Lit) 的情况，剪枝范围就是 [Lit, Lit]
-        // 所以我们把同一个值 clone 两份，分别作为 min 和 max
         map.insert(col_name.to_string(), (json_val.clone(), json_val));
     }
 }
 
 fn polars_literal_to_json(lit: &LiteralValue) -> Option<serde_json::Value> {
     match lit {
-        // 第一层洋葱：解包 LiteralValue::Scalar
+        // Unpack LiteralValue::Scalar
         LiteralValue::Scalar(scalar_struct) => {
-            // 第二层洋葱：直接拿 scalar_struct.value (它是 AnyValue)
-            // 注意：根据 Polars 版本，可能是 .value 字段或者 .value() 方法
-            // 假设你的 struct 定义是 pub value，直接访问即可
             let any_value = &scalar_struct.value(); 
 
-            // 第三层洋葱：匹配 AnyValue 的具体变体
             match any_value {
-                // 1. 基础数值 (直接转 JSON Number)
+                // Primitives
                 AnyValue::Boolean(b) => Some(serde_json::json!(b)),
                 AnyValue::Int8(v)    => Some(serde_json::json!(v)),
                 AnyValue::Int16(v)   => Some(serde_json::json!(v)),
@@ -929,14 +823,11 @@ fn polars_literal_to_json(lit: &LiteralValue) -> Option<serde_json::Value> {
                 AnyValue::Float32(v) => Some(serde_json::json!(v)),
                 AnyValue::Float64(v) => Some(serde_json::json!(v)),
 
-                // 2. 字符串 (String / Utf8)
-                // Polars 的 String 有时是 Utf8，有时是 String，视版本而定
+                // String / Utf8
                 AnyValue::String(s)  => Some(serde_json::json!(s)),
                 AnyValue::StringOwned(s) => Some(serde_json::json!(s)), 
                 
-                // 3. 日期 (重点！)
-                // Delta Stats 里的 Date 是 "YYYY-MM-DD" 字符串
-                // Polars AnyValue::Date(i32) 是 days since epoch
+                // Date
                 AnyValue::Date(days) => {
                     let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
                     let date = TimeDelta::try_days(*days as i64)
@@ -944,23 +835,17 @@ fn polars_literal_to_json(lit: &LiteralValue) -> Option<serde_json::Value> {
                     date.map(|d| serde_json::json!(d.format("%Y-%m-%d").to_string()))
                 },
 
-                // 4. 时间戳 (Timestamp)
-                // Delta Stats 通常是 ISO String。
-                // Polars AnyValue::Datetime(val, unit, tz)
-                // 这里的 val 是 long (时间戳数值)，unit 是精度 (ms/us/ns)
+                // Timestamp
+                // TimeZone is hard to convert
                 AnyValue::Datetime(_val, _time_unit, _tz) => {
-                    // 为了简化，这里先不支持带时区的复杂转换，防止剪枝错误
-                    // 如果你的 Delta 表里存的是 UTC 时间戳，可以尝试转换
-                    // 否则最安全的做法是：遇到 Timestamp 就不做 Stats Pruning，只做 Partition Pruning
                     None 
                 },
 
-                // 5. 其他 (Null, Binary, List, Struct...) -> 不支持剪枝
+                // Others
                 _ => None,
             }
         },
         
-        // LiteralValue::Range, LiteralValue::Series 等不支持静态分析
         _ => None
     }
 }
@@ -986,7 +871,7 @@ pub extern "C" fn pl_io_delta_delete(
         
         // Take ownership of Expr
         let predicate_ctx = unsafe { *Box::from_raw(predicate_ptr) };
-        // [Auto-Derive]: 从 Expr 提取 Key Bounds
+
         let root_expr = &predicate_ctx.inner;
         let mut key_bounds = HashMap::new();
         extract_bounds_from_expr(root_expr, &mut key_bounds);
@@ -1005,19 +890,13 @@ pub extern "C" fn pl_io_delta_delete(
             let metadata = snapshot.metadata();
             let part_cols = metadata.partition_columns().clone();
 
-            // 2.3 Get Actions (Fix: Use table method + Collect Stream)
-            // 这是一个 Stream，我们需要用 futures::StreamExt 把它收集起来
-            use futures::StreamExt; 
-            
+            // 2.3 Get Actions
             let mut stream = scan_t.get_active_add_actions_by_partitions(&[]);
             let mut actions = Vec::new();
             
             while let Some(item) = stream.next().await {
-                // 解包 DeltaResult<LogicalFileView>
+                // Unwrap DeltaResult<LogicalFileView>
                 let view = item.map_err(|e| PolarsError::ComputeError(format!("Stream error: {}", e).into()))?;
-                // LogicalFileView 通常包含 add action 的信息
-                // 如果你的版本 view 不能直接用，可能需要 view.into() 或者 view.action()
-                // 这里假设 view 可以直接用，或者它本身就是我们需要的结构
                 actions.push(view);
             }
 
@@ -1041,7 +920,7 @@ pub extern "C" fn pl_io_delta_delete(
             // =================================================================================
             // PHASE 1: Partition Pruning (The "Fast Drop" Check)
             // =================================================================================
-            // 尝试仅基于分区值构建一个 1 行的 DataFrame 并运行 Predicate
+            // Try build a single row DataFrame to predicate
             let mut can_skip_scan = false;
             let mut fast_drop = false;
 
@@ -1049,19 +928,18 @@ pub extern "C" fn pl_io_delta_delete(
                 // Build Mini-DataFrame from partition values
                 let mut columns = Vec::with_capacity(partition_cols.len());
                 for target_col in &partition_cols {
-                    // 1. 在 StructData 里查找对应的列索引
+                    // Find Partition value from actions
                     let val_str_opt = p_fields.iter()
-                        .position(|f| f.name() == target_col) // 找到 index
-                        .map(|idx| &p_values[idx])            // 拿到 Scalar
-                        .filter(|scalar| !scalar.is_null())   // 过滤 Null
+                        .position(|f| f.name() == target_col) // Get index
+                        .map(|idx| &p_values[idx])            // Get Scalar
+                        .filter(|scalar| !scalar.is_null())   // Filter Null
                         .map(|scalar| {
-                             // 使用 serialize() 拿到纯净字符串 (如 "2024-01-01")
                              scalar.serialize()
                         });
 
                     let dtype = polars_schema.get_field(target_col).map(|f| f.dtype.clone()).unwrap_or(DataType::String);
                     
-                    // 2. 构建 Series
+                    // Build Series
                     let s = match val_str_opt {
                         Some(v) => Series::new(target_col.into(), &[v]).cast(&dtype)?,
                         None => Series::new_null(target_col.into(), 1).cast(&dtype)?
@@ -1120,7 +998,7 @@ pub extern "C" fn pl_io_delta_delete(
             }
 
             // =========================================================
-             // Phase 1.5: Stats Pruning (Auto-Derived) 🚀
+             // Phase 1.5: Stats Pruning (Auto-Derived)
              // =========================================================
             let stats_struct = view.stats()
                     .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null));
@@ -1128,8 +1006,6 @@ pub extern "C" fn pl_io_delta_delete(
 
                  let mut file_overlaps = true;
                  for (key, (src_min, src_max)) in &key_bounds {
-                     // 这里的 src_min 已经是我们辛苦转换好的 JSON Value 了
-                     // 可以直接传给那个 check_file_overlap_optimized
                      if !check_file_overlap_optimized(&stats_struct, key, src_min, src_max) {
                          file_overlaps = false;
                          break;
@@ -1137,7 +1013,7 @@ pub extern "C" fn pl_io_delta_delete(
                  }
                  
                  if !file_overlaps {
-                     continue; // Skip file (Zero-IO)
+                     continue;
                  }
             }
 
@@ -1165,7 +1041,7 @@ pub extern "C" fn pl_io_delta_delete(
 
             // Inject Partitions
             for target_col in &partition_cols {
-                // 1. 查找值 (逻辑同上)
+                // Find Value
                 let val_str_opt = p_fields.iter()
                     .position(|f| f.name() == target_col)
                     .map(|idx| &p_values[idx])
@@ -1174,13 +1050,13 @@ pub extern "C" fn pl_io_delta_delete(
                          scalar.serialize()
                     });
 
-                // 2. 构建 Literal Expr
+                // Build Literal Expr
                 let lit_expr = match val_str_opt {
                     Some(v) => lit(v),
                     None => lit(NULL)
                 };
 
-                // 3. Cast 并注入
+                // Cast and Inject
                 let final_expr = if let Some(dtype) = polars_schema.get_field(target_col).map(|f| f.dtype.clone()) {
                     lit_expr.cast(dtype)
                 } else {
@@ -1192,44 +1068,36 @@ pub extern "C" fn pl_io_delta_delete(
 
             // [Optimization]: Use filter() first to allow Parquet Stats Pushdown
             // If Parquet Min/Max stats prove "No Match", filter returns empty LF instantly.
-            // We select len() to count matches.
             let has_match_df = lf.clone()
                 .filter(root_expr.clone())
-                .limit(1) // 只要找到 1 行就停止扫描
+                .limit(1)
                 .collect_with_engine(Engine::Streaming)?;
             
-            // let matched_rows = stats_df.column("matched_count")?.u32()?.get(0).unwrap_or(0);
-
             if has_match_df.height() == 0 {
-                // Case 1: Keep (Predicate 没命中任何行)
+                // Case 1: Keep (Predicate missed)
                 continue;
             }
             
             let is_full_drop = if let Some(_total) = total_rows_opt {
-                // 路径 A: 如果我们知道总行数，且刚才 limit(1) 没法告诉我们是否全匹配
-                // 我们需要反向检查：有没有“保留”的行？
                 let keep_expr = root_expr.clone().not();
                 let has_keep_df = lf.clone()
                     .filter(keep_expr)
-                    .limit(1) // 🚀 只要找到 1 行不需要删的，就是 Rewrite
+                    .limit(1) 
                     .collect_with_engine(Engine::Streaming)?;
                 
                 has_keep_df.height() == 0
             } else {
-                // 路径 B: 极端情况，Delta Log 里没写 numRecords
-                // [Optimization]: 一次扫描同时计算 Total 和 Matched
-                // pred 是 boolean 列，cast(UInt32) 后，sum() 就是匹配行数
                 let counts_df = lf.clone()
                     .select([
-                        len().alias("total"), // 总行数
-                        root_expr.clone().cast(DataType::UInt32).sum().alias("matched") // 匹配行数
+                        len().alias("total"), 
+                        root_expr.clone().cast(DataType::UInt32).sum().alias("matched") 
                     ])
                     .collect_with_engine(Engine::Streaming)?;
 
                 let total = counts_df.column("total")?.u32()?.get(0).unwrap_or(0) as i64;
                 let matched = counts_df.column("matched")?.u32()?.get(0).unwrap_or(0) as i64;
 
-                // 如果匹配行数 == 总行数，说明全是垃圾，直接 Drop
+                // if matched == total => Drop
                 matched == total
             };
 
@@ -1315,9 +1183,8 @@ pub extern "C" fn pl_io_delta_delete(
         // 4. Commit
         if !actions.is_empty() {
             rt.block_on(async {
-                // [Fix]: 使用 DeltaOperation::Delete 以获得正确的事务语义
                 let operation = DeltaOperation::Delete {
-                    predicate: None, // 目前我们只有 Expr 对象，无法轻易还原为 SQL 字符串，故填 None
+                    predicate: None, 
                 };
                 
                 let _ver = CommitBuilder::default()
@@ -1328,8 +1195,6 @@ pub extern "C" fn pl_io_delta_delete(
                         operation
                     ).await.map_err(|e| PolarsError::ComputeError(format!("Commit failed: {}", e).into()))?;
                 
-                // Optional: Print version for debug
-                // println!("[Debug] Delete Commit Success. Version: {}", _ver.version);
                 Ok::<(), PolarsError>(())
             })?;
         }
@@ -1349,14 +1214,10 @@ enum PruningBound {
 fn bound_to_json(bound: &PruningBound) -> serde_json::Value {
     match bound {
         // A. Integer (i128)
-        // serde_json::Number 默认不支持 i128，我们需要降级处理
-        // 绝大多数 ID 或 Timestamp 都能塞进 i64
         PruningBound::Integer(i) => {
             if let Ok(val) = i64::try_from(*i) {
                 serde_json::json!(val)
             } else {
-                // 如果超出了 i64 (极大整数)，转成 f64 比较
-                // 虽然精度有损，但用于 Pruning (剪枝) 是安全的 (区间会变宽，不会误删)
                 serde_json::json!(*i as f64)
             }
         },
@@ -1369,10 +1230,7 @@ fn bound_to_json(bound: &PruningBound) -> serde_json::Value {
         PruningBound::Lexical(s) => serde_json::json!(s),
     }
 }
-/// 分析 Source LazyFrame，提取出所有涉及的分区值组合。
-/// 返回类型: Option<HashSet<Vec<String>>>
-/// - None: 无法剪枝 (无分区列，或执行出错)
-/// - Some(Set): 包含所有出现的 (col1_val, col2_val, ...) 组合
+/// Parse Source LazyFrame to extract partition values
 fn get_source_partition_values(
     source_lf: &LazyFrame,
     partition_cols: &[String]
@@ -1381,7 +1239,6 @@ fn get_source_partition_values(
         return None;
     }
     let cols: Vec<Expr> = partition_cols.iter().map(|c| col(c)).collect();
-    // 使用 UniqueKeepStrategy::Any 只要唯一的组合
     let distinct_df = source_lf.clone().select(cols).unique(None, UniqueKeepStrategy::Any).collect().ok()?;
 
     let height = distinct_df.height();
@@ -1393,7 +1250,6 @@ fn get_source_partition_values(
         for col_name in partition_cols {
             let s = distinct_df.column(col_name).ok()?;
             let val = s.get(row_idx).ok()?;
-            // [关键]: 使用稳健转换
             row_values.push(any_value_to_string(&val));
         }
         affected_partitions.insert(row_values);
@@ -1407,14 +1263,12 @@ fn any_value_to_string(val: &AnyValue) -> String {
         AnyValue::StringOwned(s) => s.to_string(),
         AnyValue::Binary(b) => String::from_utf8_lossy(b).to_string(),
         AnyValue::BinaryOwned(b) => String::from_utf8_lossy(&b).to_string(),
-        // 对于数值和时间，直接转
         v => v.to_string(),
     }
 }
 
 fn any_value_to_bound(val: &AnyValue, _dtype: &DataType) -> Option<PruningBound> {
     match val {
-        // --- 整数类型：全部提升至 i128 确保 u64 不丢失精度 ---
         AnyValue::Int8(v) => Some(PruningBound::Integer(*v as i128)),
         AnyValue::Int16(v) => Some(PruningBound::Integer(*v as i128)),
         AnyValue::Int32(v) => Some(PruningBound::Integer(*v as i128)),
@@ -1424,11 +1278,9 @@ fn any_value_to_bound(val: &AnyValue, _dtype: &DataType) -> Option<PruningBound>
         AnyValue::UInt32(v) => Some(PruningBound::Integer(*v as i128)),
         AnyValue::UInt64(v) => Some(PruningBound::Integer(*v as i128)),
         
-        // --- 浮点类型 ---
         AnyValue::Float32(v) => Some(PruningBound::Float(*v as f64)),
         AnyValue::Float64(v) => Some(PruningBound::Float(*v)),
         
-        // --- 字符串与时间 (保持 ISO 8601 逻辑) ---
         AnyValue::String(s) => Some(PruningBound::Lexical(s.to_string())),
         AnyValue::StringOwned(s) => Some(PruningBound::Lexical(s.to_string())),
         AnyValue::Date(days) => {
@@ -1448,7 +1300,7 @@ fn any_value_to_bound(val: &AnyValue, _dtype: &DataType) -> Option<PruningBound>
     }
 }
 
-// 获取 Source 的 Min/Max
+// Get Source Min/Max
 fn get_source_key_bounds(lf: &LazyFrame, key: &str, dtype: &DataType) -> Option<(PruningBound, PruningBound)> {
     if !dtype.is_numeric() && !dtype.is_temporal() && !matches!(dtype, DataType::String) {
         return None;
@@ -1471,8 +1323,6 @@ enum PruningCandidates {
     Integers(Vec<i64>), 
     Strings(Vec<String>), 
 }
-
-const MAX_PRUNING_CANDIDATES: usize = 100_000;
 
 struct MergeContext {
     pub merge_keys: Vec<String>,
@@ -1935,36 +1785,34 @@ fn phase_planning(
         output_cols.push(name.to_string());
         seen.insert(name.to_string());
     }
-    // 再加入 Source 新增列 (Schema Evolution)
+    // Add Source New Column (Schema Evolution)
     for name in src_schema.iter_names() {
         if !seen.contains(name.as_str()) {
             output_cols.push(name.to_string());
         }
     }
 
-    // B. 构建每一列的取值逻辑
     for col_name in output_cols {
         let src_col_alias = format!("{}_src_tmp", col_name);
         let has_source = source_cols_set.contains(&col_name);
         let has_target = target_schema.get_field(&col_name).is_some();
 
-        // 基础值引用
         let src_val = if has_source { col(&src_col_alias) } else { lit(NULL) };
         let tgt_val = if has_target { col(&col_name) } else { lit(NULL) };
 
         let col_expr = if has_source {
-            // Case 1: Source 有这一列 (Full Update / New Data)
-            // 逻辑: 如果是 Insert 或 Update，取 Source；否则取 Target
+            // Case 1: Source has this column (Full Update / New Data)
+            // If Insert or Update, use Source；or Target
             when(col("_merge_action").eq(act_insert.clone())
                 .or(col("_merge_action").eq(act_update.clone())))
             .then(src_val)
             .otherwise(tgt_val)
         } else {
-            // Case 2: Source 没有这一列 (Partial Update / Evolution Old Rows)
-            // 逻辑: 
-            // - 如果是 Insert (新行): 必须是 Null (因为 Source 没给值)
-            // - 如果是 Update (旧行): 必须保持 Target 原值 (Partial Update 语义)
-            // - 如果是 Keep: 保持 Target 原值
+            // Case 2: Source does not have this column (Partial Update / Evolution Old Rows)
+            // Logic: 
+            // - Insert (new row): Null
+            // - Update (old row): Keep target
+            // - Keep: Target
             when(col("_merge_action").eq(act_insert.clone()))
             .then(lit(NULL))
             .otherwise(tgt_val)
@@ -1977,19 +1825,17 @@ fn phase_planning(
     // 6. Final Assemble
     // =========================================================
     let processed_lf = joined_lf
-        .with_column(action_expr) // 注入裁决列
+        .with_column(action_expr)
         .filter(
-            col("_merge_action").neq(act_delete.clone()) // 过滤掉标记删除的行
-            .and(col("_merge_action").neq(act_ignore))   // 过滤掉被忽略的新行
+            col("_merge_action").neq(act_delete.clone()) 
+            .and(col("_merge_action").neq(act_ignore))   
         )
-        .select(final_exprs); // 应用投影逻辑
+        .select(final_exprs);
 
     Ok(processed_lf)
 }
 
-/// Phase 4: Execution (行动阶段)
-/// 职责：配置 Writer、生成 Staging 目录、执行流式写入
-/// 返回：(Staging目录名, Write ID) -> 供 Commit 阶段使用
+/// Phase 4: Execution 
 fn phase_execution(
     ctx: &MergeContext,
     processed_lf: LazyFrame,
@@ -2006,7 +1852,6 @@ fn phase_execution(
     let staging_uri = format!("{}/{}", root_trimmed, staging_dir_name);
 
     // 2. Configure Partition Strategy
-    // 如果 Delta 表是分区的，Staging 文件也必须按同样的结构分区写入
     let partition_strategy = if partition_cols.is_empty() {
         PartitionStrategy::FileSize
     } else {
@@ -2033,20 +1878,19 @@ fn phase_execution(
 
     // 4. Configure Parquet Options
     let write_opts = build_parquet_write_options(
-        1,  // compression: Snappy (Delta 标准)
+        1,  // compression: Snappy
         -1, // compression level: Default
-        true, // statistics: 必须开启，Delta 依赖这个做 Data Skipping
+        true, // statistics: true 
         0,  // row_group_size: Default
         0,  // data_page_size: Default
-        -1  // created_by: Default
+        -1  // compat_level: Default
     ).map_err(|e| PolarsError::ComputeError(format!("Options error: {}", e).into()))?;
 
     // 5. Re-build Cloud Args (Unsafe FFI)
-    // Sink 需要一套统一的 IO 参数
     let unified_args = unsafe {
         build_unified_sink_args(
-            false, // mkdir: Staging 目录通常不需要显式创建，写入时会自动创建
-            false, // maintain_order: 不需要
+            false, // mkdir
+            false, // maintain_order: false
             0,     // sync_on_close: Default
             cloud_args.provider,
             cloud_args.retries,
@@ -2060,8 +1904,7 @@ fn phase_execution(
         )
     };
 
-    // 6. Execute! (The Heavy Lifting)
-    // 这里会触发真正的计算和 IO
+    // 6. Execute
     processed_lf
         .sink(destination, FileWriteFormat::Parquet(write_opts), unified_args)?
         .collect_with_engine(Engine::Streaming)?;
@@ -2069,9 +1912,8 @@ fn phase_execution(
     Ok((staging_dir_name, write_id))
 }
 
-/// Phase 5-A: Process Staging Files (收割阶段)
-/// 职责：扫描 Staging、读取 Stats、移动文件、生成 Add Actions
-/// 返回：Add Actions 列表 (准备提交)
+/// Phase 5-A: Process Staging Files
+/// Scan Staging, read Stats, move file, generate Add Actions
 pub async fn phase_process_staging(
     table: &DeltaTable,
     staging_dir_name: &str,
@@ -2082,10 +1924,9 @@ pub async fn phase_process_staging(
     let object_store = table.object_store();
     let staging_path = Path::from(staging_dir_name);
 
-    // 1. List Files (Listing is usually fast and linear)
-    // 获取 Staging 目录下所有的 .parquet 文件
+    // 1. List Files
     let file_metas: Vec<_> = object_store.list(Some(&staging_path))
-        .filter_map(|res| async { res.ok() }) // 忽略 list 错误
+        .filter_map(|res| async { res.ok() }) 
         .filter(|meta| futures::future::ready(meta.location.to_string().ends_with(".parquet")))
         .collect()
         .await;
@@ -2095,12 +1936,10 @@ pub async fn phase_process_staging(
     }
 
     // 2. Parallel Processing (Read Stats + Rename)
-    // 设定并发度，避免把 S3/MinIO 打挂
     const CONCURRENCY: usize = 64; 
 
     let stream = futures::stream::iter(file_metas)
         .map(|meta| {
-            // Clone 必要的上下文以移入 async block
             let object_store = object_store.clone();
             let staging_dir_name = staging_dir_name.to_string();
             let partition_cols = partition_cols.to_vec();
@@ -2113,39 +1952,37 @@ pub async fn phase_process_staging(
                 // ---------------------------------------------------------
                 // A. Read Parquet Footer (IO - Small Read)
                 // ---------------------------------------------------------
-                // 我们使用 deltalake 提供的 ParquetObjectReader，它能很好地配合 object_store 工作
                 let mut reader = ParquetObjectReader::new(object_store.clone(), meta.location.clone())
                     .with_file_size(meta.size as u64);
                 
                 let footer = reader.get_metadata(None).await
                     .map_err(|e| PolarsError::ComputeError(format!("Read parquet footer error: {}", e).into()))?;
                 
-                // 提取 Stats (这一步会解析 Row Groups 的统计信息并合并)
-                // extract_delta_stats 是一个假设存在的 Helper，复用之前的逻辑
+                // Extract Stats 
                 let (_, stats_json) = extract_delta_stats(&footer)?;
 
                 // ---------------------------------------------------------
                 // B. Rename & Promote (IO - Metadata Operation)
                 // ---------------------------------------------------------
-                // 原始路径: .merge_staging_xxx/region=A/part-001.parquet
-                // 目标路径: region=A/part-001-<uuid>.parquet
+                // Old Path: .merge_staging_xxx/region=A/part-001.parquet
+                // Target Path: region=A/part-001-<uuid>.parquet
                 
-                // 1. 去掉 Staging 前缀
+                // 1. Remove Staging Prefix
                 let rel_path = src_path_str.trim_start_matches(&format!("{}/", staging_dir_name));
-                // 2. 注入 Write ID (防止文件名冲突，且用于 Lineage 追踪)
+                // 2. Inject Write ID
                 let dest_path_str = rel_path.replace(".parquet", &format!("-{}.parquet", write_id));
                 
                 let src_path = Path::from(src_path_str);
                 let dest_path = Path::from(dest_path_str.clone());
 
-                // 执行重命名 (S3 上通常是 Copy + Delete，Azure/HDFS 是原子 Rename)
+                // Rename (S3: Copy + Delete，Azure/HDFS: Rename)
                 object_store.rename(&src_path, &dest_path).await
                     .map_err(|e| PolarsError::ComputeError(format!("Rename failed: {}", e).into()))?;
 
                 // ---------------------------------------------------------
                 // C. Build Add Action (CPU)
                 // ---------------------------------------------------------
-                // 从目标路径中解析分区值 (因为 Polars 已经按照 Hive 结构写好了)
+                // Parse hive partitions
                 let partition_values = parse_hive_partitions(&dest_path_str, &partition_cols);
 
                 Ok::<Action, PolarsError>(Action::Add(Add {
@@ -2153,7 +1990,7 @@ pub async fn phase_process_staging(
                     size: file_size,
                     partition_values,
                     modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
-                    data_change: true, // Merge 操作产生的都是数据变更
+                    data_change: true, 
                     stats: Some(stats_json),
                     tags: None,
                     deletion_vector: None,
@@ -2163,12 +2000,12 @@ pub async fn phase_process_staging(
                 }))
             }
         })
-        .buffer_unordered(CONCURRENCY); // 🚀 关键：乱序并发执行，榨干网络带宽
+        .buffer_unordered(CONCURRENCY); 
 
     // 3. Collect Results
     let results: Vec<Result<Action, PolarsError>> = stream.collect().await;
 
-    // 解包 Result，如果有任何一个文件处理失败，整个操作必须失败 (并在外层触发 Cleanup)
+    // Unwrap results
     let mut add_actions = Vec::with_capacity(results.len());
     for res in results {
         add_actions.push(res?);
@@ -2177,8 +2014,7 @@ pub async fn phase_process_staging(
     Ok(add_actions)
 }
 
-/// Phase 5-B: Commit Transaction (签字画押)
-/// 职责：构建 Merge Predicates, 处理 Schema 演化, 提交事务, 清理 Staging
+/// Phase 5-B: Commit Transaction
 async fn phase_commit(
     ctx: &MergeContext,
     table: &mut DeltaTable,
@@ -2211,7 +2047,7 @@ async fn phase_commit(
             action_type: "UPDATE".into() 
         });
     } else {
-        // 用户没提供 -> 默认 Upsert -> 无 Predicate
+        //  Upsert -> No Predicate
         matched_preds.push(MergePredicate { 
             predicate: None, 
             action_type: "UPDATE".into() 
@@ -2242,9 +2078,8 @@ async fn phase_commit(
     // =========================================================
     // 2. Schema Evolution (Metadata Action)
     // =========================================================
-    // 检查是否有新列需要更新到 Delta Log
     
-    // 构建新的 Polars Schema (Target + Source New Cols)
+    // Build New Polars Schema (Target + Source New Cols)
     let mut new_pl_schema = target_schema.clone();
     let mut has_schema_change = false;
     
@@ -2256,40 +2091,38 @@ async fn phase_commit(
     }
 
     if has_schema_change {
-        // 转换回 Delta Schema
+        // Convert to Delta Schema
         let new_delta_schema = convert_to_delta_schema(&new_pl_schema)?;
         
         let current_snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot error: {}", e).into()))?;
         let current_delta_schema = current_snapshot.schema();
 
-        // 只有当 Delta Schema 真的变了才提交 Metadata Action
         if current_delta_schema.as_ref() != &new_delta_schema {
             if !ctx.can_evolve {
                 return Err(PolarsError::SchemaMismatch("Schema mismatch detected. Pass 'can_evolve=true'.".into()));
             }
             
-            // 1. 获取当前 Metadata 并序列化为 JSON Value
+            // Current Metadata => JSON Value
             let current_metadata = current_snapshot.metadata();
             let mut meta_json = serde_json::to_value(current_metadata)
                 .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize metadata: {}", e).into()))?;
 
-            // 2. 将新的 Schema 序列化为字符串
+            // New Schema => String
             let new_schema_string = serde_json::to_string(&new_delta_schema)
                 .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize new schema: {}", e).into()))?;
 
-            // 3. 在 JSON 对象中强行替换 "schemaString" 字段
-            // 这样会自动保留 id, partitionColumns, createdTime 等所有私有/公有字段
+            // Replace "schemaString" field in JSON
             if let Some(obj) = meta_json.as_object_mut() {
                 obj.insert("schemaString".to_string(), serde_json::Value::String(new_schema_string));
             } else {
                 return Err(PolarsError::ComputeError("Metadata is not a JSON object".into()));
             }
 
-            // 4. 反序列化回 Metadata Action
+            // Convert to Metadata Action
             let new_metadata_action: deltalake::kernel::Metadata = serde_json::from_value(meta_json)
                 .map_err(|e| PolarsError::ComputeError(format!("Failed to deserialize modified metadata: {}", e).into()))?;
 
-            // 5. 插入到 Actions 列表的最前面 (必须是第一个)
+            // Inject Actions List
             actions.insert(0, Action::Metadata(new_metadata_action));
         }
     }
@@ -2298,7 +2131,7 @@ async fn phase_commit(
     // 3. Commit Transaction
     // =========================================================
     
-    // 构建 SQL 风格的 Predicate 用于显示 (e.g. "source.id = target.id")
+    // Build SQL Style Predicate (e.g. "source.id = target.id")
     let join_predicate = ctx.merge_keys.iter()
         .map(|k| format!("source.{} = target.{}", k, k))
         .collect::<Vec<_>>()
@@ -2316,12 +2149,9 @@ async fn phase_commit(
     // 3. Strict Commit (No Internal Retry)
     // =========================================================
     
-    // ⚡️ 核心修改：移除 loop，禁用 delta-rs 内部重试
-    // 我们要求：如果你提交时的 Snapshot 版本不是最新的，立刻报错！
-    // 这样外层的 "Grand Retry Loop" 才能捕获错误，并触发 Re-Scan 和 Re-Plan。
     let commit_res = CommitBuilder::default()
         .with_actions(actions)
-        .with_max_retries(0) // <--- 关键！禁止它是自作聪明地 Blind Append
+        .with_max_retries(0) // NO internal retry
         .build(
             Some(table.snapshot().map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?), 
             table.log_store().clone(),
@@ -2329,8 +2159,6 @@ async fn phase_commit(
         )
         .await;
 
-    // 直接透传结果
-    // 如果失败，外层 pl_io_delta_merge 的 Loop 会捕获它
     commit_res.map_err(|e| PolarsError::ComputeError(format!("Commit failed (Strict Mode): {}", e).into()))?;
 
     // =========================================================
@@ -2455,35 +2283,31 @@ pub extern "C" fn pl_io_delta_merge(
             &partition_cols
         )?;
         // =========================================================================
-        // 🔄 THE GRAND RETRY LOOP (全链路重算循环)
+        // THE GRAND RETRY LOOP
         // =========================================================================
         let mut attempt = 0;
         
         loop {
             attempt += 1;
             
-            // 如果不是第一次尝试，说明发生了冲突，需要重新加载 Table 的最新状态
+            // Reload table status if attempted
                 if attempt > 1 {
                 println!("[Delta-RS] Conflict detected. Starting Full Retry attempt {}/{}...", attempt, MAX_FULL_JOB_RETRIES);
                 
-                // [Fix]: table.update() 是 async 的，必须在 Runtime 中执行
                 rt.block_on(async {
                     table.update_state().await
                         .map_err(|e| PolarsError::ComputeError(format!("Reload table failed: {}", e).into()))
                 })?;
                 
-                
-                // Update Target Schema (Schema 可能也被别人改了)
-                // table.snapshot() 是同步方法，可以直接调
+                // Update Target Schema
                 let _snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?;
                 let polars_schema = get_polars_schema_from_delta(&table)?;
                 target_schema = polars_schema.into();
             }
 
             // ---------------------------------------------------------------------
-            // Phase 1-C: Scan & Prune (基于最新的 Table Snapshot)
+            // Phase 1-C: Scan & Prune
             // ---------------------------------------------------------------------
-            // 这一步必须重做，因为别人可能删除了我们正要 Update 的文件
             let remove_actions = rt.block_on(
                 phase_1_scan_and_prune(
                     &table, 
@@ -2498,21 +2322,20 @@ pub extern "C" fn pl_io_delta_merge(
             // ---------------------------------------------------------------------
             // Phase 2, 3: Validation & Planning (Polars)
             // ---------------------------------------------------------------------
-            // Clone source_lf_plan，因为每次 loop 都要消费它
+            // Clone source_lf_plan
             let mut current_source_lf = source_lf.clone(); 
             
             phase_validation(&ctx, &mut current_source_lf, &target_schema)?;
 
             let target_lf = construct_target_lf(&ctx, &remove_actions, &target_schema, &cloud_args)?;
             
-            // Join 逻辑可能会因为 Target 数据的变化而产生不同的结果
             let processed_lf = phase_planning(&ctx, target_lf, current_source_lf, &target_schema)?;
 
             // ---------------------------------------------------------------------
             // Phase 4: Execution (IO - Write NEW Staging Files)
             // ---------------------------------------------------------------------
-            // 每次重试都会生成一个新的 write_id 和新的 staging 目录，绝对隔离
             let (staging_dir, write_id) = phase_execution(&ctx, processed_lf, &partition_cols, &cloud_args)?;
+
             let staging_dir_for_commit = staging_dir.clone();
             // ---------------------------------------------------------------------
             // Phase 5: Commit (Try to finalize)
@@ -2564,7 +2387,7 @@ pub extern "C" fn pl_io_delta_merge(
                         
                         let base_backoff = 100 * 2_u64.pow(attempt as u32);
 
-                        // 加入 0~50% 的随机抖动
+                        // Insert 0~50% Jitter
                         let jitter = rand::Rng::random_range(&mut rand::rng(), 0..base_backoff/2); 
                         let final_backoff = base_backoff + jitter;
 
