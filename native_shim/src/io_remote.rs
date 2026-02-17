@@ -2,7 +2,7 @@
 // Delta Lake Support
 // ==========================================
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use deltalake::kernel::engine::arrow_conversion::{TryIntoArrow, TryIntoKernel};
 use deltalake::kernel::transaction::{CommitBuilder};
 use deltalake::kernel::scalars::ScalarExt;
@@ -838,7 +838,108 @@ ffi_try_void!({
 // ==========================================
 // Delete Implementation
 // ==========================================
+// 定义我们内部的 Bound Map
+type PruningMap = HashMap<String, (serde_json::Value, serde_json::Value)>;
 
+// 递归提取 Expr 中的等于条件 (Col == Lit)
+fn extract_bounds_from_expr(expr: &Expr, map: &mut PruningMap) {
+    match expr {
+        // 处理 (A == B) & (C == D) 的情况：递归左右
+        Expr::BinaryExpr { left, op: Operator::And, right } => {
+            extract_bounds_from_expr(left, map);
+            extract_bounds_from_expr(right, map);
+        },
+        
+        // 处理 Col("A") == Lit(10)
+        Expr::BinaryExpr { left, op: Operator::Eq, right } => {
+            // 检查 left 是否是 Col, right 是否是 Lit
+            if let (Expr::Column(name), Expr::Literal(lit_val)) = (left.as_ref(), right.as_ref()) {
+                insert_bound(map, name.as_str(), lit_val);
+            } 
+            // 反过来也行：Lit(10) == Col("A")
+            else if let (Expr::Literal(lit_val), Expr::Column(name)) = (left.as_ref(), right.as_ref()) {
+                insert_bound(map, name.as_str(), lit_val);
+            }
+        },
+        
+        // 处理 Alias (有些 Expr 会被 alias 包裹)
+        Expr::Alias(inner, _) => {
+            extract_bounds_from_expr(inner, map);
+        },
+        
+        // 其他复杂 Expr (Gt, Lt, Or, Function) 暂时忽略，不做剪枝
+        _ => {}
+    }
+}
+
+fn insert_bound(map: &mut PruningMap, col_name: &str, lit: &LiteralValue) {
+    // 调用下面的转换函数
+    if let Some(json_val) = polars_literal_to_json(lit) {
+        // 对于 (Col == Lit) 的情况，剪枝范围就是 [Lit, Lit]
+        // 所以我们把同一个值 clone 两份，分别作为 min 和 max
+        map.insert(col_name.to_string(), (json_val.clone(), json_val));
+    }
+}
+
+fn polars_literal_to_json(lit: &LiteralValue) -> Option<serde_json::Value> {
+    match lit {
+        // 第一层洋葱：解包 LiteralValue::Scalar
+        LiteralValue::Scalar(scalar_struct) => {
+            // 第二层洋葱：直接拿 scalar_struct.value (它是 AnyValue)
+            // 注意：根据 Polars 版本，可能是 .value 字段或者 .value() 方法
+            // 假设你的 struct 定义是 pub value，直接访问即可
+            let any_value = &scalar_struct.value(); 
+
+            // 第三层洋葱：匹配 AnyValue 的具体变体
+            match any_value {
+                // 1. 基础数值 (直接转 JSON Number)
+                AnyValue::Boolean(b) => Some(serde_json::json!(b)),
+                AnyValue::Int8(v)    => Some(serde_json::json!(v)),
+                AnyValue::Int16(v)   => Some(serde_json::json!(v)),
+                AnyValue::Int32(v)   => Some(serde_json::json!(v)),
+                AnyValue::Int64(v)   => Some(serde_json::json!(v)),
+                AnyValue::UInt8(v)   => Some(serde_json::json!(v)),
+                AnyValue::UInt16(v)  => Some(serde_json::json!(v)),
+                AnyValue::UInt32(v)  => Some(serde_json::json!(v)),
+                AnyValue::UInt64(v)  => Some(serde_json::json!(v)),
+                AnyValue::Float32(v) => Some(serde_json::json!(v)),
+                AnyValue::Float64(v) => Some(serde_json::json!(v)),
+
+                // 2. 字符串 (String / Utf8)
+                // Polars 的 String 有时是 Utf8，有时是 String，视版本而定
+                AnyValue::String(s)  => Some(serde_json::json!(s)),
+                AnyValue::StringOwned(s) => Some(serde_json::json!(s)), 
+                
+                // 3. 日期 (重点！)
+                // Delta Stats 里的 Date 是 "YYYY-MM-DD" 字符串
+                // Polars AnyValue::Date(i32) 是 days since epoch
+                AnyValue::Date(days) => {
+                    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                    let date = TimeDelta::try_days(*days as i64)
+                        .and_then(|delta| epoch.checked_add_signed(delta));
+                    date.map(|d| serde_json::json!(d.format("%Y-%m-%d").to_string()))
+                },
+
+                // 4. 时间戳 (Timestamp)
+                // Delta Stats 通常是 ISO String。
+                // Polars AnyValue::Datetime(val, unit, tz)
+                // 这里的 val 是 long (时间戳数值)，unit 是精度 (ms/us/ns)
+                AnyValue::Datetime(_val, _time_unit, _tz) => {
+                    // 为了简化，这里先不支持带时区的复杂转换，防止剪枝错误
+                    // 如果你的 Delta 表里存的是 UTC 时间戳，可以尝试转换
+                    // 否则最安全的做法是：遇到 Timestamp 就不做 Stats Pruning，只做 Partition Pruning
+                    None 
+                },
+
+                // 5. 其他 (Null, Binary, List, Struct...) -> 不支持剪枝
+                _ => None,
+            }
+        },
+        
+        // LiteralValue::Range, LiteralValue::Series 等不支持静态分析
+        _ => None
+    }
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_io_delta_delete(
     table_path_ptr: *const c_char,
@@ -861,36 +962,69 @@ pub extern "C" fn pl_io_delta_delete(
         
         // Take ownership of Expr
         let predicate_ctx = unsafe { *Box::from_raw(predicate_ptr) };
+        // [Auto-Derive]: 从 Expr 提取 Key Bounds
+        let root_expr = &predicate_ctx.inner;
+        let mut key_bounds = HashMap::new();
+        extract_bounds_from_expr(root_expr, &mut key_bounds);
+        // [Debug Check]: 看看你的 Expr 被解析成了什么
+        if !key_bounds.is_empty() {
+            println!("[Rust Optimization] Derived Pruning Bounds: {:?}", key_bounds);
+        }
 
         let rt = get_runtime();
 
-        // 2. Load Table & Meta (Sync Block)
-        let (table, polars_schema, partition_cols) = rt.block_on(async {
+        // 2. Load Table & Get Active Actions (Sync Block)
+        let (table, polars_schema, partition_cols, active_add_actions) = rt.block_on(async {
+            // 2.1 Load Table
             let t = DeltaTable::try_from_url_with_storage_options(table_url.clone(), delta_storage_options.clone())
                 .await.map_err(|e| PolarsError::ComputeError(format!("Delta load error: {}", e).into()))?;
-            
+            let scan_t = t.clone();
+            // 2.2 Get Schema & Partition Cols from Snapshot
+            let snapshot = scan_t.snapshot().map_err(|e| PolarsError::ComputeError(format!("Failed to get snapshot: {}", e).into()))?;
             let schema = get_polars_schema_from_delta(&t)?;
-            let snapshot = t.snapshot().map_err(|e| PolarsError::ComputeError(format!("Failed to get snapshot: {}", e).into()))?;
             let metadata = snapshot.metadata();
             let part_cols = metadata.partition_columns().clone();
 
-            Ok::<_, PolarsError>((t, schema, part_cols))
+            // 2.3 Get Actions (Fix: Use table method + Collect Stream)
+            // 这是一个 Stream，我们需要用 futures::StreamExt 把它收集起来
+            use futures::StreamExt; 
+            
+            let mut stream = scan_t.get_active_add_actions_by_partitions(&[]);
+            let mut actions = Vec::new();
+            
+            while let Some(item) = stream.next().await {
+                // 解包 DeltaResult<LogicalFileView>
+                let view = item.map_err(|e| PolarsError::ComputeError(format!("Stream error: {}", e).into()))?;
+                // LogicalFileView 通常包含 add action 的信息
+                // 如果你的版本 view 不能直接用，可能需要 view.into() 或者 view.action()
+                // 这里假设 view 可以直接用，或者它本身就是我们需要的结构
+                actions.push(view);
+            }
+
+            Ok::<_, PolarsError>((t, schema, part_cols, actions))
         })?;
 
-        // 3. Get Files
-        let files = rt.block_on(async {
-             table.get_files_by_partitions(&[]).await
-                .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))
-        })?;
+        // // 3. Get Files
+        // let files = rt.block_on(async {
+        //      table.get_files_by_partitions(&[]).await
+        //         .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))
+        // })?;
 
         let mut actions = Vec::new();
         let object_store = table.object_store(); 
         let table_root = table.table_url().to_string(); 
 
-        for file_path in files {
-            let file_path_str = file_path.to_string(); 
-            let partition_map = parse_hive_partitions(&file_path_str, &partition_cols);
-
+        for view in active_add_actions {
+            let file_path_str = view.path().clone(); 
+            
+            // Partition Map 可以直接从 add.partition_values 拿 (HashMap<String, Option<String>>)
+            // 但为了兼容你的 parse_hive_partitions 逻辑，还是解析路径比较稳妥
+            // let partition_map = parse_hive_partitions(&file_path_str, &partition_cols);
+            let partition_struct_opt = view.partition_values();
+            let (p_fields, p_values) = match &partition_struct_opt {
+                Some(sd) => (sd.fields(), sd.values()),
+                None => (&[][..], &[][..]), // 空切片，处理无分区的情况
+            };
             // =================================================================================
             // PHASE 1: Partition Pruning (The "Fast Drop" Check)
             // =================================================================================
@@ -901,14 +1035,23 @@ pub extern "C" fn pl_io_delta_delete(
             if !partition_cols.is_empty() {
                 // Build Mini-DataFrame from partition values
                 let mut columns = Vec::with_capacity(partition_cols.len());
-                for col_name in &partition_cols {
-                    let val_opt = partition_map.get(col_name).cloned().flatten();
-                    let dtype = polars_schema.get_field(col_name).map(|f| f.dtype.clone()).unwrap_or(DataType::String);
+                for target_col in &partition_cols {
+                    // 1. 在 StructData 里查找对应的列索引
+                    let val_str_opt = p_fields.iter()
+                        .position(|f| f.name() == target_col) // 找到 index
+                        .map(|idx| &p_values[idx])            // 拿到 Scalar
+                        .filter(|scalar| !scalar.is_null())   // 过滤 Null
+                        .map(|scalar| {
+                             // 使用 serialize() 拿到纯净字符串 (如 "2024-01-01")
+                             scalar.serialize()
+                        });
+
+                    let dtype = polars_schema.get_field(target_col).map(|f| f.dtype.clone()).unwrap_or(DataType::String);
                     
-                    // Create Series (len=1)
-                    let s = match val_opt {
-                        Some(v) => Series::new(col_name.into(), &[v]).cast(&dtype)?,
-                        None => Series::new_null(col_name.into(), 1).cast(&dtype)?
+                    // 2. 构建 Series
+                    let s = match val_str_opt {
+                        Some(v) => Series::new(target_col.into(), &[v]).cast(&dtype)?,
+                        None => Series::new_null(target_col.into(), 1).cast(&dtype)?
                     };
                     columns.push(s.into());
                 }
@@ -952,7 +1095,7 @@ pub extern "C" fn pl_io_delta_delete(
                 if fast_drop {
                     // Fast Drop: Mark file for removal, skip IO
                     let remove = Remove {
-                        path: file_path_str.clone(),
+                        path: file_path_str.to_string().clone(),
                         deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
                         data_change: true,
                         ..Default::default()
@@ -963,9 +1106,35 @@ pub extern "C" fn pl_io_delta_delete(
                 continue; 
             }
 
+            // =========================================================
+             // Phase 1.5: Stats Pruning (Auto-Derived) 🚀
+             // =========================================================
+            let stats_struct = view.stats()
+                    .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null));
+             if !key_bounds.is_empty() {
+
+                 let mut file_overlaps = true;
+                 for (key, (src_min, src_max)) in &key_bounds {
+                     // 这里的 src_min 已经是我们辛苦转换好的 JSON Value 了
+                     // 可以直接传给那个 check_file_overlap_optimized
+                     if !check_file_overlap_optimized(&stats_struct, key, src_min, src_max) {
+                         file_overlaps = false;
+                         break;
+                     }
+                 }
+                 
+                 if !file_overlaps {
+                     continue; // Skip file (Zero-IO)
+                 }
+            }
+
             // =================================================================================
             // PHASE 2: Scan & Filter (Stats Pushdown Optimized)
             // =================================================================================
+
+            let total_rows_opt = stats_struct.as_ref()
+                .and_then(|v| v.get("numRecords"))
+                .and_then(|v| v.as_i64());
             
             let full_scan_path = format!("{}/{}", table_root.trim_end_matches('/'), file_path_str);
             let scan_cloud_options = unsafe {
@@ -982,49 +1151,79 @@ pub extern "C" fn pl_io_delta_delete(
             )?;
 
             // Inject Partitions
-            for (col_name, val_opt) in &partition_map {
-                let lit_expr = match val_opt {
-                    Some(v) => lit(v.clone()),
+            for target_col in &partition_cols {
+                // 1. 查找值 (逻辑同上)
+                let val_str_opt = p_fields.iter()
+                    .position(|f| f.name() == target_col)
+                    .map(|idx| &p_values[idx])
+                    .filter(|scalar| !scalar.is_null())
+                    .map(|scalar| {
+                         scalar.serialize()
+                    });
+
+                // 2. 构建 Literal Expr
+                let lit_expr = match val_str_opt {
+                    Some(v) => lit(v),
                     None => lit(NULL)
                 };
-                let final_expr = if let Some(dtype) = polars_schema.get_field(col_name).map(|f| f.dtype.clone()) {
+
+                // 3. Cast 并注入
+                let final_expr = if let Some(dtype) = polars_schema.get_field(target_col).map(|f| f.dtype.clone()) {
                     lit_expr.cast(dtype)
                 } else {
                     lit_expr
                 };
-                lf = lf.with_column(final_expr.alias(col_name));
+                
+                lf = lf.with_column(final_expr.alias(target_col));
             }
 
             // [Optimization]: Use filter() first to allow Parquet Stats Pushdown
             // If Parquet Min/Max stats prove "No Match", filter returns empty LF instantly.
             // We select len() to count matches.
-            let stats_df = lf.clone()
-                .filter(predicate_ctx.inner.clone()) // Pushdown candidate
-                .select([len().alias("matched_count")])
+            let has_match_df = lf.clone()
+                .filter(root_expr.clone())
+                .limit(1) // 只要找到 1 行就停止扫描
                 .collect_with_engine(Engine::Streaming)?;
             
-            let matched_rows = stats_df.column("matched_count")?.u32()?.get(0).unwrap_or(0);
+            // let matched_rows = stats_df.column("matched_count")?.u32()?.get(0).unwrap_or(0);
 
-            if matched_rows == 0 {
-                // Case 1: Keep (No rows matched predicate)
+            if has_match_df.height() == 0 {
+                // Case 1: Keep (Predicate 没命中任何行)
                 continue;
-            } 
+            }
             
-            // If we have matches, we need to check if it's a Full Drop or Rewrite.
-            // But we don't know Total Rows yet (unless we scan again or trust stats).
-            // Optimization: Since we already filtered, we can check if we *filtered everything*.
-            // Wait, we need total count to know if it's a Full Drop.
-            // Let's get total count from metadata/stats if possible, or simple select(len()) on raw LF.
-            
-            // However, Scan overhead is paid. Let's just do a quick check on the original LF for Total Count.
-            // NOTE: This might trigger another metadata read, but usually cached or cheap.
-            let total_rows_df = lf.clone().select([len().alias("total")]).collect_with_engine(Engine::Streaming)?;
-            let total_rows = total_rows_df.column("total")?.u32()?.get(0).unwrap_or(0);
+            let is_full_drop = if let Some(_total) = total_rows_opt {
+                // 路径 A: 如果我们知道总行数，且刚才 limit(1) 没法告诉我们是否全匹配
+                // 我们需要反向检查：有没有“保留”的行？
+                let keep_expr = root_expr.clone().not();
+                let has_keep_df = lf.clone()
+                    .filter(keep_expr)
+                    .limit(1) // 🚀 只要找到 1 行不需要删的，就是 Rewrite
+                    .collect_with_engine(Engine::Streaming)?;
+                
+                has_keep_df.height() == 0
+            } else {
+                // 路径 B: 极端情况，Delta Log 里没写 numRecords
+                // [Optimization]: 一次扫描同时计算 Total 和 Matched
+                // pred 是 boolean 列，cast(UInt32) 后，sum() 就是匹配行数
+                let counts_df = lf.clone()
+                    .select([
+                        len().alias("total"), // 总行数
+                        root_expr.clone().cast(DataType::UInt32).sum().alias("matched") // 匹配行数
+                    ])
+                    .collect_with_engine(Engine::Streaming)?;
 
-            if matched_rows == total_rows {
+                let total = counts_df.column("total")?.u32()?.get(0).unwrap_or(0) as i64;
+                let matched = counts_df.column("matched")?.u32()?.get(0).unwrap_or(0) as i64;
+
+                // 如果匹配行数 == 总行数，说明全是垃圾，直接 Drop
+                matched == total
+            };
+
+            if is_full_drop {
                 // Case 2: Drop (Full match)
                 let remove = Remove {
-                    path: file_path_str.clone(),
+                    path: file_path_str.to_string().clone(),
                     deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
                     data_change: true,
                     ..Default::default()
@@ -1033,7 +1232,7 @@ pub extern "C" fn pl_io_delta_delete(
             } else {
                 // Case 3: Rewrite (Partial match)
                 let remove = Remove {
-                    path: file_path_str.clone(),
+                    path: file_path_str.to_string().clone(),
                     deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
                     data_change: true,
                     ..Default::default()
@@ -1053,8 +1252,10 @@ pub extern "C" fn pl_io_delta_delete(
 
                 // ... (Writing logic matches previous implementation) ...
                 let new_name = format!("part-{}-{}.parquet", Utc::now().timestamp_millis(), Uuid::new_v4());
-                let parent_dir = std::path::Path::new(&file_path_str).parent()
-                    .map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "".to_string());
+                let parent_dir = std::path::Path::new(file_path_str.as_ref()) 
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "".to_string());
                 let relative_new_path = if parent_dir.is_empty() { new_name.clone() } else { format!("{}/{}", parent_dir, new_name) };
                 let full_write_path = format!("{}/{}", table_root.trim_end_matches('/'), relative_new_path);
 
@@ -1132,6 +1333,29 @@ enum PruningBound {
     Integer(i128),
     Float(f64),
     Lexical(String), 
+}
+fn bound_to_json(bound: &PruningBound) -> serde_json::Value {
+    match bound {
+        // A. Integer (i128)
+        // serde_json::Number 默认不支持 i128，我们需要降级处理
+        // 绝大多数 ID 或 Timestamp 都能塞进 i64
+        PruningBound::Integer(i) => {
+            if let Ok(val) = i64::try_from(*i) {
+                serde_json::json!(val)
+            } else {
+                // 如果超出了 i64 (极大整数)，转成 f64 比较
+                // 虽然精度有损，但用于 Pruning (剪枝) 是安全的 (区间会变宽，不会误删)
+                serde_json::json!(*i as f64)
+            }
+        },
+        
+        // B. Float (f64) -> JSON Number
+        PruningBound::Float(f) => serde_json::json!(f),
+        
+        // C. Lexical (String) -> JSON String
+        // 包含 Date, String 等
+        PruningBound::Lexical(s) => serde_json::json!(s),
+    }
 }
 /// 分析 Source LazyFrame，提取出所有涉及的分区值组合。
 /// 返回类型: Option<HashSet<Vec<String>>>
@@ -1230,47 +1454,10 @@ fn get_source_key_bounds(lf: &LazyFrame, key: &str, dtype: &DataType) -> Option<
     Some((min_val, max_val))
 }
 
-// 检查文件 Stats 重叠
-fn check_file_overlap(stats_json: Option<&str>, col_name: &str, src_min: PruningBound, src_max: PruningBound) -> bool {
-    let json_str = match stats_json {
-        Some(s) => s,
-        None => return true, 
-    };
-    let json_val: Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return true, 
-    };
-
-    let extract_bound = |field: &str| -> Option<PruningBound> {
-        let val = json_val.get(field)?.get(col_name)?;
-        match (&src_min, val) {
-            // 如果 Source 是整数，尝试从 JSON 解析为 i128
-            (PruningBound::Integer(_), Value::Number(n)) => {
-                n.as_i64().map(|v| PruningBound::Integer(v as i128))
-                 .or_else(|| n.as_u64().map(|v| PruningBound::Integer(v as i128)))
-            },
-            // 如果 Source 是浮点，从 JSON 析出 f64
-            (PruningBound::Float(_), Value::Number(n)) => {
-                n.as_f64().map(PruningBound::Float)
-            },
-            // 如果 Source 是词法（String/Date），从 JSON 析出 String
-            (PruningBound::Lexical(_), Value::String(s)) => {
-                Some(PruningBound::Lexical(s.clone()))
-            },
-            _ => None 
-        }
-    };
-
-    let file_min = match extract_bound("minValues") {
-        Some(v) => v,
-        None => return true, 
-    };
-    let file_max = match extract_bound("maxValues") {
-        Some(v) => v,
-        None => return true, 
-    };
-
-    !(src_max < file_min || src_min > file_max)
+#[derive(Debug)]
+enum PruningCandidates {
+    Integers(Vec<i64>), // 针对 Int, BigInt, TinyInt
+    Strings(Vec<String>), // 针对 String, Date (ISO格式), Timestamp
 }
 
 #[unsafe(no_mangle)]
@@ -1373,7 +1560,51 @@ pub extern "C" fn pl_io_delta_merge(
             // D. Iterate & Prune Active Files
             // =========================================================
             let mut remove_actions = Vec::new();
-            
+            // ==========================================
+            // 0. Pre-computation: Discrete Pruning Candidates
+            // ==========================================
+            let mut pruning_candidates: Option<PruningCandidates> = None;
+
+            // 仅针对单列主键进行优化 (复合主键逻辑太复杂，暂跳过)
+            if merge_keys.len() == 1 {
+                let key_col_name = &merge_keys[0];
+                // 设定阈值：如果 Source Key 太多，构建 Vec 的开销 > 收益，就降级
+                let max_candidates = 100_000; 
+
+                // 1. 提取去重后的 Keys
+                // 使用 LazyFrame 的优化查询
+                if let Ok(df) = source_lf.clone()
+                    .select(&[col(key_col_name)])
+                    .unique(None, UniqueKeepStrategy::Any)
+                    .limit(max_candidates as u32 + 1) // 多取一个用于判断是否超限
+                    .collect() 
+                {
+                    if df.height() <= max_candidates {
+                        let s = df.column(key_col_name).unwrap();
+                        let dtype = s.dtype();
+
+                        if dtype.is_integer() {
+                            // A. 整数路径 (转 i64 -> 排序)
+                            if let Ok(s_cast) = s.cast(&DataType::Int64) {
+                                let mut keys: Vec<i64> = s_cast.i64().unwrap()
+                                    .into_iter().flatten().collect();
+                                keys.sort_unstable(); // 必须排序才能二分查找
+                                pruning_candidates = Some(PruningCandidates::Integers(keys));
+                            }
+                        } else {
+                            // B. 字符串/日期路径 (序列化为 String -> 排序)
+                            // 对于 Date/Timestamp，Delta Stats 存的是 String，所以这里也要转 String
+                            // Polars 的 cast(String) 对于 Date 会生成 ISO 格式，正好匹配
+                            if let Ok(s_cast) = s.cast(&DataType::String) {
+                                let mut keys: Vec<String> = s_cast.str().unwrap()
+                                    .into_iter().flatten().map(|v| v.to_string()).collect();
+                                keys.sort_unstable();
+                                pruning_candidates = Some(PruningCandidates::Strings(keys));
+                            }
+                        }
+                    }
+                }
+            }
             // Get Active File Stream
             let t_scan = t.clone(); 
             let mut stream = t_scan.get_active_add_actions_by_partitions(&[]);
@@ -1437,16 +1668,87 @@ pub extern "C" fn pl_io_delta_merge(
                     }
                 }
 
-                // 2. Stats Pruning 
-                // File max&min has to intersection with key
+                // ==========================================
+                // 2. Stats Pruning (Global + Discrete)
+                // ==========================================
                 let mut file_overlaps = true;
+                
                 if !key_bounds.is_empty() {
                     let stats_json = view.stats();
-                    
+                    // 提前解析 Stats JSON，供两步使用
+                    let stats_struct: Option<serde_json::Value> = stats_json
+                        .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null));
+
+                    // ---------------------------------------------------
+                    // Step A: Global Range Check (粗筛)
+                    // ---------------------------------------------------
                     for (key, (src_min, src_max)) in &key_bounds {
-                        if !check_file_overlap(stats_json.as_deref(), key, src_min.clone(), src_max.clone()) {
+                         // 使用之前定义的 check_file_overlap_optimized
+                        let src_min_json = bound_to_json(src_min);
+                        let src_max_json = bound_to_json(src_max);
+
+                         if !check_file_overlap_optimized(&stats_struct, key, &src_min_json, &src_max_json) {
                             file_overlaps = false;
-                            break; 
+                            break;
+                         }
+                    }
+
+                    // ---------------------------------------------------
+                    // Step B: Discrete Candidates Check (细筛 - DFP)
+                    // 只有当粗筛通过，且有候选集时才执行
+                    // ---------------------------------------------------
+                    if file_overlaps {
+                        if let Some(candidates) = &pruning_candidates {
+                             let key_col = &merge_keys[0];
+                             
+                             // 尝试提取文件级的 Min/Max
+                             let f_min_opt = extract_stats_value(&stats_struct, "minValues", key_col);
+                             let f_max_opt = extract_stats_value(&stats_struct, "maxValues", key_col);
+
+                             if let (Some(f_min_val), Some(f_max_val)) = (f_min_opt, f_max_opt) {
+                                 let hit = match candidates {
+                                     // 整数二分查找
+                                     PruningCandidates::Integers(sorted_keys) => {
+                                         // 尝试解析 Stats 为 i64
+                                         let f_min_i = as_i64_safe(f_min_val);
+                                         let f_max_i = as_i64_safe(f_max_val);
+                                         
+                                         if let (Some(min_i), Some(max_i)) = (f_min_i, f_max_i) {
+                                             // 1. 找到第一个 >= FileMin 的位置
+                                             let idx = sorted_keys.partition_point(|&x| x < min_i);
+                                             // 2. 检查该位置的值是否 <= FileMax
+                                             // 如果 idx 越界，或者 key > max_i，说明文件范围内没有 key
+                                             if idx < sorted_keys.len() && sorted_keys[idx] <= max_i {
+                                                 true // 命中！
+                                             } else {
+                                                 false // 没命中，可以剪枝
+                                             }
+                                         } else {
+                                             true // 解析失败，保守保留
+                                         }
+                                     },
+                                     // 字符串二分查找
+                                     PruningCandidates::Strings(sorted_keys) => {
+                                         let f_min_s = f_min_val.as_str();
+                                         let f_max_s = f_max_val.as_str();
+                                         
+                                         if let (Some(min_s), Some(max_s)) = (f_min_s, f_max_s) {
+                                             let idx = sorted_keys.partition_point(|x| x.as_str() < min_s);
+                                             if idx < sorted_keys.len() && sorted_keys[idx].as_str() <= max_s {
+                                                 true
+                                             } else {
+                                                 false
+                                             }
+                                         } else {
+                                             true
+                                         }
+                                     }
+                                 };
+
+                                 if !hit {
+                                     file_overlaps = false; // 🔪 剪枝成功！
+                                 }
+                             }
                         }
                     }
                 }
