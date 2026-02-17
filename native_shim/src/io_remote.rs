@@ -966,10 +966,6 @@ pub extern "C" fn pl_io_delta_delete(
         let root_expr = &predicate_ctx.inner;
         let mut key_bounds = HashMap::new();
         extract_bounds_from_expr(root_expr, &mut key_bounds);
-        // [Debug Check]: 看看你的 Expr 被解析成了什么
-        if !key_bounds.is_empty() {
-            println!("[Rust Optimization] Derived Pruning Bounds: {:?}", key_bounds);
-        }
 
         let rt = get_runtime();
 
@@ -1004,11 +1000,7 @@ pub extern "C" fn pl_io_delta_delete(
             Ok::<_, PolarsError>((t, schema, part_cols, actions))
         })?;
 
-        // // 3. Get Files
-        // let files = rt.block_on(async {
-        //      table.get_files_by_partitions(&[]).await
-        //         .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))
-        // })?;
+        // // 3. Get actions
 
         let mut actions = Vec::new();
         let object_store = table.object_store(); 
@@ -1017,13 +1009,10 @@ pub extern "C" fn pl_io_delta_delete(
         for view in active_add_actions {
             let file_path_str = view.path().clone(); 
             
-            // Partition Map 可以直接从 add.partition_values 拿 (HashMap<String, Option<String>>)
-            // 但为了兼容你的 parse_hive_partitions 逻辑，还是解析路径比较稳妥
-            // let partition_map = parse_hive_partitions(&file_path_str, &partition_cols);
             let partition_struct_opt = view.partition_values();
             let (p_fields, p_values) = match &partition_struct_opt {
                 Some(sd) => (sd.fields(), sd.values()),
-                None => (&[][..], &[][..]), // 空切片，处理无分区的情况
+                None => (&[][..], &[][..]), 
             };
             // =================================================================================
             // PHASE 1: Partition Pruning (The "Fast Drop" Check)
@@ -1835,22 +1824,45 @@ pub extern "C" fn pl_io_delta_merge(
             new_names.push(new_name);
         }
 
-        // Unique Source
-        // subset: merge_keys
-        // keep: UniqueKeepStrategy::Last 
-        let names_vec: Vec<PlSmallStr> = merge_keys.iter()
-            .map(|k| PlSmallStr::from_string(k.clone()))
+        // -------------------------------------------------------------------------
+        // 1. Strict Duplicate Check (Fail Fast)
+        // -------------------------------------------------------------------------
+        // 我们不希望静默去重，而是希望在上游数据有问题时直接炸掉，
+        // 迫使开发者去修复数据源，而不是掩盖问题。
+        
+        // [Fix]: 1. 将 String 转换为 Expr (col("key"))
+        // over() 需要的是 Vec<Expr>，而不是 Selector
+        let partition_exprs: Vec<Expr> = merge_keys.iter()
+            .map(|k| col(k)) 
             .collect();
-            
-        let names_arc: Arc<[PlSmallStr]> = names_vec.into();
 
-        let selector = Selector::ByName {
-            names: names_arc,
-            strict: true, 
-        };
+        // B. 计算重复
+        // limit(1) 极大优化：只要发现哪怕 1 组重复，立刻停止计算并报错
+        let count_df = source_lf.clone()
+            .select([
+                // 使用窗口函数 over(partition_exprs)
+                len().over(partition_exprs).alias("group_count") 
+            ])
+            .filter(col("group_count").gt(lit(1))) // 筛选出 count > 1 的行
+            .limit(1) 
+            .collect_with_engine(Engine::Streaming)?;
+
+        if count_df.height() > 0 {
+            // C. 发现重复！构造详细报错信息
+            // 为了方便调试，我们可以尝试提取出具体的重复 Key (可选)
+            // 这里简单起见，直接报错
+            let msg = format!(
+                "CRITICAL ERROR: Duplicate keys detected in SOURCE table! \
+                 Merge expects unique source keys. \
+                 Please dedup your source data before merging. \
+                 Merge Keys: {:?}", 
+                merge_keys
+            );
+            return Err(PolarsError::Duplicate(msg.into()));
+        }
 
         let source_renamed = source_lf.clone()
-            .unique(Some(selector), UniqueKeepStrategy::Last) 
+            // .unique(Some(selector), UniqueKeepStrategy::Last) 
             .rename(old_names, new_names, true);
 
         let join_args = JoinArgs {

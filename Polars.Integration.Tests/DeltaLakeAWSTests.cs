@@ -1433,6 +1433,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // 这是一个干净的表，主键唯一
         using (var dfTarget = DataFrame.FromColumns(new { 
             Id = new[] { 1 }, 
+            Time = new[] {"2025"},
             Val = new[] { 10 } 
         }))
         {
@@ -1443,33 +1444,16 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // 注意：Id=1 出现了两次！这就好比你发了两个更新请求：
         // 请求A: 把 1 改成 88
         // 请求B: 把 1 改成 99
-        using (var dfSource = DataFrame.FromColumns(new { 
-            Id = new[] { 1, 1 }, 
-            Val = new[] { 88, 99 }
-        }))
+        using var dfSource = DataFrame.FromColumns(new { 
+            Id = new[] { 1, 1,1 }, 
+            Time = new[] {"2025","2024","2025"},
+            Val = new[] { 88, 99,100 }
+        });
+        var ex = Assert.Throws<PolarsException>(() => 
         {
-            // 3. 执行 Merge
-            // 预期行为：
-            // A (严格): 抛出异常 "Multiple source rows matched the same target row" (标准 SQL 行为)
-            // B (宽容): 自动去重，保留最后一条 (Val=99)，Target 依然只有 1 行。
-            // C (灾难): 发生笛卡尔积膨胀，Target 变成 2 行 (Id=1, Val=88) 和 (Id=1, Val=99)。
-            
-            dfSource.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options);
-        }
+            dfSource.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id","Time"], cloudOptions: options);
+        });
 
-        // 4. 验证结果
-        using var res = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
-        
-        // 打印出来看看“灾难”现场
-        Console.WriteLine("=== Merge Result Preview ===");
-
-        // 核心断言：
-        // 无论如何，Merge 不应该导致 Target 的主键约束被破坏。
-        // 如果这里是 2，说明发生了“基数膨胀”，这是严重的 Bug。
-        Assert.Equal(1, res.Height); 
-        
-        // 进阶断言（如果实现了 Last-Win 策略）：
-        Assert.Equal(99, res["Val"][0]);
     }
     [Fact]
     [Trait("DeltaLake", "MergeExplicitNull")]
