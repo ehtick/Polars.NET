@@ -2384,13 +2384,18 @@ pub extern "C" fn pl_io_delta_merge(
                             let _ = object_store.delete(&Path::from(staging_dir_for_commit)).await;
                         });
                         
-                        let base_backoff = 100 * 2_u64.pow(attempt as u32);
+                        let base_sleep = 50_u64.saturating_mul(2_u64.pow((attempt - 1) as u32));
+                        
+                        // Set cap as 1000ms
+                        let capped_sleep = std::cmp::min(base_sleep, 1000);
+                        
+                        // Full Jitter
+                        let mut rng = rand::rng();
+                        let jitter_millis = rand::Rng::random_range(&mut rng, (capped_sleep/2)..=(capped_sleep*3/2));
 
-                        // Insert 0~50% Jitter
-                        let jitter = rand::Rng::random_range(&mut rand::rng(), 0..base_backoff/2); 
-                        let final_backoff = base_backoff + jitter;
+                        println!("[Delta-RS] Conflict! Backoff for {}ms (Attempt {})", jitter_millis, attempt);
 
-                        std::thread::sleep(std::time::Duration::from_millis(final_backoff));
+                        std::thread::sleep(std::time::Duration::from_millis(jitter_millis));
                         
                         continue; 
                     } else {
