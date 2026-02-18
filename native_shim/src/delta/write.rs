@@ -6,7 +6,7 @@ use uuid::Uuid;
 use polars::{error::{PolarsError, PolarsResult}, prelude::*};
 use deltalake::protocol::SaveMode;
 
-use crate::io::{build_parquet_write_options, build_partitioned_destination, build_unified_sink_args};
+use crate::io::{build_parquet_write_options, build_unified_sink_args};
 use crate::types::{LazyFrameContext,SelectorContext};
 use crate::utils::ptr_to_str;
 use crate::delta::utils::*;
@@ -89,12 +89,12 @@ ffi_try_void!({
         // 3. Build Cloud Options & Delta Table
         let delta_storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
         
-        let (mut table, old_files_to_remove, should_skip) = rt.block_on(async {
+        let (mut table, should_skip) = rt.block_on(async {
             let table_url = parse_table_url(base_path_str)?;
             let dt = DeltaTable::try_from_url_with_storage_options(table_url.clone(), delta_storage_options.clone())
                 .await.map_err(|e| PolarsError::ComputeError(format!("Delta init error: {}", e).into()))?;
             
-            let mut old_files = Vec::new();
+            // let mut old_files = Vec::new();
             let mut skip_write = false;
 
             if dt.version() >= Some(0) {
@@ -108,36 +108,96 @@ ffi_try_void!({
                         skip_write = true;
                     },
                     // Case C: Overwrite -> Collect old files
-                    SaveMode::Overwrite => {
-                        let files = dt.get_files_by_partitions(&[]).await
-                            .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))?;
-                        for p in files {
-                            old_files.push(p.to_string());
-                        }
-                    },
+                    // SaveMode::Overwrite => {
+                    //     let files = dt.get_files_by_partitions(&[]).await
+                    //         .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))?;
+                    //     for p in files {
+                    //         old_files.push(p.to_string());
+                    //     }
+                    // },
                     // Case D: Append -> Continue
                     _ => {} 
                 }
             }
-            Ok::<_, PolarsError>((dt, old_files, skip_write))
+            Ok::<_, PolarsError>((dt,  skip_write))
         })?;
 
         if should_skip {
             return Ok(());
         }
 
-        // 4. Polars Sink -> Staging Folder
-        let destination = unsafe {
-            build_partitioned_destination(
-                std::ffi::CString::new(staging_uri.clone()).unwrap().as_ptr(), 
-                ".parquet", 
-                &schema,
-                partition_by_ptr,
-                include_keys,
-                keys_pre_grouped,
-                max_rows_per_file,
-                approx_bytes_per_file
-            )?
+        // // 4. Polars Sink -> Staging Folder
+        // let destination = unsafe {
+        //     build_partitioned_destination(
+        //         std::ffi::CString::new(staging_uri.clone()).unwrap().as_ptr(), 
+        //         ".parquet", 
+        //         &schema,
+        //         partition_by_ptr,
+        //         include_keys,
+        //         keys_pre_grouped,
+        //         max_rows_per_file,
+        //         approx_bytes_per_file
+        //     )?
+        // };
+        // =========================================================
+        // [FIX] Align Partitioning Logic BEFORE building destination
+        // =========================================================
+        let mut final_partition_cols = partition_cols.clone();
+        
+        // 这一步必须是同步的，因为我们需要更新 final_partition_cols
+        if table.version() >= Some(0) {
+            // 注意：这里需要短暂 block_on 来获取 metadata，因为 table.snapshot() 可能需要 IO (load)
+            // 但通常 load() 已经在上面做过了，所以 snapshot() 是瞬时的
+            let snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot: {}", e).into()))?;
+            let existing_part_cols = snapshot.metadata().partition_columns().clone();
+
+            if !existing_part_cols.is_empty() {
+                if partition_cols.is_empty() {
+                    // Case A: Auto-fill from table definition
+                    for col in &existing_part_cols {
+                        if schema.get_field(col).is_none() {
+                             return Err(PolarsError::ComputeError(format!("DataFrame missing partition column: {}", col).into()));
+                        }
+                    }
+                    final_partition_cols = existing_part_cols;
+                } else if partition_cols != existing_part_cols {
+                    // Case B: Mismatch
+                    return Err(PolarsError::ComputeError(
+                         format!("Partition mismatch. Table: {:?}, Input: {:?}", existing_part_cols, partition_cols).into()
+                     ));
+                }
+            }
+        }
+        
+        // 4. Build Destination (Use final_partition_cols)
+        // 既然我们已经有了 Vec<String> 类型的 final_partition_cols，
+        // 我们不需要再依赖 partition_by_ptr 这个 C 指针了。
+        // 直接构建 Rust 端的 PartitionStrategy。
+        
+        let partition_strategy = if final_partition_cols.is_empty() {
+             PartitionStrategy::FileSize
+        } else {
+             // 将列名转换为 Expr
+             let keys: Vec<Expr> = final_partition_cols.iter().map(|n| col(n)).collect();
+             PartitionStrategy::Keyed {
+                 keys,
+                 include_keys: include_keys, // 通常 Delta 需要 include_keys=true (写在文件里)? 不，通常是 false，但 Polars 默认行为可能不同
+                 keys_pre_grouped: keys_pre_grouped,
+             }
+        };
+
+        // 手动构建 Destination，绕过 C++ 指针的限制
+        let hive_provider = file_provider::HivePathProvider {
+            extension: PlSmallStr::from_str(".parquet"),
+        };
+        
+        let destination = SinkDestination::Partitioned {
+            base_path: PlRefPath::new(&staging_uri), 
+            file_path_provider: Some(file_provider::FileProviderType::Hive(hive_provider)),
+            partition_strategy,
+            // 传入用户的参数
+            max_rows_per_file: if max_rows_per_file == 0 { u32::MAX } else { max_rows_per_file as u32 },
+            approximate_bytes_per_file: if approx_bytes_per_file == 0 { usize::MAX as u64 } else { approx_bytes_per_file },
         };
 
         let write_options_arc = build_parquet_write_options(
@@ -221,7 +281,7 @@ ffi_try_void!({
             // Step B: Parallel Staging Processing
             // ==========================================
             // Fast Listing
-            let add_actions = phase_process_staging(&table, &staging_dir_name, &partition_cols, write_id).await?;
+            let add_actions = phase_process_staging(&table, &staging_dir_name, &final_partition_cols, write_id).await?;
             
             for res in add_actions {
                 actions.push(res);
@@ -229,9 +289,12 @@ ffi_try_void!({
 
             // Handle Overwrite
             if let SaveMode::Overwrite = save_mode {
-                for old_path in old_files_to_remove {
+                let current_files = table.get_files_by_partitions(&[]).await
+                    .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))?;
+                
+                for p in current_files {
                      let remove = Remove {
-                         path: old_path,
+                         path: p.to_string(),
                          deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
                          data_change: true,
                          ..Default::default()
@@ -267,100 +330,3 @@ ffi_try_void!({
         Ok(())
     })
 }
-
-// pub(crate) async fn write_lazyframe_to_temp_files(
-//     table: &DeltaTable,
-//     lf: polars::prelude::LazyFrame,
-//     partition_cols: Vec<String>,
-//     write_id: Uuid,
-//     cloud_options: Option<polars_io::cloud::CloudOptions>,
-// ) -> Result<Vec<Action>, PolarsError> {
-//     // 1. 路径处理 (Url -> OS Path / Cloud Path)
-//     let table_url = table.table_url();
-//     let staging_dir_name = format!(".tmp_write_{}", write_id);
-
-//     // 2026年 Polars 需要明确的基础路径类型
-//     let staging_uri = if table_url.scheme() == "file" {
-//         table_url.to_file_path()
-//             .map_err(|_| PolarsError::ComputeError("Failed to convert file URL".into()))?
-//             .join(&staging_dir_name)
-//             .to_string_lossy()
-//             .to_string()
-//     } else {
-//         let url_str = table_url.as_str().trim_end_matches('/').to_string();
-//         format!("{}/{}", url_str, staging_dir_name)
-//     };
-
-//     // 2. 准备 Parquet Write Options
-//     let write_options = ParquetWriteOptions {
-//         compression: Default::default(),
-//         statistics: Default::default(),
-//         row_group_size: None,
-//         data_page_size: None,
-//         key_value_metadata: None,
-//         arrow_schema: None,
-//         compat_level: None,
-//     };
-//     let file_format = FileWriteFormat::Parquet(std::sync::Arc::new(write_options));
-
-//     // 3. 构建 UnifiedSinkArgs
-//     let unified_args = UnifiedSinkArgs {
-//         mkdir: true,
-//         maintain_order: false,
-//         sync_on_close: polars::prelude::sync_on_close::SyncOnCloseType::None,
-//         cloud_options: cloud_options.map(std::sync::Arc::new),
-//     };
-
-//     // ---------------------------------------------------------
-//     // 4. 构建复杂的 SinkDestination (从 FFI 逻辑移植)
-//     // ---------------------------------------------------------
-    
-//     // 4.1 转换分区列： Vec<String> -> Vec<Expr>
-//     let partition_exprs: Vec<Expr> = partition_cols.iter()
-//         .map(|name| polars::prelude::col(name)) // 2026 Polars col() 接受 Into<PlSmallStr>
-//         .collect();
-
-//     // 4.2 确定 PartitionStrategy
-//     // 既然是 Delta Lake 的 optimize/write，如果有分区列，我们通常使用 Keyed 策略 (Hive Style)
-//     // 如果没有分区列，则回退到 FileSize 策略 (依赖 max_rows 或 bytes 切分)
-//     let partition_strategy = if partition_exprs.is_empty() {
-//         PartitionStrategy::FileSize
-//     } else {
-//         PartitionStrategy::Keyed {
-//             keys: partition_exprs,
-//             include_keys: false, // Delta 通常在 Parquet 文件内部不存储分区列数据以节省空间 (由目录结构定义)
-//             keys_pre_grouped: false,
-//         }
-//     };
-
-//     // 4.3 构建 HivePathProvider
-//     // 指定扩展名为 .parquet
-//     let hive_provider = file_provider::HivePathProvider {
-//         extension: PlSmallStr::from_static(".parquet"), 
-//     };
-//     let file_path_provider = Some(polars::prelude::file_provider::FileProviderType::Hive(hive_provider));
-
-//     // 4.4 组装最终的 Destination
-//     // 注意：这里需要设定文件切分的阈值。
-//     // 由于函数签名没有传入这些参数，我使用了 2026 年常见的默认“大文件”设置。
-//     // 如果需要细粒度控制，建议将 max_rows_per_file 等添加到函数参数中。
-//     let destination = SinkDestination::Partitioned {
-//         base_path: PlRefPath::new(&staging_uri), // 使用 PlRefPath 包装路径
-//         file_path_provider,
-//         partition_strategy,
-//         // 下面两个参数决定了非 Keyed 模式下的切分逻辑，或者 Keyed 模式下每个分区内的文件切分
-//         max_rows_per_file: usize::MAX as IdxSize, // 默认不限制行数，尽量写大文件
-//         approximate_bytes_per_file: u64::MAX,     // 默认不限制大小
-//     };
-
-//     // ---------------------------------------------------------
-
-//     // 5. 执行 Sink
-//     lf.sink(destination, file_format, unified_args)?
-//         .collect_with_engine(Engine::Streaming)?;
-
-//     // 6. 生成 Actions
-//     let add_actions = phase_process_staging(table, &staging_dir_name, &partition_cols, write_id).await?;
-
-//     Ok(add_actions)
-// }

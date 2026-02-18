@@ -1,6 +1,7 @@
 use deltalake::DeltaTableBuilder;
 use polars::{error::{PolarsError, PolarsResult}, prelude::{LazyFrame, PlRefPath}};
 use polars_buffer::Buffer;
+use polars_io::HiveOptions;
 use url::Url;
 use std::{ffi::c_char, sync::Arc};
 
@@ -55,7 +56,7 @@ pub extern "C" fn pl_scan_delta(
         let delta_opts = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
         // Load Delta Table & Extract Info (Async)
         let rt = get_runtime();
-        let (file_uris, polars_schema) = rt.block_on(async {
+        let (file_uris, polars_schema, partition_cols) = rt.block_on(async {
             let mut builder = DeltaTableBuilder::from_url(table_url).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
             if let Some(v) = version_val { builder = builder.with_version(v); }
             else if let Some(dt) = datetime_str { builder = builder.with_datestring(dt).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?; }
@@ -64,9 +65,12 @@ pub extern "C" fn pl_scan_delta(
 
             let final_schema = get_polars_schema_from_delta(&table)?;
 
+            let snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot error: {}", e).into()))?;
+            let partition_cols = snapshot.metadata().partition_columns().clone();
+
             let files = table.get_file_uris().map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
             let uris: Vec<String> = files.map(|s| s.to_string()).collect();
-            Ok::<_, PolarsError>((uris, final_schema))
+            Ok::<_, PolarsError>((uris, final_schema, partition_cols))
         })?;
 
         let allow_missing_columns = true;
@@ -86,9 +90,35 @@ pub extern "C" fn pl_scan_delta(
 
         // 5. Inject Delta Schema 
         if args.schema.is_none() {
-            args.schema = Some(Arc::new(polars_schema));
+            args.schema = Some(Arc::new(polars_schema.clone()));
         }
-        
+
+        // 4. [FIXED] Inject Hive Partition Schema 
+        // 逻辑修正：使用 with_capacity + insert 构建 Schema
+        if hive_schema_ptr.is_null() && !partition_cols.is_empty() {
+            // 按照参考代码，创建一个指定容量的空 Schema
+            let mut part_schema = polars::prelude::Schema::with_capacity(partition_cols.len());
+            
+            // 遍历 Delta 记录的分区列名
+            for col_name in &partition_cols {
+                // 从完整 Schema 中查找该列的类型
+                if let Some(dtype) = polars_schema.get(col_name) {
+                    // 使用 insert 方法插入列 (key 需要转为 SmartString 或类似，into() 通常能处理)
+                    part_schema.insert(col_name.into(), dtype.clone());
+                }
+            }
+            
+            // 如果成功提取到了分区列
+            if !part_schema.is_empty() {
+                // 显式覆盖 HiveOptions
+                args.hive_options = HiveOptions {
+                    enabled: Some(true),
+                    hive_start_idx: 0,
+                    schema: Some(Arc::new(part_schema)), // 注入构建好的 schema
+                    try_parse_dates: false, // 沿用传入的配置
+                };
+            }
+        }
         // 6. Scan
         let pl_paths: Vec<PlRefPath> = file_uris.iter().map(|s| PlRefPath::new(s)).collect();
         let buffer: Buffer<PlRefPath> = pl_paths.into();
@@ -97,51 +127,3 @@ pub extern "C" fn pl_scan_delta(
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
     })
 }
-
-// pub(crate) fn scan_delta_files(
-//     table: &deltalake::DeltaTable,
-//     file_paths: Vec<String>, 
-//     cloud_options: Option<polars_io::cloud::CloudOptions>, 
-// ) -> Result<LazyFrame, PolarsError> {
-    
-//     if file_paths.is_empty() {
-//         let schema = get_polars_schema_from_delta(table)?;
-//         return Ok(polars::prelude::IntoLazy::lazy(polars::frame::DataFrame::empty_with_schema(&schema)));
-//     }
-
-//     let table_uri = table.table_url();
-    
-//     let full_paths: Vec<String> = file_paths.iter().map(|p| {
-//         if p.starts_with("s3://") || p.starts_with("abfss://") || p.starts_with("gs://") || p.starts_with("/") {
-//             p.to_string() // 直接要 String
-//         } else {
-//             let base = table_uri.to_string().trim_end_matches('/').to_string();
-//             let relative = p.trim_start_matches('/');
-//             format!("{}/{}", base, relative) // format! 返回的就是 String，直接用
-//         }
-//     }).collect();
-
-//     // 2. Schema 注入 (Crucial!)
-//     let delta_polars_schema = get_polars_schema_from_delta(table)?;
-
-//     // 3. 构建 ScanArgsParquet (Manual Construction)
-//     let args = polars::prelude::ScanArgsParquet {
-//         n_rows: None,          // 读全量
-//         cache: false,          // Optimize 是一次性操作，不需要缓存
-//         parallel: polars::prelude::ParallelStrategy::Auto,
-//         rechunk: false,        // 流式处理不需要 rechunk
-//         row_index: None,       // 不需要行号
-//         low_memory: true,      // 开启低内存模式，防止 OOM
-//         cloud_options: cloud_options, // 关键：透传 S3 凭证
-//         use_statistics: true,  // 利用 Parquet 统计信息加速读取
-//         schema: Some(Arc::new(delta_polars_schema)), // 强校验 Schema
-//         ..Default::default()
-//     };
-
-//     let pl_paths: Vec<PlRefPath> = full_paths.iter().map(|s| PlRefPath::new(s)).collect();
-//     let buffer: Buffer<PlRefPath> = pl_paths.into();
-    
-//     let lf = LazyFrame::scan_parquet_files(buffer, args)?;
-
-//     Ok(lf)
-// }

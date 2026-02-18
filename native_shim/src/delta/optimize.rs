@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ffi::c_char, time::{SystemTime, UNIX_EPOCH}};
 use futures::StreamExt;
-use polars::prelude::{file_provider::HivePathProvider, *};
+use polars::prelude::*;
 use polars_buffer::Buffer;
 use url::Url;
 use deltalake::{DeltaTable, Path, kernel::scalars::ScalarExt};
@@ -257,9 +257,41 @@ fn phase_2_execute_rewrite(
         lf = crate::delta::zorder::apply_z_order(lf, z_cols)?;
     }
 
-    // 3. Construct Writer (Sink)
-    // -----------------------------------------------------
-    // 配置写入选项
+    if !bin.partition_values.is_empty() {
+        // 1. 遍历分区键，将 String 转换为 PlSmallStr
+        let part_cols: Vec<PlSmallStr> = bin.partition_values.keys()
+            .map(|k| PlSmallStr::from_str(k)) // 使用 from_str 处理动态字符串
+            .collect();
+        
+        // 2. 构造 Selector::ByName
+        lf = lf.drop(Selector::ByName { 
+            names: Arc::from(part_cols), // Vec<PlSmallStr> 可以直接转为 Arc<[PlSmallStr]>
+            strict: false // 建议设为 false：如果 Polars 没推断出分区列，drop 也不报错，安全
+        });
+    }
+
+    // 构造分区路径前缀
+    // e.g. "Category=Even"
+    let mut part_path = String::new();
+    if !bin.partition_values.is_empty() {
+        // 保证顺序确定，比如按 key 排序
+        let mut entries: Vec<(&String, &Option<String>)> = bin.partition_values.iter().collect();
+        entries.sort_by_key(|e| e.0);
+        
+        let paths: Vec<String> = entries.iter().map(|(k, v)| {
+            format!("{}={}", k, v.as_deref().unwrap_or("__HIVE_DEFAULT_PARTITION__"))
+        }).collect();
+        part_path = paths.join("/");
+    }
+
+    // 拼接到 Staging URI 后面
+    // staging_uri/Category=Even/part-xxx.parquet
+    let file_name = format!("part-{}-optimized.parquet", Uuid::new_v4());
+    let dest_path_str = if part_path.is_empty() {
+        format!("{}/{}", staging_uri, file_name)
+    } else {
+        format!("{}/{}/{}", staging_uri, part_path, file_name)
+    };
     let write_opts = build_parquet_write_options(
         1,  // compression: Snappy
         -1, // level
@@ -279,20 +311,8 @@ fn phase_2_execute_rewrite(
     };
 
     // 配置 Destination
-    // 由于我们是按 Bin (单个分区) 处理的，我们可以直接写到 Staging 根目录，
-    // 稍后 phase_process_staging 会处理重命名。
-    // 但是，为了兼容 HivePathProvider，我们还是设置一下
-    let hive_provider = HivePathProvider {
-        extension: PlSmallStr::from_str(".parquet"),
-    };
-
-    let destination = SinkDestination::Partitioned {
-        base_path: PlRefPath::new(&staging_uri),
-        file_path_provider: Some(file_provider::FileProviderType::Hive(hive_provider)),
-        // Optimize 不应该再重新分区，因为数据已经是按分区读出来的
-        partition_strategy: PartitionStrategy::FileSize, 
-        max_rows_per_file: u32::MAX, // 尽量写大文件
-        approximate_bytes_per_file: usize::MAX as u64,
+    let destination = SinkDestination::File {
+        target: SinkTarget::Path(PlRefPath::from(dest_path_str.as_str())),
     };
 
     // 4. Execute Flow
