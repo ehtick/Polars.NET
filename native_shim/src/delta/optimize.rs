@@ -51,6 +51,8 @@ async fn phase_1_plan_bins(
     // 2. 分组缓冲区: Key = Canonical Partition String
     let mut buckets: HashMap<String, Vec<Add>> = HashMap::new();
 
+    let min_rewrite_threshold = ctx.target_size_bytes / 2;
+
     while let Some(view_res) = stream.next().await {
         let view = view_res.map_err(|e| PolarsError::ComputeError(format!("Delta stream error: {}", e).into()))?;
         
@@ -93,6 +95,10 @@ async fn phase_1_plan_bins(
             default_row_commit_version: None,
             clustering_provider: None,
         };
+
+        if add.size >= min_rewrite_threshold {
+            continue;
+        }
 
         // =========================================================
         // FIX: 应用 Partition Filter
@@ -139,42 +145,62 @@ async fn phase_1_plan_bins(
     }
 
     // 3. 执行 Bin-packing (贪婪算法)
-    let mut tasks = Vec::new();
+    let mut final_tasks = Vec::new();
 
-    for (_, mut files) in buckets {
+    let max_bin_size = (ctx.target_size_bytes as f64 * 1.2) as i64;
+    
+    for (_part_key, mut files) in buckets {
         if files.is_empty() { continue; }
-        
-        // 按大小排序，优化合并效率（可选）
-        files.sort_by_key(|f| f.size);
 
-        let mut current_bin = OptimizeBin {
-            partition_values: files[0].partition_values.clone(),
-            files: Vec::new(),
-            total_size: 0,
-        };
+        files.sort_by_key(|f| f.size);
+        
+        // [FIX 1] 预先提取 Partition Values
+        // 同一个 Bucket 下的所有文件分区键都是一样的，取第一个就行
+        let partition_values = files[0].partition_values.clone();
+
+        let mut current_bin_files = Vec::new();
+        let mut current_bin_size = 0;
 
         for file in files {
-            // 如果当前箱子 + 新文件 > 目标大小 * 1.5 (允许一定溢出以减少文件数)，则封箱
-            if current_bin.total_size > 0 && (current_bin.total_size + file.size) > (ctx.target_size_bytes as f64 * 1.2) as i64 {
-                tasks.push(current_bin);
-                current_bin = OptimizeBin {
-                    partition_values: file.partition_values.clone(),
-                    files: Vec::new(),
-                    total_size: 0,
-                };
+            // [FIX 2] 找回丢失的 1.2 倍弹性阈值逻辑
+            // 贪婪算法：如果加上当前文件会显著超过目标大小，就封箱
+            if current_bin_size > 0 && (current_bin_size + file.size) > max_bin_size {
+                
+                // [FIX 3] 单文件跳过逻辑 (Write Amplification Check)
+                // 只有当箱子里有 >1 个文件时，合并才有意义。
+                if current_bin_files.len() > 1 {
+                    final_tasks.push(OptimizeBin {
+                        partition_values: partition_values.clone(), // Clone Map
+                        files: std::mem::take(&mut current_bin_files), // 移走所有权，清空原 Vec
+                        total_size: current_bin_size,
+                    });
+                } else {
+                    // 即使不生成 Task，也要清空当前状态，开始新的箱子
+                    // 否则这个大文件会和下一个文件粘连
+                    current_bin_files.clear();
+                }
+                
+                current_bin_size = 0;
             }
-            
-            current_bin.total_size += file.size;
-            current_bin.files.push(file);
+
+            current_bin_size += file.size;
+            current_bin_files.push(file);
         }
 
-        // 最后一个箱子
-        if !current_bin.files.is_empty() {
-            tasks.push(current_bin);
+        // [FIX 4] 处理残留的最后一个箱子 (Residual Bin)
+        if !current_bin_files.is_empty() {
+            // 同样的逻辑：如果只剩 1 个文件，且之前没合并进任何东西，就不动它
+            if current_bin_files.len() > 1 {
+                final_tasks.push(OptimizeBin {
+                    partition_values: partition_values, // Move (最后一次用了，不用 Clone)
+                    files: current_bin_files,
+                    total_size: current_bin_size,
+                });
+            }
         }
     }
 
-    Ok(tasks)
+    Ok(final_tasks)
 }
 
 // =========================================================
@@ -193,7 +219,11 @@ fn phase_2_execute_rewrite(
     let staging_dir_name = format!(".optimize_staging_{}", write_id);
     let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
     let staging_uri = format!("{}/{}", root_trimmed, staging_dir_name);
-
+    println!(
+        "Optimizing bin: {} files, total size: {:.3} MB", 
+        bin.files.len(),
+        bin.total_size as f64 / 1024.0 / 1024.0
+    );
     // 2. Construct Reader (LazyFrame)
     // -----------------------------------------------------
     // 将 Add Actions 转换为 Polars 路径

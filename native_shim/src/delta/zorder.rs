@@ -1,7 +1,5 @@
 use polars::prelude::*;
 use polars_arrow::array::{BinaryArray, PrimitiveArray};
-// use polars_arrow::bitmap::Bitmap;
-// use polars_arrow::buffer::Buffer;
 use polars_arrow::array::Array;
 use polars_arrow::offset::OffsetsBuffer;
 use polars_buffer::Buffer;
@@ -23,6 +21,12 @@ pub fn interleave_columns(columns: &[Series]) -> PolarsResult<Series> {
     let mut _guards: Vec<Box<dyn Array>> = Vec::with_capacity(num_cols);
     
     for s in columns {
+        if s.null_count() > 0 {
+             return Err(PolarsError::ComputeError(
+                format!("Z-Order column '{}' contains nulls. Please fill nulls before interleaving.", s.name()).into()
+            ));
+        }
+
         if s.dtype() != &DataType::UInt32 {
             return Err(PolarsError::ComputeError(
                 format!("Z-Order input must be UInt32, got {:?}", s.dtype()).into()
@@ -58,46 +62,6 @@ pub fn interleave_columns(columns: &[Series]) -> PolarsResult<Series> {
     // 转为字节：(num_cols * 32) / 8 = num_cols * 4。
     let bytes_per_row = num_cols * 4;
     let total_bytes = row_count * bytes_per_row;
-    
-    // // 预分配大宽度的 Buffer
-    // let mut value_buffer: Vec<u8> = Vec::with_capacity(total_bytes);
-    // let mut offsets: Vec<i64> = Vec::with_capacity(row_count + 1);
-    // let mut current_offset = 0;
-    // offsets.push(0);
-
-    // // 3. 硬核位操作循环 (The Hot Loop)
-    // // 逻辑：对每一行，从 31 到 0 遍历每个 bit 位，
-    // // 然后依次从 col 0 到 col N 提取该位，拼接到 output 中。
-    
-    // for i in 0..row_count {
-    //     let mut byte_accumulator: u8 = 0;
-    //     let mut bits_filled = 0;
-
-    //     // 大端序：从高位 (31) 开始，保证生成的 Binary 字典序正确
-    //     for bit_idx in (0..32).rev() {
-    //         // 遍历每一列
-    //         for col_idx in 0..num_cols {
-    //             let val = column_slices[col_idx][i];
-                
-    //             // 提取第 bit_idx 位: (val >> bit_idx) & 1
-    //             let bit = (val >> bit_idx) & 1;
-                
-    //             // 塞入累加器 (左移腾位置)
-    //             byte_accumulator = (byte_accumulator << 1) | (bit as u8);
-    //             bits_filled += 1;
-
-    //             // 攒够 8 位，刷入 Buffer
-    //             if bits_filled == 8 {
-    //                 value_buffer.push(byte_accumulator);
-    //                 byte_accumulator = 0;
-    //                 bits_filled = 0;
-    //             }
-    //         }
-    //     }
-        
-    //     current_offset += bytes_per_row as i64;
-    //     offsets.push(current_offset);
-    // }
 
     let mut value_buffer: Vec<u8> = vec![0u8; total_bytes]; 
     
@@ -275,6 +239,7 @@ pub fn apply_z_order(lf: LazyFrame, columns: &[String]) -> PolarsResult<LazyFram
                     method: RankMethod::Dense,
                     descending: false,
                 }, None)
+                .fill_null(0)
                 .cast(DataType::UInt32)
                 .alias(name)
         })
