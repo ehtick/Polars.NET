@@ -1211,7 +1211,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
 
         // Case 7: Conditional Insert Skip
         Assert.Equal(0, dfRes.Filter(Col("Id") == 7).Height);
-
+        Delta.History(path:rootUrl,cloudOptions:options).Show();
         Console.WriteLine("Full Feature Merge Passed! 🚀");
     }
     [Fact]
@@ -1670,5 +1670,193 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
     // 我们要确保 Retry 之后，Insert 逻辑也被正确重新执行了。
     var countNewRows = result.Filter(Col("Id") > 100).Height;
     Assert.Equal(concurrency, countNewRows);
+    }
+    [Fact]
+    [Trait("DeltaLake", "Vacuum")]
+    public void Test_Sink_Overwrite_And_Vacuum_Full_Cycle()
+    {
+        // ==========================================
+        // 1. 环境与鉴权准备
+        // ==========================================
+        var tableName = $"delta_vacuum_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // ==========================================
+        // 2. 初始化写入 (Version 0) - 制造第一批文件
+        // ==========================================
+        Console.WriteLine("Step 1: Initial Write (Version 0)...");
+        using (var df = DataFrame.FromColumns(new { 
+            Id = new[] { 1, 2, 3 }, 
+            Value = new[] { 10, 20, 30 }
+        }))
+        {
+            df.Lazy().SinkDelta(
+                rootUrl, 
+                mode: DeltaSaveMode.Overwrite, 
+                cloudOptions: options
+            );
+        }
+
+        // ==========================================
+        // 3. 覆盖写入 (Version 1) - 制造垃圾文件
+        // ==========================================
+        // 我们使用 Overwrite 模式。这意味着 Version 0 的 Parquet 文件虽然还在磁盘上，
+        // 但在逻辑上已经过时了（Stale）。
+        Console.WriteLine("Step 2: Overwrite (Version 1) - Creating stale files...");
+        using (var df2 = DataFrame.FromColumns(new { 
+            Id = new[] { 4, 5 }, 
+            Value = new[] { 40, 50 }
+        }))
+        {
+            df2.Lazy().SinkDelta(
+                rootUrl, 
+                mode: DeltaSaveMode.Overwrite, 
+                cloudOptions: options
+            );
+        }
+
+        // 验证当前数据 (V1)
+        using var currentDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(2, currentDf.Height); // Id: 4, 5
+
+        // 验证 Time Travel (V0) - 在 Vacuum 之前应该能读到
+        Console.WriteLine("Step 3: Verify Time Travel BEFORE Vacuum...");
+        using var oldDf = LazyFrame.ScanDelta(rootUrl, version: 1, cloudOptions: options).Collect();
+        Assert.Equal(3, oldDf.Height); // Id: 1, 2, 3
+
+        // ==========================================
+        // 4. 执行 Vacuum (Dry Run)
+        // ==========================================
+        Console.WriteLine("Step 4: Vacuum Dry Run...");
+        
+        // retentionHours: 0 (立即过期，否则默认要等 7 天)
+        // enforceRetention: false (必须设为 false，否则 Delta 会阻止删除最近的文件)
+        // dryRun: true (只看不删)
+        long filesToDelete = Delta.Vacuum(
+            rootUrl, 
+            retentionHours: 0, 
+            enforceRetention: false, 
+            dryRun: true,
+            cloudOptions: options
+        );
+
+        Console.WriteLine($"Dry Run found {filesToDelete} files to delete.");
+        Assert.True(filesToDelete > 0, "Dry run should find stale files from Version 0");
+
+        // 再次验证 Time Travel (V0) - Dry Run 不应该删除物理文件
+        using var oldDfCheck = LazyFrame.ScanDelta(rootUrl, version: 1, cloudOptions: options).Collect();
+        Assert.Equal(3, oldDfCheck.Height);
+
+        // ==========================================
+        // 5. 执行 Vacuum (Real Run)
+        // ==========================================
+        Console.WriteLine("Step 5: Vacuum Real Run (Delete physical files)...");
+
+        long deletedCount = Delta.Vacuum(
+            rootUrl, 
+            retentionHours: 0, 
+            enforceRetention: false, 
+            dryRun: false, 
+            cloudOptions: options
+        );
+
+        Console.WriteLine($"Vacuum deleted {deletedCount} files.");
+        Assert.Equal(filesToDelete, deletedCount);
+
+        // ==========================================
+        // 6. 验证毁灭性打击 (Time Travel Should Fail)
+        // ==========================================
+        Console.WriteLine("Step 6: Verify Time Travel FAILURE after Vacuum...");
+
+        // 此时 Version 1 的 Parquet 文件已经被删除了。
+        // 尝试读取 Version 1 应该抛出异常 (通常是 IO Error 或 File Not Found)
+        var ex = Assert.ThrowsAny<Exception>(() => 
+        {
+            // 注意：ScanDelta 本身可能只是读取 Log，只有 Collect 真正读数据时才会炸
+            LazyFrame.ScanDelta(rootUrl, version: 1, cloudOptions: options).Collect();
+        });
+
+        Console.WriteLine($"Caught expected exception: {ex.Message}");
+        // 错误信息通常包含 "No such file" 或 "Objcet not found" 或 "IO error"
+        // Assert.Contains("No such file", ex.Message); // 具体消息取决于 S3/MinIO 返回的错误文本
+
+        // ==========================================
+        // 7. 验证当前版本 (V1) 依然健康
+        // ==========================================
+        Console.WriteLine("Step 7: Verify Current Version is still alive...");
+        using var aliveDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(2, aliveDf.Height);
+        Assert.Equal(40, aliveDf["Value"][0]);
+
+        Console.WriteLine("Delta Vacuum Full Cycle Passed!");
+    }
+    [Fact]
+    [Trait("DeltaLake", "Restore")]
+    public void Test_Restore_To_Version()
+    {
+        var tableName = $"delta_restore_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // Step 1: 写入 Version 1 (正确的数据)
+        Console.WriteLine("Step 1: Write Version 0 and 1 (Correct Data)");
+        using (var df = DataFrame.FromColumns(new { Id = new[] { 1, 2 }, Val = new[] { "Good", "Good" } }))
+        {
+            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Overwrite, cloudOptions: options);
+        }
+
+        // Step 2: 写入 Version 2 (错误的数据 - Overwrite)
+        Console.WriteLine("Step 2: Write Version 2 (Bad Data - Overwrite)");
+        using (var dfBad = DataFrame.FromColumns(new { Id = new[] { 1, 2 }, Val = new[] { "Bad", "Bad" } }))
+        {
+            dfBad.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Overwrite, cloudOptions: options);
+        }
+
+        // 验证当前是坏数据
+        using var currentDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal("Bad", currentDf["Val"][0]);
+
+        // Step 3: 执行 Restore 回到 Version 0
+        Console.WriteLine("Step 3: Restore to Version 1...");
+        long newVersion = Delta.Restore(
+            rootUrl, 
+            version: 1, 
+            cloudOptions: options
+        );
+
+        Console.WriteLine($"Restored! New Version is: {newVersion}");
+        // 注意：Restore 会产生一个新的 Commit。
+        // V1 (Good) -> V2 (Bad) -> V3 (Restore to V1 content)
+        Assert.Equal(3, newVersion);
+
+        // Step 4: 验证数据变回了好数据
+        using var restoredDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal("Good", restoredDf["Val"][0]);
     }
 }

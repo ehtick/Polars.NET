@@ -9,7 +9,7 @@ mod utils;
 mod types;
 mod expr;
 mod io;
-mod deltalake;
+mod delta;
 mod eager;
 mod lazy;
 mod udf;
