@@ -97,4 +97,48 @@ public static partial class PolarsWrapper
             }
         }
     }
+    public static ulong Optimize(
+        string path,
+        long targetSizeMb,
+        string? filterJson,
+        string[]? zOrderCols,
+        // Cloud Options
+        PlCloudProvider cloudProvider,
+        UIntPtr cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        nuint zOrderLen = (nuint)(zOrderCols?.Length ?? 0);
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
+        nuint optimizedFilesCount;
+
+        // 3. 调用 Native Binding
+        NativeBindings.pl_io_delta_optimize(
+            path,
+            targetSizeMb,
+            filterJson,
+            zOrderCols,
+            zOrderLen,
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen,
+            out optimizedFilesCount
+        );
+
+        ErrorHelper.CheckVoid();
+
+        return optimizedFilesCount;
+    }
 }

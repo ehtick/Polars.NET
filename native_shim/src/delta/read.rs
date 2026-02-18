@@ -97,3 +97,51 @@ pub extern "C" fn pl_scan_delta(
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })))
     })
 }
+
+// pub(crate) fn scan_delta_files(
+//     table: &deltalake::DeltaTable,
+//     file_paths: Vec<String>, 
+//     cloud_options: Option<polars_io::cloud::CloudOptions>, 
+// ) -> Result<LazyFrame, PolarsError> {
+    
+//     if file_paths.is_empty() {
+//         let schema = get_polars_schema_from_delta(table)?;
+//         return Ok(polars::prelude::IntoLazy::lazy(polars::frame::DataFrame::empty_with_schema(&schema)));
+//     }
+
+//     let table_uri = table.table_url();
+    
+//     let full_paths: Vec<String> = file_paths.iter().map(|p| {
+//         if p.starts_with("s3://") || p.starts_with("abfss://") || p.starts_with("gs://") || p.starts_with("/") {
+//             p.to_string() // 直接要 String
+//         } else {
+//             let base = table_uri.to_string().trim_end_matches('/').to_string();
+//             let relative = p.trim_start_matches('/');
+//             format!("{}/{}", base, relative) // format! 返回的就是 String，直接用
+//         }
+//     }).collect();
+
+//     // 2. Schema 注入 (Crucial!)
+//     let delta_polars_schema = get_polars_schema_from_delta(table)?;
+
+//     // 3. 构建 ScanArgsParquet (Manual Construction)
+//     let args = polars::prelude::ScanArgsParquet {
+//         n_rows: None,          // 读全量
+//         cache: false,          // Optimize 是一次性操作，不需要缓存
+//         parallel: polars::prelude::ParallelStrategy::Auto,
+//         rechunk: false,        // 流式处理不需要 rechunk
+//         row_index: None,       // 不需要行号
+//         low_memory: true,      // 开启低内存模式，防止 OOM
+//         cloud_options: cloud_options, // 关键：透传 S3 凭证
+//         use_statistics: true,  // 利用 Parquet 统计信息加速读取
+//         schema: Some(Arc::new(delta_polars_schema)), // 强校验 Schema
+//         ..Default::default()
+//     };
+
+//     let pl_paths: Vec<PlRefPath> = full_paths.iter().map(|s| PlRefPath::new(s)).collect();
+//     let buffer: Buffer<PlRefPath> = pl_paths.into();
+    
+//     let lf = LazyFrame::scan_parquet_files(buffer, args)?;
+
+//     Ok(lf)
+// }

@@ -1,8 +1,9 @@
 use std::{ffi::c_char, time::{SystemTime, UNIX_EPOCH}};
 use deltalake::{DeltaTable, Path, kernel::{Action, Remove, transaction}, protocol::DeltaOperation};
+// use polars_utils::IdxSize;
 use serde_json::Value;
 use uuid::Uuid;
-use polars::{error::{PolarsError, PolarsResult}, prelude::{Engine, FileWriteFormat, InitHashMaps, PlHashSet}};
+use polars::{error::{PolarsError, PolarsResult}, prelude::*};
 use deltalake::protocol::SaveMode;
 
 use crate::io::{build_parquet_write_options, build_partitioned_destination, build_unified_sink_args};
@@ -10,7 +11,6 @@ use crate::types::{LazyFrameContext,SelectorContext};
 use crate::utils::ptr_to_str;
 use crate::delta::utils::*;
 use crate::delta::merge::phase_process_staging;
-
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_sink_delta(
@@ -267,3 +267,100 @@ ffi_try_void!({
         Ok(())
     })
 }
+
+// pub(crate) async fn write_lazyframe_to_temp_files(
+//     table: &DeltaTable,
+//     lf: polars::prelude::LazyFrame,
+//     partition_cols: Vec<String>,
+//     write_id: Uuid,
+//     cloud_options: Option<polars_io::cloud::CloudOptions>,
+// ) -> Result<Vec<Action>, PolarsError> {
+//     // 1. 路径处理 (Url -> OS Path / Cloud Path)
+//     let table_url = table.table_url();
+//     let staging_dir_name = format!(".tmp_write_{}", write_id);
+
+//     // 2026年 Polars 需要明确的基础路径类型
+//     let staging_uri = if table_url.scheme() == "file" {
+//         table_url.to_file_path()
+//             .map_err(|_| PolarsError::ComputeError("Failed to convert file URL".into()))?
+//             .join(&staging_dir_name)
+//             .to_string_lossy()
+//             .to_string()
+//     } else {
+//         let url_str = table_url.as_str().trim_end_matches('/').to_string();
+//         format!("{}/{}", url_str, staging_dir_name)
+//     };
+
+//     // 2. 准备 Parquet Write Options
+//     let write_options = ParquetWriteOptions {
+//         compression: Default::default(),
+//         statistics: Default::default(),
+//         row_group_size: None,
+//         data_page_size: None,
+//         key_value_metadata: None,
+//         arrow_schema: None,
+//         compat_level: None,
+//     };
+//     let file_format = FileWriteFormat::Parquet(std::sync::Arc::new(write_options));
+
+//     // 3. 构建 UnifiedSinkArgs
+//     let unified_args = UnifiedSinkArgs {
+//         mkdir: true,
+//         maintain_order: false,
+//         sync_on_close: polars::prelude::sync_on_close::SyncOnCloseType::None,
+//         cloud_options: cloud_options.map(std::sync::Arc::new),
+//     };
+
+//     // ---------------------------------------------------------
+//     // 4. 构建复杂的 SinkDestination (从 FFI 逻辑移植)
+//     // ---------------------------------------------------------
+    
+//     // 4.1 转换分区列： Vec<String> -> Vec<Expr>
+//     let partition_exprs: Vec<Expr> = partition_cols.iter()
+//         .map(|name| polars::prelude::col(name)) // 2026 Polars col() 接受 Into<PlSmallStr>
+//         .collect();
+
+//     // 4.2 确定 PartitionStrategy
+//     // 既然是 Delta Lake 的 optimize/write，如果有分区列，我们通常使用 Keyed 策略 (Hive Style)
+//     // 如果没有分区列，则回退到 FileSize 策略 (依赖 max_rows 或 bytes 切分)
+//     let partition_strategy = if partition_exprs.is_empty() {
+//         PartitionStrategy::FileSize
+//     } else {
+//         PartitionStrategy::Keyed {
+//             keys: partition_exprs,
+//             include_keys: false, // Delta 通常在 Parquet 文件内部不存储分区列数据以节省空间 (由目录结构定义)
+//             keys_pre_grouped: false,
+//         }
+//     };
+
+//     // 4.3 构建 HivePathProvider
+//     // 指定扩展名为 .parquet
+//     let hive_provider = file_provider::HivePathProvider {
+//         extension: PlSmallStr::from_static(".parquet"), 
+//     };
+//     let file_path_provider = Some(polars::prelude::file_provider::FileProviderType::Hive(hive_provider));
+
+//     // 4.4 组装最终的 Destination
+//     // 注意：这里需要设定文件切分的阈值。
+//     // 由于函数签名没有传入这些参数，我使用了 2026 年常见的默认“大文件”设置。
+//     // 如果需要细粒度控制，建议将 max_rows_per_file 等添加到函数参数中。
+//     let destination = SinkDestination::Partitioned {
+//         base_path: PlRefPath::new(&staging_uri), // 使用 PlRefPath 包装路径
+//         file_path_provider,
+//         partition_strategy,
+//         // 下面两个参数决定了非 Keyed 模式下的切分逻辑，或者 Keyed 模式下每个分区内的文件切分
+//         max_rows_per_file: usize::MAX as IdxSize, // 默认不限制行数，尽量写大文件
+//         approximate_bytes_per_file: u64::MAX,     // 默认不限制大小
+//     };
+
+//     // ---------------------------------------------------------
+
+//     // 5. 执行 Sink
+//     lf.sink(destination, file_format, unified_args)?
+//         .collect_with_engine(Engine::Streaming)?;
+
+//     // 6. 生成 Actions
+//     let add_actions = phase_process_staging(table, &staging_dir_name, &partition_cols, write_id).await?;
+
+//     Ok(add_actions)
+// }

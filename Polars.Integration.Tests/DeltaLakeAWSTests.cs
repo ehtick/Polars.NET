@@ -1859,4 +1859,93 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         using var restoredDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
         Assert.Equal("Good", restoredDf["Val"][0]);
     }
+    [Fact]
+    [Trait("DeltaLake", "Optimize")]
+    public void Test_Optimize_ZOrder_Scale_100()
+    {
+        var tableName = $"delta_opt_100_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // Step 1: 制造碎片数据 (分 4 批写入，共 100 行)
+        // 100 行对于 Z-Order 算法来说很重要，因为 100 % 8 != 0 (余 4)
+        // 这将同时测试 Rust 端的 "SIMD Batch Loop" 和 "Remainder Loop"
+        Console.WriteLine("Step 1: Write Fragmented Data (4 Appends, 100 Rows total)");
+
+        for (int i = 0; i < 4; i++)
+        {
+            int startId = i * 25;
+            // 生成 25 行数据
+            var ids = Enumerable.Range(startId, 25).ToArray();
+            // Category: "Even" 或 "Odd"，用于测试 Z-Order 的聚类效果
+            var cats = ids.Select(x => x % 2 == 0 ? "Even" : "Odd").ToArray();
+            var vals = ids.Select(x => x * 1.5).ToArray();
+
+            using var df = DataFrame.FromColumns(new
+            {
+                Id = ids,
+                Category = cats,
+                Val = vals
+            });
+            
+            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+        }
+
+        // 验证当前有 4 个文件，100 行数据
+        using var beforeDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(100, beforeDf.Height);
+        Console.WriteLine($"Before Optimization: {beforeDf.Height} rows verified.");
+
+        // Step 2: 执行 Optimize (Z-Order by Category, Id)
+        // 我们期望它把 4 个小文件合并成 1 个大文件，并且数据按 Z-Order 排序
+        Console.WriteLine("Step 2: Executing Optimize with Z-Order...");
+        
+        var zCols = new[] { "Category", "Id" };
+        
+        long numFiles = Delta.Optimize(
+            rootUrl,
+            targetSizeMb: 128, 
+            zOrderColumns: zCols,
+            cloudOptions: options
+        );
+
+        Console.WriteLine($"Optimized! New data files created: {numFiles}");
+        Assert.True(numFiles > 0, "Should have created at least 1 new file");
+
+        // Step 3: 验证数据完整性 (Data Integrity)
+        // 这一步最关键：经过复杂的位交织操作后，数据绝对不能乱、不能丢
+        using var afterDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options)
+            .Sort("Id",  false ) // 拉回来按 ID 排序对比
+            .Collect();
+
+        Assert.Equal(100, afterDf.Height);
+
+        // 验证首尾和中间的数据，确保没有 Bit 移位错误
+        // Row 0
+        Assert.Equal(0, afterDf["Id"][0]);
+        Assert.Equal("Even", afterDf["Category"][0]);
+        
+        // Row 49 (Middle)
+        Assert.Equal(49, afterDf["Id"][49]);
+        Assert.Equal("Odd", afterDf["Category"][49]); // 49 is Odd
+
+        // Row 99 (Last - 落在 Remainder Loop 处理范围内)
+        Assert.Equal(99, afterDf["Id"][99]);
+        Assert.Equal("Odd", afterDf["Category"][99]);
+        Assert.Equal(148.5, (double)afterDf["Val"][99]!); // 99 * 1.5
+
+        Console.WriteLine("Data Integrity Check Passed!");
+    }
 }

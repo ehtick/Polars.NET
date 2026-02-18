@@ -44,4 +44,25 @@ unsafe internal partial class NativeBindings
         // Output: 指向 JSON 字符串的指针
         out IntPtr jsonPtr
     );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_io_delta_optimize(
+        string path,
+        long target_size_mb,
+        string? filter_json,
+        // Z-Order
+        [MarshalAs(UnmanagedType.LPArray)] string[]? z_order_cols,
+        nuint z_order_len,
+        // Cloud Options
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? keys,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? values,
+        nuint cloud_len,
+
+        out nuint optimized_files
+    );
 }

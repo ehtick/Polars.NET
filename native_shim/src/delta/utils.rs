@@ -21,7 +21,6 @@ use url::Url;
 use serde_json::{json, Value};
 use chrono::{NaiveDate, TimeDelta};
 
-
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 // Get global tokio runtime
