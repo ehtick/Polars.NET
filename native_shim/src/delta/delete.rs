@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ffi::c_char, time::{SystemTime, UNIX_EPOCH}};
 
-use chrono::Utc;
+use chrono::{NaiveDate, TimeDelta, Utc};
 use deltalake::{DeltaTable, ObjectStore, kernel::{DeletionVectorDescriptor, StorageType}, table::state::DeltaTableState}; 
 use deltalake::kernel::{Action, Add, Remove};
 use deltalake::kernel::transaction::CommitBuilder;
@@ -10,6 +10,7 @@ use futures::StreamExt;
 use polars::{error::{PolarsError, PolarsResult}, frame::DataFrame, prelude::{DataType, LazyFrame, PlRefPath, ScanArgsParquet}, series::Series};
 use polars::prelude::*;
 use roaring::RoaringBitmap;
+use serde_json::Value;
 use uuid::Uuid;
 use crate::delta::{deletion_vector::read_deletion_vector, utils::{RawCloudArgs, build_delta_storage_options_map, check_file_overlap_optimized, extract_delta_stats, get_polars_schema_from_delta, get_runtime, parse_hive_partitions, parse_table_url, view_to_add_action}};
 use crate::io::{build_cloud_options, build_parquet_write_options, build_unified_sink_args};
@@ -88,7 +89,7 @@ impl DeleteContext {
     ) -> Self {
         // Extract Key Bounds immediately upon creation
         let mut key_bounds = HashMap::new();
-        crate::delta::utils::extract_bounds_from_expr(&predicate, &mut key_bounds);
+        extract_bounds_from_expr(&predicate, &mut key_bounds);
 
         Self {
             table_root: table.table_url().to_string(),
@@ -120,37 +121,197 @@ pub enum FileActionDecision {
         file_view: Add, // The original file info
     },
 }
+// ==========================================
+// Delete Implementation
+// ==========================================
+pub type PruningMap = HashMap<String, (Option<Value>, Option<Value>)>;
+
+#[derive(Debug, Clone, Copy)]
+enum BoundType {
+    Min,
+    Max,
+    Exact, // Min == Max
+}
+
+pub(crate) fn extract_bounds_from_expr(expr: &Expr, map: &mut PruningMap) {
+    match expr {
+        // Handle AND: Recurse both sides
+        // (A > 5) & (A < 10)
+        Expr::BinaryExpr { left, op: Operator::And, right } => {
+            extract_bounds_from_expr(left, map);
+            extract_bounds_from_expr(right, map);
+        },
+
+        // Handle Comparison Operators
+        Expr::BinaryExpr { left, op, right } => {
+            // Helper to clean up the nesting
+            let (col_name, lit_val, effective_op) = match (left.as_ref(), right.as_ref()) {
+                // Case 1: Col op Lit (e.g., A > 10) -> Keep Op
+                (Expr::Column(name), Expr::Literal(lit)) => (name.as_str(), lit, *op),
+                
+                // Case 2: Lit op Col (e.g., 10 < A) -> Flip Op (A > 10)
+                (Expr::Literal(lit), Expr::Column(name)) => {
+                    let flipped_op = match op {
+                        Operator::Eq => Operator::Eq,
+                        Operator::Gt => Operator::Lt,   // 10 > A  => A < 10
+                        Operator::Lt => Operator::Gt,   // 10 < A  => A > 10
+                        Operator::GtEq => Operator::LtEq,
+                        Operator::LtEq => Operator::GtEq,
+                        _ => return, // Unsupported op
+                    };
+                    (name.as_str(), lit, flipped_op)
+                },
+                _ => return, // Not a simple Col/Lit comparison
+            };
+
+            // Apply Bound based on Operator
+            match effective_op {
+                Operator::Eq => update_map(map, col_name, lit_val, BoundType::Exact),
+                Operator::Gt | Operator::GtEq => update_map(map, col_name, lit_val, BoundType::Min),
+                Operator::Lt | Operator::LtEq => update_map(map, col_name, lit_val, BoundType::Max),
+                _ => {}
+            }
+        },
+
+        // Handle Alias (pass-through)
+        Expr::Alias(inner, _) => {
+            extract_bounds_from_expr(inner, map);
+        },
+
+        _ => {}
+    }
+}
+
+fn update_map(map: &mut PruningMap, col_name: &str, lit: &LiteralValue, b_type: BoundType) {
+    if let Some(json_val) = polars_literal_to_json(lit) {
+        // 获取现有的 bounds，如果没有则初始化为 (None, None)
+        let entry = map.entry(col_name.to_string()).or_insert((None, None));
+
+        match b_type {
+            BoundType::Exact => {
+                // A == 10 implies Min=10, Max=10
+                entry.0 = Some(json_val.clone());
+                entry.1 = Some(json_val);
+            },
+            BoundType::Min => {
+                // A > 10 implies Min=10. Keep existing Max.
+                // TODO: 如果想更智能，可以比较 json_val 和 entry.0 谁更大，保留更严格的下界
+                entry.0 = Some(json_val);
+            },
+            BoundType::Max => {
+                // A < 10 implies Max=10. Keep existing Min.
+                // TODO: 如果想更智能，可以比较 json_val 和 entry.1 谁更小，保留更严格的上界
+                entry.1 = Some(json_val);
+            }
+        }
+    }
+}
+
+fn polars_literal_to_json(lit: &LiteralValue) -> Option<serde_json::Value> {
+    match lit {
+        // Unpack LiteralValue::Scalar
+        LiteralValue::Scalar(scalar_struct) => {
+            let any_value = &scalar_struct.value(); 
+
+            match any_value {
+                // Primitives
+                AnyValue::Boolean(b) => Some(serde_json::json!(b)),
+                AnyValue::Int8(v)    => Some(serde_json::json!(v)),
+                AnyValue::Int16(v)   => Some(serde_json::json!(v)),
+                AnyValue::Int32(v)   => Some(serde_json::json!(v)),
+                AnyValue::Int64(v)   => Some(serde_json::json!(v)),
+                AnyValue::UInt8(v)   => Some(serde_json::json!(v)),
+                AnyValue::UInt16(v)  => Some(serde_json::json!(v)),
+                AnyValue::UInt32(v)  => Some(serde_json::json!(v)),
+                AnyValue::UInt64(v)  => Some(serde_json::json!(v)),
+                AnyValue::Float32(v) => Some(serde_json::json!(v)),
+                AnyValue::Float64(v) => Some(serde_json::json!(v)),
+
+                // String / Utf8
+                AnyValue::String(s)  => Some(serde_json::json!(s)),
+                AnyValue::StringOwned(s) => Some(serde_json::json!(s)), 
+                
+                // Date
+                AnyValue::Date(days) => {
+                    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                    let date = TimeDelta::try_days(*days as i64)
+                        .and_then(|delta| epoch.checked_add_signed(delta));
+                    date.map(|d| serde_json::json!(d.format("%Y-%m-%d").to_string()))
+                },
+
+                // Timestamp
+                // TimeZone is hard to convert
+                AnyValue::Datetime(_val, _time_unit, _tz) => {
+                    None 
+                },
+
+                // Others
+                _ => None,
+            }
+        },
+        
+        _ => None
+    }
+}
+
 
 /// 将 RoaringBitmap 序列化并写入存储
 /// 返回: (文件名, 文件大小)
-async fn write_dv_file(
-    ctx: &DeleteContext,
+pub(crate) async fn write_dv_file(
+    object_store: Arc<dyn ObjectStore>,
+    table_root: &str,
     bitmap: &RoaringBitmap,
 ) -> PolarsResult<(String, i64)> {
     // 1. 序列化 Bitmap (Portable Format)
-    // Delta Lake 要求使用 RoaringBitmap 的 "Portable" 格式
     let mut buf = Vec::new();
     bitmap.serialize_into(&mut buf)
         .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize bitmap: {}", e).into()))?;
 
     // 2. 生成文件名
-    // 格式: deletion_vector_{uuid}.bin
     let uuid = Uuid::new_v4();
     let file_name = format!("deletion_vector_{}.bin", uuid);
     
     // 3. 构建路径
-    // DV 文件通常和数据文件在同一个表目录下 (或者专门的文件夹，但根目录最常见)
-    let path = deltalake::Path::from(format!("{}/{}", ctx.table_root.trim_end_matches('/'), file_name));
+    let path = deltalake::Path::from(format!("{}/{}", table_root.trim_end_matches('/'), file_name));
+
+    // 提前记录长度，因为后面 buf 的所有权会转移给 put
+    let buf_len = buf.len() as i64;
 
     // 4. 写入存储
-    ctx.object_store.put(&path, buf.clone().into()).await
+    // buf.into() 直接转移所有权，省去 clone
+    object_store.put(&path, buf.into()).await
         .map_err(|e| PolarsError::ComputeError(format!("Failed to write DV file: {}", e).into()))?;
 
-    Ok((file_name, buf.len() as i64))
+    Ok((file_name, buf_len))
 }
+// pub(crate) async fn write_dv_file(
+//     ctx: &DeleteContext,
+//     bitmap: &RoaringBitmap,
+// ) -> PolarsResult<(String, i64)> {
+//     // 1. 序列化 Bitmap (Portable Format)
+//     // Delta Lake 要求使用 RoaringBitmap 的 "Portable" 格式
+//     let mut buf = Vec::new();
+//     bitmap.serialize_into(&mut buf)
+//         .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize bitmap: {}", e).into()))?;
+
+//     // 2. 生成文件名
+//     // 格式: deletion_vector_{uuid}.bin
+//     let uuid = Uuid::new_v4();
+//     let file_name = format!("deletion_vector_{}.bin", uuid);
+    
+//     // 3. 构建路径
+//     // DV 文件通常和数据文件在同一个表目录下 (或者专门的文件夹，但根目录最常见)
+//     let path = deltalake::Path::from(format!("{}/{}", ctx.table_root.trim_end_matches('/'), file_name));
+
+//     // 4. 写入存储
+//     ctx.object_store.put(&path, buf.clone().into()).await
+//         .map_err(|e| PolarsError::ComputeError(format!("Failed to write DV file: {}", e).into()))?;
+
+//     Ok((file_name, buf.len() as i64))
+// }
 
 /// 生成符合 Delta Protocol 的 DV 描述符
-fn create_dv_descriptor(
+pub(crate) fn create_dv_descriptor(
     file_name: &str, // deletion_vector_{uuid}.bin
     dv_size: i64,
     cardinality: i64,
@@ -631,7 +792,7 @@ pub fn execute_merge_on_read(
 
     // 4. 写入新 DV 文件 (IO)
     let (dv_file_name, dv_size) = rt.block_on(async {
-        write_dv_file(ctx, &bitmap).await
+        write_dv_file(ctx.object_store.clone(), &ctx.table_root, &bitmap).await
     })?;
 
     // 5. 构造 Actions
@@ -829,356 +990,3 @@ pub extern "C" fn pl_io_delta_delete(
         Ok(())
     })
 }
-
-// #[unsafe(no_mangle)]
-// pub extern "C" fn pl_io_delta_delete_1(
-//     table_path_ptr: *const c_char,
-//     predicate_ptr: *mut ExprContext, 
-//     cloud_provider: u8,
-//     cloud_retries: usize,
-//     cloud_retry_timeout_ms: u64,      
-//     cloud_retry_init_backoff_ms: u64, 
-//     cloud_retry_max_backoff_ms: u64, 
-//     cloud_cache_ttl: u64,
-//     cloud_keys: *const *const c_char,
-//     cloud_values: *const *const c_char,
-//     cloud_len: usize
-// ) {
-//     ffi_try_void!({
-//         // 1. Arg Parsing
-//         let path_str = ptr_to_str(table_path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-//         let table_url = parse_table_url(path_str)?;
-//         let delta_storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
-        
-//         // Take ownership of Expr
-//         let predicate_ctx = unsafe { *Box::from_raw(predicate_ptr) };
-
-//         let root_expr = &predicate_ctx.inner;
-//         let mut key_bounds = HashMap::new();
-//         extract_bounds_from_expr(root_expr, &mut key_bounds);
-
-//         let rt = get_runtime();
-
-//         // 2. Load Table & Get Active Actions (Sync Block)
-//         let (table, polars_schema, partition_cols, active_add_actions) = rt.block_on(async {
-//             // 2.1 Load Table
-//             let t = DeltaTable::try_from_url_with_storage_options(table_url.clone(), delta_storage_options.clone())
-//                 .await.map_err(|e| PolarsError::ComputeError(format!("Delta load error: {}", e).into()))?;
-//             let scan_t = t.clone();
-//             // 2.2 Get Schema & Partition Cols from Snapshot
-//             let snapshot = scan_t.snapshot().map_err(|e| PolarsError::ComputeError(format!("Failed to get snapshot: {}", e).into()))?;
-//             let schema = get_polars_schema_from_delta(&t)?;
-//             let metadata = snapshot.metadata();
-//             let part_cols = metadata.partition_columns().clone();
-
-//             // 2.3 Get Actions
-//             let mut stream = scan_t.get_active_add_actions_by_partitions(&[]);
-//             let mut actions = Vec::new();
-            
-//             while let Some(item) = stream.next().await {
-//                 // Unwrap DeltaResult<LogicalFileView>
-//                 let view = item.map_err(|e| PolarsError::ComputeError(format!("Stream error: {}", e).into()))?;
-//                 actions.push(view);
-//             }
-
-//             Ok::<_, PolarsError>((t, schema, part_cols, actions))
-//         })?;
-
-//         // // 3. Get actions
-
-//         let mut actions = Vec::new();
-//         let object_store = table.object_store(); 
-//         let table_root = table.table_url().to_string(); 
-
-//         for view in active_add_actions {
-//             let file_path_str = view.path().clone(); 
-            
-//             let partition_struct_opt = view.partition_values();
-//             let (p_fields, p_values) = match &partition_struct_opt {
-//                 Some(sd) => (sd.fields(), sd.values()),
-//                 None => (&[][..], &[][..]), 
-//             };
-//             // =================================================================================
-//             // PHASE 1: Partition Pruning (The "Fast Drop" Check)
-//             // =================================================================================
-//             // Try build a single row DataFrame to predicate
-//             let mut can_skip_scan = false;
-//             let mut fast_drop = false;
-
-//             if !partition_cols.is_empty() {
-//                 // Build Mini-DataFrame from partition values
-//                 let mut columns = Vec::with_capacity(partition_cols.len());
-//                 for target_col in &partition_cols {
-//                     // Find Partition value from actions
-//                     let val_str_opt = p_fields.iter()
-//                         .position(|f| f.name() == target_col) // Get index
-//                         .map(|idx| &p_values[idx])            // Get Scalar
-//                         .filter(|scalar| !scalar.is_null())   // Filter Null
-//                         .map(|scalar| {
-//                              scalar.serialize()
-//                         });
-
-//                     let dtype = polars_schema.get_field(target_col).map(|f| f.dtype.clone()).unwrap_or(DataType::String);
-                    
-//                     // Build Series
-//                     let s = match val_str_opt {
-//                         Some(v) => Series::new(target_col.into(), &[v]).cast(&dtype)?,
-//                         None => Series::new_null(target_col.into(), 1).cast(&dtype)?
-//                     };
-//                     columns.push(s.into());
-//                 }
-                
-//                 if let Ok(mini_df) = DataFrame::new(1,columns) {
-//                     // Try to evaluate predicate
-//                     // Clone expr because we might need it later if this fails
-//                     let eval_result = mini_df.lazy()
-//                         .select([predicate_ctx.inner.clone().alias("result")])
-//                         .collect_with_engine(Engine::Streaming);
-
-//                     match eval_result {
-//                         Ok(res) => {
-//                             // [Success]: Predicate only depends on Partition Columns!
-//                             // Check the boolean result
-//                             if let Ok(bool_s) = res.column("result") {
-//                                 if let Ok(is_match) = bool_s.bool() {
-//                                     if is_match.get(0) == Some(true) {
-//                                         // Partition Matched Predicate -> Drop entire file
-//                                         fast_drop = true;
-//                                     } else {
-//                                         // Partition Did NOT Match -> Keep entire file (No-op)
-//                                         // Do nothing for this file loop
-//                                     }
-//                                     can_skip_scan = true;
-//                                 }
-//                             }
-//                         },
-//                         Err(_e) => {
-//                             // [Failure]: Error likely means "ColumnNotFound".
-//                             // This confirms the Predicate involves Data Columns (e.g. "id").
-//                             // We MUST proceed to scan the file content.
-//                             // Ignore error and fall through to Phase 2.
-//                         }
-//                     }
-//                 }
-//             }
-
-//             // --- Apply Pruning Result ---
-//             if can_skip_scan {
-//                 if fast_drop {
-//                     // Fast Drop: Mark file for removal, skip IO
-//                     let remove = Remove {
-//                         path: file_path_str.to_string().clone(),
-//                         deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
-//                         data_change: true,
-//                         ..Default::default()
-//                     };
-//                     actions.push(Action::Remove(remove));
-//                 }
-//                 // If fast_drop is false, we simply keep the file (do nothing), effectively skipping it.
-//                 continue; 
-//             }
-
-//             // =========================================================
-//              // Phase 1.5: Stats Pruning (Auto-Derived)
-//              // =========================================================
-//             let stats_struct = view.stats()
-//                     .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null));
-//              if !key_bounds.is_empty() {
-
-//                  let mut file_overlaps = true;
-//                  for (key, (src_min, src_max)) in &key_bounds {
-//                      if !check_file_overlap_optimized(&stats_struct, key, src_min, src_max) {
-//                          file_overlaps = false;
-//                          break;
-//                      }
-//                  }
-                 
-//                  if !file_overlaps {
-//                      continue;
-//                  }
-//             }
-
-//             // =================================================================================
-//             // PHASE 2: Scan & Filter (Stats Pushdown Optimized)
-//             // =================================================================================
-
-//             let total_rows_opt = stats_struct.as_ref()
-//                 .and_then(|v| v.get("numRecords"))
-//                 .and_then(|v| v.as_i64());
-            
-//             let full_scan_path = format!("{}/{}", table_root.trim_end_matches('/'), file_path_str);
-//             let scan_cloud_options = unsafe {
-//                 build_cloud_options(
-//                     cloud_provider, cloud_retries, cloud_retry_timeout_ms,
-//                     cloud_retry_init_backoff_ms, cloud_retry_max_backoff_ms, cloud_cache_ttl,
-//                     cloud_keys, cloud_values, cloud_len
-//                 )
-//             };
-            
-//             let mut lf = LazyFrame::scan_parquet(
-//                 PlRefPath::new(full_scan_path.clone()), 
-//                 ScanArgsParquet { cloud_options: scan_cloud_options, ..Default::default() }
-//             )?;
-
-//             // Inject Partitions
-//             for target_col in &partition_cols {
-//                 // Find Value
-//                 let val_str_opt = p_fields.iter()
-//                     .position(|f| f.name() == target_col)
-//                     .map(|idx| &p_values[idx])
-//                     .filter(|scalar| !scalar.is_null())
-//                     .map(|scalar| {
-//                          scalar.serialize()
-//                     });
-
-//                 // Build Literal Expr
-//                 let lit_expr = match val_str_opt {
-//                     Some(v) => lit(v),
-//                     None => lit(NULL)
-//                 };
-
-//                 // Cast and Inject
-//                 let final_expr = if let Some(dtype) = polars_schema.get_field(target_col).map(|f| f.dtype.clone()) {
-//                     lit_expr.cast(dtype)
-//                 } else {
-//                     lit_expr
-//                 };
-                
-//                 lf = lf.with_column(final_expr.alias(target_col));
-//             }
-
-//             // [Optimization]: Use filter() first to allow Parquet Stats Pushdown
-//             // If Parquet Min/Max stats prove "No Match", filter returns empty LF instantly.
-//             let has_match_df = lf.clone()
-//                 .filter(root_expr.clone())
-//                 .limit(1)
-//                 .collect_with_engine(Engine::Streaming)?;
-            
-//             if has_match_df.height() == 0 {
-//                 // Case 1: Keep (Predicate missed)
-//                 continue;
-//             }
-            
-//             let is_full_drop = if let Some(_total) = total_rows_opt {
-//                 let keep_expr = root_expr.clone().not();
-//                 let has_keep_df = lf.clone()
-//                     .filter(keep_expr)
-//                     .limit(1) 
-//                     .collect_with_engine(Engine::Streaming)?;
-                
-//                 has_keep_df.height() == 0
-//             } else {
-//                 let counts_df = lf.clone()
-//                     .select([
-//                         len().alias("total"), 
-//                         root_expr.clone().cast(DataType::UInt32).sum().alias("matched") 
-//                     ])
-//                     .collect_with_engine(Engine::Streaming)?;
-
-//                 let total = counts_df.column("total")?.u32()?.get(0).unwrap_or(0) as i64;
-//                 let matched = counts_df.column("matched")?.u32()?.get(0).unwrap_or(0) as i64;
-
-//                 // if matched == total => Drop
-//                 matched == total
-//             };
-
-//             if is_full_drop {
-//                 // Case 2: Drop (Full match)
-//                 let remove = Remove {
-//                     path: file_path_str.to_string().clone(),
-//                     deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
-//                     data_change: true,
-//                     ..Default::default()
-//                 };
-//                 actions.push(Action::Remove(remove));
-//             } else {
-//                 // Case 3: Rewrite (Partial match)
-//                 let remove = Remove {
-//                     path: file_path_str.to_string().clone(),
-//                     deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
-//                     data_change: true,
-//                     ..Default::default()
-//                 };
-//                 actions.push(Action::Remove(remove));
-
-//                 // Rewrite: Keep rows that do NOT match
-//                 let keep_expr = predicate_ctx.inner.clone().not();
-                
-//                 // Construct Selector to drop partition cols
-//                 let drop_names: Vec<PlSmallStr> = partition_cols.iter()
-//                     .map(|s| PlSmallStr::from_string(s.clone()))
-//                     .collect();
-//                 let drop_selector = Selector::ByName { names: drop_names.into(), strict: true };
-
-//                 let new_lf = lf.filter(keep_expr).drop(drop_selector);
-
-//                 let new_name = format!("part-{}-{}.parquet", Utc::now().timestamp_millis(), Uuid::new_v4());
-//                 let parent_dir = std::path::Path::new(file_path_str.as_ref()) 
-//                     .parent()
-//                     .map(|p| p.to_string_lossy().to_string())
-//                     .unwrap_or_else(|| "".to_string());
-//                 let relative_new_path = if parent_dir.is_empty() { new_name.clone() } else { format!("{}/{}", parent_dir, new_name) };
-//                 let full_write_path = format!("{}/{}", table_root.trim_end_matches('/'), relative_new_path);
-
-//                 let write_opts = build_parquet_write_options(1, -1, true, 0, 0, -1)
-//                     .map_err(|e| PolarsError::ComputeError(format!("Options error: {}", e).into()))?;
-                
-//                 let target = SinkTarget::Path(PlRefPath::new(&full_write_path));
-//                 let unified_args = unsafe {
-//                     build_unified_sink_args(
-//                         false, false, 0, cloud_provider, cloud_retries, cloud_retry_timeout_ms,
-//                         cloud_retry_init_backoff_ms, cloud_retry_max_backoff_ms, cloud_cache_ttl,
-//                         cloud_keys, cloud_values, cloud_len 
-//                     )
-//                 };
-
-//                 new_lf.sink(SinkDestination::File { target }, FileWriteFormat::Parquet(write_opts), unified_args)?
-//                     .collect_with_engine(Engine::Streaming)?;
-
-//                 // Read Stats & Add Action
-//                 let (file_size, stats_json) = rt.block_on(async {
-//                     let path = Path::from(relative_new_path.clone());
-//                     let meta = object_store.head(&path).await
-//                          .map_err(|e| PolarsError::ComputeError(format!("Head error: {}", e).into()))?;
-//                     let mut reader = ParquetObjectReader::new(object_store.clone(), path.clone())
-//                             .with_file_size(meta.size as u64);
-//                     let footer = reader.get_metadata(None).await
-//                             .map_err(|e| PolarsError::ComputeError(format!("Footer error: {}", e).into()))?;
-//                     let (_, json) = extract_delta_stats(&footer)?;
-//                     Ok::<_, PolarsError>((meta.size as i64, json))
-//                 })?;
-
-//                 let new_partition_values = parse_hive_partitions(&relative_new_path, &partition_cols);
-//                 let add = Add {
-//                     path: relative_new_path,
-//                     size: file_size,
-//                     partition_values: new_partition_values,
-//                     modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
-//                     data_change: true,
-//                     stats: Some(stats_json),
-//                     ..Default::default()
-//                 };
-//                 actions.push(Action::Add(add));
-//             }
-//         }
-//         // 4. Commit
-//         if !actions.is_empty() {
-//             rt.block_on(async {
-//                 let operation = DeltaOperation::Delete {
-//                     predicate: None, 
-//                 };
-                
-//                 let _ver = CommitBuilder::default()
-//                     .with_actions(actions)
-//                     .build(
-//                         table.snapshot().ok().map(|s| s as &dyn transaction::TableReference),
-//                         table.log_store().clone(),
-//                         operation
-//                     ).await.map_err(|e| PolarsError::ComputeError(format!("Commit failed: {}", e).into()))?;
-                
-//                 Ok::<(), PolarsError>(())
-//             })?;
-//         }
-//         Ok(())
-//     })
-// }

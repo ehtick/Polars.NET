@@ -145,7 +145,7 @@ pub extern "C" fn pl_scan_delta(
                     enabled: Some(true),
                     hive_start_idx: 0,
                     schema: Some(Arc::new(part_schema)), // 注入构建好的 schema
-                    try_parse_dates: false, // 沿用传入的配置
+                    try_parse_dates: try_parse_hive_dates, // 沿用传入的配置
                 };
             }
         }

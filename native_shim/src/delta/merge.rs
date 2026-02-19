@@ -4,21 +4,60 @@ use chrono::{DateTime, NaiveDate};
 use futures::StreamExt;
 use polars::prelude::{file_provider::HivePathProvider, *};
 use polars_buffer::Buffer;
+use roaring::RoaringBitmap;
 use url::Url;
-use deltalake::{DeltaTable, Path};
+use deltalake::{DeltaTable, Path, table::state::DeltaTableState};
 use deltalake::kernel::{Action, Add, Remove, scalars::ScalarExt, transaction::CommitBuilder};
 use deltalake::parquet::arrow::async_reader::{AsyncFileReader, ParquetObjectReader};
 use deltalake::protocol::{DeltaOperation, MergePredicate};
 use uuid::Uuid;
 
-use crate::delta::utils::*;
+use crate::delta::{delete::{create_dv_descriptor, write_dv_file}, deletion_vector::{apply_deletion_vector, read_deletion_vector}, utils::*};
 use crate::io::{build_cloud_options, build_parquet_write_options, build_unified_sink_args}; 
 use crate::types::{ExprContext, LazyFrameContext};
 use crate::utils::{ptr_to_str, ptr_to_vec_string};
 
+const MAX_FULL_JOB_RETRIES: usize = 5;
+const MAX_PRUNING_CANDIDATES: usize = 100_000;
+
 // -------------------------------------------------------------------------
 // Merge / Update Helpers
 // -------------------------------------------------------------------------
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MergeStrategy {
+    /// Copy-on-Write: Rewrite entire files for any match. (Classic)
+    CopyOnWrite,
+    /// Merge-on-Read: Write new files for Inserts/Updates, write DVs for Deletes/Updates.
+    MergeOnRead,
+}
+
+impl MergeStrategy {
+    pub fn determine(snapshot: &DeltaTableState, force_cow: bool) -> Self {
+        if force_cow {
+            return Self::CopyOnWrite;
+        }
+        let protocol = snapshot.protocol();
+        // Writer Version 7+ supports Deletion Vectors
+        if protocol.min_writer_version() >= 7 {
+            Self::MergeOnRead
+        } else {
+            Self::CopyOnWrite
+        }
+    }
+}
+
+struct MergeContext {
+    pub merge_keys: Vec<String>,
+    pub table_url: Url,
+    pub can_evolve: bool,
+    pub strategy: MergeStrategy,
+    // Conditions (Owned Exprs)
+    pub cond_update: Option<Expr>,     // Default: true
+    pub cond_delete: Option<Expr>,     // Default: false
+    pub cond_insert: Option<Expr>,     // Default: true
+    pub cond_src_delete: Option<Expr>, // Default: false
+}
+
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum PruningBound {
     Integer(i128),
@@ -138,31 +177,16 @@ enum PruningCandidates {
     Strings(Vec<String>), 
 }
 
-struct MergeContext {
-    pub merge_keys: Vec<String>,
-    pub table_url: Url,
-    pub storage_options: HashMap<String, String>,
-    pub can_evolve: bool,
-    // Conditions (Owned Exprs)
-    pub cond_update: Option<Expr>,     // Default: true
-    pub cond_delete: Option<Expr>,     // Default: false
-    pub cond_insert: Option<Expr>,     // Default: true
-    pub cond_src_delete: Option<Expr>, // Default: false
-}
-
-
-
-const MAX_FULL_JOB_RETRIES: usize = 5;
-const MAX_PRUNING_CANDIDATES: usize = 100_000;
-
 /// Phase 1: Pruning
 /// Partition Pruning, Z-Order Bounds Pruning, Discrete Candidates Pruning
 async fn phase_1_load_table(
-    ctx: &MergeContext,
+    table_url: Url,
+    storage_options: HashMap<String, String>,
 ) -> PolarsResult<(DeltaTable, Vec<String>, SchemaRef)> {
+    
     let table = DeltaTable::try_from_url_with_storage_options(
-        ctx.table_url.clone(),
-        ctx.storage_options.clone()
+        table_url,
+        storage_options
     ).await.map_err(|e| PolarsError::ComputeError(format!("Delta load error: {}", e).into()))?;
 
     let polars_schema = get_polars_schema_from_delta(&table)?;
@@ -236,9 +260,9 @@ async fn phase_1_scan_and_prune(
     key_bounds_json: HashMap<String, (serde_json::Value, serde_json::Value)>,
     pruning_candidates: Option<PruningCandidates>,
     merge_keys_0: Option<&String>,
-) -> PolarsResult<Vec<Remove>> {
+) -> PolarsResult<Vec<Add>> {
     
-    let mut remove_actions = Vec::new();
+    let mut candidate_files = Vec::new();
     let t_scan = table.clone(); 
     let mut stream = t_scan.get_active_add_actions_by_partitions(&[]);
 
@@ -319,10 +343,10 @@ async fn phase_1_scan_and_prune(
         }
 
         if file_overlaps {
-            remove_actions.push(view.remove_action(true));
+            candidate_files.push(crate::delta::utils::view_to_add_action(&view));
         }
     }
-    Ok(remove_actions)
+    Ok(candidate_files)
 }
 
 fn phase_validation(
@@ -441,7 +465,8 @@ fn phase_validation(
 
 fn construct_target_lf(
     ctx: &MergeContext,
-    remove_actions: &[Remove],
+    table: &DeltaTable, 
+    remove_actions: &[Add], 
     target_schema: &Schema,
     cloud_args: &RawCloudArgs,
 ) -> PolarsResult<LazyFrame> {
@@ -450,47 +475,85 @@ fn construct_target_lf(
         return Ok(DataFrame::empty_with_schema(target_schema).lazy());
     }
 
-    // Build FileName list
-    // table_url e.g., "s3://bucket/table/" -> trim -> "s3://bucket/table"
     let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
+    let is_mor = ctx.strategy == MergeStrategy::MergeOnRead;
     
-    let full_paths: Vec<PlRefPath> = remove_actions.iter()
-        .map(|r| {
-            let full = format!("{}/{}", root_trimmed, r.path);
-            PlRefPath::new(full)
-        })
-        .collect();
-    
-    let paths_buffer = Buffer::from(full_paths);
+    let make_scan_args = || unsafe {
+        let mut args = ScanArgsParquet::default();
+        args.hive_options = HiveOptions {
+            enabled: Some(true), hive_start_idx: 0, schema: None, try_parse_dates: true,
+        };
+        args.cloud_options = build_cloud_options(
+            cloud_args.provider, cloud_args.retries, cloud_args.retry_timeout_ms,
+            cloud_args.retry_init_backoff_ms, cloud_args.retry_max_backoff_ms, cloud_args.cache_ttl,
+            cloud_args.keys, cloud_args.values, cloud_args.len,
+        );
 
-    // Build ScanArgs
-    let mut scan_args = ScanArgsParquet::default();
-    
-    // Build HiveOptions
-    scan_args.hive_options = HiveOptions {
-        enabled: Some(true),
-        hive_start_idx: 0,
-        schema: None,
-        try_parse_dates: true,
+        if is_mor {
+            args.row_index = Some(RowIndex { 
+                name: "__row_index".into(), 
+                offset: 0 
+            });
+            args.include_file_paths = Some(PlSmallStr::from_static("__file_path"));
+        }
+        args
     };
 
-    // Build Cloud Options 
-    scan_args.cloud_options = unsafe {
-        build_cloud_options(
-            cloud_args.provider,
-            cloud_args.retries,
-            cloud_args.retry_timeout_ms,
-            cloud_args.retry_init_backoff_ms,
-            cloud_args.retry_max_backoff_ms,
-            cloud_args.cache_ttl,
-            cloud_args.keys,
-            cloud_args.values,
-            cloud_args.len,
-        )
-    };
+    // =========================================================
+    // CoW (Fast Path): Bulk Scan
+    // =========================================================
+    if !is_mor {
+        // CoW 模式不需要精准的 row_index，直接批量扫描获得最佳性能
+        let full_paths: Vec<PlRefPath> = remove_actions.iter()
+            .map(|r| PlRefPath::new(format!("{}/{}", root_trimmed, r.path)))
+            .collect();
+        
+        let paths_buffer = Buffer::from(full_paths);
+        return LazyFrame::scan_parquet_files(paths_buffer, make_scan_args());
+    }
 
-    // return LazyFrame
-    LazyFrame::scan_parquet_files(paths_buffer, scan_args)
+    // =========================================================
+    // MoR Mode: MUST scan iteratively to guarantee row_index = 0 per file
+    // =========================================================
+    let rt = get_runtime();
+    let object_store = table.object_store();
+    let table_root = Path::from(root_trimmed);
+
+    let lfs = rt.block_on(async {
+        let mut processed = Vec::with_capacity(remove_actions.len());
+        
+        for r in remove_actions {
+            let full_path = format!("{}/{}", root_trimmed, r.path);
+            
+            // [CRITICAL FIX] 逐个文件 scan，确保 __row_index 从 0 开始
+            let mut lf = LazyFrame::scan_parquet(
+                PlRefPath::new(&full_path), 
+                make_scan_args()
+            )?;
+
+            // Read and Apply DV if exists
+            if let Some(dv) = &r.deletion_vector {
+                let bitmap = read_deletion_vector(object_store.clone(), dv, &table_root).await?;
+                lf = apply_deletion_vector(lf, bitmap)?;
+            }
+            processed.push(lf);
+        }
+        Ok::<_, PolarsError>(processed)
+    })?;
+
+    // Concat Everything (Polars 引擎会自动并行化执行这个合并后的计算图)
+    let args = UnionArgs {
+        parallel: true,
+        rechunk: false,
+        to_supertypes: true,
+        diagonal: true, 
+        ..Default::default()
+    };
+    
+    let final_lf = polars::prelude::concat(lfs, args)
+        .map_err(|e| PolarsError::ComputeError(format!("Merge Target Concat failed: {}", e).into()))?;
+
+    Ok(final_lf)
 }
 
 /// Phase 3: Planning
@@ -641,6 +704,175 @@ fn phase_planning(
     Ok(processed_lf)
 }
 
+/// Phase 3 (MoR): Planning
+/// Returns: 
+/// 1. new_data_lf: Rows to be written to new Parquet files (Updates' New Values + Inserts)
+/// 2. tombstones_lf: Rows to be soft-deleted (Updates' Old Rows + Deletes) -> (Path, RowIndex)
+fn phase_planning_mor(
+    ctx: &MergeContext,
+    target_lf: LazyFrame, // 必须包含 "__row_index" 和 "__file_path"
+    mut source_lf: LazyFrame,
+    target_schema: &Schema, 
+) -> PolarsResult<(LazyFrame, LazyFrame)> {
+
+    // =========================================================
+    // 1. Rename Source Columns (Standard Procedure)
+    // =========================================================
+    let src_schema = source_lf.collect_schema()
+        .map_err(|e| PolarsError::ComputeError(format!("Source schema error: {}", e).into()))?;
+    
+    let mut rename_old = Vec::new();
+    let mut rename_new = Vec::new();
+    let mut source_cols_set = HashSet::new();
+
+    for name in src_schema.iter_names() {
+        rename_old.push(name.as_str());
+        rename_new.push(format!("{}_src_tmp", name)); 
+        source_cols_set.insert(name.to_string());
+    }
+
+    let source_renamed = source_lf.rename(rename_old, rename_new, true);
+
+    // =========================================================
+    // 2. Join (Full Outer)
+    // =========================================================
+    let left_on: Vec<Expr> = ctx.merge_keys.iter().map(|k| col(k)).collect();
+    let right_on: Vec<Expr> = ctx.merge_keys.iter().map(|k| col(&format!("{}_src_tmp", k))).collect();
+
+    let join_args = JoinArgs {
+        how: JoinType::Full,
+        validation: JoinValidation::ManyToMany, 
+        coalesce: JoinCoalesce::KeepColumns,    
+        maintain_order: MaintainOrderJoin::None,
+        ..Default::default()
+    };
+
+    let joined_lf = target_lf.join(source_renamed, left_on, right_on, join_args);
+
+    // =========================================================
+    // 3. Define Logic Actions
+    // =========================================================
+    // Action Constants
+    let act_keep   = lit(0);
+    let act_insert = lit(1);
+    let act_update = lit(2);
+    let act_delete = lit(3);
+    let act_ignore = lit(4);
+
+    // Row State 
+    let first_key = &ctx.merge_keys[0];
+    let src_key_col = format!("{}_src_tmp", first_key);
+    
+    let src_exists = col(&src_key_col).is_not_null();
+    let tgt_exists = col(first_key).is_not_null();
+
+    // Three Status
+    let is_matched     = src_exists.clone().and(tgt_exists.clone());
+    let is_source_only = src_exists.clone().and(tgt_exists.clone().not());
+    let is_target_only = src_exists.not().and(tgt_exists);
+    
+    // Conditions
+    let expr_update = ctx.cond_update.clone().unwrap_or(lit(true));
+    let expr_delete = ctx.cond_delete.clone().unwrap_or(lit(false));
+    let expr_insert = ctx.cond_insert.clone().unwrap_or(lit(true));
+    let expr_src_del = ctx.cond_src_delete.clone().unwrap_or(lit(false));
+
+    // Calculate Action Column
+    let action_expr = when(is_matched.clone().and(expr_delete))
+        .then(act_delete.clone())
+        .when(is_matched.and(expr_update))
+        .then(act_update.clone())
+        .when(is_source_only.clone().and(expr_insert))
+        .then(act_insert.clone())
+        .when(is_source_only)
+        .then(act_ignore.clone()) 
+        .when(is_target_only.and(expr_src_del))
+        .then(act_delete.clone()) 
+        .otherwise(act_keep)      
+        .alias("_merge_action");
+
+    let lf_with_action = joined_lf.with_column(action_expr);
+
+    // =========================================================
+    // 4. BRANCH A: New Data Generation (Inserts + Updates)
+    // =========================================================
+    // 我们只需要写入 Insert 和 Update 的行。
+    // Keep 的行不需要写（MoR 优势），Delete 的行不需要写。
+    
+    let mut new_data_exprs = Vec::new();
+    let mut output_cols = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Target Columns
+    for name in target_schema.iter_names() {
+        // Skip metadata cols
+        if name == "__row_index" || name == "__file_path" { continue; }
+        output_cols.push(name.to_string());
+        seen.insert(name.to_string());
+    }
+    // New Source Columns (Evolution)
+    for name in src_schema.iter_names() {
+        if !seen.contains(name.as_str()) {
+            output_cols.push(name.to_string());
+        }
+    }
+
+    for col_name in output_cols {
+        let src_col_alias = format!("{}_src_tmp", col_name);
+        let has_source = source_cols_set.contains(&col_name);
+        let has_target = target_schema.get_field(&col_name).is_some();
+
+        let src_val = if has_source { col(&src_col_alias) } else { lit(NULL) };
+        let tgt_val = if has_target { col(&col_name) } else { lit(NULL) };
+
+        // Projection Logic:
+        // - Insert: Source Value (or Null)
+        // - Update: Source Value (or Target Value if partial update)
+        let col_expr = if has_source {
+            when(col("_merge_action").eq(act_insert.clone())
+                .or(col("_merge_action").eq(act_update.clone())))
+            .then(src_val)
+            .otherwise(tgt_val) // Should be filtered out anyway, but safe fallback
+        } else {
+            // Source missing this col
+            // Insert -> Null
+            // Update -> Keep Target
+            when(col("_merge_action").eq(act_insert.clone()))
+            .then(lit(NULL))
+            .otherwise(tgt_val)
+        };
+
+        new_data_exprs.push(col_expr.alias(&col_name));
+    }
+
+    let new_data_lf = lf_with_action.clone()
+        .filter(
+            col("_merge_action").eq(act_insert.clone())
+            .or(col("_merge_action").eq(act_update.clone()))
+        )
+        .select(new_data_exprs);
+
+    // =========================================================
+    // 5. BRANCH B: Tombstones (Deletes + Updates' Old Rows)
+    // =========================================================
+    // 我们需要软删除所有被 Delete 或被 Update 的行。
+    // Update 在 MoR 里 = Soft Delete Old + Insert New。
+    
+    let tombstones_lf = lf_with_action
+        .filter(
+            col("_merge_action").eq(act_delete.clone())
+            .or(col("_merge_action").eq(act_update.clone()))
+        )
+        .select([
+            col("__file_path"),
+            col("__row_index"), // Polars 必须在 Scan 时开启 row_index
+        ]);
+
+    Ok((new_data_lf, tombstones_lf))
+}
+
+
+
 /// Phase 4: Execution 
 fn phase_execution(
     ctx: &MergeContext,
@@ -717,6 +949,98 @@ fn phase_execution(
 
     Ok((staging_dir_name, write_id))
 }
+
+/// Phase 4-B (MoR Only): Process Tombstones into Deletion Vectors
+async fn phase_execution_dv(
+    ctx: &MergeContext,
+    table: &DeltaTable,
+    // tombstones_lf: LazyFrame,
+    df: DataFrame,
+    candidate_files: &[Add], 
+) -> PolarsResult<Vec<Action>> {
+    
+    // 1. Group By File Path to get lists of deleted row indices
+    // let df = tombstones_lf
+    //     .group_by([col("__file_path")])
+    //     .agg([col("__row_index")])
+    //     .collect_with_engine(Engine::Streaming)?;
+
+    if df.height() == 0 {
+        return Ok(Vec::new()); // No rows deleted
+    }
+
+    // 2. Build Lookup Table for Original Files
+    let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
+    let mut file_lookup: HashMap<String, &Add> = HashMap::new();
+    for f in candidate_files {
+        file_lookup.insert(f.path.clone(), f);
+    }
+
+    let mut final_actions = Vec::new();
+    let object_store = table.object_store();
+    let table_root = Path::from(root_trimmed);
+
+    let path_series = df.column("__file_path")?.str()?;
+    let row_idx_series = df.column("__row_index")?.list()?;
+
+    // 3. Iterate over affected files
+    for i in 0..df.height() {
+        let full_path = path_series.get(i).unwrap();
+        
+        // Polars 的 include_file_paths 给出的是绝对路径，我们需要还原为相对路径
+        let rel_path = full_path.strip_prefix(&format!("{}/", root_trimmed))
+            .unwrap_or(full_path)
+            .to_string();
+
+        let row_indices_series = row_idx_series.get_as_series(i).unwrap();
+        let row_indices_ca = row_indices_series.u32()?;
+        let new_deleted_indices: Vec<u32> = row_indices_ca.into_no_null_iter().collect();
+
+        // 找回这个文件原始的 Add Action (为了拿旧的 DV 和 Stats)
+        let original_add = file_lookup.get(&rel_path).ok_or_else(|| {
+            PolarsError::ComputeError(format!("Cannot find original action for {}", rel_path).into())
+        })?;
+
+        // A. 读取旧 DV (如果存在)
+        let mut bitmap = if let Some(old_dv) = &original_add.deletion_vector {
+            read_deletion_vector(object_store.clone(), old_dv, &table_root).await?
+        } else {
+            RoaringBitmap::new()
+        };
+
+        // B. 合并新的删除行
+        bitmap.extend(new_deleted_indices);
+
+        // C. 写入新 DV 文件
+        let (dv_file_name, dv_size) = write_dv_file(object_store.clone(), &root_trimmed, &bitmap).await?;
+        let new_dv_descriptor = create_dv_descriptor(&dv_file_name, dv_size, bitmap.len() as i64)?;
+
+        // D. 生成 Remove Action (移除旧状态)
+        let remove = Remove {
+            path: original_add.path.clone(),
+            deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
+            data_change: true,
+            extended_file_metadata: Some(true),
+            partition_values: Some(original_add.partition_values.clone()),
+            size: Some(original_add.size),
+            deletion_vector: original_add.deletion_vector.clone(), // 必须带上旧的 DV 描述符
+            tags: original_add.tags.clone(),
+            base_row_id: original_add.base_row_id,
+            default_row_commit_version: original_add.default_row_commit_version,
+        };
+        final_actions.push(Action::Remove(remove));
+
+        // E. 生成 Add Action (附加新 DV 状态)
+        let mut new_add = (*original_add).clone();
+        new_add.deletion_vector = Some(new_dv_descriptor);
+        new_add.modification_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+        final_actions.push(Action::Add(new_add));
+    }
+
+    Ok(final_actions)
+}
+
+
 
 /// Phase 5-A: Process Staging Files
 /// Scan Staging, read Stats, move file, generate Add Actions
@@ -1048,18 +1372,6 @@ pub extern "C" fn pl_io_delta_merge(
         // 4. Build Cloud Options Map (For Delta-RS)
         let delta_storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
 
-        // 5. Pack Context
-        let ctx = MergeContext {
-            table_url,
-            merge_keys,
-            storage_options: delta_storage_options,
-            can_evolve,
-            cond_update,
-            cond_delete,
-            cond_insert,
-            cond_src_delete,
-        };
-
         // 6. Pack Raw Cloud Args (For Polars Scan/Sink later)
         let cloud_args = RawCloudArgs {
             provider: cloud_provider,
@@ -1078,10 +1390,27 @@ pub extern "C" fn pl_io_delta_merge(
         // =========================================================
         // Phase 1: Pruning (Async Context 1)
         // =========================================================
-        let (mut table, partition_cols,mut target_schema) = rt.block_on(
-            phase_1_load_table(&ctx)
+        let (mut table, partition_cols, mut target_schema) = rt.block_on(
+            phase_1_load_table(table_url.clone(), delta_storage_options.clone())
         )?;
         
+        // [NEW] Determine Strategy
+        let snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot error: {}", e).into()))?;
+        let strategy = MergeStrategy::determine(snapshot, false);
+
+        // 5. Pack Context
+        let ctx = MergeContext {
+            table_url,
+            merge_keys,
+            // storage_options: delta_storage_options,
+            can_evolve,
+            strategy,
+            cond_update,
+            cond_delete,
+            cond_insert,
+            cond_src_delete,
+        };
+
         let (source_partitions, key_bounds, candidates) = phase_1_analyze_source(
             &ctx, 
             &source_lf, 
@@ -1113,7 +1442,7 @@ pub extern "C" fn pl_io_delta_merge(
             // ---------------------------------------------------------------------
             // Phase 1-C: Scan & Prune
             // ---------------------------------------------------------------------
-            let remove_actions = rt.block_on(
+            let candidate_files = rt.block_on(
                 phase_1_scan_and_prune(
                     &table, 
                     &partition_cols, 
@@ -1132,36 +1461,79 @@ pub extern "C" fn pl_io_delta_merge(
             
             phase_validation(&ctx, &mut current_source_lf, &target_schema)?;
 
-            let target_lf = construct_target_lf(&ctx, &remove_actions, &target_schema, &cloud_args)?;
+            let target_lf = construct_target_lf(&ctx,&table ,&candidate_files, &target_schema, &cloud_args)?;
             
-            let processed_lf = phase_planning(&ctx, target_lf, current_source_lf, &target_schema)?;
+            // let processed_lf = phase_planning(&ctx, target_lf, current_source_lf, &target_schema)?;
+            let (new_data_lf, tombstones_lf_opt) = match ctx.strategy {
+                MergeStrategy::CopyOnWrite => {
+                    let processed = phase_planning(&ctx, target_lf, current_source_lf, &target_schema)?;
+                    (processed, None)
+                },
+                MergeStrategy::MergeOnRead => {
+                    let (new_data, tombstones) = phase_planning_mor(&ctx, target_lf, current_source_lf, &target_schema)?;
+                    (new_data, Some(tombstones))
+                }
+            };
 
             // ---------------------------------------------------------------------
             // Phase 4: Execution (IO - Write NEW Staging Files)
             // ---------------------------------------------------------------------
-            let (staging_dir, write_id) = phase_execution(&ctx, processed_lf, &partition_cols, &cloud_args)?;
+            let (staging_dir, write_id) = phase_execution(&ctx, new_data_lf, &partition_cols, &cloud_args)?;
 
             let staging_dir_for_commit = staging_dir.clone();
+
+            // [FIXED] 新增代码：在此处 (同步环境中) 计算 Tombstone DataFrame
+            let tombstones_df_opt = match tombstones_lf_opt {
+                Some(lf) => {
+                    let df = lf
+                        .group_by([col("__file_path")])
+                        .agg([col("__row_index")])
+                        .collect_with_engine(Engine::Streaming)?;
+                    
+                    if df.height() > 0 { Some(df) } else { None }
+                },
+                None => None,
+            };
             // ---------------------------------------------------------------------
             // Phase 5: Commit (Try to finalize)
             // ---------------------------------------------------------------------
-            let commit_result = rt.block_on(async {
-                let add_actions = phase_process_staging(&table, &staging_dir, &partition_cols, write_id).await?;
 
-                let mut final_actions = Vec::with_capacity(remove_actions.len() + add_actions.len());
-                for r in remove_actions { final_actions.push(Action::Remove(r)); }
-                final_actions.extend(add_actions);
+            let commit_result = rt.block_on(async {
+                
+                // 1. 处理 Staging Files 得到 Add(New Data) Actions
+                let mut final_actions = phase_process_staging(&table, &staging_dir, &partition_cols, write_id).await?;
+
+                // 2. 根据策略处理旧文件
+                match ctx.strategy {
+                    MergeStrategy::CopyOnWrite => {
+                        // CoW：直接把所有候选文件丢弃 (生成 Remove)
+                        for add in &candidate_files {
+                            let remove = Remove {
+                                path: add.path.clone(),
+                                deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
+                                data_change: true,
+                                extended_file_metadata: Some(true),
+                                partition_values: Some(add.partition_values.clone()),
+                                size: Some(add.size),
+                                deletion_vector: add.deletion_vector.clone(),
+                                ..Default::default()
+                            };
+                            final_actions.push(Action::Remove(remove));
+                        }
+                    },
+                    MergeStrategy::MergeOnRead => {
+                        // MoR：生成 DV 文件并附带相应的 Remove/Add Actions
+                        if let Some(t_df) = tombstones_df_opt {
+                            let dv_actions = phase_execution_dv(&ctx, &table, t_df, &candidate_files).await?;
+                            final_actions.extend(dv_actions);
+                        }
+                    }
+                }
 
                 if !final_actions.is_empty() {
                     let src_schema = source_lf.collect_schema().unwrap();
-                    
                     phase_commit(
-                        &ctx, 
-                        &mut table, 
-                        final_actions, 
-                        &staging_dir, 
-                        &src_schema,
-                        &target_schema
+                        &ctx, &mut table, final_actions, &staging_dir, &src_schema, &target_schema
                     ).await?;
                 } else {
                      let object_store = table.object_store();
