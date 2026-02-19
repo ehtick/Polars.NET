@@ -139,7 +139,7 @@ pub fn apply_deletion_vector(
         .with_row_index("row_nr", None) 
         .filter(
             // 逻辑：保留那些 [行号] 不在 [删除列表] 里的行
-            col("row_nr").is_in(lit(del_series),false).not()
+            col("row_nr").is_in(lit(del_series).implode(),false).not()
         )
         // 4. 清理临时列
         .drop(Selector::ByName {

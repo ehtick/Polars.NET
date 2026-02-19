@@ -2274,7 +2274,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             .Collect();
 
         afterDf.Show();
-        
+
         // 关键断言 1：经过复杂的 DV 过滤和 Z-Order 位交织后，行数必须依然是 98
         Assert.Equal(98, afterDf.Height);
         var validIds = new[] {10,99};
