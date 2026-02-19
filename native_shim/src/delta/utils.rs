@@ -9,7 +9,7 @@ use deltalake::parquet::file::metadata::ParquetMetaData;
 use deltalake::parquet::file::statistics::Statistics as ParquetStatistics;
 use deltalake::arrow::datatypes::Schema as DeltaArrowSchema;
 use deltalake::arrow::ffi::FFI_ArrowSchema as DeltaFFISchema;
-use deltalake::kernel::StructType;
+use deltalake::kernel::{Add, LogicalFileView, StructType};
 use deltalake::protocol::SaveMode;
 use polars::{error::PolarsError, prelude::*};
 use polars_arrow::ffi::{import_field_from_c,ArrowSchema as PolarsFFISchema};
@@ -132,72 +132,89 @@ pub(crate) fn as_f64_safe(v: &serde_json::Value) -> Option<f64> {
      .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
 }
 
-// Overlap Check
+// 优化版：支持单边区间裁剪 (One-sided Range Pruning)
+/// 逻辑：
+/// - 如果 QueryMin 存在，且 FileMax < QueryMin -> Prune (Skip)
+/// - 如果 QueryMax 存在，且 FileMin > QueryMax -> Prune (Skip)
+/// - 否则 -> Keep
 pub(crate) fn check_file_overlap_optimized(
-    stats: &Option<serde_json::Value>, 
+    stats: &Option<Value>, 
     col: &str, 
-    src_min: &serde_json::Value, 
-    src_max: &serde_json::Value
+    src_min_opt: Option<&Value>, // 改为 Option
+    src_max_opt: Option<&Value>  // 改为 Option
 ) -> bool {
     let f_min_val = extract_stats_value(stats, "minValues", col);
     let f_max_val = extract_stats_value(stats, "maxValues", col);
 
-    if f_min_val.is_none() || f_max_val.is_none() {
-        return true;
-    }
-    let f_min = f_min_val.unwrap();
-    let f_max = f_max_val.unwrap();
-
-    match src_min {
-        // A. Compare Number 
-        serde_json::Value::Number(s_min_num) => {
-            if let serde_json::Value::Number(s_max_num) = src_max {
-                
-                // [Step 1]: Integer (i64) 
-                let s_min_i = s_min_num.as_i64();
-                let s_max_i = s_max_num.as_i64();
-                let f_min_i = as_i64_safe(f_min);
-                let f_max_i = as_i64_safe(f_max);
-
-                if let (Some(s_min), Some(s_max), Some(f_min), Some(f_max)) = (s_min_i, s_max_i, f_min_i, f_max_i) {
-                     // Not Overlap
-                     if f_max < s_min || f_min > s_max {
-                        return false; 
-                     }
-                     return true; // Overlap
-                }
-
-                // [Step 2]: Fallback to f64
-                let s_min_f = s_min_num.as_f64();
-                let s_max_f = s_max_num.as_f64();
-                let f_min_f = as_f64_safe(f_min);
-                let f_max_f = as_f64_safe(f_max);
-
-                if let (Some(s_min), Some(s_max), Some(f_min), Some(f_max)) = (s_min_f, s_max_f, f_min_f, f_max_f) {
-                     if f_max < s_min || f_min > s_max {
-                        return false;
-                     }
-                }
+    // -----------------------------------------------------------
+    // 1. Check Lower Bound: QueryMin
+    // 如果查询条件有下界 (e.g., A > 10)，且文件的最大值 < 10，则无交集
+    // -----------------------------------------------------------
+    if let Some(q_min) = src_min_opt {
+        // 只有当我们知道文件的 Max 值时，才能进行此项裁剪
+        if let Some(f_max) = f_max_val {
+            match q_min {
+                Value::Number(q_num) => {
+                    // Try Integer Comparison
+                    let f_i = as_i64_safe(f_max);
+                    let q_i = q_num.as_i64();
+                    
+                    if let (Some(f), Some(q)) = (f_i, q_i) {
+                        if f < q { return false; } // Pruned
+                    } else {
+                        // Fallback to Float
+                        let f_f = as_f64_safe(f_max);
+                        let q_f = q_num.as_f64();
+                        if let (Some(f), Some(q)) = (f_f, q_f) {
+                            if f < q { return false; } // Pruned
+                        }
+                    }
+                },
+                Value::String(q_str) => {
+                    if let Some(f_str) = f_max.as_str() {
+                        if *f_str < **q_str { return false; } // Pruned
+                    }
+                },
+                _ => {} // 其他类型保守处理，认为有交集
             }
-        },
-        
-        // B. String/Date/Decimal (Lexicographical Compare)
-        serde_json::Value::String(s_min_str) => {
-             if let serde_json::Value::String(s_max_str) = src_max {
-                 let f_min_s = f_min.as_str();
-                 let f_max_s = f_max.as_str();
-                 
-                 if let (Some(f_min), Some(f_max)) = (f_min_s, f_max_s) {
-                     if f_max < s_min_str.as_str() || f_min > s_max_str.as_str() {
-                        return false;
-                     }
-                 }
-             }
-        },
-        
-        _ => return true,
+        }
     }
 
+    // -----------------------------------------------------------
+    // 2. Check Upper Bound: QueryMax
+    // 如果查询条件有上界 (e.g., A < 50)，且文件的最小值 > 50，则无交集
+    // -----------------------------------------------------------
+    if let Some(q_max) = src_max_opt {
+        // 只有当我们知道文件的 Min 值时，才能进行此项裁剪
+        if let Some(f_min) = f_min_val {
+             match q_max {
+                Value::Number(q_num) => {
+                    // Try Integer
+                    let f_i = as_i64_safe(f_min);
+                    let q_i = q_num.as_i64();
+                    
+                    if let (Some(f), Some(q)) = (f_i, q_i) {
+                        if f > q { return false; } // Pruned
+                    } else {
+                        // Fallback to Float
+                        let f_f = as_f64_safe(f_min);
+                        let q_f = q_num.as_f64();
+                        if let (Some(f), Some(q)) = (f_f, q_f) {
+                            if f > q { return false; } // Pruned
+                        }
+                    }
+                },
+                Value::String(q_str) => {
+                    if let Some(f_str) = f_min.as_str() {
+                        if *f_str > **q_str { return false; } // Pruned
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+
+    // 没能排除，保留文件
     true
 }
 
@@ -404,39 +421,86 @@ pub(crate) fn convert_to_delta_schema(pl_schema: &Schema) -> PolarsResult<Struct
 // ==========================================
 // Delete Implementation
 // ==========================================
-type PruningMap = HashMap<String, (serde_json::Value, serde_json::Value)>;
+pub type PruningMap = HashMap<String, (Option<Value>, Option<Value>)>;
 
-// Extract Expr (Col == Lit)
+#[derive(Debug, Clone, Copy)]
+enum BoundType {
+    Min,
+    Max,
+    Exact, // Min == Max
+}
+
 pub(crate) fn extract_bounds_from_expr(expr: &Expr, map: &mut PruningMap) {
     match expr {
-        // (A == B) & (C == D) 
+        // Handle AND: Recurse both sides
+        // (A > 5) & (A < 10)
         Expr::BinaryExpr { left, op: Operator::And, right } => {
             extract_bounds_from_expr(left, map);
             extract_bounds_from_expr(right, map);
         },
-        
-        // Col("A") == Lit(10)
-        Expr::BinaryExpr { left, op: Operator::Eq, right } => {
-            if let (Expr::Column(name), Expr::Literal(lit_val)) = (left.as_ref(), right.as_ref()) {
-                insert_bound(map, name.as_str(), lit_val);
-            } 
-            else if let (Expr::Literal(lit_val), Expr::Column(name)) = (left.as_ref(), right.as_ref()) {
-                insert_bound(map, name.as_str(), lit_val);
+
+        // Handle Comparison Operators
+        Expr::BinaryExpr { left, op, right } => {
+            // Helper to clean up the nesting
+            let (col_name, lit_val, effective_op) = match (left.as_ref(), right.as_ref()) {
+                // Case 1: Col op Lit (e.g., A > 10) -> Keep Op
+                (Expr::Column(name), Expr::Literal(lit)) => (name.as_str(), lit, *op),
+                
+                // Case 2: Lit op Col (e.g., 10 < A) -> Flip Op (A > 10)
+                (Expr::Literal(lit), Expr::Column(name)) => {
+                    let flipped_op = match op {
+                        Operator::Eq => Operator::Eq,
+                        Operator::Gt => Operator::Lt,   // 10 > A  => A < 10
+                        Operator::Lt => Operator::Gt,   // 10 < A  => A > 10
+                        Operator::GtEq => Operator::LtEq,
+                        Operator::LtEq => Operator::GtEq,
+                        _ => return, // Unsupported op
+                    };
+                    (name.as_str(), lit, flipped_op)
+                },
+                _ => return, // Not a simple Col/Lit comparison
+            };
+
+            // Apply Bound based on Operator
+            match effective_op {
+                Operator::Eq => update_map(map, col_name, lit_val, BoundType::Exact),
+                Operator::Gt | Operator::GtEq => update_map(map, col_name, lit_val, BoundType::Min),
+                Operator::Lt | Operator::LtEq => update_map(map, col_name, lit_val, BoundType::Max),
+                _ => {}
             }
         },
-        
-        // Handle Alias
+
+        // Handle Alias (pass-through)
         Expr::Alias(inner, _) => {
             extract_bounds_from_expr(inner, map);
         },
-        
+
         _ => {}
     }
 }
 
-fn insert_bound(map: &mut PruningMap, col_name: &str, lit: &LiteralValue) {
+fn update_map(map: &mut PruningMap, col_name: &str, lit: &LiteralValue, b_type: BoundType) {
     if let Some(json_val) = polars_literal_to_json(lit) {
-        map.insert(col_name.to_string(), (json_val.clone(), json_val));
+        // 获取现有的 bounds，如果没有则初始化为 (None, None)
+        let entry = map.entry(col_name.to_string()).or_insert((None, None));
+
+        match b_type {
+            BoundType::Exact => {
+                // A == 10 implies Min=10, Max=10
+                entry.0 = Some(json_val.clone());
+                entry.1 = Some(json_val);
+            },
+            BoundType::Min => {
+                // A > 10 implies Min=10. Keep existing Max.
+                // TODO: 如果想更智能，可以比较 json_val 和 entry.0 谁更大，保留更严格的下界
+                entry.0 = Some(json_val);
+            },
+            BoundType::Max => {
+                // A < 10 implies Max=10. Keep existing Min.
+                // TODO: 如果想更智能，可以比较 json_val 和 entry.1 谁更小，保留更严格的上界
+                entry.1 = Some(json_val);
+            }
+        }
     }
 }
 
@@ -499,4 +563,44 @@ pub struct RawCloudArgs {
     pub keys: *const *const c_char,
     pub values: *const *const c_char,
     pub len: usize,
+}
+
+pub(crate) fn view_to_add_action(view: &LogicalFileView) -> Add {
+    
+    // 1. 手动实现 partition_values_map 的逻辑
+    // view.partition_values() 是 public 的，我们可以拿出来自己遍历
+    let partition_values = view.partition_values()
+        .map(|data| {
+            data.fields()
+                .iter()
+                .zip(data.values().iter())
+                .map(|(k, v)| {
+                    (
+                        k.name().to_string(),
+                        if v.is_null() {
+                            None
+                        } else {
+                            // serialize() 也是 public 的
+                            Some(deltalake::kernel::scalars::ScalarExt::serialize(v))
+                        }
+                    )
+                })
+                .collect::<HashMap<String, Option<String>>>()
+        })
+        .unwrap_or_default();
+
+    // 2. 构造 Add 结构体
+    Add {
+        path: view.path().to_string(),
+        size: view.size(),
+        partition_values, // 使用我们要来的 map
+        modification_time: view.modification_time(),
+        data_change: true, // 既然是从 active actions 读出来的，通常视为 data
+        stats: view.stats(),
+        tags: None,
+        deletion_vector: view.deletion_vector_descriptor(),
+        base_row_id: None,
+        default_row_commit_version: None,
+        clustering_provider: None, // View 里通常没有直接暴露这个，给 None 即可
+    }
 }

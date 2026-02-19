@@ -281,7 +281,7 @@ async fn phase_1_scan_and_prune(
 
         if !key_bounds_json.is_empty() {
             for (key, (src_min, src_max)) in &key_bounds_json {
-                if !check_file_overlap_optimized(&stats_struct, key, src_min, src_max) {
+                if !check_file_overlap_optimized(&stats_struct, key, Some(src_min), Some(src_max)) {
                      file_overlaps = false; break;
                 }
             }

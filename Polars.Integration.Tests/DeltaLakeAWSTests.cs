@@ -774,7 +774,93 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
 
         Console.WriteLine("Delta Delete Full Cycle Passed!");
     }
-    
+    [Fact]
+    [Trait("DeltaLake", "DeleteDV")]
+    public void Test_Sink_And_Delete_Delta_With_Deletion_Vectors()
+    {
+        // ==========================================
+        // 1. 环境准备
+        // ==========================================
+        var tableName = $"delta_dv_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // ==========================================
+        // 2. 初始化写入 (V0 - CoW Ready)
+        // ==========================================
+        Console.WriteLine("Step 1: Initial Write (10 rows)...");
+        using (var df = DataFrame.FromColumns(new { 
+            Id = Enumerable.Range(0, 10).ToArray(), // 0..9
+            Data = Enumerable.Repeat("A", 10).ToArray()
+        }))
+        {
+            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+        }
+
+        // ==========================================
+        // 3. 开启 Deletion Vectors 特性 (Upgrade to V1)
+        // ==========================================
+        Console.WriteLine("Step 2: Enabling Deletion Vectors...");
+        
+        // 这会把 Protocol 升级到 Reader v3 / Writer v7
+        Delta.AddFeature(
+            rootUrl, 
+            DeltaTableFeatures.DeletionVectors, // 确保你有这个常量，或传字符串 "deletionVectors"
+            allowProtocolIncrease: true, 
+            cloudOptions: options
+        );
+
+        // ==========================================
+        // 4. 执行删除 (Should use MoR/DV)
+        // ==========================================
+        // 删除 Id 为 0, 2, 4 的偶数行
+        Console.WriteLine("Step 3: Delete Even numbers (0, 2, 4)...");
+        var validIds = new[] {0,2,4};
+        
+        var predicate = Col("Id").IsIn(Lit(validIds).Implode());
+        
+        // 此时 Rust 端的 DeleteStrategy.determine 会发现 WriterVersion=7
+        // 从而自动选择 MergeOnRead 策略
+        Delta.Delete(rootUrl, predicate, cloudOptions: options);
+
+        // ==========================================
+        // 5. 验证数据
+        // ==========================================
+        using var dfV2 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("Id");
+        
+        // 预期：剩下 7 行 (1, 3, 5, 6, 7, 8, 9)
+        Assert.Equal(7, dfV2.Height);
+        
+        var ids = dfV2["Id"].ToArray<int>();
+        Assert.DoesNotContain(0, ids);
+        Assert.DoesNotContain(2, ids);
+        Assert.DoesNotContain(4, ids);
+        Assert.Contains(1, ids);
+        Assert.Contains(9, ids);
+
+        // ==========================================
+        // 6. 验证 Time Travel (确保旧数据还在)
+        // ==========================================
+        Console.WriteLine("Step 4: Time Travel Check...");
+        
+        // Version 0: 原始 10 行
+        // 注意：AddFeature 产生 Version 1，Delete 产生 Version 2
+        using var dfV0 = LazyFrame.ScanDelta(rootUrl, version: 1, cloudOptions: options).Collect();
+        Assert.Equal(10, dfV0.Height);
+        
+        Console.WriteLine("Delta Deletion Vector Test Passed!");
+    }
     [Fact]
     [Trait("DeltaLake", "Upsert")]
     public void Test_Upsert_Delta_Full_Cycle_Upsert()
