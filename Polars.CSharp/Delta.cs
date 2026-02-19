@@ -3,6 +3,93 @@ using System.Text.Json;
 using Polars.NET.Core;
 
 namespace Polars.CSharp;
+
+/// <summary>
+/// Common Delta Lake Table Features.
+/// </summary>
+public static class DeltaTableFeatures
+{
+    /// <summary>
+    /// Enables Deletion Vectors for efficient deletes/updates (Merge-on-Read).
+    /// Requires Reader v3, Writer v7.
+    /// </summary>
+    public const string DeletionVectors = "deletionVectors";
+
+    /// <summary>
+    /// Enables Change Data Feed (CDF) to track row-level changes.
+    /// </summary>
+    public const string ChangeDataFeed = "changeDataFeed";
+
+    /// <summary>
+    /// Enables Column Mapping (allows renaming columns and special characters).
+    /// </summary>
+    public const string ColumnMapping = "columnMapping";
+
+    /// <summary>
+    /// Enforces Append-Only retention (prevents deletes/updates).
+    /// </summary>
+    public const string AppendOnly = "appendOnly";
+
+    // /// <summary>
+    // /// Enables Identity Columns (auto-incrementing IDs).
+    // /// </summary>
+    // public const string IdentityColumns = "identityColumns";
+    
+    /// <summary>
+    /// Enables Check Constraints on columns.
+    /// </summary>
+    public const string CheckConstraints = "checkConstraints";
+
+    /// <summary>
+    /// Enables TimestampWithoutTimezone.
+    /// </summary>
+    public const string TimestampWithoutTimezone = "TimestampWithoutTimezone";
+    
+    // /// <summary>
+    // /// Enables V2 Checkpointing (JSON + Parquet sidecars).
+    // /// </summary>
+    // public const string V2Checkpoint = "v2Checkpoint";
+
+    /// <summary>
+    /// Enables IcebergCompatV1
+    /// </summary>
+    public const string IcebergCompatV1 = "IcebergCompatV1";
+}
+
+/// <summary>
+/// Common configuration keys for Delta Tables.
+/// </summary>
+public static class DeltaTableProperties
+{
+    /// <summary>
+    /// The shortest duration that deleted files are kept before Vacuum deletes them.
+    /// Default: 7 days (e.g., "interval 7 days").
+    /// </summary>
+    public const string DeletedFileRetentionDuration = "delta.deletedFileRetentionDuration";
+
+    /// <summary>
+    /// How long the history of the Delta Log is kept.
+    /// Default: 30 days (e.g., "interval 30 days").
+    /// </summary>
+    public const string LogRetentionDuration = "delta.logRetentionDuration";
+
+    /// <summary>
+    /// The target file size in bytes for Optimize/Bin-packing.
+    /// Default: 134217728 (128 MB).
+    /// </summary>
+    public const string TargetFileSize = "delta.targetFileSize";
+
+    /// <summary>
+    /// Whether to collect stats for columns (min/max/nulls).
+    /// Default: true.
+    /// </summary>
+    public const string DataSkippingNumIndexedCols = "delta.dataSkippingNumIndexedCols";
+    
+    /// <summary>
+    /// If true, enables the Change Data Feed (CDF).
+    /// </summary>
+    public const string EnableChangeDataFeed = "delta.enableChangeDataFeed";
+}
 /// <summary>
 /// Methods for DeltaLake 
 /// </summary>
@@ -24,6 +111,35 @@ public static class Delta
     public static Expr Target(string columnName)
     {
         return Polars.Col(columnName);
+    }
+    /// <summary>
+    /// Delete rows from a Delta Lake table based on a predicate.
+    /// This operation performs a Copy-on-Write: files containing matching rows are rewritten.
+    /// </summary>
+    /// <param name="path">Path to the Delta table.</param>
+    /// <param name="predicate">Filter expression to identify rows to delete.</param>
+    /// <param name="cloudOptions">Cloud storage configuration.</param>
+    public static void Delete(
+        string path,
+        Expr predicate,
+        CloudOptions? cloudOptions = null)
+    {
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
+
+        using var clonedPredicate = predicate.CloneHandle();
+
+        PolarsWrapper.DeltaDelete(
+            path,
+            clonedPredicate,
+            provider.ToNative(),
+            retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
+            cacheTtl,
+            keys,
+            values
+        );
     }
     /// <summary>
     /// Recursively delete files and directories in the table that are no longer needed by the table for maintaining the transaction history.
@@ -49,17 +165,19 @@ public static class Delta
     /// <returns>The number of files deleted (or selected for deletion in dry-run mode).</returns>
     public static long Vacuum(
         string path,
-        int retentionHours = -1,
+        int? retentionHours = null,
         bool enforceRetention = true,
         bool dryRun = false,
         bool vacuumModeFull = false, 
         CloudOptions? cloudOptions = null)
     {
         var (_, _, _, _, _, _, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
-
+        int retentionArg = retentionHours ?? -1;
+        if (retentionHours.HasValue && retentionHours.Value < 0)
+            throw new ArgumentException("Retention hours cannot be negative.", nameof(retentionHours));
         return PolarsWrapper.Vacuum(
             path,
-            retentionHours,
+            retentionArg,
             enforceRetention,
             dryRun,
             vacuumModeFull,
@@ -248,5 +366,70 @@ public static class Delta
         );
 
         return (long)result;
+    }
+    /// <summary>
+    /// Enables a specific feature on the Delta Table.
+    /// <para>
+    /// WARNING: Enabling features may upgrade the Delta Protocol version (e.g., to Reader v3 / Writer v7).
+    /// Older readers may not be able to read the table after this operation.
+    /// </para>
+    /// </summary>
+    /// <param name="path">The root URI of the Delta table.</param>
+    /// <param name="featureName">The name of the feature to enable (use <see cref="DeltaTableFeatures"/> constants).</param>
+    /// <param name="allowProtocolIncrease">
+    /// If true, allows the operation to upgrade the table's Protocol Version if the feature requires it.
+    /// If false, and the current protocol is too low, the operation will fail.
+    /// </param>
+    /// <param name="cloudOptions">Cloud storage credentials.</param>
+    public static void AddFeature(
+        string path, 
+        string featureName, 
+        bool allowProtocolIncrease = true, 
+        CloudOptions? cloudOptions = null)
+    {
+        var (_, _, _, _, _, _, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
+
+        PolarsWrapper.AddFeature(
+            path,
+            featureName,
+            allowProtocolIncrease,
+            keys,
+            values
+        );
+    }
+    /// <summary>
+    /// Sets or updates properties on the Delta Table.
+    /// </summary>
+    /// <param name="path">The root URI of the Delta table.</param>
+    /// <param name="properties">A dictionary of key-value pairs to set.</param>
+    /// <param name="raiseIfNotExists">
+    /// If true, the operation fails if you try to update a property that doesn't strictly exist (rarely used, default false).
+    /// </param>
+    /// <param name="cloudOptions">Cloud storage credentials.</param>
+    public static void SetTableProperties(
+        string path,
+        Dictionary<string, string> properties,
+        bool raiseIfNotExists = false,
+        CloudOptions? cloudOptions = null)
+    {
+        if (properties == null || properties.Count == 0)
+            throw new ArgumentException("Properties dictionary cannot be empty.", nameof(properties));
+
+        // 1. Prepare Properties (Unpack Dictionary)
+        var propKeys = properties.Keys.ToArray();
+        var propValues = properties.Values.ToArray();
+
+        // 2. Prepare Cloud Options
+        var (_, _, _, _, _, _, cloudKeys, cloudValues) = CloudOptions.ParseCloudOptions(cloudOptions);
+
+        // 3. Call Wrapper
+        PolarsWrapper.SetTableProperties(
+            path,
+            propKeys,
+            propValues,
+            raiseIfNotExists,
+            cloudKeys,
+            cloudValues
+        );
     }
 }

@@ -711,7 +711,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // 注意：我们必须构造一个 Expr 传给 DeleteDelta
         var predicateRewrite = (Col("Year") == Lit("2024")) & (Col("Id")==4);
         
-        DeleteDelta(rootUrl, predicateRewrite, cloudOptions: options);
+        Delta.Delete(rootUrl, predicateRewrite, cloudOptions: options);
 
         // 验证 V2 (应该剩 4 行: 1,2,3,5)
         using var dfV2 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("Id");
@@ -730,7 +730,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         
         var predicateDrop = Col("Year") == Lit("2023");
         
-        DeleteDelta(rootUrl, predicateDrop, cloudOptions: options);
+        Delta.Delete(rootUrl, predicateDrop, cloudOptions: options);
 
         // 验证 V3 (应该剩 2 行: 3, 5)
         using var dfV3 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect().Sort("Id");
@@ -749,7 +749,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         
         var predicateNoOp = Col("Id") == 999;
         
-        DeleteDelta(rootUrl, predicateNoOp, cloudOptions: options);
+        Delta.Delete(rootUrl, predicateNoOp, cloudOptions: options);
 
         // 验证 V4 (数据应与 V3 一致)
         using var dfV4 = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
@@ -1947,5 +1947,102 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         Assert.Equal(148.5, (double)afterDf["Val"][99]!); // 99 * 1.5
 
         Console.WriteLine("Data Integrity Check Passed!");
+    }
+    [Fact]
+    [Trait("DeltaLake", "Features")]
+    public void Test_Add_DeletionVector_Feature()
+    {
+        var tableName = $"delta_feat_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+        
+        // 1. 初始化一张普通的表 (Protocol 默认通常是较低的，比如 Reader v1/Writer v2)
+        using (var df = DataFrame.FromColumns(new { Id = new[] { 1, 2, 3 } }))
+        {
+            df.Lazy().SinkDelta(rootUrl, cloudOptions: options);
+        }
+
+        // 2. 尝试添加 DeletionVectors 特性
+        // 这通常需要 Reader v3 / Writer v7
+        Console.WriteLine("Enabling DeletionVectors...");
+        Delta.AddFeature(
+            rootUrl, 
+            DeltaTableFeatures.DeletionVectors, 
+            allowProtocolIncrease: true, 
+            cloudOptions: options
+        );
+
+        // 3. 验证 (通过再次写入或读取来确保存储层没崩)
+        // 既然开启了 DV，下次 Delta Lake 内部做 Delete 时就会用 DV 了
+        // 这里我们要确保 Polars 依然能读它 (兼容性检查)
+        using var dfRead = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(3, dfRead.Height);
+        
+        // 注意：目前我们没有暴露 GetProtocolVersion 的 API，
+        // 但如果 AddFeature 没抛异常，说明 Protocol 升级成功了。
+        // 如果想更严谨，可以去 S3 查看 _delta_log/0000000000000001.json 里的 protocol 字段
+    }
+    [Fact]
+    [Trait("DeltaLake", "Properties")]
+    public void Test_Set_Table_Retention()
+    {
+        var tableName = $"delta_props_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+        
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+        
+        // 1. 创建表
+        using (var df = DataFrame.FromColumns(new { Id = new[] { 1 } }))
+        {
+            df.Lazy().SinkDelta(rootUrl, cloudOptions: options);
+        }
+
+        // 2. 设置属性：修改删除文件保留时间为 1 小时 (默认是 7 天)
+        // 这在测试 Vacuum 功能时非常有用
+        Console.WriteLine("Setting retention to 1 hour...");
+        
+        var props = new Dictionary<string, string>
+        {
+            { DeltaTableProperties.DeletedFileRetentionDuration, "interval 1 hour" },
+            { "my.custom.metadata", "polars-driver-v1" } // 也可以设自定义 Tag
+        };
+
+        Delta.SetTableProperties(rootUrl, props, cloudOptions: options);
+
+        // 3. 验证 (通过 GetProtocol 或查看 S3 上的 Metadata Action)
+        // 目前我们还没做 GetProperties 的 API，但只要上面不报错，
+        // 说明 Commit 已经成功写入了 Delta Log。
+        
+        // 补充验证：尝试再次写入，确保表没坏
+        using (var df2 = DataFrame.FromColumns(new { Id = new[] { 2 } }))
+        {
+            df2.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+        }
+        
+        using var dfRead = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(2, dfRead.Height);
     }
 }

@@ -1,13 +1,14 @@
 use chrono::TimeZone;
 use chrono::Utc;
 use deltalake::DeltaTable;
+use deltalake::kernel::TableFeatures;
 use deltalake::operations::vacuum::VacuumMode;
 use polars_io::pl_async::get_runtime;
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::ffi::c_char;
 use polars::error::PolarsError;
 use polars::error::PolarsResult;
-use chrono::Duration;
 
 use crate::delta::utils::build_delta_storage_options_map;
 use crate::delta::utils::parse_table_url;
@@ -49,8 +50,11 @@ pub extern "C" fn pl_io_delta_vacuum(
             
             // Retention
             if retention_hours >= 0 {
+                let seconds = (retention_hours as i64).checked_mul(3600)
+                    .ok_or(PolarsError::ComputeError("Retention hours overflow".into()))?;
+                    
                 vacuum_builder = vacuum_builder.with_retention_period(
-                    Duration::try_seconds(retention_hours as i64 * 3600).unwrap()
+                    chrono::Duration::seconds(seconds)
                 );
             }
 
@@ -196,6 +200,117 @@ pub extern "C" fn pl_io_delta_history(
         unsafe { 
             *out_json_ptr = c_str.into_raw(); 
         }
+
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_io_delta_add_feature(
+    path_ptr: *const c_char,
+    feature_name_ptr: *const c_char, // e.g., "deletionVectors", "appendOnly"
+    allow_protocol_increase: bool,
+    // --- Cloud Args ---
+    cloud_keys: *const *const c_char,
+    cloud_values: *const *const c_char,
+    cloud_len: usize
+) {
+    ffi_try_void!({
+        // 1. 解析参数
+        let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        let feature_str = ptr_to_str(feature_name_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        let table_url = parse_table_url(path_str)?;
+        let storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
+
+        // 2. 将字符串转换为 Delta TableFeatures 枚举
+        // delta-rs 的 feature 名字通常是驼峰命名，如 "deletionVectors"
+        let feature = <TableFeatures as std::str::FromStr>::from_str(feature_str)
+            .map_err(|_| PolarsError::ComputeError(format!("Unknown table feature: {}", feature_str).into()))?;
+
+        let rt = get_runtime();
+
+        rt.block_on(async {
+            // 3. 加载表
+            let table = DeltaTable::try_from_url_with_storage_options(table_url, storage_options)
+                .await
+                .map_err(|e| PolarsError::ComputeError(format!("Failed to load table: {}", e).into()))?;
+
+            // 4. 执行 Add Feature
+            // 这里的逻辑直接映射你提供的源码
+            let builder = table.add_feature()
+                .with_feature(feature)
+                .with_allow_protocol_versions_increase(allow_protocol_increase);
+
+            let _ = builder.await
+                .map_err(|e| PolarsError::ComputeError(format!("Failed to add feature: {}", e).into()))?;
+            
+            Ok::<(), PolarsError>(())
+        })?;
+
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_io_delta_set_table_properties(
+    path_ptr: *const c_char,
+    
+    // --- Properties to Set ---
+    props_keys: *const *const c_char,
+    props_values: *const *const c_char,
+    props_len: usize,
+    
+    // --- Options ---
+    raise_if_not_exists: bool, // 如果是 Update 操作且 Key 不存在是否报错
+    
+    // --- Cloud Args ---
+    cloud_keys: *const *const c_char,
+    cloud_values: *const *const c_char,
+    cloud_len: usize
+) {
+    ffi_try_void!({
+        // 1. 解析基础参数
+        let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        let table_url = parse_table_url(path_str)?;
+        let storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
+
+        // 2. 构建 Properties HashMap
+        let mut properties = HashMap::with_capacity(props_len);
+        for i in 0..props_len {
+            unsafe {
+                let k_ptr = *props_keys.add(i);
+                let v_ptr = *props_values.add(i);
+                // 简单的空指针保护
+                if !k_ptr.is_null() && !v_ptr.is_null() {
+                    let k = ptr_to_str(k_ptr).unwrap().to_string();
+                    let v = ptr_to_str(v_ptr).unwrap().to_string();
+                    properties.insert(k, v);
+                }
+            }
+        }
+
+        if properties.is_empty() {
+            // 如果没传属性，直接返回，或者也可以让 delta-rs 报错
+            return Ok(());
+        }
+
+        let rt = get_runtime();
+        rt.block_on(async {
+            // 3. 加载表
+            let table = DeltaTable::try_from_url_with_storage_options(table_url, storage_options)
+                .await
+                .map_err(|e| PolarsError::ComputeError(format!("Failed to load table: {}", e).into()))?;
+
+            // 4. 执行 Set Properties
+            let builder = table.set_tbl_properties()
+                .with_properties(properties)
+                .with_raise_if_not_exists(raise_if_not_exists);
+
+            let _ = builder.await
+                .map_err(|e| PolarsError::ComputeError(format!("Failed to set properties: {}", e).into()))?;
+            
+            Ok::<(), PolarsError>(())
+        })?;
 
         Ok(())
     })

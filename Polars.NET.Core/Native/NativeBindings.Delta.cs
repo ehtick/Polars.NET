@@ -65,4 +65,24 @@ unsafe internal partial class NativeBindings
 
         out nuint optimized_files
     );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_io_delta_add_feature(
+        string path,
+        string feature_name,
+        [MarshalAs(UnmanagedType.U1)] bool allowProtocolIncrease,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? keys,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_io_delta_set_table_properties(
+        string path,
+        [MarshalAs(UnmanagedType.LPArray)] string[] props_keys,
+        [MarshalAs(UnmanagedType.LPArray)] string[] props_values,
+        nuint props_len,
+        [MarshalAs(UnmanagedType.U1)] bool raise_if_not_exists,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? keys,
+        [MarshalAs(UnmanagedType.LPArray)] string[]? values,
+        nuint cloud_len
+    );
 }

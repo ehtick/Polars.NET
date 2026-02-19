@@ -261,35 +261,7 @@ public static class Polars
     /// </example>
     public static Expr CombineDateAndTime(Expr date, Expr time, TimeUnit tu = TimeUnit.Microseconds)
         => date.Dt.Combine(time, tu);
-    /// <summary>
-    /// Delete rows from a Delta Lake table based on a predicate.
-    /// This operation performs a Copy-on-Write: files containing matching rows are rewritten.
-    /// </summary>
-    /// <param name="path">Path to the Delta table.</param>
-    /// <param name="predicate">Filter expression to identify rows to delete.</param>
-    /// <param name="cloudOptions">Cloud storage configuration.</param>
-    public static void DeleteDelta(
-        string path,
-        Expr predicate,
-        CloudOptions? cloudOptions = null)
-    {
-        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
 
-        using var clonedPredicate = predicate.CloneHandle();
-
-        PolarsWrapper.DeltaDelete(
-            path,
-            clonedPredicate,
-            provider.ToNative(),
-            retries,
-            retryTimeoutMs,
-            retryInitBackoffMs,
-            retryMaxBackoffMs,
-            cacheTtl,
-            keys,
-            values
-        );
-    }
 
 }
 

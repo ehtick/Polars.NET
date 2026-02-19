@@ -141,4 +141,52 @@ public static partial class PolarsWrapper
 
         return optimizedFilesCount;
     }
+    public static void AddFeature(
+        string path,
+        string featureName,
+        bool allowProtocolIncrease,
+        // Cloud Options
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
+        NativeBindings.pl_io_delta_add_feature(
+            path,
+            featureName,
+            allowProtocolIncrease,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        ErrorHelper.CheckVoid();
+    }
+    public static void SetTableProperties(
+        string path,
+        string[] propKeys,
+        string[] propValues,
+        bool raiseIfNotExists,
+        // Cloud Options
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        nuint propLen = (nuint)propKeys.Length;
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
+        NativeBindings.pl_io_delta_set_table_properties(
+            path,
+            propKeys,
+            propValues,
+            propLen,
+            raiseIfNotExists,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        ErrorHelper.CheckVoid();
+    }
 }
