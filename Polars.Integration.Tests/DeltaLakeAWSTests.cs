@@ -2171,6 +2171,138 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         Console.WriteLine("Data Integrity Check Passed!");
     }
     [Fact]
+    [Trait("DeltaLake", "OptimizeDV")]
+    public void Test_Optimize_ZOrder_With_Deletion_Vectors_Scale_100()
+    {
+        var tableName = $"delta_opt_dv_100_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        var rawEndpoint = _minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/');
+        var polarsEndpoint = $"http://{rawEndpoint}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: polarsEndpoint
+        );
+
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // ==========================================
+        // Step 1: 制造碎片数据 (分 4 批写入，共 100 行)
+        // ==========================================
+        Console.WriteLine("Step 1: Write Fragmented Data (4 Appends, 100 Rows total)...");
+
+        for (int i = 0; i < 4; i++)
+        {
+            int startId = i * 25;
+            var ids = Enumerable.Range(startId, 25).ToArray();
+            var cats = ids.Select(x => x % 2 == 0 ? "Even" : "Odd").ToArray();
+            var vals = ids.Select(x => x * 1.5).ToArray();
+
+            using var df = DataFrame.FromColumns(new
+            {
+                Id = ids,
+                Category = cats,
+                Val = vals
+            });
+            
+            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, partitionBy: Selector.Col("Category"), cloudOptions: options);
+        }
+
+        using var beforeDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(100, beforeDf.Height);
+        Console.WriteLine($"Before Optimization: {beforeDf.Height} rows verified.");
+
+        // ==========================================
+        // Step 1.5: 开启 Deletion Vectors 特性 (MoR 模式)
+        // ==========================================
+        Console.WriteLine("Step 1.5: Enabling Deletion Vectors (MoR Mode)...");
+        Delta.AddFeature(
+            rootUrl, 
+            DeltaTableFeatures.DeletionVectors, 
+            allowProtocolIncrease: true, 
+            cloudOptions: options
+        );
+
+        // ==========================================
+        // Step 2: 制造 DV 僵尸行 (删除 Id = 10 和 Id = 99)
+        // ==========================================
+        Console.WriteLine("Step 2: Creating Deletion Vectors (Soft Deleting Id 10 and 99)...");
+        using (var delDf = DataFrame.FromColumns(new { Id = new[] { 10, 99 }, Action = new[] { "DeleteMe", "DeleteMe" } }))
+        {
+            // 利用我们刚刚写好的 MoR Merge 来打 DV 补丁
+            delDf.Lazy().MergeDelta(
+                rootUrl,
+                mergeKeys: ["Id"],
+                matchedDeleteCond: Delta.Source("Action") == "DeleteMe",
+                canEvolve:true,
+                
+                cloudOptions: options
+            );
+        }
+
+        // 此时，逻辑上只剩 98 行，但在底层物理文件上，10 和 99 依然存在，只是被标记在 DV (.bin) 文件里
+        using var midDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        Assert.Equal(98, midDf.Height); 
+        Console.WriteLine($"After DV Delete (Logical): {midDf.Height} rows verified.");
+        // midDf.Show();
+        // ==========================================
+        // Step 3: 执行 Optimize (Z-Order by Id + DV Purging)
+        // ==========================================
+        Console.WriteLine("Step 3: Executing Optimize with Z-Order and DV Purging...");
+        
+        var zCols = new[] { "Id" };
+        
+        long numFiles = Delta.Optimize(
+            rootUrl,
+            targetSizeMb: 128, 
+            zOrderColumns: zCols,
+            cloudOptions: options
+        );
+
+        Console.WriteLine($"Optimized! Numbers of original files compacted/purged: {numFiles}");
+        Assert.True(numFiles > 0, "Should have optimized at least 1 file");
+
+        // ==========================================
+        // Step 4: 验证数据完整性 (Data Integrity & Purge Check)
+        // ==========================================
+        using var afterDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options)
+            .Sort("Id", false) 
+            .Collect();
+
+        afterDf.Show();
+        
+        // 关键断言 1：经过复杂的 DV 过滤和 Z-Order 位交织后，行数必须依然是 98
+        Assert.Equal(98, afterDf.Height);
+        var validIds = new[] {10,99};
+        
+        var predicate = Col("Id").IsIn(Lit(validIds).Implode());
+        // 关键断言 2：被软删除的行必须已经被物理剔除
+        var deletedRows = afterDf.Filter(predicate);
+        Assert.Equal(0, deletedRows.Height); 
+
+        // 关键断言 3：没被删除的位交织数据必须正确
+        // Row 0
+        Assert.Equal(0, afterDf["Id"][0]);
+        Assert.Equal("Even", afterDf["Category"][0]);
+        
+        // Row 49 (Id=49 is actually at index 48 now because Id=10 is gone)
+        var row49 = afterDf.Filter(Col("Id") == 49);
+        Assert.Equal(49, row49["Id"][0]);
+        Assert.Equal("Odd", row49["Category"][0]); 
+
+        // Row 98 (Last element, since 99 was deleted)
+        var lastRow = afterDf.Filter(Col("Id") == 98);
+        Assert.Equal(98, lastRow["Id"][0]);
+        Assert.Equal("Even", lastRow["Category"][0]);
+        Assert.Equal(147.0, (double)lastRow["Val"][0]!); // 98 * 1.5
+
+        Console.WriteLine("Data Integrity & DV Purge Check Passed! 🚀");
+    }
+    [Fact]
     [Trait("DeltaLake", "Features")]
     public void Test_Add_DeletionVector_Feature()
     {

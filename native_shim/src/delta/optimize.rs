@@ -8,7 +8,7 @@ use deltalake::kernel::{Action, Add, Remove, transaction::CommitBuilder};
 use deltalake::protocol::DeltaOperation;
 use uuid::Uuid;
 
-use crate::{delta::{merge::phase_process_staging, utils::*}, utils::ptr_to_vec_string};
+use crate::{delta::{deletion_vector::{apply_deletion_vector, read_deletion_vector}, merge::phase_process_staging, utils::*}, utils::ptr_to_vec_string};
 use crate::io::{build_cloud_options, build_parquet_write_options, build_unified_sink_args}; 
 use crate::utils::{ptr_to_str};
 
@@ -18,7 +18,7 @@ use crate::utils::{ptr_to_str};
 
 struct OptimizeContext {
     pub table_url: Url,
-    pub storage_options: HashMap<String, String>,
+    // pub storage_options: HashMap<String, String>,
     pub target_size_bytes: i64,
     pub partition_filters: Option<HashMap<String, String>>,// Optional filter
     pub z_order_columns: Option<Vec<String>>
@@ -79,24 +79,33 @@ async fn phase_1_plan_bins(
         // =========================================================
         // FIX: Manual conversion to Add Action
         // =========================================================
+
+        let dv_descriptor = view.deletion_vector_descriptor(); // 提取 DV
+
         let add = Add {
             path: view.path().to_string(),
             size: view.size(),
-            partition_values: partition_values_map, // 使用手动提取的 Map
+            partition_values: partition_values_map,
             modification_time: view.modification_time(),
             data_change: false, 
-            stats: view.stats().map(|s| s.to_string()), 
+            stats: view.stats(), // view.stats() 本来就是 Option<String>
             
-            // Explicitly set to None as requested
             tags: None,
-            deletion_vector: None,
+            deletion_vector: dv_descriptor.clone(), // <--- [关键修复] 必须保留 DV！
             
             base_row_id: None,
             default_row_commit_version: None,
             clustering_provider: None,
         };
 
-        if add.size >= min_rewrite_threshold {
+        // =========================================================
+        // FIX: 智能入选逻辑 (Small Files OR Dirty Files)
+        // =========================================================
+        let is_small_file = add.size < min_rewrite_threshold;
+        let has_dv = dv_descriptor.is_some();
+
+        // 只有“既是大文件，又没带过 DV 补丁”的纯净大文件，才不需要优化
+        if !is_small_file && !has_dv {
             continue;
         }
 
@@ -209,9 +218,10 @@ async fn phase_1_plan_bins(
 
 fn phase_2_execute_rewrite(
     ctx: &OptimizeContext,
+    table: &DeltaTable, // <--- [NEW] 需要 Table 来读取 Object Store 里的 DV
     bin: &OptimizeBin,
     cloud_args: &RawCloudArgs,
-    schema: &Schema, // Delta Table 的 Schema (转为 Polars Schema)
+    // schema: &Schema, 
 ) -> PolarsResult<(String, Uuid)> {
     
     // 1. Setup Identity
@@ -219,103 +229,173 @@ fn phase_2_execute_rewrite(
     let staging_dir_name = format!(".optimize_staging_{}", write_id);
     let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
     let staging_uri = format!("{}/{}", root_trimmed, staging_dir_name);
+    
     println!(
         "Optimizing bin: {} files, total size: {:.3} MB", 
         bin.files.len(),
         bin.total_size as f64 / 1024.0 / 1024.0
     );
-    // 2. Construct Reader (LazyFrame)
-    // -----------------------------------------------------
-    // 将 Add Actions 转换为 Polars 路径
-    let full_paths: Vec<PlRefPath> = bin.files.iter()
-        .map(|f| {
-            let full = format!("{}/{}", root_trimmed, f.path);
-            PlRefPath::new(full)
-        })
-        .collect();
-    
-    let paths_buffer = Buffer::from(full_paths);
 
-    // 复用 merge.rs 中的构建逻辑
-    let mut scan_args = ScanArgsParquet::default();
-    scan_args.cloud_options = unsafe {
-        build_cloud_options(
+    // =========================================================
+    // 2. Construct Reader (Handling Deletion Vectors)
+    // =========================================================
+    let has_dv = bin.files.iter().any(|f| f.deletion_vector.is_some());
+
+    // 统一的 ScanArgs 闭包
+    let make_scan_args = || unsafe {
+        let mut args = ScanArgsParquet::default();
+        args.hive_options = HiveOptions {
+            enabled: Some(true), 
+            hive_start_idx: 0, 
+            schema: None, 
+            try_parse_dates: true,
+        };
+        args.cloud_options = build_cloud_options(
             cloud_args.provider, cloud_args.retries, cloud_args.retry_timeout_ms,
             cloud_args.retry_init_backoff_ms, cloud_args.retry_max_backoff_ms, cloud_args.cache_ttl,
             cloud_args.keys, cloud_args.values, cloud_args.len,
-        )
+        );
+        // args.schema = Some(Arc::new(schema.clone()));
+        args.low_memory = true;
+        args.rechunk = false;
+        
+        // 如果有 DV，必须开启物理行号列以供过滤
+        if has_dv {
+            args.row_index = Some(RowIndex { 
+                name: "__row_index".into(), 
+                offset: 0 
+            });
+            args.include_file_paths = Some(PlSmallStr::from_static("__file_path"));
+        }
+        args
     };
-    // 强制 Schema 检查，防止类型推断错误
-    scan_args.schema = Some(Arc::new(schema.clone()));
-    scan_args.low_memory = true; // 优化操作通常涉及大IO
-    scan_args.rechunk = false;   // 流式处理不需要
 
-    let mut lf = LazyFrame::scan_parquet_files(paths_buffer, scan_args)?;
+    let mut lf = if !has_dv {
+        // ---------------------------------------------------------
+        // Scenario A: Fast Path (No DVs in this bin)
+        // ---------------------------------------------------------
+        let full_paths: Vec<PlRefPath> = bin.files.iter()
+            .map(|f| PlRefPath::new(format!("{}/{}", root_trimmed, f.path)))
+            .collect();
+        LazyFrame::scan_parquet_files(Buffer::from(full_paths), make_scan_args())?
+    } else {
+        // ---------------------------------------------------------
+        // Scenario B: Slow Path (DVs present, need filtering)
+        // ---------------------------------------------------------
+        let mut lfs = Vec::new();
+        let mut clean_paths = Vec::new();
+        let mut dirty_files = Vec::new();
 
+        for f in &bin.files {
+            if f.deletion_vector.is_some() {
+                dirty_files.push(f);
+            } else {
+                clean_paths.push(format!("{}/{}", root_trimmed, f.path));
+            }
+        }
+
+        // 1. 批量读 Clean 文件
+        if !clean_paths.is_empty() {
+            let pl_paths: Vec<PlRefPath> = clean_paths.iter().map(|s| PlRefPath::new(s)).collect();
+            lfs.push(LazyFrame::scan_parquet_files(Buffer::from(pl_paths), make_scan_args())?);
+        }
+
+        // 2. 逐个读 Dirty 文件并过滤 DV
+        if !dirty_files.is_empty() {
+            let rt = get_runtime();
+            let object_store = table.object_store();
+            let table_root = Path::from(root_trimmed);
+
+            let dirty_lfs = rt.block_on(async {
+                let mut processed = Vec::with_capacity(dirty_files.len());
+                for f in dirty_files {
+                    let full_path = format!("{}/{}", root_trimmed, f.path);
+                    
+                    // 单文件读取，确保行号从 0 开始
+                    let mut single_lf = LazyFrame::scan_parquet(
+                        PlRefPath::new(&full_path), 
+                        make_scan_args()
+                    )?;
+
+                    // 核心净化逻辑：应用 DV
+                    if let Some(dv) = &f.deletion_vector {
+                        let bitmap = read_deletion_vector(object_store.clone(), dv, &table_root).await?;
+                        single_lf = apply_deletion_vector(single_lf, bitmap)?;
+                    }
+                    processed.push(single_lf);
+                }
+                Ok::<_, PolarsError>(processed)
+            })?;
+            lfs.extend(dirty_lfs);
+        }
+
+        let args = UnionArgs {
+            parallel: true, rechunk: false, to_supertypes: true, diagonal: true, ..Default::default()
+        };
+        polars::prelude::concat(lfs, args)?
+    };
+
+    // 如果因为 DV 引入了辅助列，记得在写入前丢弃它
+    if has_dv {
+        lf = lf.drop(Selector::ByName { 
+            names: Arc::from(vec![PlSmallStr::from_static("__row_index"),
+                PlSmallStr::from_static("__file_path")]),
+            strict: false 
+        });
+    }
+
+    // =========================================================
+    // 3. Transformations (Z-Order & Partitions)
+    // =========================================================
     if let Some(z_cols) = &ctx.z_order_columns {
-        // 调用我们刚写好的硬核 Z-Order 模块
         lf = crate::delta::zorder::apply_z_order(lf, z_cols)?;
     }
 
     if !bin.partition_values.is_empty() {
-        // 1. 遍历分区键，将 String 转换为 PlSmallStr
         let part_cols: Vec<PlSmallStr> = bin.partition_values.keys()
-            .map(|k| PlSmallStr::from_str(k)) // 使用 from_str 处理动态字符串
+            .map(|k| PlSmallStr::from_str(k)) 
             .collect();
         
-        // 2. 构造 Selector::ByName
         lf = lf.drop(Selector::ByName { 
-            names: Arc::from(part_cols), // Vec<PlSmallStr> 可以直接转为 Arc<[PlSmallStr]>
-            strict: false // 建议设为 false：如果 Polars 没推断出分区列，drop 也不报错，安全
+            names: Arc::from(part_cols), 
+            strict: false 
         });
     }
 
-    // 构造分区路径前缀
-    // e.g. "Category=Even"
+    // =========================================================
+    // 4. Sink to Staging
+    // =========================================================
     let mut part_path = String::new();
     if !bin.partition_values.is_empty() {
-        // 保证顺序确定，比如按 key 排序
         let mut entries: Vec<(&String, &Option<String>)> = bin.partition_values.iter().collect();
         entries.sort_by_key(|e| e.0);
-        
         let paths: Vec<String> = entries.iter().map(|(k, v)| {
             format!("{}={}", k, v.as_deref().unwrap_or("__HIVE_DEFAULT_PARTITION__"))
         }).collect();
         part_path = paths.join("/");
     }
 
-    // 拼接到 Staging URI 后面
-    // staging_uri/Category=Even/part-xxx.parquet
     let file_name = format!("part-{}-optimized.parquet", Uuid::new_v4());
     let dest_path_str = if part_path.is_empty() {
         format!("{}/{}", staging_uri, file_name)
     } else {
         format!("{}/{}/{}", staging_uri, part_path, file_name)
     };
-    let write_opts = build_parquet_write_options(
-        1,  // compression: Snappy
-        -1, // level
-        true, // statistics (Crucial for Delta!)
-        0, 0, -1
-    ).map_err(|e| PolarsError::ComputeError(format!("Options error: {}", e).into()))?;
+    
+    let write_opts = build_parquet_write_options(1, -1, true, 0, 0, -1)
+        .map_err(|e| PolarsError::ComputeError(format!("Options error: {}", e).into()))?;
 
-    let unified_args = unsafe {
-        build_unified_sink_args(
-            true, // mkdir
-            false, // maintain_order
-            0,
-            cloud_args.provider, cloud_args.retries, cloud_args.retry_timeout_ms,
-            cloud_args.retry_init_backoff_ms, cloud_args.retry_max_backoff_ms, cloud_args.cache_ttl,
-            cloud_args.keys, cloud_args.values, cloud_args.len,
-        )
-    };
+    let unified_args = unsafe { build_unified_sink_args(
+        true, false, 0, 
+        cloud_args.provider, cloud_args.retries, cloud_args.retry_timeout_ms,
+        cloud_args.retry_init_backoff_ms, cloud_args.retry_max_backoff_ms, cloud_args.cache_ttl,
+        cloud_args.keys, cloud_args.values, cloud_args.len,
+    )};
 
-    // 配置 Destination
     let destination = SinkDestination::File {
         target: SinkTarget::Path(PlRefPath::from(dest_path_str.as_str())),
     };
 
-    // 4. Execute Flow
     lf.sink(destination, FileWriteFormat::Parquet(write_opts), unified_args)?
         .collect_with_engine(Engine::Streaming)?;
 
@@ -362,6 +442,7 @@ async fn phase_3_commit_optimize(
             extended_file_metadata: Some(true),
             partition_values: Some(f.partition_values.clone()),
             size: Some(f.size),
+            deletion_vector: f.deletion_vector.clone(),
             ..Default::default()
         })
     }).collect();
@@ -449,7 +530,7 @@ pub extern "C" fn pl_io_delta_optimize(
 
         let ctx = OptimizeContext {
             table_url: table_url.clone(),
-            storage_options: delta_storage_options,
+            // storage_options: delta_storage_options,
             target_size_bytes: target_size_mb * 1024 * 1024,
             partition_filters:partition_filters, 
             z_order_columns,// 存入 Context
@@ -472,9 +553,14 @@ pub extern "C" fn pl_io_delta_optimize(
         let mut total_optimized_files = 0;
 
         // 2. Initial Load
-        let (mut table, _, polars_schema) = rt.block_on(async {
-            let t = DeltaTable::try_from_url_with_storage_options(ctx.table_url.clone(), ctx.storage_options.clone())
-                .await.map_err(|e| PolarsError::ComputeError(format!("Delta load error: {}", e).into()))?;
+        // [FIX] 直接使用局部变量 table_url 和 delta_storage_options，不再通过 ctx 访问
+        let (mut table, _, _polars_schema) = rt.block_on(async {
+            let t = DeltaTable::try_from_url_with_storage_options(
+                table_url.clone(), 
+                delta_storage_options.clone()
+            )
+            .await.map_err(|e| PolarsError::ComputeError(format!("Delta load error: {}", e).into()))?;
+            
             let s = get_polars_schema_from_delta(&t)?;
             Ok::<_, PolarsError>((t, (), s))
         })?;
@@ -515,7 +601,7 @@ pub extern "C" fn pl_io_delta_optimize(
 
             for bin in bins {
                 // Execute Rewrite
-                let (staging_dir, write_id) = phase_2_execute_rewrite(&ctx, &bin, &cloud_args, &polars_schema)?;
+                let (staging_dir, write_id) = phase_2_execute_rewrite(&ctx, &table,&bin, &cloud_args)?;
                 let staging_dir_fail_safe = staging_dir.clone();
 
                 // Commit
@@ -526,6 +612,10 @@ pub extern "C" fn pl_io_delta_optimize(
                 match commit_res {
                     Ok(_) => {
                         total_optimized_files += bin.files.len();
+                        // [FIX 2] 更新表状态，防止下一个 Bin 提交时发生 VersionMismatch 冲突
+                        rt.block_on(async {
+                            table.update_state().await
+                        }).map_err(|e| PolarsError::ComputeError(format!("Reload table failed: {}", e).into()))?;
                     },
                     Err(e) => {
                         // Handle Conflict
