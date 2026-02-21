@@ -70,32 +70,29 @@ pub extern "C" fn pl_scan_delta(
             let snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot error: {}", e).into()))?;
             let partition_cols = snapshot.metadata().partition_columns().clone();
 
-            // let files = table.get_file_uris().map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-            // let uris: Vec<String> = files.map(|s| s.to_string()).collect();
-            // 准备容器
+            // Prepare Vectors
             let mut clean = Vec::new();
-            let mut dirty = Vec::new(); // 存储 (绝对路径, DV描述符)
+            let mut dirty = Vec::new(); 
 
-            // 获取迭代器 (返回 LogicalFileView)
+            // Get iterator
             let binding = table.clone();
             let mut stream = binding.get_active_add_actions_by_partitions(&[]);
             let binding_table_url = table.table_url().to_string();
             let table_root = binding_table_url.trim_end_matches('/'); // e.g. "s3://bucket/table"
 
             while let Some(item) = stream.next().await {
-                // item 是 DeltaResult<LogicalFileView>
+                // Item is DeltaResult<LogicalFileView>
                 let view = item.map_err(|e| PolarsError::ComputeError(format!("Action stream error: {}", e).into()))?;
                 
-                // 1. 构建绝对路径 (view.path() 返回的是相对路径字符串)
+                //  Build full path
                 let full_path = format!("{}/{}", table_root, view.path());
 
-                // 2. 检查是否有 Deletion Vector
-                // [关键修改] 使用 deletion_vector_descriptor() 方法
+                // Check Deletion Vector
                 if let Some(dv_descriptor) = view.deletion_vector_descriptor() {
-                    // 有 DV -> 放入脏列表，保存 DV 信息
+                    // Has DV -> Dirty 
                     dirty.push((full_path, dv_descriptor));
                 } else {
-                    // 无 DV -> 放入干净列表
+                    // No DV -> Clean
                     clean.push(full_path);
                 }
             }
@@ -123,75 +120,67 @@ pub extern "C" fn pl_scan_delta(
             args.schema = Some(Arc::new(polars_schema.clone()));
         }
 
-        // 4. [FIXED] Inject Hive Partition Schema 
-        // 逻辑修正：使用 with_capacity + insert 构建 Schema
+        // 6. Inject Hive Partition Schema 
         if hive_schema_ptr.is_null() && !partition_cols.is_empty() {
-            // 按照参考代码，创建一个指定容量的空 Schema
             let mut part_schema = polars::prelude::Schema::with_capacity(partition_cols.len());
             
-            // 遍历 Delta 记录的分区列名
+            // Iter Delta log partition column
             for col_name in &partition_cols {
-                // 从完整 Schema 中查找该列的类型
+                // Check cols dtype from Schema 
                 if let Some(dtype) = polars_schema.get(col_name) {
-                    // 使用 insert 方法插入列 (key 需要转为 SmartString 或类似，into() 通常能处理)
                     part_schema.insert(col_name.into(), dtype.clone());
                 }
             }
             
-            // 如果成功提取到了分区列
+            // Get partition schema
             if !part_schema.is_empty() {
-                // 显式覆盖 HiveOptions
                 args.hive_options = HiveOptions {
                     enabled: Some(true),
                     hive_start_idx: 0,
-                    schema: Some(Arc::new(part_schema)), // 注入构建好的 schema
-                    try_parse_dates: try_parse_hive_dates, // 沿用传入的配置
+                    schema: Some(Arc::new(part_schema)), 
+                    try_parse_dates: try_parse_hive_dates, 
                 };
             }
         }
 
         // =========================================================
-        // Phase 3: 构建 LazyFrames
+        // Phase 3: Build LazyFrames
         // =========================================================
         let mut lfs = Vec::new();
 
-        // 3.1 处理 Clean Files (批量，高性能)
+        // 3.1 Handle Clean Files
         if !clean_paths.is_empty() {
             let pl_paths: Vec<PlRefPath> = clean_paths.iter().map(|s| PlRefPath::new(s)).collect();
             let buffer: Buffer<PlRefPath> = pl_paths.into();
             
-            // 使用 args.clone() 
             let lf_clean = LazyFrame::scan_parquet_files(buffer, args.clone())?;
             lfs.push(lf_clean);
         }
 
-        // 3.2 处理 Dirty Files (逐个处理，应用 DV)
+        // 3.2 Handle Dirty Files
         if !dirty_infos.is_empty() {
             let object_store = table.object_store(); 
             let table_root = deltalake::Path::from(table.table_url().to_string());
 
-            // 既然涉及 IO (读 DV)，这部分在 runtime block_on 里做
             let dirty_lfs = rt.block_on(async {
                 let mut processed = Vec::with_capacity(dirty_infos.len());
                 
-                // 遍历我们刚才收集的 (path, dv) 元组
+                // Iter (path, dv) tuple
                 for (full_path, dv_descriptor) in dirty_infos {
                     
-                    // A. Scan 单文件
+                    // A. Scan single file
                     let mut lf = LazyFrame::scan_parquet(
                         PlRefPath::new(&full_path), 
                         args.clone()
                     )?;
 
-                    // B. 读取并应用 DV
-                    // read_deletion_vector 已经在之前实现好了
+                    // B. Read and apply DV
                     let bitmap = read_deletion_vector(
                         object_store.clone(), 
                         &dv_descriptor, 
                         &table_root
                     ).await?;
 
-                    // apply_deletion_vector 纯 CPU 操作
                     lf = apply_deletion_vector(lf, bitmap)?;
                     
                     processed.push(lf);
@@ -202,9 +191,6 @@ pub extern "C" fn pl_scan_delta(
             lfs.extend(dirty_lfs);
         }
 
-        // // 6. Scan
-        // let pl_paths: Vec<PlRefPath> = file_uris.iter().map(|s| PlRefPath::new(s)).collect();
-        // let buffer: Buffer<PlRefPath> = pl_paths.into();
         // =========================================================
         // Phase 4: Union / Concat
         // =========================================================
@@ -215,26 +201,24 @@ pub extern "C" fn pl_scan_delta(
 
         // Concat
         if lfs.len() == 1 {
-            // pop() 拿出第一个元素，避免 clone
             let lf = lfs.pop().unwrap(); 
             return Ok(Box::into_raw(Box::new(LazyFrameContext { inner: lf })));
         }
 
-        // [FIXED] 使用最新的 concat + UnionArgs 逻辑
+        // Build UnionArgs
         let args = polars::prelude::UnionArgs {
-            parallel: true,           // 允许并行合并
-            rechunk: false,           // Lazy 模式下通常不需要立即 rechunk
-            to_supertypes: true,      // 允许类型自动提升 (重要！应对 Schema 演进)
-            maintain_order: false,    // Delta 表通常不保证读取顺序，false 更快
-            strict: false,            // 允许 schema 不严格一致 (配合 diagonal)
-            diagonal: true,           // [关键] 开启对角合并，应对不同文件列数不一致的情况
+            parallel: true,           
+            rechunk: false,           
+            to_supertypes: true,      
+            maintain_order: false,    
+            strict: false,            
+            diagonal: true,           
             from_partitioned_ds: false,
         };
 
         let final_lf = polars::prelude::concat(lfs, args)
             .map_err(|e| PolarsError::ComputeError(format!("Concat failed: {}", e).into()))?;
         
-        // let lf = LazyFrame::scan_parquet_files(buffer, args)?;
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: final_lf })))
     })
 }

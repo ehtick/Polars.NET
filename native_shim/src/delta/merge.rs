@@ -32,13 +32,27 @@ pub enum MergeStrategy {
 }
 
 impl MergeStrategy {
-    pub fn determine(snapshot: &DeltaTableState, force_cow: bool) -> Self {
+    pub fn determine(state: &DeltaTableState, force_cow: bool) -> Self {
         if force_cow {
             return Self::CopyOnWrite;
         }
-        let protocol = snapshot.protocol();
-        // Writer Version 7+ supports Deletion Vectors
-        if protocol.min_writer_version() >= 7 {
+
+        let protocol = state.protocol();
+        let min_writer_version = protocol.min_writer_version();
+
+        // Serilize protocol to JSON Value 
+        let has_deletion_vectors = serde_json::to_value(protocol)
+            .ok()
+            .and_then(|json| {
+                // Read "readerFeatures" or "writerFeatures" array in JSON
+                json.get("readerFeatures")
+                    .and_then(|features| features.as_array())
+                    .map(|arr| arr.iter().any(|v| v.as_str() == Some("deletionVectors")))
+            })
+            .unwrap_or(false);
+
+        // If DeletionVectors is on and Writer Version >= 7
+        if has_deletion_vectors && min_writer_version >= 7 {
             Self::MergeOnRead
         } else {
             Self::CopyOnWrite
@@ -79,7 +93,7 @@ fn bound_to_json(bound: &PruningBound) -> serde_json::Value {
         PruningBound::Float(f) => serde_json::json!(f),
         
         // C. Lexical (String) -> JSON String
-        // 包含 Date, String 等
+        // Contains Date, String
         PruningBound::Lexical(s) => serde_json::json!(s),
     }
 }
@@ -525,7 +539,7 @@ fn construct_target_lf(
         for r in remove_actions {
             let full_path = format!("{}/{}", root_trimmed, r.path);
             
-            // [CRITICAL FIX] 逐个文件 scan，确保 __row_index 从 0 开始
+            // Scan single files one by one
             let mut lf = LazyFrame::scan_parquet(
                 PlRefPath::new(&full_path), 
                 make_scan_args()
@@ -541,7 +555,7 @@ fn construct_target_lf(
         Ok::<_, PolarsError>(processed)
     })?;
 
-    // Concat Everything (Polars 引擎会自动并行化执行这个合并后的计算图)
+    // Concat Everything
     let args = UnionArgs {
         parallel: true,
         rechunk: false,
@@ -707,10 +721,10 @@ fn phase_planning(
 /// Phase 3 (MoR): Planning
 /// Returns: 
 /// 1. new_data_lf: Rows to be written to new Parquet files (Updates' New Values + Inserts)
-/// 2. tombstones_lf: Rows to be soft-deleted (Updates' Old Rows + Deletes) -> (Path, RowIndex)
+/// 2. tombstones_lf: Rows to be soft-deleted (Updates Old Rows + Deletes) -> (Path, RowIndex)
 fn phase_planning_mor(
     ctx: &MergeContext,
-    target_lf: LazyFrame, // 必须包含 "__row_index" 和 "__file_path"
+    target_lf: LazyFrame, 
     mut source_lf: LazyFrame,
     target_schema: &Schema, 
 ) -> PolarsResult<(LazyFrame, LazyFrame)> {
@@ -796,8 +810,6 @@ fn phase_planning_mor(
     // =========================================================
     // 4. BRANCH A: New Data Generation (Inserts + Updates)
     // =========================================================
-    // 我们只需要写入 Insert 和 Update 的行。
-    // Keep 的行不需要写（MoR 优势），Delete 的行不需要写。
     
     let mut new_data_exprs = Vec::new();
     let mut output_cols = Vec::new();
@@ -855,8 +867,7 @@ fn phase_planning_mor(
     // =========================================================
     // 5. BRANCH B: Tombstones (Deletes + Updates' Old Rows)
     // =========================================================
-    // 我们需要软删除所有被 Delete 或被 Update 的行。
-    // Update 在 MoR 里 = Soft Delete Old + Insert New。
+    // Update = Soft Delete Old + Insert New。
     
     let tombstones_lf = lf_with_action
         .filter(
@@ -865,7 +876,7 @@ fn phase_planning_mor(
         )
         .select([
             col("__file_path"),
-            col("__row_index"), // Polars 必须在 Scan 时开启 row_index
+            col("__row_index"), 
         ]);
 
     Ok((new_data_lf, tombstones_lf))
@@ -959,17 +970,11 @@ async fn phase_execution_dv(
     candidate_files: &[Add], 
 ) -> PolarsResult<Vec<Action>> {
     
-    // 1. Group By File Path to get lists of deleted row indices
-    // let df = tombstones_lf
-    //     .group_by([col("__file_path")])
-    //     .agg([col("__row_index")])
-    //     .collect_with_engine(Engine::Streaming)?;
-
     if df.height() == 0 {
         return Ok(Vec::new()); // No rows deleted
     }
 
-    // 2. Build Lookup Table for Original Files
+    // Build Lookup Table for Original Files
     let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
     let mut file_lookup: HashMap<String, &Add> = HashMap::new();
     for f in candidate_files {
@@ -983,11 +988,10 @@ async fn phase_execution_dv(
     let path_series = df.column("__file_path")?.str()?;
     let row_idx_series = df.column("__row_index")?.list()?;
 
-    // 3. Iterate over affected files
+    // Iterate over affected files
     for i in 0..df.height() {
         let full_path = path_series.get(i).unwrap();
         
-        // Polars 的 include_file_paths 给出的是绝对路径，我们需要还原为相对路径
         let rel_path = full_path.strip_prefix(&format!("{}/", root_trimmed))
             .unwrap_or(full_path)
             .to_string();
@@ -996,26 +1000,26 @@ async fn phase_execution_dv(
         let row_indices_ca = row_indices_series.u32()?;
         let new_deleted_indices: Vec<u32> = row_indices_ca.into_no_null_iter().collect();
 
-        // 找回这个文件原始的 Add Action (为了拿旧的 DV 和 Stats)
+        // Get original Add Action for DV and stats
         let original_add = file_lookup.get(&rel_path).ok_or_else(|| {
             PolarsError::ComputeError(format!("Cannot find original action for {}", rel_path).into())
         })?;
 
-        // A. 读取旧 DV (如果存在)
+        // Read old DV
         let mut bitmap = if let Some(old_dv) = &original_add.deletion_vector {
             read_deletion_vector(object_store.clone(), old_dv, &table_root).await?
         } else {
             RoaringBitmap::new()
         };
 
-        // B. 合并新的删除行
+        // Concat new deletion rows
         bitmap.extend(new_deleted_indices);
 
-        // C. 写入新 DV 文件
+        // Write new DV 
         let (dv_file_name, dv_size) = write_dv_file(object_store.clone(), &root_trimmed, &bitmap).await?;
         let new_dv_descriptor = create_dv_descriptor(&dv_file_name, dv_size, bitmap.len() as i64)?;
 
-        // D. 生成 Remove Action (移除旧状态)
+        // Build Remove Action
         let remove = Remove {
             path: original_add.path.clone(),
             deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
@@ -1023,14 +1027,14 @@ async fn phase_execution_dv(
             extended_file_metadata: Some(true),
             partition_values: Some(original_add.partition_values.clone()),
             size: Some(original_add.size),
-            deletion_vector: original_add.deletion_vector.clone(), // 必须带上旧的 DV 描述符
+            deletion_vector: original_add.deletion_vector.clone(), 
             tags: original_add.tags.clone(),
             base_row_id: original_add.base_row_id,
             default_row_commit_version: original_add.default_row_commit_version,
         };
         final_actions.push(Action::Remove(remove));
 
-        // E. 生成 Add Action (附加新 DV 状态)
+        // Build Add Action
         let mut new_add = (*original_add).clone();
         new_add.deletion_vector = Some(new_dv_descriptor);
         new_add.modification_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
@@ -1482,7 +1486,7 @@ pub extern "C" fn pl_io_delta_merge(
 
             let staging_dir_for_commit = staging_dir.clone();
 
-            // [FIXED] 新增代码：在此处 (同步环境中) 计算 Tombstone DataFrame
+            // Calculate Tombstone DataFrame here in sync environment
             let tombstones_df_opt = match tombstones_lf_opt {
                 Some(lf) => {
                     let df = lf
@@ -1500,13 +1504,13 @@ pub extern "C" fn pl_io_delta_merge(
 
             let commit_result = rt.block_on(async {
                 
-                // 1. 处理 Staging Files 得到 Add(New Data) Actions
+                // Parse Staging Files to get Add(New Data) Actions
                 let mut final_actions = phase_process_staging(&table, &staging_dir, &partition_cols, write_id).await?;
 
-                // 2. 根据策略处理旧文件
+                // Handle old files
                 match ctx.strategy {
                     MergeStrategy::CopyOnWrite => {
-                        // CoW：直接把所有候选文件丢弃 (生成 Remove)
+                        // CoW：Remove old files
                         for add in &candidate_files {
                             let remove = Remove {
                                 path: add.path.clone(),
@@ -1522,7 +1526,7 @@ pub extern "C" fn pl_io_delta_merge(
                         }
                     },
                     MergeStrategy::MergeOnRead => {
-                        // MoR：生成 DV 文件并附带相应的 Remove/Add Actions
+                        // MoR：Generate DV then build Remove/Add Actions
                         if let Some(t_df) = tombstones_df_opt {
                             let dv_actions = phase_execution_dv(&ctx, &table, t_df, &candidate_files).await?;
                             final_actions.extend(dv_actions);

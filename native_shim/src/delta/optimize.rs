@@ -3,7 +3,7 @@ use futures::StreamExt;
 use polars::prelude::*;
 use polars_buffer::Buffer;
 use url::Url;
-use deltalake::{DeltaTable, Path, kernel::scalars::ScalarExt};
+use deltalake::{DeltaTable, PartitionFilter, PartitionValue, Path, kernel::scalars::ScalarExt};
 use deltalake::kernel::{Action, Add, Remove, transaction::CommitBuilder};
 use deltalake::protocol::DeltaOperation;
 use uuid::Uuid;
@@ -18,37 +18,46 @@ use crate::utils::{ptr_to_str};
 
 struct OptimizeContext {
     pub table_url: Url,
-    // pub storage_options: HashMap<String, String>,
     pub target_size_bytes: i64,
     pub partition_filters: Option<HashMap<String, String>>,// Optional filter
     pub z_order_columns: Option<Vec<String>>
 }
 
-/// 一个“箱子”，代表一次具体的合并任务
+/// A bin means a separated optimize mission
 #[derive(Debug, Clone)]
 struct OptimizeBin {
-    pub partition_values: HashMap<String, Option<String>>, // 分区键值对
-    pub files: Vec<Add>,   // 需要被合并的碎片文件 (将会变成 Remove Actions)
-    pub total_size: i64,   // 当前箱子总大小
+    pub partition_values: HashMap<String, Option<String>>, 
+    pub files: Vec<Add>,   
+    pub total_size: i64,   
 }
 
 // =========================================================
 // Phase 1: Analysis (Bin-packing Strategy)
 // =========================================================
 
-/// 扫描全表，制定“装箱”计划
-/// 返回：一组需要执行的“箱子”
+/// Scan table to plan optimization bins
 async fn phase_1_plan_bins(
     ctx: &OptimizeContext,
     table: &DeltaTable,
 ) -> PolarsResult<Vec<OptimizeBin>> {
     
-    // 1. 获取所有活跃文件流
-    // 使用 get_active_add_actions_by_partitions 获取 LogicalFileView/Add
-    // 这里传入空 slice 表示扫描全表（或者根据 ctx.partition_filter 构造过滤器）
-    let mut stream = table.get_active_add_actions_by_partitions(&[]);
+    // =========================================================
+    // Build PartitionFilters
+    // =========================================================
+    let mut filters = Vec::new();
+    if let Some(pf_map) = &ctx.partition_filters {
+        for (key, value) in pf_map {
+            filters.push(PartitionFilter {
+                key: key.clone(),
+                value: PartitionValue::Equal(value.clone()), 
+            });
+        }
+    }
+    
+    // 1. Get active add actions
+    let mut stream = table.get_active_add_actions_by_partitions(&filters);
 
-    // 2. 分组缓冲区: Key = Canonical Partition String
+    // Key = Canonical Partition String
     let mut buckets: HashMap<String, Vec<Add>> = HashMap::new();
 
     let min_rewrite_threshold = ctx.target_size_bytes / 2;
@@ -57,7 +66,7 @@ async fn phase_1_plan_bins(
         let view = view_res.map_err(|e| PolarsError::ComputeError(format!("Delta stream error: {}", e).into()))?;
         
         // =========================================================
-        // FIX: Manual conversion from LogicalFileView to Add
+        // Build Partition values map
         // =========================================================
         let mut partition_values_map = HashMap::new();
         
@@ -77,10 +86,10 @@ async fn phase_1_plan_bins(
         }
 
         // =========================================================
-        // FIX: Manual conversion to Add Action
+        // Conversion to Add Action
         // =========================================================
 
-        let dv_descriptor = view.deletion_vector_descriptor(); // 提取 DV
+        let dv_descriptor = view.deletion_vector_descriptor();
 
         let add = Add {
             path: view.path().to_string(),
@@ -88,61 +97,28 @@ async fn phase_1_plan_bins(
             partition_values: partition_values_map,
             modification_time: view.modification_time(),
             data_change: false, 
-            stats: view.stats(), // view.stats() 本来就是 Option<String>
-            
+            stats: view.stats(), 
             tags: None,
-            deletion_vector: dv_descriptor.clone(), // <--- [关键修复] 必须保留 DV！
-            
+            deletion_vector: dv_descriptor.clone(), 
             base_row_id: None,
             default_row_commit_version: None,
             clustering_provider: None,
         };
 
         // =========================================================
-        // FIX: 智能入选逻辑 (Small Files OR Dirty Files)
+        // Small Files OR Dirty Files
         // =========================================================
         let is_small_file = add.size < min_rewrite_threshold;
         let has_dv = dv_descriptor.is_some();
 
-        // 只有“既是大文件，又没带过 DV 补丁”的纯净大文件，才不需要优化
         if !is_small_file && !has_dv {
             continue;
         }
 
-        // =========================================================
-        // FIX: 应用 Partition Filter
-        // =========================================================
-        if let Some(filters) = &ctx.partition_filters {
-            let mut matched = true;
-            for (key, target_val) in filters {
-                // 从文件的分区值里找
-                // 注意：partition_values 是 HashMap<String, Option<String>>
-                if let Some(file_val_opt) = add.partition_values.get(key) {
-                    // 如果文件里的值是 Some(val)，则比对；如果是 None (null)，则不匹配 (除非 filter 显式传 null，这里简化处理)
-                    if let Some(file_val) = file_val_opt {
-                        if file_val != target_val {
-                            matched = false;
-                            break;
-                        }
-                    } else {
-                        // 文件分区值为 null，不匹配具体值
-                        matched = false;
-                        break;
-                    }
-                } else {
-                    // 文件根本没有这个分区列（可能是 Schema 演变或非分区表），视为不匹配
-                    matched = false;
-                    break;
-                }
-            }
-            if !matched { continue; }
-        }
-
-        // C. 生成分组 Key
+        // Generate partition Key
         let part_key = if add.partition_values.is_empty() {
             "__unpartitioned__".to_string()
         } else {
-            // 排序 key 以保证唯一性
             let mut keys: Vec<&String> = add.partition_values.keys().collect();
             keys.sort();
             keys.iter().map(|k| {
@@ -153,7 +129,7 @@ async fn phase_1_plan_bins(
         buckets.entry(part_key).or_default().push(add);
     }
 
-    // 3. 执行 Bin-packing (贪婪算法)
+    // Bin-packing (Greedy)
     let mut final_tasks = Vec::new();
 
     let max_bin_size = (ctx.target_size_bytes as f64 * 1.2) as i64;
@@ -163,29 +139,25 @@ async fn phase_1_plan_bins(
 
         files.sort_by_key(|f| f.size);
         
-        // [FIX 1] 预先提取 Partition Values
-        // 同一个 Bucket 下的所有文件分区键都是一样的，取第一个就行
+        // Get Partition Values
         let partition_values = files[0].partition_values.clone();
 
         let mut current_bin_files = Vec::new();
         let mut current_bin_size = 0;
 
         for file in files {
-            // [FIX 2] 找回丢失的 1.2 倍弹性阈值逻辑
-            // 贪婪算法：如果加上当前文件会显著超过目标大小，就封箱
+            // Greedy：if current bin size + current file size > target size -> close bin
             if current_bin_size > 0 && (current_bin_size + file.size) > max_bin_size {
                 
-                // [FIX 3] 单文件跳过逻辑 (Write Amplification Check)
-                // 只有当箱子里有 >1 个文件时，合并才有意义。
+                // Write Amplification Check
+                // Only files >1 in bin
                 if current_bin_files.len() > 1 {
                     final_tasks.push(OptimizeBin {
-                        partition_values: partition_values.clone(), // Clone Map
-                        files: std::mem::take(&mut current_bin_files), // 移走所有权，清空原 Vec
+                        partition_values: partition_values.clone(), 
+                        files: std::mem::take(&mut current_bin_files), 
                         total_size: current_bin_size,
                     });
                 } else {
-                    // 即使不生成 Task，也要清空当前状态，开始新的箱子
-                    // 否则这个大文件会和下一个文件粘连
                     current_bin_files.clear();
                 }
                 
@@ -196,12 +168,11 @@ async fn phase_1_plan_bins(
             current_bin_files.push(file);
         }
 
-        // [FIX 4] 处理残留的最后一个箱子 (Residual Bin)
+        // Handle Residual Bin
         if !current_bin_files.is_empty() {
-            // 同样的逻辑：如果只剩 1 个文件，且之前没合并进任何东西，就不动它
             if current_bin_files.len() > 1 {
                 final_tasks.push(OptimizeBin {
-                    partition_values: partition_values, // Move (最后一次用了，不用 Clone)
+                    partition_values: partition_values, 
                     files: current_bin_files,
                     total_size: current_bin_size,
                 });
@@ -218,10 +189,9 @@ async fn phase_1_plan_bins(
 
 fn phase_2_execute_rewrite(
     ctx: &OptimizeContext,
-    table: &DeltaTable, // <--- [NEW] 需要 Table 来读取 Object Store 里的 DV
+    table: &DeltaTable, 
     bin: &OptimizeBin,
     cloud_args: &RawCloudArgs,
-    // schema: &Schema, 
 ) -> PolarsResult<(String, Uuid)> {
     
     // 1. Setup Identity
@@ -241,7 +211,7 @@ fn phase_2_execute_rewrite(
     // =========================================================
     let has_dv = bin.files.iter().any(|f| f.deletion_vector.is_some());
 
-    // 统一的 ScanArgs 闭包
+    // Build ScanArgs
     let make_scan_args = || unsafe {
         let mut args = ScanArgsParquet::default();
         args.hive_options = HiveOptions {
@@ -255,11 +225,10 @@ fn phase_2_execute_rewrite(
             cloud_args.retry_init_backoff_ms, cloud_args.retry_max_backoff_ms, cloud_args.cache_ttl,
             cloud_args.keys, cloud_args.values, cloud_args.len,
         );
-        // args.schema = Some(Arc::new(schema.clone()));
         args.low_memory = true;
         args.rechunk = false;
         
-        // 如果有 DV，必须开启物理行号列以供过滤
+        // If has DV, turn on row index
         if has_dv {
             args.row_index = Some(RowIndex { 
                 name: "__row_index".into(), 
@@ -294,13 +263,13 @@ fn phase_2_execute_rewrite(
             }
         }
 
-        // 1. 批量读 Clean 文件
+        // Read Clean files
         if !clean_paths.is_empty() {
             let pl_paths: Vec<PlRefPath> = clean_paths.iter().map(|s| PlRefPath::new(s)).collect();
             lfs.push(LazyFrame::scan_parquet_files(Buffer::from(pl_paths), make_scan_args())?);
         }
 
-        // 2. 逐个读 Dirty 文件并过滤 DV
+        // Read Dirty files then filter with DV
         if !dirty_files.is_empty() {
             let rt = get_runtime();
             let object_store = table.object_store();
@@ -311,13 +280,12 @@ fn phase_2_execute_rewrite(
                 for f in dirty_files {
                     let full_path = format!("{}/{}", root_trimmed, f.path);
                     
-                    // 单文件读取，确保行号从 0 开始
                     let mut single_lf = LazyFrame::scan_parquet(
                         PlRefPath::new(&full_path), 
                         make_scan_args()
                     )?;
 
-                    // 核心净化逻辑：应用 DV
+                    // Apply DV
                     if let Some(dv) = &f.deletion_vector {
                         let bitmap = read_deletion_vector(object_store.clone(), dv, &table_root).await?;
                         single_lf = apply_deletion_vector(single_lf, bitmap)?;
@@ -335,7 +303,7 @@ fn phase_2_execute_rewrite(
         polars::prelude::concat(lfs, args)?
     };
 
-    // 如果因为 DV 引入了辅助列，记得在写入前丢弃它
+    // Drop row index column
     if has_dv {
         lf = lf.drop(Selector::ByName { 
             names: Arc::from(vec![PlSmallStr::from_static("__row_index"),
@@ -413,12 +381,9 @@ async fn phase_3_commit_optimize(
     write_id: Uuid,
 ) -> PolarsResult<()> {
     
-    // 1. Promote Staging Files (复用 merge.rs 中的函数!)
-    // 这个函数非常强大，它处理了 List -> Read Stats -> Rename -> Build Add 的全过程
-    // 我们需要把 partition cols 的 key 提取出来
+    // 1. Promote Staging Files
     let partition_cols: Vec<String> = bin.partition_values.keys().cloned().collect();
     
-    // 注意：这里的 phase_process_staging 必须是你 merge.rs 里定义的那个
     let new_add_actions = phase_process_staging(
         table, 
         staging_dir, 
@@ -426,8 +391,8 @@ async fn phase_3_commit_optimize(
         write_id
     ).await?;
 
+    // If no new data, clear and return
     if new_add_actions.is_empty() {
-        // 如果没有生成新文件（可能是空数据），清理并返回
         let object_store = table.object_store();
         let _ = object_store.delete(&Path::from(staging_dir)).await;
         return Ok(());
@@ -438,7 +403,7 @@ async fn phase_3_commit_optimize(
         Action::Remove(Remove {
             path: f.path.clone(),
             deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
-            data_change: false, // Optimize 不改变数据逻辑
+            data_change: false, 
             extended_file_metadata: Some(true),
             partition_values: Some(f.partition_values.clone()),
             size: Some(f.size),
@@ -454,13 +419,13 @@ async fn phase_3_commit_optimize(
 
     // 4. Commit
     let operation = DeltaOperation::Optimize {
-        target_size: 0, // 仅作记录用
+        target_size: 0, 
         predicate: None,
     };
 
     let commit_res = CommitBuilder::default()
         .with_actions(actions)
-        .with_max_retries(0) // 严格模式，外部控制重试
+        .with_max_retries(0)
         .build(
             Some(table.snapshot().map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?), 
             table.log_store().clone(),
@@ -468,7 +433,7 @@ async fn phase_3_commit_optimize(
         )
         .await;
 
-    // 5. Cleanup Staging (无论成功失败最好都清理，但这里遵循 merge.rs 在 commit 后清理)
+    // 5. Cleanup Staging
     let object_store = table.object_store();
     let _ = object_store.delete(&Path::from(staging_dir)).await;
 
@@ -486,7 +451,7 @@ pub extern "C" fn pl_io_delta_optimize(
     target_path_ptr: *const c_char,
     target_size_mb: i64,
     filter_json_ptr: *const c_char,
-    // [NEW] Z-Order 参数
+    // Z-Order Params
     z_order_cols_ptr: *const *const c_char,
     z_order_len: usize,
     // --- Cloud Args ---
@@ -513,8 +478,8 @@ pub extern "C" fn pl_io_delta_optimize(
             if json_str.trim().is_empty() {
                 None
             } else {
-                // 解析为简单的 Key-Value Map
-                // 例如: {"date": "2024-01-01", "region": "us"}
+                // Parse to Key-Value Map
+                // Example: {"date": "2024-01-01", "region": "us"}
                 let map: HashMap<String, String> = serde_json::from_str(json_str)
                     .map_err(|e| PolarsError::ComputeError(format!("Invalid filter JSON: {}", e).into()))?;
                 Some(map)
@@ -530,10 +495,9 @@ pub extern "C" fn pl_io_delta_optimize(
 
         let ctx = OptimizeContext {
             table_url: table_url.clone(),
-            // storage_options: delta_storage_options,
             target_size_bytes: target_size_mb * 1024 * 1024,
             partition_filters:partition_filters, 
-            z_order_columns,// 存入 Context
+            z_order_columns,
         };
 
 
@@ -553,8 +517,7 @@ pub extern "C" fn pl_io_delta_optimize(
         let mut total_optimized_files = 0;
 
         // 2. Initial Load
-        // [FIX] 直接使用局部变量 table_url 和 delta_storage_options，不再通过 ctx 访问
-        let (mut table, _, _polars_schema) = rt.block_on(async {
+        let (mut table, _polars_schema) = rt.block_on(async {
             let t = DeltaTable::try_from_url_with_storage_options(
                 table_url.clone(), 
                 delta_storage_options.clone()
@@ -562,19 +525,14 @@ pub extern "C" fn pl_io_delta_optimize(
             .await.map_err(|e| PolarsError::ComputeError(format!("Delta load error: {}", e).into()))?;
             
             let s = get_polars_schema_from_delta(&t)?;
-            Ok::<_, PolarsError>((t, (), s))
+            Ok::<_, PolarsError>((t, s))
         })?;
 
         // =========================================================================
         // THE GRAND RETRY LOOP
         // =========================================================================
         let mut attempt = 0;
-        // Optimize 是一个长运行任务，通常包含多个 Bin。
-        // 为了原子性和简单性，我们这里采用 "One-Shot Plan" 策略：
-        // 制定好计划后，逐个 Bin 执行。如果某个 Bin 提交失败（冲突），则重试该 Bin（或者重载表重新规划）。
-        
-        // 这里的逻辑稍微调整：我们在 Loop 内部进行 Plan，这样每次重试都能基于最新状态。
-        
+       
         loop {
             attempt += 1;
             
@@ -595,8 +553,6 @@ pub extern "C" fn pl_io_delta_optimize(
             }
 
             // Phase 2 & 3: Execute & Commit per Bin
-            // 注意：为了减少冲突概率，我们一个个 Bin 提交。
-            // 如果中间失败，外层 Loop 会重试整个过程（重新 Plan 剩余的文件）。
             let mut loop_success = true;
 
             for bin in bins {
@@ -612,7 +568,7 @@ pub extern "C" fn pl_io_delta_optimize(
                 match commit_res {
                     Ok(_) => {
                         total_optimized_files += bin.files.len();
-                        // [FIX 2] 更新表状态，防止下一个 Bin 提交时发生 VersionMismatch 冲突
+                        // Update table state
                         rt.block_on(async {
                             table.update_state().await
                         }).map_err(|e| PolarsError::ComputeError(format!("Reload table failed: {}", e).into()))?;

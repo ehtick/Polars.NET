@@ -131,11 +131,10 @@ pub(crate) fn as_f64_safe(v: &serde_json::Value) -> Option<f64> {
      .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
 }
 
-// 优化版：支持单边区间裁剪 (One-sided Range Pruning)
-/// 逻辑：
-/// - 如果 QueryMin 存在，且 FileMax < QueryMin -> Prune (Skip)
-/// - 如果 QueryMax 存在，且 FileMin > QueryMax -> Prune (Skip)
-/// - 否则 -> Keep
+// One-sided Range Pruning
+/// - FileMax < QueryMin -> Prune (Skip)
+/// - FileMin > QueryMax -> Prune (Skip)
+/// - OR -> Keep
 pub(crate) fn check_file_overlap_optimized(
     stats: &Option<Value>, 
     col: &str, 
@@ -147,10 +146,8 @@ pub(crate) fn check_file_overlap_optimized(
 
     // -----------------------------------------------------------
     // 1. Check Lower Bound: QueryMin
-    // 如果查询条件有下界 (e.g., A > 10)，且文件的最大值 < 10，则无交集
     // -----------------------------------------------------------
     if let Some(q_min) = src_min_opt {
-        // 只有当我们知道文件的 Max 值时，才能进行此项裁剪
         if let Some(f_max) = f_max_val {
             match q_min {
                 Value::Number(q_num) => {
@@ -174,17 +171,15 @@ pub(crate) fn check_file_overlap_optimized(
                         if *f_str < **q_str { return false; } // Pruned
                     }
                 },
-                _ => {} // 其他类型保守处理，认为有交集
+                _ => {}
             }
         }
     }
 
     // -----------------------------------------------------------
     // 2. Check Upper Bound: QueryMax
-    // 如果查询条件有上界 (e.g., A < 50)，且文件的最小值 > 50，则无交集
     // -----------------------------------------------------------
     if let Some(q_max) = src_max_opt {
-        // 只有当我们知道文件的 Min 值时，才能进行此项裁剪
         if let Some(f_min) = f_min_val {
              match q_max {
                 Value::Number(q_num) => {
@@ -213,7 +208,6 @@ pub(crate) fn check_file_overlap_optimized(
         }
     }
 
-    // 没能排除，保留文件
     true
 }
 
@@ -433,8 +427,6 @@ pub struct RawCloudArgs {
 
 pub(crate) fn view_to_add_action(view: &LogicalFileView) -> Add {
     
-    // 1. 手动实现 partition_values_map 的逻辑
-    // view.partition_values() 是 public 的，我们可以拿出来自己遍历
     let partition_values = view.partition_values()
         .map(|data| {
             data.fields()
@@ -446,7 +438,6 @@ pub(crate) fn view_to_add_action(view: &LogicalFileView) -> Add {
                         if v.is_null() {
                             None
                         } else {
-                            // serialize() 也是 public 的
                             Some(deltalake::kernel::scalars::ScalarExt::serialize(v))
                         }
                     )
@@ -455,18 +446,17 @@ pub(crate) fn view_to_add_action(view: &LogicalFileView) -> Add {
         })
         .unwrap_or_default();
 
-    // 2. 构造 Add 结构体
     Add {
         path: view.path().to_string(),
         size: view.size(),
-        partition_values, // 使用我们要来的 map
+        partition_values, 
         modification_time: view.modification_time(),
-        data_change: true, // 既然是从 active actions 读出来的，通常视为 data
+        data_change: true, 
         stats: view.stats(),
         tags: None,
         deletion_vector: view.deletion_vector_descriptor(),
         base_row_id: None,
         default_row_commit_version: None,
-        clustering_provider: None, // View 里通常没有直接暴露这个，给 None 即可
+        clustering_provider: None,
     }
 }

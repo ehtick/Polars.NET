@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi::c_char, time::{SystemTime, UNIX_EPOCH}};
+use std::{cmp::Ordering, collections::HashMap, ffi::c_char, time::{SystemTime, UNIX_EPOCH}};
 
 use chrono::{NaiveDate, TimeDelta, Utc};
 use deltalake::{DeltaTable, ObjectStore, kernel::{DeletionVectorDescriptor, StorageType}, table::state::DeltaTableState}; 
@@ -33,20 +33,26 @@ pub enum DeleteStrategy {
 }
 
 impl DeleteStrategy {
-    /// 根据表协议和特性自动决定策略
-    /// [FIXED] 参数类型改为 &DeltaTableState 以匹配 table.snapshot() 的返回值
     pub fn determine(state: &DeltaTableState, force_cow: bool) -> Self {
         if force_cow {
             return Self::CopyOnWrite;
         }
 
-        // DeltaTableState 直接暴露了 protocol() 方法
         let protocol = state.protocol();
-        
-        // 判断 Writer Version >= 7 (DV 要求)
-        if protocol.min_writer_version() >= 7 {
-            // TODO: 未来还可以检查 state.current_metadata() 里的 configuration 
-            // 确认是否开启了 delta.enableDeletionVectors
+        let min_writer_version = protocol.min_writer_version();
+
+        // Serilize protocol to JSON Value 
+        let has_deletion_vectors = serde_json::to_value(protocol)
+            .ok()
+            .and_then(|json| {
+                json.get("readerFeatures")
+                    .and_then(|features| features.as_array())
+                    // Check "deletionVectors"
+                    .map(|arr| arr.iter().any(|v| v.as_str() == Some("deletionVectors")))
+            })
+            .unwrap_or(false);
+
+        if has_deletion_vectors && min_writer_version >= 7 {
             Self::MergeOnRead
         } else {
             Self::CopyOnWrite
@@ -73,9 +79,6 @@ pub struct DeleteContext {
     pub object_store: Arc<dyn ObjectStore>,
     pub cloud_args: RawCloudArgs, // For Polars Scan/Sink (FFI compat)
     
-    // --- Runtime ---
-    // (Optional) We might need a reference to the runtime if we do deep async calls
-    // but usually passing object_store is enough.
 }
 
 impl DeleteContext {
@@ -182,26 +185,54 @@ pub(crate) fn extract_bounds_from_expr(expr: &Expr, map: &mut PruningMap) {
     }
 }
 
+fn compare_json_values(a: &Value, b: &Value) -> Option<Ordering> {
+    match (a, b) {
+        (Value::Number(n1), Value::Number(n2)) => {
+            if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+                Some(i1.cmp(&i2))
+            } else if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) {
+                Some(u1.cmp(&u2))
+            } else if let (Some(f1), Some(f2)) = (n1.as_f64(), n2.as_f64()) {
+                f1.partial_cmp(&f2)
+            } else {
+                None
+            }
+        }
+        (Value::String(s1), Value::String(s2)) => Some(s1.cmp(s2)),
+        (Value::Bool(b1), Value::Bool(b2)) => Some(b1.cmp(b2)),
+        _ => None,
+    }
+}
+
 fn update_map(map: &mut PruningMap, col_name: &str, lit: &LiteralValue, b_type: BoundType) {
     if let Some(json_val) = polars_literal_to_json(lit) {
-        // 获取现有的 bounds，如果没有则初始化为 (None, None)
         let entry = map.entry(col_name.to_string()).or_insert((None, None));
 
         match b_type {
             BoundType::Exact => {
-                // A == 10 implies Min=10, Max=10
+                // A == 10 means Min=10, Max=10
                 entry.0 = Some(json_val.clone());
                 entry.1 = Some(json_val);
             },
             BoundType::Min => {
-                // A > 10 implies Min=10. Keep existing Max.
-                // TODO: 如果想更智能，可以比较 json_val 和 entry.0 谁更大，保留更严格的下界
-                entry.0 = Some(json_val);
+                // A > 10 (lower bound):  MAX(current_min, new_min)
+                if let Some(ref current_min) = entry.0 {
+                    if let Some(Ordering::Less) = compare_json_values(current_min, &json_val) {
+                        entry.0 = Some(json_val);
+                    }
+                } else {
+                    entry.0 = Some(json_val);
+                }
             },
             BoundType::Max => {
-                // A < 10 implies Max=10. Keep existing Min.
-                // TODO: 如果想更智能，可以比较 json_val 和 entry.1 谁更小，保留更严格的上界
-                entry.1 = Some(json_val);
+                // A < 10 (upper bound): MIN(current_max, new_max)
+                if let Some(ref current_max) = entry.1 {
+                    if let Some(Ordering::Greater) = compare_json_values(current_max, &json_val) {
+                        entry.1 = Some(json_val);
+                    }
+                } else {
+                    entry.1 = Some(json_val);
+                }
             }
         }
     }
@@ -255,69 +286,42 @@ fn polars_literal_to_json(lit: &LiteralValue) -> Option<serde_json::Value> {
 }
 
 
-/// 将 RoaringBitmap 序列化并写入存储
-/// 返回: (文件名, 文件大小)
+/// Serilize RoaringBitmap then write to storage
 pub(crate) async fn write_dv_file(
     object_store: Arc<dyn ObjectStore>,
     table_root: &str,
     bitmap: &RoaringBitmap,
 ) -> PolarsResult<(String, i64)> {
-    // 1. 序列化 Bitmap (Portable Format)
+    // Serilize Bitmap (Portable Format)
     let mut buf = Vec::new();
     bitmap.serialize_into(&mut buf)
         .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize bitmap: {}", e).into()))?;
 
-    // 2. 生成文件名
+    // Generate file name
     let uuid = Uuid::new_v4();
     let file_name = format!("deletion_vector_{}.bin", uuid);
     
-    // 3. 构建路径
+    // Build path
     let path = deltalake::Path::from(format!("{}/{}", table_root.trim_end_matches('/'), file_name));
 
-    // 提前记录长度，因为后面 buf 的所有权会转移给 put
     let buf_len = buf.len() as i64;
 
-    // 4. 写入存储
-    // buf.into() 直接转移所有权，省去 clone
+    // Write to storage
     object_store.put(&path, buf.into()).await
         .map_err(|e| PolarsError::ComputeError(format!("Failed to write DV file: {}", e).into()))?;
 
     Ok((file_name, buf_len))
 }
-// pub(crate) async fn write_dv_file(
-//     ctx: &DeleteContext,
-//     bitmap: &RoaringBitmap,
-// ) -> PolarsResult<(String, i64)> {
-//     // 1. 序列化 Bitmap (Portable Format)
-//     // Delta Lake 要求使用 RoaringBitmap 的 "Portable" 格式
-//     let mut buf = Vec::new();
-//     bitmap.serialize_into(&mut buf)
-//         .map_err(|e| PolarsError::ComputeError(format!("Failed to serialize bitmap: {}", e).into()))?;
 
-//     // 2. 生成文件名
-//     // 格式: deletion_vector_{uuid}.bin
-//     let uuid = Uuid::new_v4();
-//     let file_name = format!("deletion_vector_{}.bin", uuid);
-    
-//     // 3. 构建路径
-//     // DV 文件通常和数据文件在同一个表目录下 (或者专门的文件夹，但根目录最常见)
-//     let path = deltalake::Path::from(format!("{}/{}", ctx.table_root.trim_end_matches('/'), file_name));
 
-//     // 4. 写入存储
-//     ctx.object_store.put(&path, buf.clone().into()).await
-//         .map_err(|e| PolarsError::ComputeError(format!("Failed to write DV file: {}", e).into()))?;
-
-//     Ok((file_name, buf.len() as i64))
-// }
-
-/// 生成符合 Delta Protocol 的 DV 描述符
+///  Delta Protocol DV Descriptor
 pub(crate) fn create_dv_descriptor(
     file_name: &str, // deletion_vector_{uuid}.bin
     dv_size: i64,
     cardinality: i64,
 ) -> PolarsResult<DeletionVectorDescriptor> {
     
-    // 1. 从文件名提取 UUID
+    // Extract UUID from filename
     // file_name: "deletion_vector_xxxxxxxx-xxxx-....bin"
     let uuid_str = file_name
         .trim_start_matches("deletion_vector_")
@@ -326,133 +330,27 @@ pub(crate) fn create_dv_descriptor(
     let uuid = Uuid::parse_str(uuid_str)
         .map_err(|e| PolarsError::ComputeError(format!("Invalid UUID in DV filename: {}", e).into()))?;
 
-    // 2. 生成 Random Prefix (1 字节) + Base85(UUID)
-    // Delta 规范：为了防止 S3 热点，UUID 前面要加个随机前缀。
+    // Generate Random Prefix (1 byte) + Base85(UUID)
     // pathOrInlineDv = <randomPrefix> + <base85(uuid)>
-    // randomPrefix 长度是 `offset`。对于 'u' 类型，offset 通常是 1。
     
-    // A. 编码 UUID (16 bytes -> 20 chars Z85)
+    // Generate UUID (16 bytes -> 20 chars Z85)
     let uuid_bytes = uuid.as_bytes();
     let uuid_z85 = z85::encode(uuid_bytes);
 
-    // B. 生成随机前缀 (1 char)
-    // 随便搞个字符就行，比如 'x'，或者随机生成
+    // Generate prefix (1 char)
     let prefix = "p"; 
     
-    // C. 拼接
+    // Concat
     let path_encoded = format!("{}{}", prefix, uuid_z85);
 
     Ok(DeletionVectorDescriptor {
         storage_type: StorageType::UuidRelativePath, // 'u'
         path_or_inline_dv: path_encoded,
-        offset: Some(0), // 前缀长度为 0
+        offset: Some(0), 
         size_in_bytes: dv_size as i32,
         cardinality,
     })
 }
-
-/// Analyze a single file to determine if it can be skipped, fully dropped, or needs processing.
-// pub fn prune_file(ctx: &DeleteContext, view: &LogicalFileView) -> PolarsResult<FileActionDecision> {
-    
-//     // =================================================================================
-//     // PHASE A: Partition Pruning (分区裁剪)
-//     // =================================================================================
-//     if !ctx.partition_cols.is_empty() {
-//         // 1. 获取 Partition Values (StructData)
-//         // 这里的逻辑直接参考了你提供的源码实现
-//         let partition_struct_opt = view.partition_values();
-//         let (p_fields, p_values) = match &partition_struct_opt {
-//             Some(sd) => (sd.fields(), sd.values()),
-//             None => (&[][..], &[][..]), 
-//         };
-
-//         // 2. 构建 Mini-DataFrame (1行)
-//         let mut columns = Vec::with_capacity(ctx.partition_cols.len());
-        
-//         for target_col in &ctx.partition_cols {
-//             // [Copy from User Logic] 查找列索引并提取值
-//             let val_str_opt = p_fields.iter()
-//                 .position(|f| f.name() == target_col) // Find index by name
-//                 .map(|idx| &p_values[idx])            // Get Scalar
-//                 .filter(|scalar| !scalar.is_null())   // Filter Nulls
-//                 .map(|scalar| {
-//                      scalar.serialize()               // Convert to String
-//                 });
-
-//             // 获取 Polars 里的目标类型，以便 Cast
-//             let dtype = ctx.polars_schema.get_field(target_col)
-//                 .map(|f| f.dtype.clone())
-//                 .unwrap_or(DataType::String);
-            
-//             // 构建 Series
-//             // 注意：scalar.serialize() 返回的是 String，所以我们先创建 String Series，然后 Cast
-//             let s = match val_str_opt {
-//                 Some(v) => Series::new(target_col.into(), &[v]).cast(&dtype)?,
-//                 None => Series::new_null(target_col.into(), 1).cast(&dtype)?
-//             };
-//             columns.push(s.into());
-//         }
-
-//         if let Ok(mini_df) = DataFrame::new(1,columns) {
-//             // 3. 评估 Predicate
-//             let eval_result = mini_df.lazy()
-//                 .select([ctx.predicate.clone().alias("result")])
-//                 .collect_with_engine(Engine::Streaming);
-
-//             match eval_result {
-//                 Ok(res) => {
-//                     if let Ok(bool_s) = res.column("result") {
-//                         if let Ok(is_match) = bool_s.bool() {
-//                             if is_match.get(0) == Some(true) {
-//                                 // [Match]: 分区完全匹配 -> 全文件删除
-//                                 // 使用 LogicalFileView 自带的方法生成 Remove Action
-//                                 let remove = view.remove_action(true);
-//                                 return Ok(FileActionDecision::FullDrop(Action::Remove(remove)));
-//                             } else {
-//                                 // [No Match]: 分区完全不匹配 -> 跳过
-//                                 return Ok(FileActionDecision::Skip);
-//                             }
-//                         }
-//                     }
-//                 },
-//                 Err(_) => {
-//                     // Predicate 涉及非分区列，无法在此阶段判断，继续。
-//                 }
-//             }
-//         }
-//     }
-
-//     // =================================================================================
-//     // PHASE B: Stats Pruning (统计信息裁剪)
-//     // =================================================================================
-//     if !ctx.key_bounds.is_empty() {
-//         // LogicalFileView 提供了 stats() 方法返回 Option<String> (JSON)
-//         let stats_struct = view.stats()
-//             .map(|s| serde_json::from_str(&s).unwrap_or(serde_json::Value::Null));
-
-//         let mut file_overlaps = true;
-//         for (key, (src_min, src_max)) in &ctx.key_bounds {
-//             if !check_file_overlap_optimized(&stats_struct, key, src_min, src_max) {
-//                 file_overlaps = false;
-//                 break;
-//             }
-//         }
-        
-//         if !file_overlaps {
-//             return Ok(FileActionDecision::Skip);
-//         }
-//     }
-
-//     // =================================================================================
-//     // PHASE C: Pass to Process (进入执行阶段)
-//     // =================================================================================
-//     // 这里的 view 是借用的，我们需要把它转换成 Owned 的 Add 结构体传给后续流程。
-//     // 使用 LogicalFileView 自带的 add_action() 方法，它会自动处理所有字段映射。
-    
-//     let add_action = view_to_add_action(view);
-
-//     Ok(FileActionDecision::Process { file_view: add_action })
-// }
 
 /// Version of prune_file that works on Owned Add struct
 pub fn prune_file_from_add(ctx: &DeleteContext, add: &Add) -> PolarsResult<FileActionDecision> {
@@ -485,7 +383,6 @@ pub fn prune_file_from_add(ctx: &DeleteContext, add: &Add) -> PolarsResult<FileA
                 if let Ok(bool_s) = res.column("result") {
                     if bool_s.bool().ok().map(|b| b.get(0) == Some(true)).unwrap_or(false) {
                         // Match -> Full Drop
-                        // 手动构建 Remove (Add -> Remove)
                         let remove = Remove {
                             path: add.path.clone(),
                             deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
@@ -532,17 +429,16 @@ pub fn prune_file_from_add(ctx: &DeleteContext, add: &Add) -> PolarsResult<FileA
 }
 
 
-/// 执行 Copy-on-Write 策略：重写文件，过滤掉匹配的数据
+/// Copy-on-Write 
 pub fn execute_copy_on_write(
     ctx: &DeleteContext,
-    file_action: &Add, // 原始文件的 Add Action
+    file_action: &Add,
 ) -> PolarsResult<Vec<Action>> {
     
     let file_path_str = &file_action.path;
     let full_scan_path = format!("{}/{}", ctx.table_root.trim_end_matches('/'), file_path_str);
 
-    // 1. 构建 Scan Args
-    // 需要使用 unsafe 构建 cloud options，复用 context 里的 args
+    // Build Scan Args
     let scan_cloud_options = unsafe {
         build_cloud_options(
             ctx.cloud_args.provider, 
@@ -557,25 +453,24 @@ pub fn execute_copy_on_write(
         )
     };
     
-    // 2. Scan Parquet
+    // Scan Parquet
     let mut lf = LazyFrame::scan_parquet(
         PlRefPath::new(&full_scan_path), 
         ScanArgsParquet { cloud_options: scan_cloud_options, ..Default::default() }
     )?;
 
-    // 3. 注入分区列 (Inject Partition Columns)
-    // 原始逻辑里是从 View 拿的，现在我们可以从 file_action.partition_values 拿
+    // Inject Partition Columns
     for target_col in &ctx.partition_cols {
-        // 从 map 中获取值
+        // Get partition value from action 
         let val_opt = file_action.partition_values.get(target_col).and_then(|v| v.as_ref());
 
-        // 构建 Literal Expr
+        // Build Literal Expr
         let lit_expr = match val_opt {
             Some(v) => lit(v.as_str()),
             None => lit(NULL)
         };
 
-        // Cast 到正确类型
+        // Cast to correct type
         let final_expr = if let Some(dtype) = ctx.polars_schema.get_field(target_col).map(|f| f.dtype.clone()) {
             lit_expr.cast(dtype)
         } else {
@@ -585,39 +480,34 @@ pub fn execute_copy_on_write(
         lf = lf.with_column(final_expr.alias(target_col));
     }
 
-    // 4. 检查是否真的有数据需要删除 (Optimization)
-    // 这里的逻辑是你之前的 Phase 2 优化：先 filter(predicate).limit(1) 看看有没有命中
-    // 如果没命中，其实可以直接 Skip (返回空 Action 列表)，但这应该在 prune_file 里尽量做掉。
-    // 这里我们再做一次双保险。
-    
+    // Optimization
     let has_match_df = lf.clone()
         .filter(ctx.predicate.clone())
         .limit(1)
         .collect_with_engine(Engine::Streaming)?;
     
     if has_match_df.height() == 0 {
-        // 没有行匹配 Predicate -> 不需要重写，文件保留
+        // No Predicate -> Keep File
         return Ok(Vec::new());
     }
 
-    // 5. 准备重写 (Rewrite)
-    // 逻辑：保留那些 [不匹配] Predicate 的行
+    // Rewrite
+    // Keep rows unmatch Predicate
     let keep_expr = ctx.predicate.clone().not();
     
-    // Drop 分区列 (写入 Parquet 时不需要包含分区列，因为它们在路径里)
+    // Drop Partition Columns
     let drop_names: Vec<PlSmallStr> = ctx.partition_cols.iter()
         .map(|s| PlSmallStr::from_string(s.clone()))
         .collect();
-    // 使用新版 Selector
-    let drop_selector = Selector::ByName { names: drop_names.into(), strict: false }; // strict=false 以防某些分区列没被识别
+    let drop_selector = Selector::ByName { names: drop_names.into(), strict: false }; 
 
     let new_lf = lf.filter(keep_expr).drop(drop_selector);
 
-    // 6. 生成新文件名
-    // 格式：part-timestamp-uuid.parquet
+    // Generate new name
+    // Format：part-timestamp-uuid.parquet
     let new_name = format!("part-{}-{}.parquet", Utc::now().timestamp_millis(), Uuid::new_v4());
     
-    // 保持原来的目录结构 (如果有分区目录)
+    // Keep original dir structure
     let parent_dir = std::path::Path::new(file_path_str) 
         .parent()
         .map(|p| p.to_string_lossy().to_string())
@@ -631,13 +521,13 @@ pub fn execute_copy_on_write(
     
     let full_write_path = format!("{}/{}", ctx.table_root.trim_end_matches('/'), relative_new_path);
 
-    // 7. 执行写入 (Sink)
+    // Sink
     let write_opts = build_parquet_write_options(1, -1, true, 0, 0, -1)
         .map_err(|e| PolarsError::ComputeError(format!("Options error: {}", e).into()))?;
     
     let target = SinkTarget::Path(PlRefPath::new(&full_write_path));
     
-    // 重新构建 Unified Args (Unsafe)
+    // Rebuild Unified Sink Args
     let unified_args = unsafe {
         build_unified_sink_args(
             false, false, 0, 
@@ -650,9 +540,7 @@ pub fn execute_copy_on_write(
     new_lf.sink(SinkDestination::File { target }, FileWriteFormat::Parquet(write_opts), unified_args)?
         .collect_with_engine(Engine::Streaming)?;
 
-    // 8. 读取新文件 Stats (Metadata)
-    // 这步需要 IO，如果不想在 block_on 里调，可以将 execute_cow 设为 async
-    // 但目前架构是同步 FFI 调 block_on，所以这里再嵌套一个 runtime block_on 是安全的
+    // Read Stats (Metadata)
     let rt = get_runtime();
     let (file_size, stats_json) = rt.block_on(async {
         let path = deltalake::Path::from(relative_new_path.clone());
@@ -668,13 +556,10 @@ pub fn execute_copy_on_write(
         Ok::<_, PolarsError>((meta.size as i64, json))
     })?;
 
-    // 9. 构造 Actions
+    // Build Actions
     let mut actions = Vec::new();
 
-    // A. Remove Old File
-    // 使用 remove_action(true) 自动生成，data_change=true
-    // 既然我们手里是 Add 结构体，我们需要手动转 Remove，或者利用 LogicalFileView 的逻辑
-    // 这里手动构造 Remove 更直接
+    // Remove Old File
     let remove = Remove {
         path: file_path_str.clone(),
         deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
@@ -682,14 +567,14 @@ pub fn execute_copy_on_write(
         extended_file_metadata: Some(true),
         partition_values: Some(file_action.partition_values.clone()),
         size: Some(file_action.size),
-        deletion_vector: file_action.deletion_vector.clone(), // 必须带上旧的 DV (如果有)
+        deletion_vector: file_action.deletion_vector.clone(),
         tags: None,
         base_row_id: None,
         default_row_commit_version: None,
     };
     actions.push(Action::Remove(remove));
 
-    // B. Add New File
+    // Add New File
     let add = Add {
         path: relative_new_path.clone(),
         size: file_size,
@@ -715,10 +600,7 @@ pub fn execute_merge_on_read(
     let file_path_str = &file_action.path;
     let full_scan_path = format!("{}/{}", ctx.table_root.trim_end_matches('/'), file_path_str);
 
-    // 1. Scan Parquet 获取要删除的行号
-    // 重要：我们只需要 row_index，不需要读其他列（除非 predicate 需要）
-    // 为了性能，Polars 会只读 predicate 涉及的列 + row_index
-    
+    // Scan Parquet to Get deletion row index
     let scan_cloud_options = unsafe {
         build_cloud_options(
             ctx.cloud_args.provider, 
@@ -738,7 +620,7 @@ pub fn execute_merge_on_read(
         ScanArgsParquet { cloud_options: scan_cloud_options, ..Default::default() }
     )?;
 
-    // 注入分区列 (Predicate 可能依赖分区列)
+    // Inject Partition cols
     for target_col in &ctx.partition_cols {
         let val_opt = file_action.partition_values.get(target_col).and_then(|v| v.as_ref());
         let lit_expr = match val_opt {
@@ -753,53 +635,49 @@ pub fn execute_merge_on_read(
         lf = lf.with_column(final_expr.alias(target_col));
     }
 
-    // 2. 筛选出要删除的行号
-    // 逻辑：filter(predicate) -> select(row_nr)
-    // 这里的 row_index 必须和 Parquet 物理行号一致，scan_parquet 默认保证这一点
+    // Filter deletion rows
+    // filter(predicate) -> select(row_nr)
     let deleted_indices_df = lf
         .with_row_index("row_nr", None)
-        .filter(ctx.predicate.clone()) // 筛选出要删的
+        .filter(ctx.predicate.clone()) 
         .select([col("row_nr")])
         .collect_with_engine(Engine::Streaming)?;
 
     if deleted_indices_df.height() == 0 {
-        return Ok(Vec::new()); // 没命中，跳过
+        return Ok(Vec::new()); 
     }
 
-    // 收集新删除的行号
+    // Collect new deleted indices
     let new_deleted_indices: Vec<u32> = deleted_indices_df
         .column("row_nr")?
         .u32()?
         .into_no_null_iter()
         .collect();
 
-    // 3. 处理旧 DV (Merge Logic)
-    let rt = get_runtime(); // 需要 Runtime 做 IO
+    // Handle old DV (Merge Logic)
+    let rt = get_runtime(); 
     let table_root_path = deltalake::Path::from(ctx.table_root.trim_end_matches('/'));
 
     let mut bitmap = if let Some(dv_desc) = &file_action.deletion_vector {
-        // 如果之前有 DV，必须读出来合并
         rt.block_on(async {
             read_deletion_vector(ctx.object_store.clone(), dv_desc, &table_root_path).await
         })?
     } else {
-        // 之前没 DV，创建新的
         RoaringBitmap::new()
     };
 
-    // 合并：Old | New
+    // Concat：Old | New
     bitmap.extend(new_deleted_indices);
 
-    // 4. 写入新 DV 文件 (IO)
+    // Write new DV file
     let (dv_file_name, dv_size) = rt.block_on(async {
         write_dv_file(ctx.object_store.clone(), &ctx.table_root, &bitmap).await
     })?;
 
-    // 5. 构造 Actions
+    // Build Actions
     let mut actions = Vec::new();
 
-    // A. Remove Old File State
-    // 注意：这里移除的是“带旧 DV”的那个状态
+    // Remove Old File State
     let remove = Remove {
         path: file_path_str.clone(),
         deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
@@ -807,33 +685,29 @@ pub fn execute_merge_on_read(
         extended_file_metadata: Some(true),
         partition_values: Some(file_action.partition_values.clone()),
         size: Some(file_action.size),
-        deletion_vector: file_action.deletion_vector.clone(), // 必须带上旧 DV
+        deletion_vector: file_action.deletion_vector.clone(), 
         tags: None,
         base_row_id: None,
         default_row_commit_version: None,
     };
     actions.push(Action::Remove(remove));
 
-    // B. Add New File State (Same Path, New DV)
-    // 这是 MoR 的精髓：Path 不变，DV 变了
+    // Add New File State (Same Path, New DV)
     let new_dv_descriptor = create_dv_descriptor(
         &dv_file_name, 
         dv_size, 
-        bitmap.len() as i64 // cardinality = 删除了多少行
+        bitmap.len() as i64 
     )?;
 
     let add = Add {
-        path: file_path_str.clone(), // 路径不变！
-        size: file_action.size,      // 大小不变 (指 Parquet 文件大小)
+        path: file_path_str.clone(), 
+        size: file_action.size,   
         partition_values: file_action.partition_values.clone(),
         modification_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
         data_change: true,
-        stats: file_action.stats.clone(), // 统计信息不变 (或者需要修正 numRecords?)
-        // Delta 规范：Stats 通常反映物理文件的状态。逻辑上的 numRecords 会减小，
-        // 但 stats 里的 min/max/nulls 通常不更新，除非重写文件。
-        // 读取端会自己 apply DV，所以这里保持原样通常是安全的。
+        stats: file_action.stats.clone(), 
         tags: None,
-        deletion_vector: Some(new_dv_descriptor), // 新的 DV
+        deletion_vector: Some(new_dv_descriptor), 
         base_row_id: None,
         default_row_commit_version: None,
         clustering_provider: None,
@@ -859,7 +733,7 @@ pub extern "C" fn pl_io_delta_delete(
 ) {
     ffi_try_void!({
         // =================================================================================
-        // Step 0: 参数解析 (Argument Parsing)
+        // Step 0: Argument Parsing
         // =================================================================================
         let path_str = ptr_to_str(table_path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
         let table_url = parse_table_url(path_str)?;
@@ -887,9 +761,8 @@ pub extern "C" fn pl_io_delta_delete(
         let rt = get_runtime();
 
         // =================================================================================
-        // Step 1: 加载表与获取文件 (Load Phase - Async)
+        // Step 1: Load Phase - Async
         // =================================================================================
-        // 我们在这里一次性把 View 转换为 Owned Add 结构体，避免后续生命周期问题
         let (table, polars_schema, partition_cols, all_files) = rt.block_on(async {
             // 1.1 Load Table
             let t = DeltaTable::try_from_url_with_storage_options(table_url.clone(), delta_storage_options)
@@ -907,7 +780,6 @@ pub extern "C" fn pl_io_delta_delete(
             
             while let Some(item) = stream.next().await {
                 let view = item.map_err(|e| PolarsError::ComputeError(format!("Stream error: {}", e).into()))?;
-                // 使用我们写的 helper 转换
                 files.push(view_to_add_action(&view));
             }
 
@@ -915,12 +787,10 @@ pub extern "C" fn pl_io_delta_delete(
         })?;
 
         // =================================================================================
-        // Step 2: 核心执行循环 (Execution Phase - Sync / Mixed)
+        // Step 2: Execution Phase - Sync / Mixed
         // =================================================================================
-        // 这里不使用 block_on 包裹整个循环，以免 execute_cow 内部的 block_on 导致死锁/panic。
         
         // 2.1 Determine Strategy
-        // (需要 snapshot，table 已经加载了，直接取)
         let snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("{}", e).into()))?;
         let strategy = DeleteStrategy::determine(snapshot, false);
 
@@ -953,11 +823,11 @@ pub extern "C" fn pl_io_delta_delete(
                     // B. Strategy Dispatch
                     let new_actions = match ctx.strategy {
                         DeleteStrategy::CopyOnWrite => {
-                            // CoW 执行 (包含 Polars 计算 + IO)
+                            // CoW
                             execute_copy_on_write(&ctx, &file_view)?
                         },
                         DeleteStrategy::MergeOnRead => {
-                            // MoR 占位符
+                            // MoR
                             execute_merge_on_read(&ctx, &file_view)?
                         }
                     };
@@ -967,7 +837,7 @@ pub extern "C" fn pl_io_delta_delete(
         }
 
         // =================================================================================
-        // Step 3: 提交事务 (Commit Phase - Async)
+        // Step 3: Commit Phase - Async
         // =================================================================================
         if !actions_to_commit.is_empty() {
             rt.block_on(async {

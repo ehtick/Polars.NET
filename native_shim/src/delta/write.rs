@@ -1,6 +1,6 @@
 use std::{ffi::c_char, time::{SystemTime, UNIX_EPOCH}};
 use deltalake::{DeltaTable, Path, kernel::{Action, Remove, transaction}, protocol::DeltaOperation};
-// use polars_utils::IdxSize;
+use futures::StreamExt;
 use serde_json::Value;
 use uuid::Uuid;
 use polars::{error::{PolarsError, PolarsResult}, prelude::*};
@@ -107,15 +107,8 @@ ffi_try_void!({
                     SaveMode::Ignore => {
                         skip_write = true;
                     },
-                    // Case C: Overwrite -> Collect old files
-                    // SaveMode::Overwrite => {
-                    //     let files = dt.get_files_by_partitions(&[]).await
-                    //         .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))?;
-                    //     for p in files {
-                    //         old_files.push(p.to_string());
-                    //     }
                     // },
-                    // Case D: Append -> Continue
+                    // Case C: Append -> Continue
                     _ => {} 
                 }
             }
@@ -127,27 +120,13 @@ ffi_try_void!({
         }
 
         // // 4. Polars Sink -> Staging Folder
-        // let destination = unsafe {
-        //     build_partitioned_destination(
-        //         std::ffi::CString::new(staging_uri.clone()).unwrap().as_ptr(), 
-        //         ".parquet", 
-        //         &schema,
-        //         partition_by_ptr,
-        //         include_keys,
-        //         keys_pre_grouped,
-        //         max_rows_per_file,
-        //         approx_bytes_per_file
-        //     )?
-        // };
+
         // =========================================================
-        // [FIX] Align Partitioning Logic BEFORE building destination
+        // Align Partitioning Logic BEFORE building destination
         // =========================================================
         let mut final_partition_cols = partition_cols.clone();
         
-        // 这一步必须是同步的，因为我们需要更新 final_partition_cols
         if table.version() >= Some(0) {
-            // 注意：这里需要短暂 block_on 来获取 metadata，因为 table.snapshot() 可能需要 IO (load)
-            // 但通常 load() 已经在上面做过了，所以 snapshot() 是瞬时的
             let snapshot = table.snapshot().map_err(|e| PolarsError::ComputeError(format!("Snapshot: {}", e).into()))?;
             let existing_part_cols = snapshot.metadata().partition_columns().clone();
 
@@ -170,23 +149,19 @@ ffi_try_void!({
         }
         
         // 4. Build Destination (Use final_partition_cols)
-        // 既然我们已经有了 Vec<String> 类型的 final_partition_cols，
-        // 我们不需要再依赖 partition_by_ptr 这个 C 指针了。
-        // 直接构建 Rust 端的 PartitionStrategy。
         
         let partition_strategy = if final_partition_cols.is_empty() {
              PartitionStrategy::FileSize
         } else {
-             // 将列名转换为 Expr
+             // Convert Column name to Expr
              let keys: Vec<Expr> = final_partition_cols.iter().map(|n| col(n)).collect();
              PartitionStrategy::Keyed {
                  keys,
-                 include_keys: include_keys, // 通常 Delta 需要 include_keys=true (写在文件里)? 不，通常是 false，但 Polars 默认行为可能不同
+                 include_keys: include_keys, 
                  keys_pre_grouped: keys_pre_grouped,
              }
         };
 
-        // 手动构建 Destination，绕过 C++ 指针的限制
         let hive_provider = file_provider::HivePathProvider {
             extension: PlSmallStr::from_str(".parquet"),
         };
@@ -195,7 +170,6 @@ ffi_try_void!({
             base_path: PlRefPath::new(&staging_uri), 
             file_path_provider: Some(file_provider::FileProviderType::Hive(hive_provider)),
             partition_strategy,
-            // 传入用户的参数
             max_rows_per_file: if max_rows_per_file == 0 { u32::MAX } else { max_rows_per_file as u32 },
             approximate_bytes_per_file: if approx_bytes_per_file == 0 { usize::MAX as u64 } else { approx_bytes_per_file },
         };
@@ -289,17 +263,26 @@ ffi_try_void!({
 
             // Handle Overwrite
             if let SaveMode::Overwrite = save_mode {
-                let current_files = table.get_files_by_partitions(&[]).await
-                    .map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))?;
+                let mut stream = table.get_active_add_actions_by_partitions(&[]);
                 
-                for p in current_files {
-                     let remove = Remove {
-                         path: p.to_string(),
-                         deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
-                         data_change: true,
-                         ..Default::default()
-                     };
-                     actions.push(Action::Remove(remove));
+                while let Some(view_res) = stream.next().await {
+                    let view = view_res.map_err(|e| PolarsError::ComputeError(format!("List files error: {}", e).into()))?;
+                    
+                    let add_action = view_to_add_action(&view);
+                    
+                    let remove = Remove {
+                        path: add_action.path.clone(),
+                        deletion_timestamp: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64),
+                        data_change: true,
+                        extended_file_metadata: Some(true),
+                        partition_values: Some(add_action.partition_values),
+                        size: Some(add_action.size),
+                        deletion_vector: add_action.deletion_vector,
+                        tags: add_action.tags,
+                        base_row_id: add_action.base_row_id,
+                        default_row_commit_version: add_action.default_row_commit_version,
+                    };
+                    actions.push(Action::Remove(remove));
                 }
             }
 
