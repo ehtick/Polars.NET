@@ -181,133 +181,6 @@ public static partial class PolarsWrapper
         }
     }
     
-    // public static unsafe LazyFrameHandle ScanCsv(
-    //     string path,
-    //     SchemaHandle? schema,
-    //     bool hasHeader,
-    //     char separator,
-    //     char? quoteChar,       
-    //     char eolChar,         
-    //     bool ignoreErrors,
-    //     bool tryParseDates,
-    //     bool lowMemory,
-    //     bool cache,
-    //     bool rechunk,
-    //     ulong skipRows,
-    //     ulong? nRows,
-    //     ulong? inferSchemaLength,
-    //     string? rowIndexName,
-    //     ulong rowIndexOffset,
-    //     PlCsvEncoding encoding,
-    //     string[]? nullValues, 
-    //     bool missingIsNull,   
-    //     string? commentPrefix,
-    //     bool decimalComma,
-    //     ulong? chunkSize)    
-    // {
-    //     UIntPtr nRowsVal = nRows.HasValue ? (UIntPtr)nRows.Value : 0;
-    //     UIntPtr* pNRows = nRows.HasValue ? &nRowsVal : null;
-
-    //     UIntPtr inferVal = inferSchemaLength.HasValue ? (UIntPtr)inferSchemaLength.Value : 0;
-    //     UIntPtr* pInfer = inferSchemaLength.HasValue ? &inferVal : null;
-
-    //     SchemaHandle schemaHandle = schema ?? new SchemaHandle();
-
-    //     UIntPtr csize = chunkSize.HasValue ? (UIntPtr)chunkSize.Value : UIntPtr.Zero;
-    //     byte quoteVal = quoteChar.HasValue ? (byte)quoteChar.Value : (byte)0;
-
-    //     return ErrorHelper.Check(NativeBindings.pl_scan_csv(
-    //         path,
-    //         hasHeader,
-    //         (byte)separator,
-    //         quoteVal, 
-    //         (byte)eolChar,   
-    //         ignoreErrors,
-    //         tryParseDates,
-    //         lowMemory,
-    //         cache,
-    //         rechunk,
-    //         (UIntPtr)skipRows,
-    //         (IntPtr)pNRows,
-    //         (IntPtr)pInfer,
-    //         rowIndexName,
-    //         (UIntPtr)rowIndexOffset,
-    //         schemaHandle,
-    //         encoding,
-    //         nullValues,                    
-    //         (nuint)(nullValues?.Length ?? 0), 
-    //         missingIsNull,                 
-    //         commentPrefix,                 
-    //         decimalComma,
-    //         csize                 
-    //     ));
-    // }
-
-    // public static unsafe LazyFrameHandle ScanCsv(
-    //     byte[] buffer,
-    //     SchemaHandle? schema,
-    //     bool hasHeader,
-    //     char separator,
-    //     char? quoteChar,       
-    //     char eolChar,         
-    //     bool ignoreErrors,
-    //     bool tryParseDates,
-    //     bool lowMemory,
-    //     bool cache,
-    //     bool rechunk,
-    //     ulong skipRows,
-    //     ulong? nRows,
-    //     ulong? inferSchemaLength,
-    //     string? rowIndexName,
-    //     ulong rowIndexOffset,
-    //     PlCsvEncoding encoding,
-    //     string[]? nullValues, 
-    //     bool missingIsNull,   
-    //     string? commentPrefix,
-    //     bool decimalComma)    
-    // {
-    //     if (buffer == null || buffer.Length == 0)
-    //         throw new ArgumentException("Buffer cannot be empty", nameof(buffer));
-
-    //     UIntPtr nRowsVal = nRows.HasValue ? (UIntPtr)nRows.Value : 0;
-    //     UIntPtr* pNRows = nRows.HasValue ? &nRowsVal : null;
-
-    //     UIntPtr inferVal = inferSchemaLength.HasValue ? (UIntPtr)inferSchemaLength.Value : 0;
-    //     UIntPtr* pInfer = inferSchemaLength.HasValue ? &inferVal : null;
-    //     byte quoteVal = quoteChar.HasValue ? (byte)quoteChar.Value : (byte)0;
-    //     SchemaHandle schemaHandle = schema ?? new SchemaHandle();
-
-    //     fixed (byte* pBuffer = buffer)
-    //     {
-    //         return ErrorHelper.Check(NativeBindings.pl_scan_csv_mem(
-    //             pBuffer,
-    //             (UIntPtr)buffer.Length,
-                
-    //             hasHeader,
-    //             (byte)separator,
-    //             quoteVal, 
-    //             (byte)eolChar,   
-    //             ignoreErrors,
-    //             tryParseDates,
-    //             lowMemory,
-    //             cache,
-    //             rechunk,
-    //             (UIntPtr)skipRows,
-    //             (IntPtr)pNRows,
-    //             (IntPtr)pInfer,
-    //             rowIndexName,
-    //             (UIntPtr)rowIndexOffset,
-    //             schemaHandle,
-    //             encoding,
-    //             nullValues,                     
-    //             (nuint)(nullValues?.Length ?? 0), 
-    //             missingIsNull,                  
-    //             commentPrefix,                  
-    //             decimalComma                    
-    //         ));
-    //     }
-    // }
-
     public static DataFrameHandle ReadParquet(
         string path,
         string[] columns,
@@ -511,39 +384,6 @@ public static partial class PolarsWrapper
             }
         }
     }
-
-    // public static void WriteCsv(
-    //     DataFrameHandle df, 
-    //     string path,
-    //     bool hasHeader,
-    //     bool useBom,
-    //     int batchSize,
-    //     char separator,
-    //     char quoteChar,
-    //     PlQuoteStyle quoteStyle,
-    //     string? nullValue,
-    //     string? lineTerminator,
-    //     string? dateFormat,
-    //     string? timeFormat,
-    //     string? datetimeFormat,
-    //     bool? floatScientific,
-    //     int? floatPrecision,
-    //     bool decimalComma)
-    // {
-    //     nuint bs = batchSize > 0 ? (nuint)batchSize : 0;
-    //     int fScientific = floatScientific switch { null => -1, false => 0, true => 1 };
-    //     int fPrecision = floatPrecision ?? -1;
-        
-    //     NativeBindings.pl_dataframe_write_csv(
-    //         df, path, hasHeader, useBom, bs,
-    //         (byte)separator, (byte)quoteChar, quoteStyle,
-    //         nullValue, lineTerminator,
-    //         dateFormat, timeFormat, datetimeFormat,
-    //         fScientific, fPrecision, decimalComma
-    //     );
-        
-    //     ErrorHelper.CheckVoid();
-    // }
     public static void SinkCsv(
         LazyFrameHandle lf,
         string path,
@@ -644,6 +484,118 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
     }
+    public static void SinkCsvPartitioned(
+        LazyFrameHandle lf,
+        string path,
+
+        // --- Partition Params ---
+        SelectorHandle partitionBy,
+        bool includeKeys,
+        bool keysPreGrouped,
+        nuint maxRowsPerFile,
+        ulong approxBytesPerFile,
+
+        // --- CSV Writer Options ---
+        bool hasHeader,
+        bool useBom,
+        int batchSize,       
+        bool checkExtension, 
+
+        // --- Compression ---
+        PlExternalCompression compressionCode, 
+        int compressionLevel,                  
+        // --- Serialize Options ---
+        char separator,
+        char quoteChar,
+        PlQuoteStyle quoteStyle,
+        string? nullValue,
+        string? lineTerminator,
+        string? dateFormat,
+        string? timeFormat,
+        string? datetimeFormat,
+        bool? floatScientific,
+        int? floatPrecision,
+        bool decimalComma,
+
+        // --- Unified Sink Options ---
+        bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir,
+
+        // --- Cloud Options ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        nuint bs = batchSize > 0 ? (nuint)batchSize : 0;
+        
+        // Float Scientific: null->-1, false->0, true->1
+        int fScientific = floatScientific switch { null => -1, false => 0, true => 1 };
+        
+        // Float Precision: null->-1
+        int fPrecision = floatPrecision ?? -1;
+
+        // Cloud Length
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
+        NativeBindings.pl_lazyframe_sink_csv_partitioned(
+            lf, 
+            path,
+            // Partition Params
+            partitionBy,
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
+            // CSV Writer Options
+            useBom,           // include_bom
+            hasHeader,        // include_header
+            bs,               // batch_size
+            checkExtension,   // check_extension
+
+            // Compression
+            compressionCode,
+            compressionLevel,
+
+            // SerializeOptions
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            fScientific,
+            fPrecision,
+            decimalComma,
+            (byte)separator,
+            (byte)quoteChar,
+            nullValue,
+            lineTerminator,
+            quoteStyle,
+
+            // UnifiedSinkArgs
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+
+            // Cloud Options
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        lf.TransferOwnership();
+        ErrorHelper.CheckVoid();
+    }
     public static void WriteParquet(
         DataFrameHandle df,
         string path,
@@ -672,24 +624,6 @@ public static partial class PolarsWrapper
 
         ErrorHelper.CheckVoid();
     }
-    // public static void WriteIpc(
-    //     DataFrameHandle df, 
-    //     string path, 
-    //     PlIpcCompression compression = PlIpcCompression.None, 
-    //     bool parallel = true, 
-    //     int compatLevel = -1)
-    // {
-    //     NativeBindings.pl_dataframe_write_ipc(
-    //         df, 
-    //         path, 
-    //         compression, 
-    //         parallel, 
-    //         compatLevel
-    //     );
-        
-    //     ErrorHelper.CheckVoid();
-    // }
-
     public static void WriteJson(DataFrameHandle df, string path, PlJsonFormat format)
     {
         NativeBindings.pl_dataframe_write_json(df, path, format);
@@ -1465,60 +1399,6 @@ public static partial class PolarsWrapper
         return ErrorHelper.Check(h);
     }
 
-    // public static void SinkDelta(
-    //     LazyFrameHandle lf,
-    //     string path,
-    //     PlDeltaSaveMode mode,
-    //     // Parquet Options
-    //     PlParquetCompression compression,
-    //     int compressionLevel,
-    //     bool statistics,
-    //     nuint rowGroupSize,
-    //     nuint dataPageSize,
-    //     int compatLevel,
-    //     // Sink Options
-    //     bool maintainOrder,
-    //     PlSyncOnClose syncOnClose,
-    //     bool mkdir,
-    //     // Cloud Options
-    //     PlCloudProvider cloudProvider,
-    //     nuint cloudRetries,
-    //     ulong cloudRetryTimeoutMs,
-    //     ulong cloudRetryInitBackoffMs,
-    //     ulong cloudRetryMaxBackoffMs,
-    //     ulong cloudCacheTtl,
-    //     string[]? cloudKeys,
-    //     string[]? cloudValues
-    //     )
-    // {
-    //     nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
-    //     NativeBindings.pl_sink_delta(
-    //         lf,
-    //         path,
-    //         mode,
-    //         compression,
-    //         compressionLevel,
-    //         statistics,
-    //         rowGroupSize,
-    //         dataPageSize,
-    //         compatLevel,
-    //         maintainOrder,
-    //         syncOnClose,
-    //         mkdir,
-    //         cloudProvider,
-    //         cloudRetries,
-    //         cloudRetryTimeoutMs,
-    //         cloudRetryInitBackoffMs,
-    //         cloudRetryMaxBackoffMs,
-    //         cloudCacheTtl,
-    //         cloudKeys,
-    //         cloudValues,
-    //         cloudLen
-    //     );
-    //     lf.TransferOwnership();
-
-    //     ErrorHelper.CheckVoid();
-    // }
     public static void SinkDelta(
         LazyFrameHandle lf,
         string path,

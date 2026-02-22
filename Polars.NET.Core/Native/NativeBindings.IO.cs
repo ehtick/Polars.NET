@@ -112,7 +112,7 @@ unsafe internal partial class NativeBindings
         string path,
 
         // --- CSV Writer Options ---
-        [MarshalAs(UnmanagedType.U1)] bool _bom,
+        [MarshalAs(UnmanagedType.U1)] bool include_bom,
         [MarshalAs(UnmanagedType.U1)] bool include_header,
         nuint batch_size,
         [MarshalAs(UnmanagedType.U1)] bool check_extension, 
@@ -150,7 +150,55 @@ unsafe internal partial class NativeBindings
         string[]? cloud_values,
         nuint cloud_len
     );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_csv_partitioned(
+        LazyFrameHandle lf,
+        string path,
+        // --- Partition Params ---
+        SelectorHandle partition_by,
+        [MarshalAs(UnmanagedType.U1)] bool include_keys,
+        [MarshalAs(UnmanagedType.U1)] bool keys_pre_grouped,
+        nuint max_rows_per_file,
+        ulong approx_bytes_per_file,
+        // --- CSV Writer Options ---
+        [MarshalAs(UnmanagedType.U1)] bool include_bom,
+        [MarshalAs(UnmanagedType.U1)] bool include_header,
+        nuint batch_size,
+        [MarshalAs(UnmanagedType.U1)] bool check_extension, 
 
+        // --- Compression ---
+        PlExternalCompression compression_code, 
+        int compression_level, 
+
+        // --- SerializeOptions  ---
+        string? date_format,
+        string? time_format,
+        string? datetime_format,
+        int float_scientific, // -1: None, 0: False, 1: True
+        int float_precision,  // -1: None, >=0: value
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma,
+        byte separator,
+        byte quote_char,
+        string? null_value,
+        string? line_terminator,
+        PlQuoteStyle quote_style, 
+
+        // --- UnifiedSinkArgs ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close, 
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Options ---
+        PlCloudProvider cloud_provider,
+        nuint cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
     // Parquet
     [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_parquet(
