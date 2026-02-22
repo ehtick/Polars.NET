@@ -6,7 +6,7 @@ use uuid::Uuid;
 use polars::{error::{PolarsError, PolarsResult}, prelude::*};
 use deltalake::protocol::SaveMode;
 
-use crate::io::{build_parquet_write_options, build_unified_sink_args};
+use crate::pl_io::{io_utils::build_unified_sink_args, parquet::parquet_utils::build_parquet_write_options};
 use crate::types::{LazyFrameContext,SelectorContext};
 use crate::utils::ptr_to_str;
 use crate::delta::utils::*;

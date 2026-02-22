@@ -49,7 +49,7 @@ public class IoTests
 
             using var df = DataFrame.ReadJson(
                 path,
-                columns: new[] { "age" },       // 只读 age 列
+                columns: ["age"],       // 只读 age 列
                 schema: schema,                 // 强制类型转换
                 jsonFormat: JsonFormat.JsonLines,
                 ignoreErrors: false

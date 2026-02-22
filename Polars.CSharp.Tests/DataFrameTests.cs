@@ -887,13 +887,13 @@ B,5";
     [Fact]
     public void Test_Unique_Stable()
     {
-        var df = DataFrame.From(new[]
-        {
+        var df = DataFrame.From(
+        [
             new { A = 1, B = "x" },
             new { A = 2, B = "y" },
             new { A = 1, B = "x" }, // Duplicate
             new { A = 3, B = "z" }
-        });
+        ]);
 
         // 1. Default (All cols, Keep First)
         var res1 = df.Unique();
@@ -903,13 +903,13 @@ B,5";
         Assert.Equal(3, res1["A"][2]);
 
         // 2. Subset (Check only A)
-        var df2 = DataFrame.From(new[]
-        {
+        var df2 = DataFrame.From(
+        [
             new { A = 1, B = "x" },
             new { A = 1, B = "y" } // Duplicate on A
-        });
+        ]);
         
-        var res2 = df2.Unique(new[] { "A" }, UniqueKeepStrategy.Last);
+        var res2 = df2.Unique(["A"], UniqueKeepStrategy.Last);
         Assert.Equal(1, res2.Height);
         Assert.Equal("y", res2["B"][0]); // Should keep the last one ("y")
 

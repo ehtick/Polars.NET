@@ -98,7 +98,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_str(
         string name, 
-        [In, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string?[] strs, 
+        [In] string?[] strs, 
         UIntPtr len
         );
     [LibraryImport(LibName)]
@@ -110,14 +110,14 @@ unsafe internal partial class NativeBindings
         IntPtr validity_ptr,  // Validity (IntPtr.Zero allowed)
         UIntPtr len // Row count
     );
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_datetime(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        string name,
         ref long ptr,
         IntPtr validity,
         UIntPtr len,
         PlTimeUnit unit, // 0=ns, 1=us, 2=ms
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? zone
+        string? zone
     );
     [LibraryImport(LibName)]
     public static partial SeriesHandle pl_series_new_date(

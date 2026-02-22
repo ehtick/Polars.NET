@@ -121,8 +121,8 @@ public class ExcelTests
             // 1. 构造极其刁钻的数据
             // UInt64.MaxValue 是 18446744073709551615，远超 Excel 精度
             // Date 和 Datetime 用于测试格式化
-            using var df = DataFrame.From(new[]
-            {
+            using var df = DataFrame.From(
+            [
                 new 
                 { 
                     Id = 1, 
@@ -130,7 +130,7 @@ public class ExcelTests
                     JoinDate = new DateTime(2023, 10, 1),
                     LogTime = new DateTime(2023, 10, 1, 14, 30, 0)
                 }
-            });
+            ]);
 
             // 2. 写入 Excel (自定义格式)
             df.WriteExcel(

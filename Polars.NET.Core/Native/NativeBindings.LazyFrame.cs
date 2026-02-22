@@ -130,12 +130,12 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool emptyAsNull,
         [MarshalAs(UnmanagedType.U1)] bool keepNulls);
     // --- Reshaping (Lazy) ---
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_lazyframe_rename(
         LazyFrameHandle lf, 
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] existing, 
+        string[] existing, 
         UIntPtr existingLen, 
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] newNames, 
+        string[] newNames, 
         UIntPtr newLen, 
         [MarshalAs(UnmanagedType.U1)] bool strict
     );
@@ -151,13 +151,13 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool maintainOrder,
         string? separator
     );
-    [LibraryImport(LibName)] 
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
     public static partial LazyFrameHandle pl_lazyframe_unpivot(
         LazyFrameHandle lf,
         SelectorHandle index,
         SelectorHandle? on, // Nullable
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? varName,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? valName
+        string? varName,
+        string? valName
     );
     [LibraryImport(LibName)] 
     public static partial LazyFrameHandle pl_lazy_concat(
@@ -171,7 +171,7 @@ unsafe internal partial class NativeBindings
     public static partial LazyFrameHandle pl_lazyframe_unnest(
         LazyFrameHandle lf, 
         SelectorHandle selector,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? separator
+        string? separator
     );
     [LibraryImport(LibName)]
     public static partial LazyFrameHandle pl_lazyframe_drop(
@@ -187,7 +187,6 @@ unsafe internal partial class NativeBindings
     // --- Streaming & Sink ---
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_lazy_collect_streaming(LazyFrameHandle lf);
-
 
     [LibraryImport(LibName)]
     [UnmanagedCallConv(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]

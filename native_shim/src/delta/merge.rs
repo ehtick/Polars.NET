@@ -12,8 +12,8 @@ use deltalake::parquet::arrow::async_reader::{AsyncFileReader, ParquetObjectRead
 use deltalake::protocol::{DeltaOperation, MergePredicate};
 use uuid::Uuid;
 
-use crate::delta::{delete::{create_dv_descriptor, write_dv_file}, deletion_vector::{apply_deletion_vector, read_deletion_vector}, utils::*};
-use crate::io::{build_cloud_options, build_parquet_write_options, build_unified_sink_args}; 
+use crate::{delta::{delete::{create_dv_descriptor, write_dv_file}, deletion_vector::{apply_deletion_vector, read_deletion_vector}, utils::*}, pl_io::parquet::parquet_utils::build_parquet_write_options};
+use crate::pl_io::io_utils::{build_cloud_options, build_unified_sink_args};
 use crate::types::{ExprContext, LazyFrameContext};
 use crate::utils::{ptr_to_str, ptr_to_vec_string};
 

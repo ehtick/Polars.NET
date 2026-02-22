@@ -61,8 +61,85 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     // Static IO Read
     // ==========================================
+    // /// <summary>
+    // /// Read a DataFrame from a CSV file.
+    // /// </summary>
+    // /// <param name="path">Path to the CSV file.</param>
+    // /// <param name="columns">Columns to select. If null, select all columns.</param>
+    // /// <param name="hasHeader">Whether the CSV file has a header. Defaults to true.</param>
+    // /// <param name="separator">Character used as separator. Defaults to ','.</param>
+    // /// <param name="quoteChar">Character used for quoting. Defaults to '"'. Set to '\0' to disable.</param>
+    // /// <param name="eolChar">Character used as End-Of-Line. Defaults to '\n'.</param>
+    // /// <param name="ignoreErrors">Try to keep reading lines if some are invalid. Defaults to false.</param>
+    // /// <param name="tryParseDates">Try to automatically parse dates. Defaults to true.</param>
+    // /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
+    // /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
+    // /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
+    // /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default.</param>
+    // /// <param name="schema">Provide a schema to ignore schema inference.</param>
+    // /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
+    // /// <param name="nullValues">List of strings to consider as null values.</param>
+    // /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
+    // /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    // /// <param name="decimalComma">Use comma as decimal separator. Defaults to false.</param>
+    // /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
+    // /// <param name="rowIndexName">If provided, add a column with the row index.</param>
+    // /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
+    // public static DataFrame ReadCsv(
+    //     string path,
+    //     string[]? columns = null,
+    //     bool hasHeader = true,
+    //     char separator = ',',
+    //     char? quoteChar = '"',
+    //     char eolChar = '\n',
+    //     bool ignoreErrors = false,
+    //     bool tryParseDates = true,
+    //     bool lowMemory = false,
+    //     int skipRows = 0,
+    //     int? nRows = null,
+    //     int? inferSchemaLength = null,
+    //     PolarsSchema? schema = null,
+    //     CsvEncoding encoding = CsvEncoding.UTF8,
+    //     string[]? nullValues = null,
+    //     bool missingIsNull = true,
+    //     string? commentPrefix = null,
+    //     bool decimalComma = false,
+    //     bool truncateRaggedLines = false,
+    //     string? rowIndexName = null,
+    //     ulong rowIndexOffset = 0)
+    // {
+    //     var handle = PolarsWrapper.ReadCsv(
+    //         path,
+    //         columns,
+    //         hasHeader,
+    //         (byte)separator,
+    //         quoteChar,
+    //         (byte)eolChar,
+    //         ignoreErrors,
+    //         tryParseDates,
+    //         lowMemory,
+    //         (nuint)skipRows,
+    //         nRows.HasValue ? (nuint)nRows.Value : null,
+    //         inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
+    //         schema?.Handle,
+    //         encoding.ToNative(),
+    //         nullValues,
+    //         missingIsNull,
+    //         commentPrefix,
+    //         decimalComma,
+    //         truncateRaggedLines,
+    //         rowIndexName,
+    //         (nuint)rowIndexOffset
+    //     );
+
+    //     return new DataFrame(handle);
+    // }
     /// <summary>
     /// Read a DataFrame from a CSV file.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanCsv and collects the result. 
+    /// For larger-than-memory datasets or better query optimization, consider using LazyFrame.ScanCsv" directly.
+    /// </para>
     /// </summary>
     /// <param name="path">Path to the CSV file.</param>
     /// <param name="columns">Columns to select. If null, select all columns.</param>
@@ -75,7 +152,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
     /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
     /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
-    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default (100).</param>
     /// <param name="schema">Provide a schema to ignore schema inference.</param>
     /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
     /// <param name="nullValues">List of strings to consider as null values.</param>
@@ -85,6 +162,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
     /// <param name="rowIndexName">If provided, add a column with the row index.</param>
     /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
+    /// <param name="cloudOptions">Options for cloud storage authentication and configuration.</param>
     public static DataFrame ReadCsv(
         string path,
         string[]? columns = null,
@@ -106,33 +184,42 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool decimalComma = false,
         bool truncateRaggedLines = false,
         string? rowIndexName = null,
-        ulong rowIndexOffset = 0)
+        ulong rowIndexOffset = 0,
+        CloudOptions? cloudOptions = null)
     {
-        var handle = PolarsWrapper.ReadCsv(
-            path,
-            columns,
-            hasHeader,
-            (byte)separator,
-            quoteChar,
-            (byte)eolChar,
-            ignoreErrors,
-            tryParseDates,
-            lowMemory,
-            (nuint)skipRows,
-            nRows.HasValue ? (nuint)nRows.Value : null,
-            inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
-            schema?.Handle,
-            encoding.ToNative(),
-            nullValues,
-            missingIsNull,
-            commentPrefix,
-            decimalComma,
-            truncateRaggedLines,
-            rowIndexName,
-            (nuint)rowIndexOffset
+        // 1. 调用底层的 Lazy API (ScanCsv)
+        var lf = LazyFrame.ScanCsv(
+            path: path,
+            schema: schema,
+            hasHeader: hasHeader,
+            separator: separator,
+            quoteChar: quoteChar,
+            eolChar: eolChar,
+            ignoreErrors: ignoreErrors,
+            tryParseDates: tryParseDates,
+            lowMemory: lowMemory,
+            skipRows: skipRows >= 0 ? (ulong)skipRows : 0,
+            nRows: nRows.HasValue ? (ulong)nRows.Value : null,
+            inferSchemaLength: inferSchemaLength.HasValue ? (ulong)inferSchemaLength.Value : 100,
+            rowIndexName: rowIndexName,
+            rowIndexOffset: rowIndexOffset,
+            encoding: encoding,
+            nullValues: nullValues,
+            missingIsNull: missingIsNull,
+            commentPrefix: commentPrefix,
+            decimalComma: decimalComma,
+            truncateRaggedLines: truncateRaggedLines,
+            cloudOptions: cloudOptions
         );
 
-        return new DataFrame(handle);
+        // 2. 如果指定了读取的列，利用 Selector 触发投影下推 (Projection Pushdown)
+        if (columns != null && columns.Length > 0)
+        {
+            lf = lf.Select(Selector.Cols(columns));
+        }
+
+        // 3. 收集结果并返回 (Eager 模式的最终体现)
+        return lf.Collect();
     }
     /// <summary>
     /// Read Parquet File
@@ -472,8 +559,30 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     public RecordBatch ToArrow()
         => ArrowFfiBridge.ExportDataFrame(Handle);
     /// <summary>
-    /// Asynchronously reads a CSV file into a DataFrame.
+    /// Asynchronously read a DataFrame from a CSV file.
     /// </summary>
+    /// <param name="path">Path to the CSV file.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <param name="hasHeader">Whether the CSV file has a header. Defaults to true.</param>
+    /// <param name="separator">Character used as separator. Defaults to ','.</param>
+    /// <param name="quoteChar">Character used for quoting. Defaults to '"'. Set to '\0' to disable.</param>
+    /// <param name="eolChar">Character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Try to keep reading lines if some are invalid. Defaults to false.</param>
+    /// <param name="tryParseDates">Try to automatically parse dates. Defaults to true.</param>
+    /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default (100).</param>
+    /// <param name="schema">Provide a schema to ignore schema inference.</param>
+    /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
+    /// <param name="nullValues">List of strings to consider as null values.</param>
+    /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    /// <param name="decimalComma">Use comma as decimal separator. Defaults to false.</param>
+    /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
+    /// <param name="rowIndexName">If provided, add a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
+    /// <param name="cloudOptions">Options for cloud storage authentication and configuration.</param>
     public static async Task<DataFrame> ReadCsvAsync(
         string path,
         string[]? columns = null,
@@ -495,33 +604,39 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool decimalComma = false,
         bool truncateRaggedLines = false,
         string? rowIndexName = null,
-        ulong rowIndexOffset = 0)
+        ulong rowIndexOffset = 0,
+        CloudOptions? cloudOptions = null)
     {
-        var handle = await PolarsWrapper.ReadCsvAsync(
-            path, 
-            columns,
-            hasHeader,
-            (byte)separator, 
-            quoteChar,
-            (byte)eolChar, 
-            ignoreErrors,
-            tryParseDates,
-            lowMemory,
-            (nuint)skipRows,
-            nRows.HasValue ? (nuint)nRows.Value : null,
-            inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
-            schema?.Handle,
-            encoding.ToNative(),
-            nullValues,
-            missingIsNull,
-            commentPrefix,
-            decimalComma,
-            truncateRaggedLines,
-            rowIndexName,
-            (nuint)rowIndexOffset
+        var lf = LazyFrame.ScanCsv(
+            path: path,
+            schema: schema,
+            hasHeader: hasHeader,
+            separator: separator,
+            quoteChar: quoteChar,
+            eolChar: eolChar,
+            ignoreErrors: ignoreErrors,
+            tryParseDates: tryParseDates,
+            lowMemory: lowMemory,
+            skipRows: skipRows >= 0 ? (ulong)skipRows : 0,
+            nRows: nRows.HasValue ? (ulong)nRows.Value : null,
+            inferSchemaLength: inferSchemaLength.HasValue ? (ulong)inferSchemaLength.Value : 100,
+            rowIndexName: rowIndexName,
+            rowIndexOffset: rowIndexOffset,
+            encoding: encoding,
+            nullValues: nullValues,
+            missingIsNull: missingIsNull,
+            commentPrefix: commentPrefix,
+            decimalComma: decimalComma,
+            truncateRaggedLines: truncateRaggedLines,
+            cloudOptions: cloudOptions
         );
 
-        return new DataFrame(handle);
+        if (columns != null && columns.Length > 0)
+        {
+            lf = lf.Select(Selector.Cols(columns));
+        }
+
+        return await lf.CollectAsync();
     }
     /// <summary>
     /// Read a Parquet file asynchronously.
@@ -2423,7 +2538,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             throw new InvalidOperationException("No numeric columns to describe.");
 
         // 2. Define statistical metrics
-        // (这部分逻辑保持不变，依然非常优雅)
         var metrics = new List<(string Name, Func<string, Expr> Op)>
         {
             ("count",      c => Polars.Col(c).Count().Cast(DataType.Float64)),

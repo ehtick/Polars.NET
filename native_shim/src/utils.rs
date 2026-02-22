@@ -2,7 +2,7 @@ use std::ffi::{CStr, c_char};
 use polars::frame::UniqueKeepStrategy;
 use polars_arrow::ffi::ArrowArray;
 use polars_arrow::ffi::{export_array_to_c,export_field_to_c};
-use polars::prelude::{ArrowSchema, AsofStrategy, CsvEncoding, Expr, JoinBuildSide, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin, ParallelStrategy, PlSmallStr, QuoteStyle, SchemaRef};
+use polars::prelude::{ArrowSchema, AsofStrategy,  Expr, JoinBuildSide, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin, ParallelStrategy, PlSmallStr,  SchemaRef};
 use polars_arrow::datatypes::Field;
 use polars_io::ExternalCompression;
 use polars_io::prelude::JsonFormat;
@@ -213,15 +213,6 @@ pub(crate) fn map_parallel_strategy(code: u8) -> ParallelStrategy {
 }
 
 #[inline]
-pub(crate) fn map_csv_encoding(encoding: u8) -> CsvEncoding {
-    match encoding {
-        0 => CsvEncoding::Utf8,
-        1 => CsvEncoding::LossyUtf8,
-        _ => CsvEncoding::Utf8,
-    }
-}
-
-#[inline]
 pub(crate) fn map_json_format(code: u8) -> JsonFormat {
     match code {
         1 => JsonFormat::JsonLines, // .jsonl / .ndjson
@@ -260,17 +251,6 @@ pub(crate) fn map_external_compression(
             level: get_level(),
         },
         _ => ExternalCompression::Uncompressed,
-    }
-}
-
-#[inline]
-pub(crate) fn map_quote_style(code: u8) -> QuoteStyle {
-    match code {
-        0 => QuoteStyle::Always,
-        1 => QuoteStyle::Necessary,
-        2 => QuoteStyle::NonNumeric,
-        3 => QuoteStyle::Never,
-        _ => QuoteStyle::Necessary, // Default
     }
 }
 

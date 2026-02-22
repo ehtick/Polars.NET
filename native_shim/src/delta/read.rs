@@ -6,8 +6,7 @@ use polars_io::HiveOptions;
 use url::Url;
 use std::{ffi::c_char, sync::Arc};
 
-use crate::delta::utils::{build_delta_storage_options_map, get_runtime,get_polars_schema_from_delta};
-use crate::io::build_scan_args;
+use crate::{delta::utils::{build_delta_storage_options_map, get_polars_schema_from_delta, get_runtime}, pl_io::io_utils::build_scan_args};
 use crate::types::{LazyFrameContext, SchemaContext};
 use crate::utils::ptr_to_str;
 use crate::delta::deletion_vector::*;

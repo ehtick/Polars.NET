@@ -8,9 +8,9 @@ use deltalake::kernel::{Action, Add, Remove, transaction::CommitBuilder};
 use deltalake::protocol::DeltaOperation;
 use uuid::Uuid;
 
-use crate::{delta::{deletion_vector::{apply_deletion_vector, read_deletion_vector}, merge::phase_process_staging, utils::*}, utils::ptr_to_vec_string};
-use crate::io::{build_cloud_options, build_parquet_write_options, build_unified_sink_args}; 
-use crate::utils::{ptr_to_str};
+use crate::{delta::{deletion_vector::{apply_deletion_vector, read_deletion_vector}, merge::phase_process_staging, utils::*}, pl_io::parquet::parquet_utils::build_parquet_write_options, utils::ptr_to_vec_string};
+use crate::pl_io::io_utils::{build_cloud_options, build_unified_sink_args};
+use crate::utils::ptr_to_str;
 
 // =========================================================
 // 0. Context Definition

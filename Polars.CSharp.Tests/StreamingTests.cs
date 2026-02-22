@@ -4,7 +4,6 @@ using Apache.Arrow.Types;
 using static Polars.CSharp.Polars;
 using Polars.NET.Core.Data;
 using Xunit.Abstractions;
-using Polars.NET.Core.Arrow;
 
 namespace Polars.CSharp.Tests;
 public class StreamingTests

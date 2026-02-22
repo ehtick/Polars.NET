@@ -12,8 +12,8 @@ use polars::prelude::*;
 use roaring::RoaringBitmap;
 use serde_json::Value;
 use uuid::Uuid;
-use crate::delta::{deletion_vector::read_deletion_vector, utils::{RawCloudArgs, build_delta_storage_options_map, check_file_overlap_optimized, extract_delta_stats, get_polars_schema_from_delta, get_runtime, parse_hive_partitions, parse_table_url, view_to_add_action}};
-use crate::io::{build_cloud_options, build_parquet_write_options, build_unified_sink_args};
+use crate::{delta::{deletion_vector::read_deletion_vector, utils::{RawCloudArgs, build_delta_storage_options_map, check_file_overlap_optimized, extract_delta_stats, get_polars_schema_from_delta, get_runtime, parse_hive_partitions, parse_table_url, view_to_add_action}}, pl_io::parquet::parquet_utils::build_parquet_write_options};
+use crate::pl_io::io_utils::{build_cloud_options, build_unified_sink_args};
 use crate::types::ExprContext;
 use crate::utils::ptr_to_str;
 

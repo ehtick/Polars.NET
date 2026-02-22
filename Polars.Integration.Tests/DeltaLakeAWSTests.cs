@@ -436,7 +436,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             // 按 Year 列分区写入
             df.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Cols("Year"), 
+                partitionBy: "Year", 
                 mode: DeltaSaveMode.Append, 
                 cloudOptions: options
             );
@@ -464,7 +464,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             df2.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Cols("Year"), 
+                partitionBy: "Year", 
                 mode: DeltaSaveMode.Append, 
                 cloudOptions: options
             );
@@ -492,7 +492,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             dfOverwrite.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Cols("Year"), 
+                partitionBy: "Year", 
                 mode: DeltaSaveMode.Overwrite, 
                 cloudOptions: options
             );
@@ -517,7 +517,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             {
                 dfError.Lazy().SinkDelta(
                     rootUrl, 
-                    partitionBy: Selector.Cols("Year"),
+                    partitionBy: "Year",
                     mode: DeltaSaveMode.ErrorIfExists, 
                     cloudOptions: options
                 );
@@ -537,7 +537,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             dfIgnore.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Cols("Year"),
+                partitionBy: "Year",
                 mode: DeltaSaveMode.Ignore, 
                 cloudOptions: options
             );
@@ -579,7 +579,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             // 初始写入，模式为 Overwrite 或 Append 均可
             dfInit.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Col("Id"), 
+                partitionBy: "Id", 
                 mode: DeltaSaveMode.Overwrite, 
                 cloudOptions: options
             );
@@ -599,7 +599,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             dfNew.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Col("Id"), 
+                partitionBy: "Id", 
                 mode: DeltaSaveMode.Append, 
                 canEvolve: false, // 显式禁止演变
                 cloudOptions: options
@@ -616,7 +616,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // ==========================================
         dfNew.Lazy().SinkDelta(
             rootUrl, 
-            partitionBy: Selector.Col("Id"),
+            partitionBy: "Id",
             mode: DeltaSaveMode.Append, 
             canEvolve: true, // <--- 开启演变！
             cloudOptions: options
@@ -689,7 +689,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             df.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Cols("Year"), 
+                partitionBy: "Year", 
                 mode: DeltaSaveMode.Append, 
                 cloudOptions: options
             );
@@ -901,7 +901,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             df.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Cols("Date"), 
+                partitionBy: "Date", 
                 mode: DeltaSaveMode.Append, 
                 cloudOptions: options
             );
@@ -1194,7 +1194,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             df.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Cols("Category"), 
+                partitionBy: "Category", 
                 mode: DeltaSaveMode.Append, 
                 cloudOptions: options
             );
@@ -1336,7 +1336,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             df.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Cols("Category"), 
+                partitionBy: "Category", 
                 mode: DeltaSaveMode.Append, 
                 cloudOptions: options
             );
@@ -1479,7 +1479,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             // Region 既是主键一部分，也是分区键
             df.Lazy().SinkDelta(
                 rootUrl, 
-                partitionBy: Selector.Cols("Region"), 
+                partitionBy: "Region", 
                 mode: DeltaSaveMode.Append, 
                 cloudOptions: options
             );
@@ -2122,7 +2122,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
                 Val = vals
             });
             
-            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append,partitionBy: Selector.Col("Category"), cloudOptions: options);
+            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append,partitionBy: "Category", cloudOptions: options);
         }
 
         // 验证当前有 4 个文件，100 行数据
@@ -2209,7 +2209,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
                 Val = vals
             });
             
-            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, partitionBy: Selector.Col("Category"), cloudOptions: options);
+            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, partitionBy: "Category", cloudOptions: options);
         }
 
         using var beforeDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
