@@ -1,6 +1,7 @@
 use polars::prelude::*;
 use std::os::raw::c_char;
-use crate::pl_io::io_utils::{build_partitioned_destination, build_unified_sink_args};
+use crate::pl_io::ffi_buffer::FfiBuffer;
+use crate::pl_io::io_utils::{build_memory_sink_destination, build_partitioned_destination, build_unified_sink_args};
 use crate::pl_io::parquet::parquet_utils::build_parquet_write_options;
 use crate::types::{LazyFrameContext, SelectorContext};
 use crate::utils::ptr_to_str;
@@ -216,6 +217,66 @@ pub extern "C" fn pl_lazyframe_sink_parquet_partitioned(
         let _ = lf_ctx.inner
             .sink(destination, file_format, unified_args)?
             .collect()?;
+
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_sink_parquet_memory(
+    lf_ptr: *mut LazyFrameContext,
+    out_buffer: *mut FfiBuffer,
+    
+    // --- Parquet Options ---
+    compression: u8,        
+    compression_level: i32, 
+    statistics: bool,       
+    row_group_size: usize,  
+    data_page_size: usize,
+    compat_level: i32,
+    
+    // --- Unified Options ---
+    maintain_order: bool,
+) {
+    ffi_try_void!({
+        if lf_ptr.is_null() || out_buffer.is_null() {
+            return Err(PolarsError::ComputeError("Null pointer passed to memory sink".into()));
+        }
+
+        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+
+        let (mem_writer, destination) = build_memory_sink_destination();
+
+        let write_options_arc = build_parquet_write_options(
+            compression,
+            compression_level,
+            statistics,
+            row_group_size,
+            data_page_size,
+            compat_level
+        )?;
+        let file_format = FileWriteFormat::Parquet(write_options_arc);
+
+        let unified_args = UnifiedSinkArgs {
+            mkdir: false,
+            maintain_order,
+            sync_on_close: Default::default(),
+            cloud_options: None,
+        };
+
+        let sink_lf = lf_ctx.inner
+            .sink(destination, file_format, unified_args)?;
+            
+        let _ = sink_lf.collect()?;
+
+        let vec = mem_writer.into_inner();
+        let mut vec = std::mem::ManuallyDrop::new(vec);
+
+        unsafe {
+            (*out_buffer).data = vec.as_mut_ptr();
+            (*out_buffer).len = vec.len();
+            (*out_buffer).capacity = vec.capacity();
+        }
 
         Ok(())
     })

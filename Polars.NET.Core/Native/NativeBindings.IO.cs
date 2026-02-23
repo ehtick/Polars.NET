@@ -2,9 +2,20 @@ using System.Runtime.InteropServices;
 
 namespace Polars.NET.Core.Native;
 
+[StructLayout(LayoutKind.Sequential)]
+public struct FfiBuffer
+{
+    public IntPtr Data;
+    public nuint Length;
+    public nuint Capacity;
+}
+
+
 unsafe internal partial class NativeBindings
 {
     const string LibName = "native_shim";
+    [LibraryImport(LibName)]
+    public static partial void pl_free_ffi_buffer(FfiBuffer buffer);
     // CSV
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_csv(
@@ -199,6 +210,33 @@ unsafe internal partial class NativeBindings
         string[]? cloud_values,
         nuint cloud_len
     );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_csv_memory(
+        LazyFrameHandle lf,
+        out FfiBuffer out_buffer,
+        // --- CSV Specific Params ---
+        [MarshalAs(UnmanagedType.U1)] bool include_bom,
+        [MarshalAs(UnmanagedType.U1)] bool include_header,
+        nuint batch_size,
+        [MarshalAs(UnmanagedType.U1)] bool check_extension,
+        // Compression
+        PlExternalCompression compression_code,
+        int compression_level,
+        // Serialize Options
+        string? date_format,
+        string? time_format,
+        string? datetime_format,
+        int float_scientific,
+        int float_precision,
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma,
+        byte separator,
+        byte quote_char,
+        string? null_value,
+        string? line_terminator,
+        PlQuoteStyle quote_style,
+        // --- Unified Options ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order
+    );
     // Parquet
     [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_parquet(
@@ -309,6 +347,22 @@ unsafe internal partial class NativeBindings
         string[]? cloud_keys,
         string[]? cloud_values,
         nuint cloud_len
+    );
+    [LibraryImport(LibName)]
+    public static partial void pl_lazyframe_sink_parquet_memory(
+        LazyFrameHandle lf,
+        out FfiBuffer out_buffer,
+
+        // --- Parquet Options ---
+        PlParquetCompression compression, 
+        int compression_level,
+        [MarshalAs(UnmanagedType.U1)] bool statistics,       
+        nuint row_group_size,  
+        nuint data_page_size,
+        int compat_level,
+        
+        // --- Unified Options ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order
     );
     // ---------------------------------------------------------
     // Read JSON (File)
@@ -563,7 +617,20 @@ unsafe internal partial class NativeBindings
         string[]? cloud_values,
         nuint cloud_len
     );
+    [LibraryImport(LibName)]
+    public static partial void pl_lazyframe_sink_ipc_memory(
+        LazyFrameHandle lf,
+        out FfiBuffer out_buffer,
 
+        // --- IpcWriterOptions params ---
+        PlIpcCompression compression, 
+        int compat_level,
+        nuint record_batch_size,      
+        [MarshalAs(UnmanagedType.U1)] bool record_batch_statistics, 
+
+        // --- UnifiedSinkArgs params ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order
+    );
     // ---------------------------------------------------------
     // Read Excel (Calamine Engine)
     // ---------------------------------------------------------

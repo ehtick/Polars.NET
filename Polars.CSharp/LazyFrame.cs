@@ -2431,6 +2431,32 @@ public class LazyFrame : IDisposable
         );
     }
     /// <summary>
+    /// Sink the LazyFrame to a Parquet format in memory.
+    /// <para>
+    /// This allows for streaming execution directly into a byte array without writing to disk.
+    /// </para>
+    /// </summary>
+    public byte[] SinkParquetMemory(
+        ParquetCompression compression = ParquetCompression.ZSTD,
+        int compressionLevel = 3, 
+        bool statistics = true,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true)
+    {
+        return PolarsWrapper.SinkParquetMemory(
+            Handle,
+            compression.ToNative(),
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            compatLevel,
+            maintainOrder
+        );
+    }
+    /// <summary>
     /// Sink the LazyFrame to an IPC (Arrow) file.
     /// <para>
     /// This allows for streaming execution.
@@ -2531,6 +2557,34 @@ public class LazyFrame : IDisposable
             cacheTtl,
             keys,
             values
+        );
+    }
+    /// <summary>
+    /// Sink the LazyFrame to an IPC (Arrow) format in memory.
+    /// <para>
+    /// This allows for streaming execution directly into a byte array without writing to disk.
+    /// </para>
+    /// </summary>
+    /// <param name="compression">Compression method to use.</param>
+    /// <param name="compatLevel">Compatibility level (default -1 = newest).</param>
+    /// <param name="recordBatchSize">Number of rows per record batch (0 = default).</param>
+    /// <param name="recordBatchStatistics">Write statistics to the record batch header (default = true).</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <returns>A byte array containing the serialized IPC data.</returns>
+    public byte[] SinkIpcMemory(
+        IpcCompression compression = IpcCompression.None,
+        int compatLevel = -1,
+        int recordBatchSize = 0,
+        bool recordBatchStatistics = true,
+        bool maintainOrder = true)
+    {
+        return PolarsWrapper.SinkIpcMemory(
+            Handle,
+            compression.ToNative(),
+            compatLevel,
+            recordBatchSize,
+            recordBatchStatistics,
+            maintainOrder
         );
     }
     /// <summary>
@@ -2879,6 +2933,54 @@ public class LazyFrame : IDisposable
             cacheTtl,
             keys,
             values
+        );
+    }
+    /// <summary>
+    /// Sink the LazyFrame to a CSV format in memory.
+    /// <para>
+    /// This allows for streaming execution directly into a byte array without writing to disk.
+    /// </para>
+    /// </summary>
+    public byte[] SinkCsvMemory(
+        bool includeBom = false,
+        bool includeHeader = true,
+        int batchSize = 1024,
+        bool checkExtension = false, 
+        ExternalCompression compressionCode = 0,    
+        int compressionLevel = 0,
+        string? dateFormat = null,
+        string? timeFormat = null,
+        string? datetimeFormat = null,
+        int floatScientific = -1,
+        int floatPrecision = -1,
+        bool decimalComma = false,
+        byte separator = (byte)',',
+        byte quoteChar = (byte)'"',
+        string? nullValue = null,
+        string? lineTerminator = "\n",
+        QuoteStyle quoteStyle = 0,         
+        bool maintainOrder = true)
+    {
+        return PolarsWrapper.SinkCsvMemory(
+            Handle,
+            includeBom,
+            includeHeader,
+            batchSize,
+            checkExtension,
+            compressionCode.ToNative(),
+            compressionLevel,
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            floatScientific,
+            floatPrecision,
+            decimalComma,
+            separator,
+            quoteChar,
+            nullValue,
+            lineTerminator,
+            quoteStyle.ToNative(),
+            maintainOrder
         );
     }
     /// <summary>

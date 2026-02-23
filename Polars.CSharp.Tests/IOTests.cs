@@ -225,7 +225,6 @@ public class IoTests
         }
     }
     [Fact]
-    [Trait("Category","ParquetDebug")]
     public void Test_ReadParquet_Advanced()
     {
         // 1. 准备测试数据
@@ -290,26 +289,19 @@ public class IoTests
     [Fact]
     public void Test_ReadParquet_Memory_And_Stream()
     {
-        // 1. 准备二进制 Parquet 数据 (Blob)
-        using var dfOriginal = DataFrame.FromColumns(new
-        {
-            timestamp = new[] { DateTime.Now, DateTime.Now.AddSeconds(1) },
-            status = new[] { "OK", "FAIL" }
-        });
+        // 1. 准备初始数据
+        using var dfOriginal = new DataFrame(
+            new Series("timestamp", [DateTime.Now, DateTime.Now.AddSeconds(1)]),
+            new Series("status", ["OK", "FAIL"])
+        );
 
-        // 为了获取合法的 Parquet bytes，我们先写到临时文件再读出来
-        // (如果以后实现了 WriteParquet(Stream) 可以直接写流)
-        string tempPath = Path.GetTempFileName();
-        byte[] parquetBytes;
-        try
-        {
-            dfOriginal.WriteParquet(tempPath);
-            parquetBytes = File.ReadAllBytes(tempPath);
-        }
-        finally
-        {
-            if (File.Exists(tempPath)) File.Delete(tempPath);
-        }
+        // 2. 闭环自举：直接利用刚刚写的 SinkMemoryParquet 将数据写入内存 Buffer
+        // 不再需要任何临时文件和 File.ReadAllBytes!
+        byte[] parquetBytes = dfOriginal.Lazy().SinkParquetMemory();
+        
+        // 确保成功拿到数据
+        Assert.NotNull(parquetBytes);
+        Assert.True(parquetBytes.Length > 0);
 
         // --- Case 1: Read from byte[] (Memory) ---
         // 场景：从 Redis/数据库/网络 拿到了 byte[]
@@ -320,18 +312,14 @@ public class IoTests
         Assert.Equal("FAIL", dfFromBytes.GetValue<string>(1, "status"));
 
         // --- Case 2: Read from Stream ---
-        // 场景：从 ASP.NET Core Request.Body 或 S3 Stream 读取
+        // 场景：从 ASP.NET Core Request.Body 或云端 Stream 读取
         using var ms = new MemoryStream(parquetBytes);
         
-        // 测试 Stream 重载
-        // 同时测试一下 nRows 参数在 Stream 模式下是否依然有效
+        // 测试 Stream 重载，并验证 nRows (Limit) 参数在流模式下是否依然有效
         using var dfFromStream = DataFrame.ReadParquet(ms, nRows: 1);
 
         Assert.Equal(1, dfFromStream.Height); // Limit 生效
         Assert.Equal("OK", dfFromStream.GetValue<string>(0, "status"));
-
-        // 确保没有读第二行
-        // Assert.Single(dfFromStream.Column("status"));
     }
     [Fact]
     public void Test_ScanParquet_File_Hive_Schema()
@@ -909,43 +897,81 @@ public class IoTests
             if (File.Exists(path)) File.Delete(path);
         }
     }
-        [Fact]
-        public void Test_SinkIpc_Advanced_Options()
-        {
-            // 1. 准备数据
-            var df = new DataFrame(
-                new Series("id", new[] { 1, 2, 3 }),
-                new Series("val", new[] { "A", "B", "C" })
-            );
+    [Fact]
+    public void Test_SinkIpc_Advanced_Options()
+    {
+        // 1. 准备数据
+        var df = new DataFrame(
+            new Series("id", new[] { 1, 2, 3 }),
+            new Series("val", new[] { "A", "B", "C" })
+        );
 
-            // 转为 LazyFrame
-            var lf = df.Lazy();
+        // 转为 LazyFrame
+        var lf = df.Lazy();
 
-            // 2. 准备输出文件
-            using var f = new DisposableFile(".ipc");
+        // 2. 准备输出文件
+        using var f = new DisposableFile(".ipc");
 
-            // 3. 执行 SinkIpc
-            // 测试点：启用 LZ4 压缩，要求保持顺序，且关闭时执行完整 Sync
-            lf.SinkIpc(
-                f.Path, 
-                compression: IpcCompression.LZ4, 
-                maintainOrder: true, 
-                syncOnClose: SyncOnClose.All
-            );
+        // 3. 执行 SinkIpc
+        // 测试点：启用 LZ4 压缩，要求保持顺序，且关闭时执行完整 Sync
+        lf.SinkIpc(
+            f.Path, 
+            compression: IpcCompression.LZ4, 
+            maintainOrder: true, 
+            syncOnClose: SyncOnClose.All
+        );
 
-            // 4. 验证结果
-            // 因为写入的是压缩文件，读取时必须显式 memoryMap: false (我们在 I/O 升级里特别强调的)
-            using var dfRead = DataFrame.ReadIpc(f.Path);
+        // 4. 验证结果
+        // 因为写入的是压缩文件，读取时必须显式 memoryMap: false (我们在 I/O 升级里特别强调的)
+        using var dfRead = DataFrame.ReadIpc(f.Path);
 
-            Assert.Equal(3, dfRead.Height);
-            Assert.Equal("val", dfRead.ColumnNames[1]);
-            Assert.Equal("B", dfRead.GetValue<string>(1, "val"));
-            
-            // 验证文件确实存在且非空
-            var fileInfo = new FileInfo(f.Path);
-            Assert.True(fileInfo.Exists);
-            Assert.True(fileInfo.Length > 0);
-        }
+        Assert.Equal(3, dfRead.Height);
+        Assert.Equal("val", dfRead.ColumnNames[1]);
+        Assert.Equal("B", dfRead.GetValue<string>(1, "val"));
+        
+        // 验证文件确实存在且非空
+        var fileInfo = new FileInfo(f.Path);
+        Assert.True(fileInfo.Exists);
+        Assert.True(fileInfo.Length > 0);
+    }
+    [Fact]
+    public void Test_SinkMemoryIpc_Advanced_Options()
+    {
+        // 1. 准备数据
+        var df = new DataFrame(
+            new Series("id", [1, 2, 3]),
+            new Series("val", ["A", "B", "C"])
+        );
+
+        // 转为 LazyFrame
+        var lf = df.Lazy();
+
+        // 2. 执行 SinkMemoryIpc
+        // 测试点：直接 sink 进内存，启用 LZ4 压缩，要求保持顺序
+        byte[] ipcBytes = lf.SinkIpcMemory(
+            compression: IpcCompression.LZ4, 
+            maintainOrder: true
+        );
+
+        // 3. 验证内存 Buffer
+        // 确保成功返回了数据且长度大于 0
+        Assert.NotNull(ipcBytes);
+        Assert.True(ipcBytes.Length > 0);
+
+        // 4. 验证数据完整性
+        // 借用 DisposableFile 将内存字节流落盘，以验证其确实是合法的 Polars IPC 格式
+        using var f = new DisposableFile(".ipc");
+        File.WriteAllBytes(f.Path, ipcBytes);
+
+        using var dfRead = DataFrame.ReadIpc(f.Path);
+
+        // 验证读取出来的数据与源数据一致
+        Assert.Equal(3, dfRead.Height);
+        Assert.Equal(2, dfRead.Width);
+        Assert.Equal("val", dfRead.ColumnNames[1]);
+        Assert.Equal("B", dfRead.GetValue<string>(1, "val"));
+        Assert.Equal(2, dfRead.GetValue<int>(1, "id"));
+    }
 
     // --- 辅助 POCO ---
     private class ComplexPoco
@@ -1397,30 +1423,44 @@ ID;ProductName;Weight;ReleaseDate
         Assert.Equal(99.99m, Convert.ToDecimal(val1));
     }
     [Fact]
-    public void Test_ScanCsv_From_Memory()
+    public void Test_SinkCsvMemory_And_Scan()
     {
-        // 1. 模拟 CSV 数据 (In-Memory)
-        string csvString = "id,name,score\n1,Alice,99.5\n2,Bob,88.0";
-        byte[] csvBytes = System.Text.Encoding.UTF8.GetBytes(csvString);
+        // 1. 准备初始数据
+        using var dfOriginal = new DataFrame(
+            new Series("id", [1L, 2L]), // 使用 long 对应 Int64
+            new Series("name", ["Alice", "Bob"]),
+            new Series("score", [99.5, 88.0]) // 使用 double 对应 Float64
+        );
 
-        // 2. 内存扫描 (不落盘!)
+        // 2. 闭环自举：Sink 进内存 Buffer
+        // 测试点：不落盘直接拿到 CSV 的 UTF-8 字节流
+        byte[] csvBytes = dfOriginal.Lazy().SinkCsvMemory(includeHeader: true);
+
+        // 验证内存分配成功
+        Assert.NotNull(csvBytes);
+        Assert.True(csvBytes.Length > 0);
+
+        // 3. 内存扫描 (依然不落盘!)
         using var lf = LazyFrame.ScanCsv(
             csvBytes,
             hasHeader: true,
             rowIndexName: "row_idx" // 顺便测测参数传递
         );
 
-        // 3. 验证 Schema (Metadata)
+        // 4. 验证 Schema (Metadata)
         using var schema = lf.Schema;
         Assert.Equal(DataTypeKind.Int64, schema["id"].Kind);
         Assert.Equal(DataTypeKind.String, schema["name"].Kind);
         Assert.Equal(DataTypeKind.Float64, schema["score"].Kind);
         Assert.Equal(DataTypeKind.UInt32, schema["row_idx"].Kind); // 行号列
 
-        // 4. Collect 验证数据
-        using var df = lf.Collect();
-        Assert.Equal(2, df.Height);
-        Assert.Equal("Alice", df["name"][0]);
-        Assert.Equal(99.5, df["score"][0]);
+        // 5. Collect 验证数据完整性
+        using var dfRead = lf.Collect();
+        Assert.Equal(2, dfRead.Height);
+        Assert.Equal(4, dfRead.Width); // 包含了额外的 row_idx 列
+        
+        Assert.Equal("Alice", dfRead.GetValue<string>(0, "name"));
+        Assert.Equal(99.5, dfRead.GetValue<double>(0, "score"));
+        Assert.Equal(0u, dfRead.GetValue<uint>(0, "row_idx")); // 第一行的索引通常是 0
     }
 }

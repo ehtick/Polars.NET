@@ -522,6 +522,68 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
     }
+    public static byte[] SinkCsvMemory(
+        LazyFrameHandle lf,
+        bool includeBom,
+        bool includeHeader,
+        int batchSize,
+        bool checkExtension,
+        PlExternalCompression compressionCode,
+        int compressionLevel,
+        string? dateFormat,
+        string? timeFormat,
+        string? datetimeFormat,
+        int floatScientific,
+        int floatPrecision,
+        bool decimalComma,
+        byte separator,
+        byte quoteChar,
+        string? nullValue,
+        string? lineTerminator,
+        PlQuoteStyle quoteStyle,
+        bool maintainOrder)
+    {
+        nuint batchSizeNative = batchSize > 0 ? (nuint)batchSize : 0;
+
+        NativeBindings.pl_lazyframe_sink_csv_memory(
+            lf,
+            out var ffiBuffer,
+            includeBom,
+            includeHeader,
+            batchSizeNative,
+            checkExtension,
+            compressionCode,
+            compressionLevel,
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            floatScientific,
+            floatPrecision,
+            decimalComma,
+            separator,
+            quoteChar,
+            nullValue,
+            lineTerminator,
+            quoteStyle,
+            maintainOrder
+        );
+
+        lf.TransferOwnership();
+        ErrorHelper.CheckVoid();
+
+        try
+        {
+            unsafe
+            {
+                var span = new ReadOnlySpan<byte>(ffiBuffer.Data.ToPointer(), (int)ffiBuffer.Length);
+                return span.ToArray();
+            }
+        }
+        finally
+        {
+            NativeBindings.pl_free_ffi_buffer(ffiBuffer);
+        }
+    }
     public static void WriteJson(DataFrameHandle df, string path, PlJsonFormat format)
     {
         NativeBindings.pl_dataframe_write_json(df, path, format);
@@ -669,6 +731,47 @@ public static partial class PolarsWrapper
         lf.TransferOwnership();
         
         ErrorHelper.CheckVoid();
+    }
+    public static byte[] SinkParquetMemory(
+        LazyFrameHandle lf,
+        PlParquetCompression compression,
+        int compressionLevel,
+        bool statistics,
+        int rowGroupSize,
+        int dataPageSize,
+        int compatLevel,
+        bool maintainOrder)
+    {
+        nuint rowGroupSizeNative = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
+        nuint dataPageSizeNative = dataPageSize > 0 ? (nuint)dataPageSize : 0;
+
+        NativeBindings.pl_lazyframe_sink_parquet_memory(
+            lf,
+            out var ffiBuffer,
+            compression,
+            compressionLevel,
+            statistics,
+            rowGroupSizeNative,
+            dataPageSizeNative,
+            compatLevel,
+            maintainOrder
+        );
+
+        lf.TransferOwnership();
+        ErrorHelper.CheckVoid();
+
+        try
+        {
+            unsafe
+            {
+                var span = new ReadOnlySpan<byte>(ffiBuffer.Data.ToPointer(), (int)ffiBuffer.Length);
+                return span.ToArray();
+            }
+        }
+        finally
+        {
+            NativeBindings.pl_free_ffi_buffer(ffiBuffer);
+        }
     }
     // ---------------------------------------------------------
     // Read JSON (File)
@@ -1210,6 +1313,44 @@ public static partial class PolarsWrapper
 
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
+    }
+    public static byte[] SinkIpcMemory(
+        LazyFrameHandle lf,
+        PlIpcCompression compression,
+        int compatLevel,
+        int recordBatchSize, 
+        bool recordBatchStatistics,
+        bool maintainOrder)
+    {
+        nuint batchSize = recordBatchSize > 0 ? (nuint)recordBatchSize : 0;
+        
+        NativeBindings.pl_lazyframe_sink_ipc_memory(
+            lf,
+            out var ffiBuffer,
+            compression,
+            compatLevel,
+            batchSize,
+            recordBatchStatistics,
+            maintainOrder
+        );
+
+        lf.TransferOwnership(); 
+        
+        ErrorHelper.CheckVoid();
+
+        try
+        {
+            unsafe
+            {
+                var span = new ReadOnlySpan<byte>(ffiBuffer.Data.ToPointer(), (int)ffiBuffer.Length);
+                
+                return span.ToArray();
+            }
+        }
+        finally
+        {
+            NativeBindings.pl_free_ffi_buffer(ffiBuffer);
+        }
     }
     public static unsafe DataFrameHandle FromArrow(RecordBatch batch)
     {
