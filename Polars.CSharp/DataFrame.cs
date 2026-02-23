@@ -61,79 +61,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     // Static IO Read
     // ==========================================
-    // /// <summary>
-    // /// Read a DataFrame from a CSV file.
-    // /// </summary>
-    // /// <param name="path">Path to the CSV file.</param>
-    // /// <param name="columns">Columns to select. If null, select all columns.</param>
-    // /// <param name="hasHeader">Whether the CSV file has a header. Defaults to true.</param>
-    // /// <param name="separator">Character used as separator. Defaults to ','.</param>
-    // /// <param name="quoteChar">Character used for quoting. Defaults to '"'. Set to '\0' to disable.</param>
-    // /// <param name="eolChar">Character used as End-Of-Line. Defaults to '\n'.</param>
-    // /// <param name="ignoreErrors">Try to keep reading lines if some are invalid. Defaults to false.</param>
-    // /// <param name="tryParseDates">Try to automatically parse dates. Defaults to true.</param>
-    // /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
-    // /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
-    // /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
-    // /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default.</param>
-    // /// <param name="schema">Provide a schema to ignore schema inference.</param>
-    // /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
-    // /// <param name="nullValues">List of strings to consider as null values.</param>
-    // /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
-    // /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
-    // /// <param name="decimalComma">Use comma as decimal separator. Defaults to false.</param>
-    // /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
-    // /// <param name="rowIndexName">If provided, add a column with the row index.</param>
-    // /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
-    // public static DataFrame ReadCsv(
-    //     string path,
-    //     string[]? columns = null,
-    //     bool hasHeader = true,
-    //     char separator = ',',
-    //     char? quoteChar = '"',
-    //     char eolChar = '\n',
-    //     bool ignoreErrors = false,
-    //     bool tryParseDates = true,
-    //     bool lowMemory = false,
-    //     int skipRows = 0,
-    //     int? nRows = null,
-    //     int? inferSchemaLength = null,
-    //     PolarsSchema? schema = null,
-    //     CsvEncoding encoding = CsvEncoding.UTF8,
-    //     string[]? nullValues = null,
-    //     bool missingIsNull = true,
-    //     string? commentPrefix = null,
-    //     bool decimalComma = false,
-    //     bool truncateRaggedLines = false,
-    //     string? rowIndexName = null,
-    //     ulong rowIndexOffset = 0)
-    // {
-    //     var handle = PolarsWrapper.ReadCsv(
-    //         path,
-    //         columns,
-    //         hasHeader,
-    //         (byte)separator,
-    //         quoteChar,
-    //         (byte)eolChar,
-    //         ignoreErrors,
-    //         tryParseDates,
-    //         lowMemory,
-    //         (nuint)skipRows,
-    //         nRows.HasValue ? (nuint)nRows.Value : null,
-    //         inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
-    //         schema?.Handle,
-    //         encoding.ToNative(),
-    //         nullValues,
-    //         missingIsNull,
-    //         commentPrefix,
-    //         decimalComma,
-    //         truncateRaggedLines,
-    //         rowIndexName,
-    //         (nuint)rowIndexOffset
-    //     );
-
-    //     return new DataFrame(handle);
-    // }
     /// <summary>
     /// Read a DataFrame from a CSV file.
     /// <para>
@@ -187,7 +114,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         ulong rowIndexOffset = 0,
         CloudOptions? cloudOptions = null)
     {
-        // 1. 调用底层的 Lazy API (ScanCsv)
         var lf = LazyFrame.ScanCsv(
             path: path,
             schema: schema,
@@ -212,13 +138,11 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             cloudOptions: cloudOptions
         );
 
-        // 2. 如果指定了读取的列，利用 Selector 触发投影下推 (Projection Pushdown)
         if (columns != null && columns.Length > 0)
         {
             lf = lf.Select(Selector.Cols(columns));
         }
 
-        // 3. 收集结果并返回 (Eager 模式的最终体现)
         return lf.Collect();
     }
     /// <summary>
@@ -2293,6 +2217,85 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
         lf.SinkCsv(
             path,
+            includeHeader,
+            includeBom,
+            separator,
+            quoteChar,
+            quoteStyle,
+            nullValue,
+            lineTerminator,
+            floatScientific,
+            floatPrecision,
+            decimalComma,
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            checkExtension,
+            compression,
+            compressionLevel,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            batchSize,
+            cloudOptions
+        );
+    }
+    /// <summary>
+    /// Write DataFrame to a partitioned comma-separated values (CSV) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
+    /// </summary>
+    /// <param name="path">The output base directory path.</param>
+    /// <param name="partitionBy">The selector(s) to partition the data by.</param>
+    /// <param name="includeKeys">Whether to include the partition keys in the output files.</param>
+    /// <param name="keysPreGrouped">
+    /// Assert that the keys are already pre-grouped. This can speed up the operation if true.
+    /// Use with caution: if the data is not grouped, the output may be incorrect.
+    /// </param>
+    /// <param name="maxRowsPerFile">Maximum number of rows per file. 0 means no limit.</param>
+    /// <param name="approxBytesPerFile">Approximate size in bytes per file. 0 means no limit.</param>
+    /// <inheritdoc cref="WriteCsv"/>
+    public void WriteCsvPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        bool includeHeader = true,
+        bool includeBom = false,
+        char separator = ',',
+        char quoteChar = '"',
+        QuoteStyle quoteStyle = QuoteStyle.Necessary,
+        string? nullValue = null,
+        string? lineTerminator = "\n",
+        bool? floatScientific = null,
+        int? floatPrecision = null,
+        bool decimalComma = false,
+        string? dateFormat = null,
+        string? timeFormat = null,
+        string? datetimeFormat = null,
+        bool checkExtension = true,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        int batchSize = 0,
+        CloudOptions? cloudOptions = null)
+    {
+
+        var lf = Lazy();
+
+        lf.SinkCsvPartitioned(
+            path,
+            // --- Partition Params ---
+            partitionBy, 
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
             includeHeader,
             includeBom,
             separator,

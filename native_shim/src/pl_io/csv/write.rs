@@ -1,78 +1,9 @@
 use polars::prelude::*;
 use std::os::raw::c_char;
-use crate::pl_io::csv::csv_utils::{build_csv_writer_options, build_serialize_options};
+use crate::pl_io::csv::csv_utils::{build_csv_writer_options};
 use crate::pl_io::io_utils::{build_partitioned_destination, build_unified_sink_args};
-use crate::types::{DataFrameContext, LazyFrameContext, SelectorContext};
+use crate::types::{LazyFrameContext, SelectorContext};
 use crate::utils::ptr_to_str;
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_dataframe_write_csv(
-    df_ptr: *mut DataFrameContext,
-    path_ptr: *const c_char,
-    // --- CSV Params ---
-    include_bom: bool,
-    include_header: bool,
-    batch_size: usize,
-    _compression_code: u8, 
-    _compression_level: i32,
-    // SerializeOptions
-    date_format_ptr: *const c_char,
-    time_format_ptr: *const c_char,
-    datetime_format_ptr: *const c_char,
-    float_scientific: i32,
-    float_precision: i32,
-    decimal_comma: bool,
-    separator: u8,
-    quote_char: u8,
-    null_value_ptr: *const c_char,
-    line_terminator_ptr: *const c_char,
-    quote_style: u8,
-    // Ignored Unified/Cloud
-    _maintain_order: bool, _sync_on_close: u8, _mkdir: bool,
-    _cloud_provider: u8, _cloud_retries: usize, _cloud_retry_timeout_ms: u64,
-    _cloud_retry_init_backoff_ms: u64, _cloud_retry_max_backoff_ms: u64,
-    _cloud_cache_ttl: u64, _cloud_keys: *const *const c_char,
-    _cloud_values: *const *const c_char, _cloud_len: usize
-) {
-    ffi_try_void!({
-        let ctx = unsafe { &mut *df_ptr };
-        let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-        let file = std::fs::File::create(path_str)
-            .map_err(|e| PolarsError::ComputeError(format!("Failed to create file: {}", e).into()))?;
-
-        let serialize_options = unsafe {
-             build_serialize_options(
-                date_format_ptr, time_format_ptr, datetime_format_ptr,
-                float_scientific, float_precision, decimal_comma,
-                separator, quote_char, null_value_ptr, line_terminator_ptr, quote_style
-            )
-        };
-
-        let mut writer = CsvWriter::new(file)
-            .include_header(include_header)
-            .include_bom(include_bom)
-            .with_separator(serialize_options.separator)
-            .with_quote_char(serialize_options.quote_char)
-            .with_quote_style(serialize_options.quote_style)
-            .with_null_value(serialize_options.null)
-            .with_line_terminator(serialize_options.line_terminator)
-            .with_decimal_comma(serialize_options.decimal_comma);
-            
-        if let Some(fmt) = serialize_options.date_format { writer = writer.with_date_format(Some(fmt)); }
-        if let Some(fmt) = serialize_options.time_format { writer = writer.with_time_format(Some(fmt)); }
-        if let Some(fmt) = serialize_options.datetime_format { writer = writer.with_datetime_format(Some(fmt)); }
-        if let Some(p) = serialize_options.float_precision { writer = writer.with_float_precision(Some(p)); }
-        if let Some(s) = serialize_options.float_scientific { writer = writer.with_float_scientific(Some(s)); }
-
-        if batch_size > 0 {
-             writer = writer.with_batch_size(std::num::NonZeroUsize::new(batch_size).unwrap());
-        }
-
-        writer.finish(&mut ctx.df)?;
-        Ok(())
-    })
-}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazyframe_sink_csv(

@@ -1,103 +1,13 @@
 use polars::prelude::*;
-use polars_utils::compression::{BrotliLevel, GzipLevel, ZstdLevel};
 use std::os::raw::c_char;
 use crate::pl_io::io_utils::{build_partitioned_destination, build_unified_sink_args};
 use crate::pl_io::parquet::parquet_utils::build_parquet_write_options;
-use crate::types::{DataFrameContext, LazyFrameContext, SelectorContext};
+use crate::types::{LazyFrameContext, SelectorContext};
 use crate::utils::ptr_to_str;
 
 // ==========================================
 // Write&Sink Parquet
 // ==========================================
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_dataframe_write_parquet(
-    df_ptr: *mut DataFrameContext,
-    path_ptr: *const c_char,
-    // --- ParquetWriteOptions ---
-    compression_code: u8,
-    compression_level: i32, 
-    statistics: bool,
-    row_group_size: usize,
-    data_page_size: usize,
-    _compat_level: i32,     
-    _maintain_order: bool, _sync_on_close: u8, _mkdir: bool,
-    // --- Cloud Options (Eager 忽略) ---
-    _cloud_provider: u8, _cloud_retries: usize, _cloud_retry_timeout_ms: u64,
-    _cloud_retry_init_backoff_ms: u64, _cloud_retry_max_backoff_ms: u64,
-    _cloud_cache_ttl: u64, _cloud_keys: *const *const c_char,
-    _cloud_values: *const *const c_char, _cloud_len: usize
-) {
-    ffi_try_void!({
-        let ctx = unsafe { &mut *df_ptr };
-        let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-
-        // Eager Mode
-        let file = std::fs::File::create(path_str)
-            .map_err(|e| PolarsError::ComputeError(format!("Failed to create file: {}", e).into()))?;
-
-        // 2. 解析压缩格式和级别
-        let compression = match compression_code {
-            0 => ParquetCompression::Uncompressed,
-            1 => ParquetCompression::Snappy,
-            2 => { // Gzip
-                // GzipLevel 需要 u8。C# 传 -1 或非法值时回退到 None (Default)
-                let lvl = if compression_level >= 0 {
-                    GzipLevel::try_new(compression_level as u8).ok()
-                } else {
-                    None
-                };
-                ParquetCompression::Gzip(lvl)
-            },
-            3 => { // Brotli
-                // BrotliLevel 需要 u32
-                let lvl = if compression_level >= 0 {
-                    BrotliLevel::try_new(compression_level as u32).ok()
-                } else {
-                    None
-                };
-                ParquetCompression::Brotli(lvl)
-            },
-            4 => { 
-                let lvl = if compression_level != -1 {
-                    ZstdLevel::try_new(compression_level).ok()
-                } else {
-                    None
-                };
-                ParquetCompression::Zstd(lvl)
-            },
-            5 => ParquetCompression::Lz4Raw,
-            _ => ParquetCompression::Snappy, // Fallback
-        };
-
-        // 3. 统计信息
-        let stats_options = if statistics {
-            StatisticsOptions::full()
-        } else {
-            StatisticsOptions::empty()
-        };
-
-        // 4. 构建 Writer
-        // 注意：ParquetWriter 默认 parallel=true
-        let mut writer = ParquetWriter::new(file)
-            .with_compression(compression)
-            .with_statistics(stats_options);
-
-        // 5. 其他选项
-        if row_group_size > 0 {
-            writer = writer.with_row_group_size(Some(row_group_size));
-        }
-        
-        if data_page_size > 0 {
-            writer = writer.with_data_page_size(Some(data_page_size));
-        }
-
-        // 6. 写入
-        writer.finish(&mut ctx.df)?;
-
-        Ok(())
-    })
-}
 
 fn fallback_eager_parquet(
     lf: LazyFrame,
@@ -170,7 +80,6 @@ pub extern "C" fn pl_lazyframe_sink_parquet(
             compat_level
         )?;
         
-        // 3. 构建 Unified Args (复用 Helper)
         let unified_args = unsafe {
             build_unified_sink_args(
                 mkdir,
