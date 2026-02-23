@@ -1,67 +1,87 @@
 use polars::prelude::*;
-use polars_io::mmap::MmapBytesReader;
 use polars_io::RowIndex;
 use polars_core::prelude::CompatLevel;
-use polars_utils::pl_str::PlRefStr;
+use polars_io::cloud::CloudOptions;
 use std::os::raw::c_char;
-use crate::utils::ptr_to_str;
 use polars_utils::compression::{ZstdLevel};
+use crate::types::{SchemaContext};
+use crate::utils::{ ptr_to_schema_ref, ptr_to_str};
+use polars_utils::slice_enum::Slice;
 
-pub(crate) unsafe fn apply_ipc_options<R: MmapBytesReader>(
-    mut reader: IpcReader<R>,
-    columns_ptr: *const *const c_char, columns_len: usize,
+#[inline]
+pub(crate) unsafe fn apply_unified_scan_args(
+    // --- Basic ---
+    schema_ptr: *mut SchemaContext,
     n_rows: *const usize,
+    rechunk: bool,
+    cache: bool,
+    glob: bool,
+    
+    // --- Row Index & Path ---
     row_index_name_ptr: *const c_char,
     row_index_offset: u32,
-    rechunk: bool,
-    include_path_ptr: *const c_char,
-    file_path_value: Option<String>
-) -> PolarsResult<IpcReader<R>> {
+    include_path_col_ptr: *const c_char,
     
-    // 1. Columns
-    if columns_len > 0 {
-        let mut cols = Vec::with_capacity(columns_len);
-        for &p in unsafe {std::slice::from_raw_parts(columns_ptr, columns_len)} {
-            if !p.is_null() {
-                if let Ok(s) = ptr_to_str(p) {
-                    cols.push(s.to_string());
-                }
-            }
-        }
-        reader = reader.with_columns(Some(cols));
+    // --- Hive Partitioning ---
+    hive_partitioning: bool,
+    hive_schema_ptr: *mut SchemaContext,
+    try_parse_hive_dates: bool,
+    
+    // --- Cloud ---
+    cloud_options: Option<CloudOptions>
+) -> PolarsResult<UnifiedScanArgs> {
+    
+    let mut args = UnifiedScanArgs::default();
+
+    // 1. Schema
+    if let Some(s) = unsafe { ptr_to_schema_ref(schema_ptr)} {
+        args.schema = Some(s);
     }
 
-    // 2. N Rows
+    // 2. Limit (Pre Slice)
     if !n_rows.is_null() {
-        reader = unsafe {reader.with_n_rows(Some(*n_rows))};
+        let n = unsafe {*n_rows};
+        args.pre_slice = Some(Slice::Positive { 
+            offset: 0, 
+            len: n 
+        });
     }
 
-    // 3. Row Index
+    // 3. Flags
+    args.rechunk = rechunk;
+    args.cache = cache;
+    args.glob = glob;
+
+    // 4. Row Index
     if !row_index_name_ptr.is_null() {
-        let name = ptr_to_str(row_index_name_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        reader = reader.with_row_index(Some(RowIndex {
+        let name = ptr_to_str(row_index_name_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        args.row_index = Some(RowIndex {
             name: PlSmallStr::from_str(name),
             offset: row_index_offset as u32,
-        }));
+        });
     }
 
-    // 4. Include File Path
-    if !include_path_ptr.is_null() {
-        let col_name = ptr_to_str(include_path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-        
-        let path_val = file_path_value.unwrap_or_default();
-
-        reader = reader.with_include_file_path(Some((
-            PlSmallStr::from_str(col_name),
-            PlRefStr::from(path_val.as_str())
-        )));
+    // 5. Include File Path
+    if !include_path_col_ptr.is_null() {
+        let name = ptr_to_str(include_path_col_ptr)
+            .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+        args.include_file_paths = Some(PlSmallStr::from_str(name));
     }
 
-    // 5. Rechunk
-    reader = reader.set_rechunk(rechunk);
+    // 6. Hive Options
+    args.hive_options.enabled = Some(hive_partitioning);
+    args.hive_options.try_parse_dates = try_parse_hive_dates;
+    if !hive_schema_ptr.is_null() {
+        args.hive_options.schema = Some(unsafe { (*hive_schema_ptr).schema.clone() });
+    }
 
-    Ok(reader)
+    // 7. Cloud Options
+    args.cloud_options = cloud_options;
+
+    Ok(args)
 }
+
 
 pub(crate) fn build_ipc_write_options(
     compression: u8,        // 0: None, 1: LZ4, 2: ZSTD

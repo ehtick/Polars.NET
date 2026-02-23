@@ -85,4 +85,116 @@ unsafe internal partial class NativeBindings
         string[]? values,
         nuint cloud_len
     );
+    // ==========================================
+    // Delta Lake
+    // ==========================================
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_scan_delta(
+        string path,
+        // --- Time Travel ---
+        IntPtr version,
+        string? datetime,
+        // --- Scan Args ---
+        IntPtr n_rows, // null for None
+        PlParallelStrategy parallel_code,
+        [MarshalAs(UnmanagedType.I1)] bool low_memory,
+        [MarshalAs(UnmanagedType.I1)] bool use_statistics,
+        [MarshalAs(UnmanagedType.I1)] bool glob,
+        [MarshalAs(UnmanagedType.I1)] bool rechunk, 
+        [MarshalAs(UnmanagedType.I1)] bool cache,   
+        // --- Option Names ---
+        string? row_index_name,
+        uint row_index_offset,
+        string? include_path_col,
+        // --- Schema ---
+        IntPtr schema,
+        IntPtr hive_schema,
+        [MarshalAs(UnmanagedType.I1)] bool try_parse_hive_dates,
+        // --- Cloud Options (Must match pl_scan_parquet pattern) ---
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        UIntPtr cloud_len
+    );
+
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_sink_delta(
+        LazyFrameHandle lf,
+        string base_path,
+        // --- Delta Options --- 
+        PlDeltaSaveMode mode,
+        [MarshalAs(UnmanagedType.U1)] bool can_evolve,
+        // --- Partition Params ---
+        IntPtr partition_by,
+        [MarshalAs(UnmanagedType.U1)] bool include_keys,
+        [MarshalAs(UnmanagedType.U1)] bool keys_pre_grouped,
+        nuint max_rows_per_file,
+        ulong approx_bytes_per_file,
+
+        // --- Parquet Options ---
+        PlParquetCompression compression,
+        int compression_level,
+        [MarshalAs(UnmanagedType.U1)] bool statistics,
+        nuint row_group_size,
+        nuint data_page_size,
+        int compat_level,
+    
+        // --- Unified Options ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Params ---
+        PlCloudProvider cloud_provider,
+        nuint cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void pl_io_delta_delete(
+        string path,
+        ExprHandle predicate,
+        // Cloud Options
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void pl_io_delta_merge(
+        LazyFrameHandle source_lf,
+        string path,
+        string[] merge_key,
+        nuint merge_key_len,
+        IntPtr matched_update_cond,
+        IntPtr matched_delete_cond,
+        IntPtr not_matched_insert_cond,
+        IntPtr not_matched_by_source_deleted_cond,
+        [MarshalAs(UnmanagedType.U1)] bool can_evolve,
+        // Cloud Options
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
 }

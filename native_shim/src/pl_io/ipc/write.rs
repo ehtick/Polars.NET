@@ -1,72 +1,9 @@
 use polars::prelude::*;
-use polars_core::prelude::CompatLevel;
 use std::os::raw::c_char;
 use crate::pl_io::io_utils::build_unified_sink_args;
 use crate::pl_io::ipc::ipc_utils::build_ipc_write_options;
-use crate::types::{DataFrameContext, LazyFrameContext};
+use crate::types::{LazyFrameContext, SelectorContext};
 use crate::utils::ptr_to_str;
-use polars_utils::compression::{ZstdLevel};
-
-#[unsafe(no_mangle)]
-pub extern "C" fn pl_dataframe_write_ipc(
-    df_ptr: *mut DataFrameContext,
-    path_ptr: *const c_char,
-    // --- IpcWriterOptions params ---
-    compression: u8,
-    compat_level: i32,
-    record_batch_size: usize,      
-    record_batch_statistics: bool, 
-    // --- UnifiedSinkArgs params  ---
-    _maintain_order: bool,
-    _sync_on_close: u8,
-    _mkdir: bool,
-    // --- Cloud Options ---
-    _cloud_provider: u8,
-    _cloud_retries: usize,
-    _cloud_retry_timeout_ms: u64,
-    _cloud_retry_init_backoff_ms: u64,
-    _cloud_retry_max_backoff_ms: u64,
-    _cloud_cache_ttl: u64,
-    _cloud_keys: *const *const c_char,
-    _cloud_values: *const *const c_char,
-    _cloud_len: usize
-) {
-    ffi_try_void!({
-        let ctx = unsafe { &mut *df_ptr };
-        let path_str = ptr_to_str(path_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-
-        let file = std::fs::File::create(path_str)
-            .map_err(|e| PolarsError::ComputeError(format!("Failed to create file: {}", e).into()))?;
-
-        let compression_opt = match compression {
-            1 => Some(IpcCompression::LZ4),
-            2 => {
-                let level = ZstdLevel::try_new(3).unwrap();
-                Some(IpcCompression::ZSTD(level))
-            },
-            _ => None,
-        };
-
-        let compat = if compat_level < 0 {
-            CompatLevel::newest()
-        } else {
-            CompatLevel::with_level(compat_level as u16)
-                .unwrap_or(CompatLevel::newest())
-        };
-
-        let batch_size_opt = if record_batch_size > 0 { Some(record_batch_size) } else { None };
-
-        IpcWriter::new(file)
-            .with_compression(compression_opt)
-            .with_compat_level(compat)
-            .with_record_batch_size(batch_size_opt)               
-            .with_record_batch_statistics(record_batch_statistics) 
-            .finish(&mut ctx.df)?;
-
-        Ok(())
-    })
-}
-
 
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazyframe_sink_ipc(
@@ -135,6 +72,81 @@ pub extern "C" fn pl_lazyframe_sink_ipc(
             .sink(destination, file_format, unified_args)?
             .collect()?;
         
+        Ok(())
+    })
+}
+
+// ==========================================
+// Sink IPC Partitioned
+// ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_sink_ipc_partitioned(
+    lf_ptr: *mut LazyFrameContext,
+    path_ptr: *const c_char,
+    
+    // --- Partition Params ---
+    partition_by_ptr: *mut SelectorContext,
+    include_keys: bool,
+    keys_pre_grouped: bool,
+    max_rows_per_file: usize,
+    approx_bytes_per_file: u64,
+
+    // --- IpcWriterOptions params ---
+    compression: u8,
+    compat_level: i32,
+    record_batch_size: usize,      
+    record_batch_statistics: bool, 
+    
+    // --- UnifiedSinkArgs params  ---
+    maintain_order: bool,
+    sync_on_close_code: u8,
+    mkdir: bool,
+    
+    // --- Cloud Options ---
+    cloud_provider: u8,
+    cloud_retries: usize,
+    cloud_retry_timeout_ms: u64,
+    cloud_retry_init_backoff_ms: u64,
+    cloud_retry_max_backoff_ms: u64,
+    cloud_cache_ttl: u64,
+    cloud_keys: *const *const c_char,
+    cloud_values: *const *const c_char,
+    cloud_len: usize
+) {
+    ffi_try_void!({
+        let mut lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+        
+        let unified_args = unsafe {
+            crate::pl_io::io_utils::build_unified_sink_args(
+                mkdir, maintain_order, sync_on_close_code,
+                cloud_provider, cloud_retries, cloud_retry_timeout_ms,
+                cloud_retry_init_backoff_ms, cloud_retry_max_backoff_ms,
+                cloud_cache_ttl, cloud_keys, cloud_values, cloud_len
+            )
+        };
+
+        let ipc_options = build_ipc_write_options(
+            compression, compat_level, record_batch_size, record_batch_statistics
+        )?;
+        let file_format = FileWriteFormat::Ipc(ipc_options);
+
+        let schema = lf_ctx.inner.collect_schema()?;
+
+        let destination = unsafe {
+            crate::pl_io::io_utils::build_partitioned_destination(
+                path_ptr,
+                ".ipc",
+                &schema,
+                partition_by_ptr,
+                include_keys,
+                keys_pre_grouped,
+                max_rows_per_file,
+                approx_bytes_per_file
+            )?
+        };
+
+        let _ = lf_ctx.inner.sink(destination, file_format, unified_args)?
+                .collect()?;
         Ok(())
     })
 }

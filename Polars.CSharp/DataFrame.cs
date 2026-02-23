@@ -146,69 +146,200 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return lf.Collect();
     }
     /// <summary>
-    /// Read Parquet File
+    /// Read a DataFrame from a Parquet file or multiple files via glob patterns.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanParquet and collects the result. 
+    /// For larger-than-memory datasets or better query optimization, consider using LazyFrame.ScanParquet directly.
+    /// </para>
     /// </summary>
+    /// <param name="path">Path to file or glob pattern (e.g. "data/*.parquet" or "s3://bucket/data.parquet").</param>
+    /// <param name="columns">Columns to select. If null, select all columns. (Optimized via projection pushdown).</param>
+    /// <param name="nRows">Limit number of rows to read (optimization).</param>
+    /// <param name="parallel">Parallel strategy.</param>
+    /// <param name="lowMemory">Reduce memory usage at the expense of performance.</param>
+    /// <param name="useStatistics">Use parquet statistics to optimize the query plan.</param>
+    /// <param name="glob">Expand glob patterns (default: true).</param>
+    /// <param name="allowMissingColumns">Allow missing columns when reading multiple files.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks when reading. (default: false)</param>
+    /// <param name="cache">Cache the result after reading. (default: true)</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row number.</param>
+    /// <param name="rowIndexOffset">Offset for the row index.</param>
+    /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    /// <param name="schema">Manually specify the schema of the file(s).</param>
+    /// <param name="hivePartitionSchema">Manually specify the schema for Hive partitioning columns.</param>
+    /// <param name="tryParseHiveDates">Whether to try parsing dates in Hive partitioning paths (default: true).</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public static DataFrame ReadParquet(
         string path,
         string[]? columns = null,
         ulong? nRows = null,
         ParallelStrategy parallel = ParallelStrategy.Auto,
         bool lowMemory = false,
+        bool useStatistics = true,
+        bool glob = true,
+        bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
         string? rowIndexName = null,
-        uint rowIndexOffset = 0)
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = true,
+        CloudOptions? cloudOptions = null)
     {
-        var h = PolarsWrapper.ReadParquet(
+        var lf = LazyFrame.ScanParquet(
             path,
-            columns ?? [],
-            nRows, 
-            parallel.ToNative(),
+            nRows,
+            parallel,
             lowMemory,
+            useStatistics,
+            glob,
+            allowMissingColumns,
+            rechunk,
+            cache,
             rowIndexName,
-            rowIndexOffset
+            rowIndexOffset,
+            includePathColumn,
+            schema,
+            hivePartitionSchema,
+            tryParseHiveDates,
+            cloudOptions
         );
 
-        return new DataFrame(h);
+        // 2. 利用列投影下推 (Projection Pushdown) 优化 I/O
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            // 如果用户要求生成行号列，必须在 Select 中保留它
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        // 3. 收集并触发执行
+        return lf.Collect();
     }
 
     /// <summary>
-    /// Read Parquet from a byte array (Memory).
+    /// Read Parquet from an in-memory byte array.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanParquet and collects the result.
+    /// </para>
     /// </summary>
+    /// <param name="buffer">The byte array containing the parquet file.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <inheritdoc cref="ReadParquet(string, string[], ulong?, ParallelStrategy, bool, bool, bool, bool, bool, bool, string?, uint, string?, PolarsSchema?, PolarsSchema?, bool, CloudOptions?)"/>
     public static DataFrame ReadParquet(
         byte[] buffer,
         string[]? columns = null,
         ulong? nRows = null,
         ParallelStrategy parallel = ParallelStrategy.Auto,
         bool lowMemory = false,
+        bool useStatistics = true,
+        bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
         string? rowIndexName = null,
-        uint rowIndexOffset = 0)
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
-        var h = PolarsWrapper.ReadParquet(
+        var lf = LazyFrame.ScanParquet(
             buffer,
-            columns ?? [],
             nRows,
-            parallel.ToNative(),
+            parallel,
             lowMemory,
+            useStatistics,
+            allowMissingColumns,
+            rechunk,
+            cache,
             rowIndexName,
-            rowIndexOffset
+            rowIndexOffset,
+            includePathColumn,
+            schema,
+            hivePartitionSchema,
+            tryParseHiveDates
         );
 
-        return new DataFrame(h);
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            // 如果用户要求生成行号列，必须在 Select 中保留它
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        return lf.Collect();
     }
+
     /// <summary>
     /// Read Parquet from a Stream.
+    /// <para>
+    /// Note: This method copies the stream to memory and then uses the Lazy execution engine.
+    /// </para>
     /// </summary>
+    /// <param name="stream">The input stream containing the parquet file.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <inheritdoc cref="ReadParquet(string, string[], ulong?, ParallelStrategy, bool, bool, bool, bool, bool, bool, string?, uint, string?, PolarsSchema?, PolarsSchema?, bool, CloudOptions?)"/>
     public static DataFrame ReadParquet(
         Stream stream,
         string[]? columns = null,
         ulong? nRows = null,
         ParallelStrategy parallel = ParallelStrategy.Auto,
         bool lowMemory = false,
+        bool useStatistics = true,
+        bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
         string? rowIndexName = null,
-        uint rowIndexOffset = 0)
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
-        return ReadParquet(ms.ToArray(), columns, nRows, parallel, lowMemory, rowIndexName, rowIndexOffset);
+        
+        return ReadParquet(
+            ms.ToArray(),
+            columns,
+            nRows,
+            parallel,
+            lowMemory,
+            useStatistics,
+            allowMissingColumns,
+            rechunk,
+            cache,
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schema,
+            hivePartitionSchema,
+            tryParseHiveDates
+        );
     }
 
     /// <summary>
@@ -310,51 +441,80 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     }
 
     // ---------------------------------------------------------
-    // Read IPC (File)
+    // Read IPC (File / Cloud)
     // ---------------------------------------------------------
 
     /// <summary>
     /// Read an Arrow IPC (Feather v2) file into a DataFrame.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanIpc and collects the result. 
+    /// For larger-than-memory datasets or better query optimization, consider using LazyFrame.ScanIpc directly.
+    /// </para>
     /// </summary>
-    /// <param name="path">Path to the IPC file.</param>
-    /// <param name="columns">Columns to select (projection).</param>
-    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="path">Path to the IPC file, glob pattern, or cloud path (e.g., "s3://...").</param>
+    /// <param name="columns">Columns to select. If null, select all columns. (Optimized via projection pushdown).</param>
+    /// <param name="schema">Optional schema to enforce. If not provided, the schema is inferred from the file footer.</param>
+    /// <param name="nRows">Limit the number of rows to scan.</param>
+    /// <param name="rechunk">Make sure the DataFrame is contiguous in memory (default: false).</param>
+    /// <param name="cache">Cache the result of the scan (default: true).</param>
+    /// <param name="glob">Expand glob patterns (default: true).</param>
     /// <param name="rowIndexName">If provided, adds a column with the row index.</param>
     /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
-    /// <param name="rechunk">Make sure the DataFrame is contiguous in memory (default: false).</param>
-    /// <param name="memoryMap">
-    /// Use memory mapping for zero-copy reading. 
-    /// Highly recommended for large, uncompressed files (default: false).
-    /// <br/>
-    /// <b>Warning:</b> This MUST be set to <c>false</c> if the IPC file is compressed (e.g. LZ4, ZSTD).
-    /// Attempting to memory map a compressed file will result in a runtime exception.
-    /// </param>
     /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    /// <param name="hivePartitioning">Enable Hive partitioning inference (default: false).</param>
+    /// <param name="hivePartitionSchema">Manually specify the schema for Hive partitioning columns.</param>
+    /// <param name="tryParseHiveDates">Whether to try parsing dates in Hive partitioning paths (default: true).</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public static DataFrame ReadIpc(
         string path,
         string[]? columns = null,
+        PolarsSchema? schema = null,
         ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
+        bool glob = true,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
-        bool rechunk = false,
-        bool memoryMap = false, 
-        string? includePathColumn = null)
+        string? includePathColumn = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = true,
+        CloudOptions? cloudOptions = null)
     {
-        if (!File.Exists(path)) 
-            throw new FileNotFoundException($"IPC file not found: {path}");
-
-        var h = PolarsWrapper.ReadIpc(
+        var lf = LazyFrame.ScanIpc(
             path,
-            columns,
+            schema,
             nRows,
+            rechunk,
+            cache,
+            glob,
             rowIndexName,
             rowIndexOffset,
-            rechunk,
-            memoryMap,
-            includePathColumn
+            includePathColumn,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates,
+            cloudOptions
         );
 
-        return new DataFrame(h);
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        return lf.Collect();
     }
 
     // ---------------------------------------------------------
@@ -363,27 +523,59 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
     /// <summary>
     /// Read Arrow IPC (Feather v2) from in-memory bytes.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanIpc and collects the result.
+    /// </para>
     /// </summary>
+    /// <param name="buffer">The byte array containing the IPC data.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <inheritdoc cref="ReadIpc(string, string[], PolarsSchema?, ulong?, bool, bool, bool, string?, uint, string?, bool, PolarsSchema?, bool, CloudOptions?)"/>
     public static DataFrame ReadIpc(
         byte[] buffer,
         string[]? columns = null,
+        PolarsSchema? schema = null,
         ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
-        bool rechunk = false)
+        string? includePathColumn = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
-
-        var h = PolarsWrapper.ReadIpc(
+        var lf = LazyFrame.ScanIpc(
             buffer,
-            columns,
+            schema,
             nRows,
+            rechunk,
+            cache,
             rowIndexName,
             rowIndexOffset,
-            rechunk,
-            null
+            includePathColumn,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates
         );
 
-        return new DataFrame(h);
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        return lf.Collect();
     }
 
     // ---------------------------------------------------------
@@ -392,14 +584,26 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
     /// <summary>
     /// Read Arrow IPC (Feather v2) from a Stream.
+    /// <para>
+    /// Note: This reads the stream fully into memory and then uses the Lazy execution engine.
+    /// </para>
     /// </summary>
+    /// <param name="stream">The input stream containing the IPC data.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <inheritdoc cref="ReadIpc(string, string[], PolarsSchema?, ulong?, bool, bool, bool, string?, uint, string?, bool, PolarsSchema?, bool, CloudOptions?)"/>
     public static DataFrame ReadIpc(
         Stream stream,
         string[]? columns = null,
+        PolarsSchema? schema = null,
         ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
-        bool rechunk = false)
+        string? includePathColumn = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
@@ -407,10 +611,16 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return ReadIpc(
             ms.ToArray(),
             columns,
+            schema,
             nRows,
+            rechunk,
+            cache,
             rowIndexName,
             rowIndexOffset,
-            rechunk
+            includePathColumn,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates
         );
     }
     // ---------------------------------------------------------
@@ -557,7 +767,14 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
         if (columns != null && columns.Length > 0)
         {
-            lf = lf.Select(Selector.Cols(columns));
+            var colsToSelect = new List<string>(columns);
+            
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
         }
 
         return await lf.CollectAsync();
@@ -571,18 +788,58 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         ulong? nRows = null,
         ParallelStrategy parallel = ParallelStrategy.Auto,
         bool lowMemory = false,
+        bool useStatistics = true,
+        bool glob = true,
+        bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
         string? rowIndexName = null,
-        uint rowIndexOffset = 0)
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = true,
+        CloudOptions? cloudOptions = null)
     {
-        var handle = await PolarsWrapper.ReadParquetAsync(
+        var lf = LazyFrame.ScanParquet(
             path,
-            columns ?? [],
-            nRows, 
-            parallel.ToNative(),
+            nRows,
+            parallel,
             lowMemory,
+            useStatistics,
+            glob,
+            allowMissingColumns,
+            rechunk,
+            cache,
             rowIndexName,
-            rowIndexOffset);
-        return new DataFrame(handle);
+            rowIndexOffset,
+            includePathColumn,
+            schema,
+            hivePartitionSchema,
+            tryParseHiveDates,
+            cloudOptions
+        );
+
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            // 如果用户要求生成行号列，必须在 Select 中保留它
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        // 3. 收集并触发执行
+        return await lf.CollectAsync();
     }
 
     /// <summary>

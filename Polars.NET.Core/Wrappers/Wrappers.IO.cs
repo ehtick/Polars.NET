@@ -181,80 +181,6 @@ public static partial class PolarsWrapper
         }
     }
     
-    public static DataFrameHandle ReadParquet(
-        string path,
-        string[] columns,
-        ulong? nRows,         
-        PlParallelStrategy parallel,
-        bool lowMemory,
-        string? rowIndexName,
-        uint rowIndexOffset)
-    {
-        return UseUtf8StringArray(columns, colPtrs =>
-        {
-            unsafe
-            {
-                ulong limitVal = nRows.GetValueOrDefault();
-                IntPtr limitPtr = nRows.HasValue ? (IntPtr)(&limitVal) : IntPtr.Zero;
-
-                var h = NativeBindings.pl_read_parquet(
-                    path,
-                    colPtrs, (UIntPtr)columns.Length,
-                    limitPtr,
-                    parallel,
-                    lowMemory,
-                    rowIndexName,
-                    rowIndexOffset
-                );
-
-                return ErrorHelper.Check(h);
-            }
-        });
-    }
-    public static DataFrameHandle ReadParquet(
-        byte[] buffer,       
-        string[] columns,
-        ulong? nRows,
-        PlParallelStrategy parallel,
-        bool lowMemory,
-        string? rowIndexName,
-        uint rowIndexOffset)
-    {
-        return UseUtf8StringArray(columns, colPtrs =>
-        {
-            unsafe
-            {
-                fixed (byte* pBuffer = buffer)
-                {
-                    ulong limitVal = nRows.GetValueOrDefault();
-                    IntPtr limitPtr = nRows.HasValue ? (IntPtr)(&limitVal) : IntPtr.Zero;
-
-                    var h = NativeBindings.pl_read_parquet_memory(
-                        (IntPtr)pBuffer, (UIntPtr)buffer.Length,
-                        colPtrs, (UIntPtr)columns.Length,
-                        limitPtr,
-                        parallel,
-                        lowMemory,
-                        rowIndexName,
-                        rowIndexOffset
-                    );
-
-                    return ErrorHelper.Check(h);
-                }
-            }
-        });
-    }
-    public static Task<DataFrameHandle> ReadParquetAsync(
-        string path,
-        string[] columns, 
-        ulong? nRows,   
-        PlParallelStrategy parallel, 
-        bool lowMemory, 
-        string? rowIndexName, 
-        uint rowIndexOffset)
-    {
-        return Task.Run(() => ReadParquet(path,columns,nRows,parallel,lowMemory,rowIndexName,rowIndexOffset));
-    }
     public static LazyFrameHandle ScanParquet(
         string path,
         ulong? nRows,
@@ -594,34 +520,6 @@ public static partial class PolarsWrapper
         );
 
         lf.TransferOwnership();
-        ErrorHelper.CheckVoid();
-    }
-    public static void WriteParquet(
-        DataFrameHandle df,
-        string path,
-        PlParquetCompression compression,
-        int compressionLevel,
-        bool statistics,
-        int rowGroupSize,
-        int dataPageSize,
-        int compatLevel,
-        bool parallel)
-    {
-        nuint rgs = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
-        nuint dps = dataPageSize > 0 ? (nuint)dataPageSize : 0;
-
-        NativeBindings.pl_dataframe_write_parquet(
-            df,
-            path,
-            compression,
-            compressionLevel,
-            statistics,
-            rgs,
-            dps,
-            compatLevel,
-            parallel
-        );
-
         ErrorHelper.CheckVoid();
     }
     public static void WriteJson(DataFrameHandle df, string path, PlJsonFormat format)
@@ -1009,94 +907,30 @@ public static partial class PolarsWrapper
         ErrorHelper.CheckVoid();
     }
     // ---------------------------------------------------------
-    // Read IPC (File)
-    // ---------------------------------------------------------
-    public static DataFrameHandle ReadIpc(
-        string path,
-        string[]? columns,
-        ulong? nRows,
-        string? rowIndexName,
-        uint rowIndexOffset,
-        bool rechunk,
-        bool memoryMap,
-        string? includePathColumn)
-    {
-        return UseUtf8StringArray(columns ?? System.Array.Empty<string>(), colPtrs =>
-        {
-            unsafe
-            {
-                ulong rowsVal = nRows.GetValueOrDefault();
-                IntPtr rowsPtr = nRows.HasValue ? (IntPtr)(&rowsVal) : IntPtr.Zero;
-
-                var h = NativeBindings.pl_read_ipc(
-                    path,
-                    colPtrs, 
-                    (UIntPtr)(columns?.Length ?? 0),
-                    rowsPtr,
-                    rowIndexName,
-                    rowIndexOffset,
-                    rechunk,
-                    memoryMap,
-                    includePathColumn
-                );
-
-                return ErrorHelper.Check(h);
-            }
-        });
-    }
-
-    // ---------------------------------------------------------
-    // Read IPC (Memory)
-    // ---------------------------------------------------------
-    public static DataFrameHandle ReadIpc(
-        byte[] buffer,
-        string[]? columns,
-        ulong? nRows,
-        string? rowIndexName,
-        uint rowIndexOffset,
-        bool rechunk,
-        string? includePathColumn)
-    {
-        return UseUtf8StringArray(columns ?? System.Array.Empty<string>(), colPtrs =>
-        {
-            unsafe
-            {
-                fixed (byte* pBuf = buffer)
-                {
-                    ulong rowsVal = nRows.GetValueOrDefault();
-                    IntPtr rowsPtr = nRows.HasValue ? (IntPtr)(&rowsVal) : IntPtr.Zero;
-
-                    var h = NativeBindings.pl_read_ipc_memory(
-                        (IntPtr)pBuf, 
-                        (UIntPtr)buffer.Length,
-                        colPtrs, 
-                        (UIntPtr)(columns?.Length ?? 0),
-                        rowsPtr,
-                        rowIndexName,
-                        rowIndexOffset,
-                        rechunk,
-                        includePathColumn
-                    );
-
-                    return ErrorHelper.Check(h);
-                }
-            }
-        });
-    }
-
-    // ---------------------------------------------------------
-    // Scan IPC (File)
+    // Scan IPC (File / Cloud)
     // ---------------------------------------------------------
     public static LazyFrameHandle ScanIpc(
         string path,
-        SchemaHandle? schema,
         ulong? nRows,
         bool rechunk,
         bool cache,
+        bool glob,
         string? rowIndexName,
         uint rowIndexOffset,
         string? includePathColumn,
-        bool hivePartitioning)
+        SchemaHandle? schema,
+        bool hivePartitioning,
+        SchemaHandle? hivePartitionSchema,
+        bool tryParseHiveDates,
+        // --- Cloud Params ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues)
     {
         unsafe
         {
@@ -1108,17 +942,38 @@ public static partial class PolarsWrapper
             );
             IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
 
-            // 3. 调用 Native
+            using var hiveLock = new SafeHandleLock<SchemaHandle>(
+                hivePartitionSchema != null ? new[] { hivePartitionSchema } : null
+            );
+            IntPtr hiveSchemaPtr = hivePartitionSchema != null ? hiveLock.Pointers[0] : IntPtr.Zero;
+
+            nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
             var h = NativeBindings.pl_scan_ipc(
                 path,
-                schemaPtr,
+                // --- Unified Args ---
                 rowsPtr,
                 rechunk,
                 cache,
+                glob,
                 rowIndexName,
                 rowIndexOffset,
                 includePathColumn,
-                hivePartitioning
+                // --- Schema & Hive ---
+                schemaPtr,
+                hivePartitioning,
+                hiveSchemaPtr,
+                tryParseHiveDates,
+                // --- Cloud Params ---
+                cloudProvider,
+                cloudRetries,
+                cloudRetryTimeoutMs,
+                cloudRetryInitBackoffMs,
+                cloudRetryMaxBackoffMs,
+                cloudCacheTtl,
+                cloudKeys,
+                cloudValues,
+                cloudLen
             );
 
             return ErrorHelper.Check(h);
@@ -1130,14 +985,20 @@ public static partial class PolarsWrapper
     // ---------------------------------------------------------
     public static LazyFrameHandle ScanIpc(
         byte[] buffer,
-        SchemaHandle? schema,
         ulong? nRows,
         bool rechunk,
         bool cache,
         string? rowIndexName,
         uint rowIndexOffset,
-        bool hivePartitioning)
+        string? includePathColumn,
+        SchemaHandle? schema,
+        bool hivePartitioning,
+        SchemaHandle? hivePartitionSchema,
+        bool tryParseHiveDates)
     {
+        if (buffer == null || buffer.Length == 0)
+            throw new ArgumentException("Buffer cannot be empty", nameof(buffer));
+
         unsafe
         {
             fixed (byte* pBuf = buffer)
@@ -1150,16 +1011,25 @@ public static partial class PolarsWrapper
                 );
                 IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
 
+                using var hiveLock = new SafeHandleLock<SchemaHandle>(
+                    hivePartitionSchema != null ? new[] { hivePartitionSchema } : null
+                );
+                IntPtr hiveSchemaPtr = hivePartitionSchema != null ? hiveLock.Pointers[0] : IntPtr.Zero;
+
                 var h = NativeBindings.pl_scan_ipc_memory(
-                    (IntPtr)pBuf, (UIntPtr)buffer.Length,
-                    schemaPtr,
+                    pBuf, (UIntPtr)buffer.Length,
+                    // --- Unified Args ---
                     rowsPtr,
                     rechunk,
                     cache,
                     rowIndexName,
                     rowIndexOffset,
-                    null, 
-                    hivePartitioning
+                    includePathColumn,
+                    // --- Schema & Hive ---
+                    schemaPtr,
+                    hivePartitioning,
+                    hiveSchemaPtr,
+                    tryParseHiveDates
                 );
 
                 return ErrorHelper.Check(h);
@@ -1197,6 +1067,70 @@ public static partial class PolarsWrapper
         NativeBindings.pl_lazyframe_sink_ipc(
             lf,
             path,
+            compression,
+            compatLevel,
+            batchSize,
+            recordBatchStatistics,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            // Cloud Args
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        lf.TransferOwnership();
+        ErrorHelper.CheckVoid();
+    }
+    /// <summary>
+    /// Sinks the LazyFrame to partitioned IPC files. 
+    /// Consumes the LazyFrame handle.
+    /// </summary>
+    public static void SinkIpcPartitioned(
+        LazyFrameHandle lf,
+        string path,
+        // --- Partition Params ---
+        SelectorHandle partitionBy,
+        bool includeKeys,
+        bool keysPreGrouped,
+        nuint maxRowsPerFile,
+        ulong approxBytesPerFile,
+        PlIpcCompression compression,
+        int compatLevel,
+        int recordBatchSize, 
+        bool recordBatchStatistics,
+        bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir,
+        // --- Cloud Options ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+        )
+    {
+        nuint batchSize = recordBatchSize > 0 ? (nuint)recordBatchSize : 0;
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+        NativeBindings.pl_lazyframe_sink_ipc_partitioned(
+            lf,
+            path,
+            // Partition Params
+            partitionBy,
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
             compression,
             compatLevel,
             batchSize,

@@ -225,6 +225,7 @@ public class IoTests
         }
     }
     [Fact]
+    [Trait("Category","ParquetDebug")]
     public void Test_ReadParquet_Advanced()
     {
         // 1. 准备测试数据
@@ -273,10 +274,11 @@ public class IoTests
             rowIndexName: "row_idx", // 生成行号
             rowIndexOffset: 10   
         );
-
+        dfPartial.Show();
         // 验证结构
         Assert.Equal(3, dfPartial.Height); 
         Assert.Equal(2, dfPartial.Width);  // id + row_idx (name 被裁剪)
+
         
         Assert.True(dfPartial.ColumnNames.Contains("id"));
         Assert.False(dfPartial.ColumnNames.Contains("name"));
@@ -474,7 +476,7 @@ public class IoTests
         );
 
         // 2. 读取验证 (注意：压缩文件不应开启 memoryMap)
-        using var df = DataFrame.ReadIpc(f.Path, memoryMap: false);
+        using var df = DataFrame.ReadIpc(f.Path);
 
         Assert.Equal(3, df.Height);
         Assert.Equal("val", df.ColumnNames[1]);
@@ -512,8 +514,7 @@ public class IoTests
             using var df = DataFrame.ReadIpc(
                 f.Path, 
                 columns: new[] { "id", "val" }, // 列裁剪
-                nRows: 3,                       // 行限制
-                memoryMap: true                 // 启用 mmap (无压缩时安全)
+                nRows: 3
             );
 
             Assert.Equal(3, df.Height);
@@ -934,7 +935,7 @@ public class IoTests
 
             // 4. 验证结果
             // 因为写入的是压缩文件，读取时必须显式 memoryMap: false (我们在 I/O 升级里特别强调的)
-            using var dfRead = DataFrame.ReadIpc(f.Path, memoryMap: false);
+            using var dfRead = DataFrame.ReadIpc(f.Path);
 
             Assert.Equal(3, dfRead.Height);
             Assert.Equal("val", dfRead.ColumnNames[1]);

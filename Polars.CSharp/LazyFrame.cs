@@ -364,14 +364,14 @@ public class LazyFrame : IDisposable
 
         return new LazyFrame(h);
     }
-    // ---------------------------------------------------------
-    // Scan IPC (File)
+// ---------------------------------------------------------
+    // Scan IPC (File / Cloud)
     // ---------------------------------------------------------
 
     /// <summary>
-    /// Lazily read an Arrow IPC (Feather v2) file.
+    /// Lazily read an Arrow IPC (Feather v2) file, multiple files via glob patterns, or cloud storage.
     /// </summary>
-    /// <param name="path">Path to the IPC file.</param>
+    /// <param name="path">Path to the IPC file, glob pattern, or cloud path (e.g., "s3://...").</param>
     /// <param name="schema">
     /// Optional schema to enforce. If not provided, the schema is inferred from the file footer.
     /// </param>
@@ -381,36 +381,53 @@ public class LazyFrame : IDisposable
     /// </param>
     /// <param name="rechunk">Rechunk the memory to be contiguous (default: false).</param>
     /// <param name="cache">Cache the result of the scan (default: true).</param>
+    /// <param name="glob">Expand glob patterns (default: true).</param>
     /// <param name="rowIndexName">If provided, adds a column with the row index.</param>
     /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
     /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
     /// <param name="hivePartitioning">Enable Hive partitioning inference (default: false).</param>
+    /// <param name="hivePartitionSchema">Manually specify the schema for Hive partitioning columns.</param>
+    /// <param name="tryParseHiveDates">Whether to try parsing dates in Hive partitioning paths (default: true).</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public static LazyFrame ScanIpc(
         string path,
         PolarsSchema? schema = null,
         ulong? nRows = null,
         bool rechunk = false,
         bool cache = true,
+        bool glob = true,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
         string? includePathColumn = null,
-        bool hivePartitioning = false)
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = true,
+        CloudOptions? cloudOptions = null)
     {
-        if (!File.Exists(path)) 
-            throw new FileNotFoundException($"IPC file not found: {path}");
-
-        var schemaHandle = schema?.Handle;
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = 
+            CloudOptions.ParseCloudOptions(cloudOptions);
 
         var h = PolarsWrapper.ScanIpc(
             path,
-            schemaHandle,
             nRows,
             rechunk,
             cache,
+            glob,
             rowIndexName,
             rowIndexOffset,
             includePathColumn,
-            hivePartitioning
+            schema?.Handle,
+            hivePartitioning,
+            hivePartitionSchema?.Handle,
+            tryParseHiveDates,
+            provider.ToNative(),
+            (nuint)retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
+            cacheTtl,
+            keys,
+            values
         );
 
         return new LazyFrame(h);
@@ -431,19 +448,23 @@ public class LazyFrame : IDisposable
         bool cache = true,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
-        bool hivePartitioning = false)
+        string? includePathColumn = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
-        var schemaHandle = schema?.Handle;
-
         var h = PolarsWrapper.ScanIpc(
             buffer,
-            schemaHandle,
             nRows,
             rechunk,
             cache,
             rowIndexName,
             rowIndexOffset,
-            hivePartitioning
+            includePathColumn,
+            schema?.Handle,
+            hivePartitioning,
+            hivePartitionSchema?.Handle,
+            tryParseHiveDates
         );
 
         return new LazyFrame(h);
@@ -467,7 +488,10 @@ public class LazyFrame : IDisposable
         bool cache = true,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
-        bool hivePartitioning = false)
+        string? includePathColumn = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
@@ -480,7 +504,10 @@ public class LazyFrame : IDisposable
             cache,
             rowIndexName,
             rowIndexOffset,
-            hivePartitioning
+            includePathColumn,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates
         );
     }
     // ---------------------------------------------------------
@@ -2434,6 +2461,60 @@ public class LazyFrame : IDisposable
         PolarsWrapper.SinkIpc(
             Handle,
             path,
+            compression.ToNative(),
+            compatLevel,
+            recordBatchSize,
+            recordBatchStatistics,
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir,
+            // Cloud
+            provider.ToNative(),
+            retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
+            cacheTtl,
+            keys,
+            values
+        );
+    }
+    /// <inheritdoc cref="SinkIpc"/>
+    /// <param name="partitionBy">The selector(s) to partition the data by.</param>
+    /// <param name="includeKeys">Whether to include the partition keys in the output files.</param>
+    /// <param name="keysPreGrouped">
+    /// Assert that the keys are already pre-grouped. This can speed up the operation if true.
+    /// Use with caution: if the data is not grouped, the output may be incorrect.
+    /// </param>
+    /// <param name="maxRowsPerFile">Maximum number of rows per file. 0 means no limit.</param>
+    /// <param name="approxBytesPerFile">Approximate size in bytes per file. 0 means no limit.</param>
+    public void SinkIpcPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        IpcCompression compression = IpcCompression.None,
+        int compatLevel = -1,
+        int recordBatchSize = 0,
+        bool recordBatchStatistics = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
+
+        PolarsWrapper.SinkIpcPartitioned(
+            Handle,
+            path,
+            // --- Partition Params ---
+            partitionBy.Handle, 
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile > 0 ? (nuint)maxRowsPerFile : 0,
+            approxBytesPerFile > 0 ? (ulong)approxBytesPerFile : 0,
             compression.ToNative(),
             compatLevel,
             recordBatchSize,
