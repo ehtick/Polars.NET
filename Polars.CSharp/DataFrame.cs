@@ -2667,6 +2667,18 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     {
         PolarsWrapper.WriteJson(Handle, path, format.ToNative());
     }
+    /// <summary>
+    /// Writes the DataFrame to a JSON format in memory.
+    /// </summary>
+    /// <param name="jsonFormat">The JSON format to use (Json or JsonLines).</param>
+    /// <returns>A byte array containing the JSON data.</returns>
+    public byte[] WriteJsonMemory(JsonFormat jsonFormat = JsonFormat.Json)
+    {
+        return PolarsWrapper.WriteJsonMemory(
+            Handle,
+            jsonFormat.ToNative()
+        );
+    }
 
     /// <summary>
     /// Write DataFrame to a Newline Delimited JSON (NDJSON) file.

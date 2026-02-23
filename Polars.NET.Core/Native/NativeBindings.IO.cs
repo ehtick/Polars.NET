@@ -443,6 +443,12 @@ unsafe internal partial class NativeBindings
         string path,
         PlJsonFormat jsonFormat
     );
+    [LibraryImport(LibName)]
+    public static partial void pl_dataframe_write_json_memory(
+        DataFrameHandle df, 
+        out FfiBuffer out_buffer,
+        PlJsonFormat jsonFormat
+    );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial void pl_lazyframe_sink_json(
         LazyFrameHandle lf,
@@ -499,6 +505,20 @@ unsafe internal partial class NativeBindings
         string[]? cloud_keys,
         string[]? cloud_values,
         nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_json_memory(
+        LazyFrameHandle lf,
+        out FfiBuffer out_buffer,
+
+        // --- NDJson Params ---
+        PlExternalCompression compression_code, // u8
+        int compression_level,                  // i32
+        [MarshalAs(UnmanagedType.U1)] bool check_extension, // bool
+
+        // --- UnifiedSinkArgs ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order
+
     );
 
     // IPC

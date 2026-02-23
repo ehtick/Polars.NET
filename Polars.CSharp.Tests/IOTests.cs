@@ -80,54 +80,91 @@ public class IoTests
         }
     }
     [Fact]
-    public void Test_ReadJson_Memory_Bytes()
+    public void Test_SinkAndReadJsonLines_Memory_Bytes()
     {
         // ---------------------------------------------------
-        // 场景：从内存 byte[] 读取标准 JSON 数组
-        // 验证：NativeBinding -> Wrapper -> 内存指针传递链路
+        // 场景：验证 NDJSON (JsonLines) 格式的内存双向传递
+        // 链路：String -> 内存流读取 -> 转换为 LazyFrame -> Sink 到内存 -> 再次从内存读取
+        // 验证：NativeBinding -> Wrapper -> 内存指针双向传递的正确性
         // ---------------------------------------------------
 
-        var jsonContent = @"
-            [
-                {""id"": 1, ""val"": true},
-                {""id"": 2, ""val"": false}
-            ]";
+        // 1. 准备标准 NDJSON (JsonLines) 格式字符串 (每行一个完整的 JSON 对象)
+        var ndjsonContent = 
+            "{\"id\": 1, \"val\": true}\n" +
+            "{\"id\": 2, \"val\": false}\n";
         
-        byte[] buffer = Encoding.UTF8.GetBytes(jsonContent);
+        byte[] inputBuffer = Encoding.UTF8.GetBytes(ndjsonContent);
 
-        // 这里不传 Schema，让 Polars 自动推断
-        using var df = DataFrame.ReadJson(
-            buffer,
-            jsonFormat: JsonFormat.Json // 默认值，显式写出来以示清晰
+        // 2. 从内存读取 NDJSON 以构建初始 DataFrame
+        using var originalDf = DataFrame.ReadJson(
+            inputBuffer,
+            jsonFormat: JsonFormat.JsonLines // 显式指定为 JsonLines
         );
 
-        Assert.Equal(2, df.Height);
-        Assert.Equal(1, df.GetValue<int>(0, "id"));
-        Assert.True(df.GetValue<bool>(0, "val"));
-        Assert.False(df.GetValue<bool>(1, "val"));
-    }
+        // 3. 核心测试：调用你刚写的 SinkJsonMemory 
+        // 注意：SinkJsonMemory 是 LazyFrame 的方法，所以先调用 .Lazy()
+        byte[] sinkBuffer = originalDf.Lazy().SinkJsonMemory();
 
+        // 简单断言确保成功拿到了数据
+        Assert.NotNull(sinkBuffer);
+        Assert.True(sinkBuffer.Length > 0);
+
+        // 4. 将 Sink 生成的 byte[] 重新读取回 DataFrame 进行验证
+        using var readDf = DataFrame.ReadJson(
+            sinkBuffer,
+            jsonFormat: JsonFormat.JsonLines
+        );
+
+        // 5. 验证闭环后的数据完整性和准确性
+        Assert.Equal(2, readDf.Height);
+        
+        // 第一行断言
+        Assert.Equal(1, readDf.GetValue<int>(0, "id"));
+        Assert.True(readDf.GetValue<bool>(0, "val"));
+        
+        // 第二行断言
+        Assert.Equal(2, readDf.GetValue<int>(1, "id"));
+        Assert.False(readDf.GetValue<bool>(1, "val"));
+    }
     [Fact]
-    public void Test_ReadJson_Stream()
+    public void Test_WriteAndReadJson_Stream_And_Memory()
     {
         // ---------------------------------------------------
-        // 场景：从 Stream 读取
-        // 验证：API 层 Stream -> MemoryStream -> byte[] 的转换逻辑
+        // 场景：验证从 Stream 读取并写入到内存 (标准 JSON) 的完整闭环
+        // 链路：String -> Stream 读取 -> DataFrame -> 写入内存 (byte[]) -> 再次转为 Stream 读取
+        // 验证：Stream API 转换逻辑 + DataFrame -> JsonWriter 内存指针双向传递
         // ---------------------------------------------------
 
+        // 1. 准备标准 JSON 数组数据
         var jsonContent = @"[{""city"": ""New York""}, {""city"": ""London""}]";
         byte[] bytes = Encoding.UTF8.GetBytes(jsonContent);
 
-        using var stream = new MemoryStream(bytes);
+        // 2. 验证 Stream 读取逻辑
+        using var inputStream = new MemoryStream(bytes);
+        using var originalDf = DataFrame.ReadJson(
+            inputStream, 
+            jsonFormat: JsonFormat.Json // 显式声明为标准 JSON
+        );
 
-        // 模拟流的位置不在开头的情况 (Polars API 层应该处理 copy，所以这里位置不重要，
-        // 但通常 Stream.CopyTo 是从当前位置开始复制，所以我们要确保流是 Ready 的)
+        Assert.Equal(2, originalDf.Height);
         
-        using var df = DataFrame.ReadJson(stream);
+        // 3. 核心测试：调用基于 DataFrame 的内存写入 (标准 JSON 格式)
+        byte[] outputBytes = originalDf.WriteJsonMemory(JsonFormat.Json);
 
-        Assert.Equal(2, df.Height);
-        Assert.Equal("New York", df.GetValue<string>(0, "city"));
-        Assert.Equal("London", df.GetValue<string>(1, "city"));
+        Assert.NotNull(outputBytes);
+        Assert.True(outputBytes.Length > 0);
+
+        // 4. 将输出的 byte[] 再次包装成 Stream，测试读取的闭环
+        using var readStream = new MemoryStream(outputBytes);
+        using var readDf = DataFrame.ReadJson(
+            readStream, 
+            jsonFormat: JsonFormat.Json
+        );
+
+        // 5. 验证闭环后的数据完整性和准确性
+        Assert.Equal(2, readDf.Height);
+        Assert.Equal("New York", readDf.GetValue<string>(0, "city"));
+        Assert.Equal("London", readDf.GetValue<string>(1, "city"));
     }
 
     [Fact]

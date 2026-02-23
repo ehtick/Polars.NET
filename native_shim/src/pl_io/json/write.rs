@@ -2,7 +2,8 @@ use polars::prelude::*;
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::fs::File;
-use crate::pl_io::io_utils::build_unified_sink_args;
+use crate::pl_io::ffi_buffer::FfiBuffer;
+use crate::pl_io::io_utils::{build_memory_sink_destination, build_unified_sink_args};
 use crate::pl_io::json::json_utils::build_ndjson_writer_options;
 use crate::types::{DataFrameContext, LazyFrameContext, SelectorContext};
 use crate::utils::{map_json_format, ptr_to_str};
@@ -25,6 +26,38 @@ pub extern "C" fn pl_dataframe_write_json(
         JsonWriter::new(file)
             .with_json_format(format)
             .finish(&mut ctx.df)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_dataframe_write_json_memory(
+    df_ptr: *mut DataFrameContext,
+    out_buffer: *mut FfiBuffer,
+    json_format: u8, // 0: Json, 1: JsonLines
+) {
+    ffi_try_void!({
+        if df_ptr.is_null() || out_buffer.is_null() {
+            return Err(PolarsError::ComputeError("Null pointer passed to dataframe json memory writer".into()));
+        }
+
+        let ctx = unsafe { &mut *df_ptr };
+        let format = map_json_format(json_format);
+        
+        let mut mem_writer = Vec::new();
+
+        JsonWriter::new(&mut mem_writer)
+            .with_json_format(format)
+            .finish(&mut ctx.df)?;
+
+        let mut vec = std::mem::ManuallyDrop::new(mem_writer);
+
+        unsafe {
+            (*out_buffer).data = vec.as_mut_ptr();
+            (*out_buffer).len = vec.len();
+            (*out_buffer).capacity = vec.capacity();
+        }
+
+        Ok(())
     })
 }
 
@@ -173,6 +206,58 @@ pub extern "C" fn pl_lazyframe_sink_json_partitioned(
         let _ = lf_ctx.inner
             .sink(destination, file_format, unified_args)?
             .collect()?;
+
+        Ok(())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_sink_json_memory(
+    lf_ptr: *mut LazyFrameContext,
+    out_buffer: *mut FfiBuffer,
+    // --- NDJson Params ---
+    compression_code: u8,
+    compression_level: i32,
+    check_extension: bool,
+    // --- UnifiedSinkArgs ---
+    maintain_order: bool,
+) {
+    ffi_try_void!({
+        if lf_ptr.is_null() || out_buffer.is_null() {
+            return Err(PolarsError::ComputeError("Null pointer passed to memory sink".into()));
+        }
+
+        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+
+        let (mem_writer, destination) = build_memory_sink_destination();
+
+        let json_options = build_ndjson_writer_options(
+            compression_code,
+            compression_level,
+            check_extension
+        );
+        let file_format = FileWriteFormat::NDJson(json_options);
+
+        let unified_args = UnifiedSinkArgs {
+            mkdir: false,
+            maintain_order,
+            sync_on_close: Default::default(),
+            cloud_options: None,
+        };
+
+        let sink_lf = lf_ctx.inner
+            .sink(destination, file_format, unified_args)?;
+            
+        let _ = sink_lf.collect()?;
+
+        let vec = mem_writer.into_inner();
+        let mut vec = std::mem::ManuallyDrop::new(vec);
+
+        unsafe {
+            (*out_buffer).data = vec.as_mut_ptr();
+            (*out_buffer).len = vec.len();
+            (*out_buffer).capacity = vec.capacity();
+        }
 
         Ok(())
     })

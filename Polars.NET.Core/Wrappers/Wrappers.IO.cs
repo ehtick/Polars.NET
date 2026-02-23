@@ -589,6 +589,23 @@ public static partial class PolarsWrapper
         NativeBindings.pl_dataframe_write_json(df, path, format);
         ErrorHelper.CheckVoid();
     }
+    public static byte[] WriteJsonMemory(DataFrameHandle df,PlJsonFormat format)
+    {
+        NativeBindings.pl_dataframe_write_json_memory(df,out var ffiBuffer,format);
+        ErrorHelper.CheckVoid();
+        try
+        {
+            unsafe
+            {
+                var span = new ReadOnlySpan<byte>(ffiBuffer.Data.ToPointer(), (int)ffiBuffer.Length);
+                return span.ToArray();
+            }
+        }
+        finally
+        {
+            NativeBindings.pl_free_ffi_buffer(ffiBuffer);
+        }
+    }
     // Sink Parquet
     public static void SinkParquet(
         LazyFrameHandle lf, 
@@ -1066,6 +1083,39 @@ public static partial class PolarsWrapper
 
         lf.TransferOwnership();
         ErrorHelper.CheckVoid();
+    }
+    public static byte[] SinkJsonMemory(
+        LazyFrameHandle lf,
+        PlExternalCompression compression,
+        int compressionLevel,
+        bool checkExtension,
+        bool maintainOrder
+        )
+    {
+        NativeBindings.pl_lazyframe_sink_json_memory(
+            lf,
+            out var ffiBuffer,
+            compression,
+            compressionLevel,
+            checkExtension,
+            maintainOrder
+        );
+
+        lf.TransferOwnership();
+        ErrorHelper.CheckVoid();
+
+        try
+        {
+            unsafe
+            {
+                var span = new ReadOnlySpan<byte>(ffiBuffer.Data.ToPointer(), (int)ffiBuffer.Length);
+                return span.ToArray();
+            }
+        }
+        finally
+        {
+            NativeBindings.pl_free_ffi_buffer(ffiBuffer);
+        }
     }
     // ---------------------------------------------------------
     // Scan IPC (File / Cloud)

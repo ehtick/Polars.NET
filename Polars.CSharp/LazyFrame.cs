@@ -2698,6 +2698,23 @@ public class LazyFrame : IDisposable
         SinkJson(path,compression,compressionLevel,checkExtension, maintainOrder, syncOnClose, mkdir,cloudOptions);
     }
     /// <summary>
+    /// Sink the LazyFrame to a NDJSON (Newline Delimited JSON) format in memory.
+    /// </summary>
+    public byte[] SinkJsonMemory(
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool checkExtension = true,
+        bool maintainOrder = true)
+    {
+        return PolarsWrapper.SinkJsonMemory(
+            Handle,
+            compression.ToNative(),
+            compressionLevel,
+            checkExtension,
+            maintainOrder
+        );
+    }
+    /// <summary>
     /// Execute the LazyFrame and sink the result to a CSV file.
     /// <para>
     /// This operation allows processing datasets larger than memory by streaming results 
