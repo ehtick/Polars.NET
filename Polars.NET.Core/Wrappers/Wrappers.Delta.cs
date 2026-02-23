@@ -189,4 +189,262 @@ public static partial class PolarsWrapper
 
         ErrorHelper.CheckVoid();
     }
+        // ---------------------------------------------------------
+    // DeltaLake
+    // ---------------------------------------------------------
+    public unsafe static LazyFrameHandle ScanDelta(
+        string path,
+        long? version,
+        string? datetime,
+        ulong? nRows,
+        PlParallelStrategy parallel,
+        bool lowMemory,
+        bool useStatistics,
+        bool glob,
+        // bool allowMissingColumns,
+        bool rechunk,
+        bool cache,
+        string? rowIndexName,
+        uint rowIndexOffset,
+        string? includePathColumn,
+        SchemaHandle? schema,
+        SchemaHandle? hivePartitionSchema,
+        bool tryParseHiveDates,
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues)
+    {
+        long versionVal = version.GetValueOrDefault();
+        IntPtr versionPtr = version.HasValue ? (IntPtr)(&versionVal) : IntPtr.Zero;
+
+        ulong nRowsVal = nRows.GetValueOrDefault();
+        IntPtr nRowsPtr = nRows.HasValue ? (IntPtr)(&nRowsVal) : IntPtr.Zero;
+
+        using var schemaLock = new SafeHandleLock<SchemaHandle>(
+            schema != null ? [schema] : null
+        );
+        IntPtr schemaPtr = schema != null ? schemaLock.Pointers[0] : IntPtr.Zero;
+
+        using var hiveLock = new SafeHandleLock<SchemaHandle>(
+            hivePartitionSchema != null ? [hivePartitionSchema] : null
+        );
+        IntPtr hiveSchemaPtr = hivePartitionSchema != null ? hiveLock.Pointers[0] : IntPtr.Zero;
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+        var h = NativeBindings.pl_scan_delta(
+            path,
+            versionPtr,
+            datetime,
+            nRowsPtr,
+            parallel,
+            lowMemory,
+            useStatistics,
+            glob,
+            rechunk, 
+            cache,  
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schemaPtr,
+            hiveSchemaPtr,
+            tryParseHiveDates,
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        return ErrorHelper.Check(h);
+    }
+
+    public static void SinkDelta(
+        LazyFrameHandle lf,
+        string path,
+        
+        // --- Delta Options ---
+        PlDeltaSaveMode mode,
+        bool canEvolve,
+        // --- Partition Params ---
+        SelectorHandle? partitionBy,
+        bool includeKeys,
+        bool keysPreGrouped,
+        nuint maxRowsPerFile,
+        ulong approxBytesPerFile,
+
+        // --- Parquet Options ---
+        PlParquetCompression compression,
+        int compressionLevel,
+        bool statistics,
+        nuint rowGroupSize,
+        nuint dataPageSize,
+        int compatLevel,
+
+        // --- Unified Options ---
+        bool maintainOrder,
+        PlSyncOnClose syncOnClose,
+        bool mkdir,
+
+        // --- Cloud Params ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        nuint rgs = rowGroupSize > 0 ? (nuint)rowGroupSize : 0;
+        nuint dps = dataPageSize > 0 ? (nuint)dataPageSize : 0;
+        
+        int safeCompatLevel = compatLevel;
+        if (safeCompatLevel < -1) safeCompatLevel = -1;
+        else if (safeCompatLevel > 1) safeCompatLevel = 1;
+
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+        IntPtr partitionByHandle = partitionBy?.TransferOwnership() ?? IntPtr.Zero;
+        NativeBindings.pl_sink_delta(
+            lf,
+            path,
+            
+            // Delta Options
+            mode,
+            canEvolve,
+            // Partition Params
+            partitionByHandle,
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
+
+            // Parquet Options
+            compression,
+            compressionLevel,
+            statistics,
+            rgs,
+            dps,
+            safeCompatLevel,
+
+            // Unified Options
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+
+            // Cloud Params
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        lf.TransferOwnership();
+        
+        ErrorHelper.CheckVoid();
+    }
+    public static void DeltaDelete(
+        string path,
+        ExprHandle predicate,
+        // Cloud Options
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+        
+        NativeBindings.pl_io_delta_delete(
+            path,
+            predicate,
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        predicate.TransferOwnership();
+
+        ErrorHelper.CheckVoid();
+    }
+    public static void DeltaMerge(
+        LazyFrameHandle sourceLf,
+        string path,
+        string[] mergeKeys,
+        ExprHandle? matchedUpdateCond,
+        ExprHandle? matchedDeleteCond,
+        ExprHandle? notMatchedInsertCond,
+        ExprHandle? notMatchedBySourceDeletedCond,
+        bool can_evolve,
+        // Cloud Options
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues
+    )
+    {
+        if (mergeKeys == null || mergeKeys.Length == 0)
+        {
+            throw new ArgumentException("Merge keys cannot be null or empty.", nameof(mergeKeys));
+        }
+        nuint mergeKeysLen = (nuint)mergeKeys.Length;
+        IntPtr updateHandle = matchedUpdateCond?.TransferOwnership() ?? IntPtr.Zero;
+        IntPtr deleteHandle = matchedDeleteCond?.TransferOwnership() ?? IntPtr.Zero;
+        IntPtr insertHandle = notMatchedInsertCond?.TransferOwnership() ?? IntPtr.Zero;
+        IntPtr srcDeleteHandle = notMatchedBySourceDeletedCond?.TransferOwnership() ?? IntPtr.Zero;
+
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
+
+        NativeBindings.pl_io_delta_merge(
+            sourceLf,
+            path,
+            mergeKeys,
+            mergeKeysLen,
+            updateHandle,
+            deleteHandle,
+            insertHandle,
+            srcDeleteHandle,
+            can_evolve,
+            cloudProvider,
+            cloudRetries,
+            cloudRetryTimeoutMs,
+            cloudRetryInitBackoffMs,
+            cloudRetryMaxBackoffMs,
+            cloudCacheTtl,
+            cloudKeys,
+            cloudValues,
+            cloudLen
+        );
+
+        sourceLf.TransferOwnership();
+
+        ErrorHelper.CheckVoid();
+    }
 }

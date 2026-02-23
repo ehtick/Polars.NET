@@ -415,6 +415,37 @@ unsafe internal partial class NativeBindings
         string[]? cloud_values,
         nuint cloud_len
     );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_json_partitioned(
+        LazyFrameHandle lf,
+        string path,
+        // --- Partition Params ---
+        SelectorHandle partition_by,
+        [MarshalAs(UnmanagedType.U1)] bool include_keys,
+        [MarshalAs(UnmanagedType.U1)] bool keys_pre_grouped,
+        nuint max_rows_per_file,
+        ulong approx_bytes_per_file,
+        // --- NDJson Params ---
+        PlExternalCompression compression_code, // u8
+        int compression_level,                  // i32
+        [MarshalAs(UnmanagedType.U1)] bool check_extension, // bool
+
+        // --- UnifiedSinkArgs ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,            // u8
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Params ---
+        PlCloudProvider cloud_provider,         // u8
+        nuint cloud_retries,                    // usize
+        ulong cloud_retry_timeout_ms,           // u64
+        ulong cloud_retry_init_backoff_ms,      // u64
+        ulong cloud_retry_max_backoff_ms,       // u64
+        ulong cloud_cache_ttl,                  // u64
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
 
     // IPC
     // ---------------------------------------------------------

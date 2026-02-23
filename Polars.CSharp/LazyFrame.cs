@@ -2576,7 +2576,58 @@ public class LazyFrame : IDisposable
             values
         );
     }
+    /// <inheritdoc cref="SinkJson"/>
+    /// <param name="partitionBy">The selector(s) to partition the data by.</param>
+    /// <param name="includeKeys">Whether to include the partition keys in the output files.</param>
+    /// <param name="keysPreGrouped">
+    /// Assert that the keys are already pre-grouped. This can speed up the operation if true.
+    /// Use with caution: if the data is not grouped, the output may be incorrect.
+    /// </param>
+    /// <param name="maxRowsPerFile">Maximum number of rows per file. 0 means no limit.</param>
+    /// <param name="approxBytesPerFile">Approximate size in bytes per file. 0 means no limit.</param>
+    public void SinkJsonPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool checkExtension = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var (provider, retries, timeout, initBackoff, maxBackoff, cacheTtl, keys, values) = CloudOptions.ParseCloudOptions(cloudOptions);
 
+        PolarsWrapper.SinkJsonPartitioned(
+            Handle,
+            path,
+            // --- Partition Params ---
+            partitionBy.Handle, 
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile > 0 ? (nuint)maxRowsPerFile : 0,
+            approxBytesPerFile > 0 ? (ulong)approxBytesPerFile : 0,
+            compression.ToNative(),
+            compressionLevel,
+            checkExtension,
+            maintainOrder,
+            syncOnClose.ToNative(),
+            mkdir,
+            // Cloud
+            provider.ToNative(),
+            retries,
+            timeout,
+            initBackoff,
+            maxBackoff,
+            cacheTtl,
+            keys,
+            values
+        );
+    }
     /// <summary>
     /// Alias for SinkJson with format=JsonLines.
     /// </summary>
