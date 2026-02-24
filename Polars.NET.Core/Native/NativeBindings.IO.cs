@@ -413,7 +413,17 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool ignoreErrors,
         string? rowIndexName,
         uint rowIndexOffset,
-        string? includePathColumn
+        string? includePathColumn,
+        // --- Cloud Params ---
+        PlCloudProvider cloud_provider,         // u8
+        nuint cloud_retries,                    // usize
+        ulong cloud_retry_timeout_ms,           // u64
+        ulong cloud_retry_init_backoff_ms,      // u64
+        ulong cloud_retry_max_backoff_ms,       // u64
+        ulong cloud_cache_ttl,                  // u64
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
     );
 
     // ---------------------------------------------------------

@@ -534,6 +534,7 @@ public class LazyFrame : IDisposable
     /// <param name="rowIndexName">If provided, adds a column with the row index.</param>
     /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
     /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+   /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public static LazyFrame ScanNdjson(
         string path,
         PolarsSchema? schema = null,
@@ -545,11 +546,13 @@ public class LazyFrame : IDisposable
         bool ignoreErrors = false,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
-        string? includePathColumn = null)
+        string? includePathColumn = null,
+        CloudOptions? cloudOptions = null)
     {
         if (!File.Exists(path)) 
             throw new FileNotFoundException($"NDJSON file not found: {path}");
-
+        var (provider, retries, retryTimeoutMs, retryInitBackoffMs, retryMaxBackoffMs, cacheTtl, keys, values) = 
+            CloudOptions.ParseCloudOptions(cloudOptions);
         var schemaHandle = schema?.Handle;
 
         var h = PolarsWrapper.ScanNdjson(
@@ -563,7 +566,15 @@ public class LazyFrame : IDisposable
             ignoreErrors,
             rowIndexName,
             rowIndexOffset,
-            includePathColumn
+            includePathColumn,
+            provider.ToNative(),
+            retries,
+            retryTimeoutMs,
+            retryInitBackoffMs,
+            retryMaxBackoffMs,
+            cacheTtl,
+            keys,
+            values
         );
 
         return new LazyFrame(h);
@@ -2975,7 +2986,7 @@ public class LazyFrame : IDisposable
         byte quoteChar = (byte)'"',
         string? nullValue = null,
         string? lineTerminator = "\n",
-        QuoteStyle quoteStyle = 0,         
+        QuoteStyle quoteStyle = QuoteStyle.Necessary,         
         bool maintainOrder = true)
     {
         return PolarsWrapper.SinkCsvMemory(

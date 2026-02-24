@@ -891,8 +891,18 @@ public static partial class PolarsWrapper
         bool ignoreErrors,
         string? rowIndexName,
         uint rowIndexOffset,
-        string? includePathColumn)
+        string? includePathColumn,
+        // --- Cloud Params ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,
+        ulong cloudRetryInitBackoffMs,
+        ulong cloudRetryMaxBackoffMs,
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues)
     {
+        nuint cloudLen = (nuint)(cloudKeys?.Length ?? 0);
         unsafe
         {
             ulong batchVal = batchSize.GetValueOrDefault();
@@ -921,7 +931,16 @@ public static partial class PolarsWrapper
                 ignoreErrors,
                 rowIndexName,
                 rowIndexOffset,
-                includePathColumn
+                includePathColumn,
+                cloudProvider,
+                cloudRetries,
+                cloudRetryTimeoutMs,
+                cloudRetryInitBackoffMs,
+                cloudRetryMaxBackoffMs,
+                cloudCacheTtl,
+                cloudKeys,
+                cloudValues,
+                cloudLen
             );
 
             return ErrorHelper.Check(h);

@@ -503,7 +503,10 @@ and Expr(handle: ExprHandle) =
         this.Map(func, DataType.SameAsInput)
     /// Advanced
     /// <summary> Explode a list column into multiple rows. </summary>
-    member this.Explode() = new Expr(PolarsWrapper.Explode(this.CloneHandle()))
+    member this.Explode(?emptyAsNull: bool, ?keepNulls: bool) = 
+        let emp = defaultArg emptyAsNull true
+        let kn = defaultArg keepNulls true
+        new Expr(PolarsWrapper.Explode(this.CloneHandle(),emp,kn))
     /// <summary> Implode multiple rows to a list. </summary>
     member this.Implode() = new Expr(PolarsWrapper.Implode(this.CloneHandle()))
     // ==========================================
@@ -2133,7 +2136,10 @@ and ArrayOps(handle: ExprHandle) =
     member _.ArgMax() = new Expr(PolarsWrapper.ArrayArgMax handle)
 
     /// <summary> Explode the array to rows. </summary>
-    member _.Explode() = new Expr(PolarsWrapper.ArrayExplode handle)
+    member _.Explode(?emptyAsNull:bool,?keepNulls:bool) = 
+        let emp = defaultArg emptyAsNull true
+        let kn = defaultArg keepNulls true
+        new Expr(PolarsWrapper.ArrayExplode(handle,emp,kn))
 
     // --- Indexing ---
 

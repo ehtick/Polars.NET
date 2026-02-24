@@ -254,6 +254,21 @@ type JoinType =
         | Semi -> PlJoinType.Semi
         | Anti -> PlJoinType.Anti
 
+type JoinSide =
+    | LetPolarsDecide
+    | PreferLeft
+    | ForceLeft
+    | PreferRight
+    | ForceRight
+    member internal this.ToNative() =
+        match this with
+        | LetPolarsDecide -> PlJoinSide.None
+        | PreferRight -> PlJoinSide.PreferRight
+        | PreferLeft -> PlJoinSide.PreferLeft
+        | ForceLeft -> PlJoinSide.ForceLeft
+        | ForceRight -> PlJoinSide.ForceRight
+
+
 /// <summary>
 /// Specifies the aggregation function for pivot operations.
 /// </summary>
@@ -491,7 +506,7 @@ type ParquetCompression =
         | Snappy -> PlParquetCompression.Snappy
         | Gzip -> PlParquetCompression.Gzip
         | Brotli -> PlParquetCompression.Brotli
-        | Zstd -> PlParquetCompression.Zstd
+        | Zstd -> PlParquetCompression.ZSTD
         | Lz4Raw -> PlParquetCompression.Lz4Raw
 
 type QuoteStyle =
@@ -529,3 +544,39 @@ type CloudProvider =
         | Gcp -> PlCloudProvider.Gcp
         | Http -> PlCloudProvider.Http
         | HuggingFace -> PlCloudProvider.HuggingFace
+
+/// <summary>
+/// mode for saving delta lake table
+/// </summary>
+type DeltaSaveMode =
+    | Append
+    | Overwrite
+    | ErrorIfExists
+    | Ignore
+    member internal this.ToNative() = 
+        match this with 
+        | Append -> PlDeltaSaveMode.Append
+        | Overwrite -> PlDeltaSaveMode.Overwrite
+        | ErrorIfExists -> PlDeltaSaveMode.ErrorIfExists
+        | Ignore -> PlDeltaSaveMode.Ignore
+
+type ExternalCompression =
+    | Uncompressed
+    | Gzip
+    | ZSTD
+    member internal this.ToNative() =
+        match this with
+        | Uncompressed -> PlExternalCompression.Uncompressed
+        | Gzip -> PlExternalCompression.Gzip
+        | ZSTD -> PlExternalCompression.ZSTD
+
+type AvroCompression =
+    | Uncompressed
+    | Deflate
+    | Snappy
+    member internal this.ToNative() =
+        match this with
+        | Uncompressed -> PlAvroCompression.Uncompressed
+        | Deflate -> PlAvroCompression.Deflate
+        | Snappy -> PlAvroCompression.Snappy
+

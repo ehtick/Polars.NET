@@ -870,6 +870,25 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return new DataFrame(handle);
     }
     /// <summary>
+    /// Read an Avro memory Stream into a DataFrame.
+    /// </summary>
+    /// <param name="stream">The stream containing Avro data.</param>
+    /// <param name="nRows">Stop reading when `nRows` are read.</param>
+    /// <param name="columns">Columns to select/project by name.</param>
+    /// <param name="projection">Columns to select/project by index.</param>
+    /// <returns>A new DataFrame.</returns>
+    public static DataFrame ReadAvro(
+        Stream stream, 
+        ulong? nRows = null, 
+        string[]? columns = null, 
+        int[]? projection = null)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        var handle = PolarsWrapper.ReadAvro(ms.ToArray(), nRows, columns, projection);
+        return new DataFrame(handle);
+    }
+    /// <summary>
     /// Create a DataFrame directly from a <see cref="IDataReader"/>.
     /// <para>
     /// This method streams data from the reader into Arrow batches, allowing for memory-efficient 
@@ -2603,6 +2622,49 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             cloudOptions
         );
     }
+    /// <inheritdoc cref="LazyFrame.SinkCsvMemory"/>
+    public byte[] WriteCsvMemory(
+        bool includeBom = false,
+        bool includeHeader = true,
+        int batchSize = 1024,
+        bool checkExtension = false, 
+        ExternalCompression compressionCode = 0,    
+        int compressionLevel = 0,
+        string? dateFormat = null,
+        string? timeFormat = null,
+        string? datetimeFormat = null,
+        int floatScientific = -1,
+        int floatPrecision = -1,
+        bool decimalComma = false,
+        byte separator = (byte)',',
+        byte quoteChar = (byte)'"',
+        string? nullValue = null,
+        string? lineTerminator = "\n",
+        QuoteStyle quoteStyle = QuoteStyle.Necessary,         
+        bool maintainOrder = true)
+    {
+        var lf = Lazy();
+        return lf.SinkCsvMemory(
+            includeBom,
+            includeHeader,
+            batchSize,
+            checkExtension,
+            compressionCode,
+            compressionLevel,
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            floatScientific,
+            floatPrecision,
+            decimalComma,
+            separator,
+            quoteChar,
+            nullValue,
+            lineTerminator,
+            quoteStyle,
+            maintainOrder
+        );
+    }
     /// <summary>
     /// Write DataFrame to a Parquet file.
     /// <para>
@@ -2645,6 +2707,73 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             cloudOptions
         );
     }
+    /// <inheritdoc cref="LazyFrame.SinkParquetPartitioned"/>
+    public void WriteParquetPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = false,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.SinkParquetPartitioned(
+            path,
+            
+            // --- Partition Params ---
+            partitionBy, 
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
+
+            // --- Parquet Options ---
+            compression,
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            compatLevel,
+
+            // --- Unified Options ---
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            cloudOptions
+
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.SinkParquetMemory"/>
+    public byte[] WriteParquetMemory(
+        ParquetCompression compression = ParquetCompression.ZSTD,
+        int compressionLevel = 3, 
+        bool statistics = true,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true)
+    {
+        var lf = Lazy();
+        return lf.SinkParquetMemory(
+            compression,
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            compatLevel,
+            maintainOrder
+        );
+    }
     /// <summary>
     /// Write DataFrame to an IPC (Arrow/Feather) file.
     /// <para>
@@ -2685,6 +2814,46 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             cloudOptions
         );
     }
+    /// <inheritdoc cref="LazyFrame.SinkIpcPartitioned"/>
+    public void WriteIpcPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        IpcCompression compression = IpcCompression.None,
+        int compatLevel = -1,
+        int recordBatchSize = 0,
+        bool recordBatchStatistics = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.SinkIpcPartitioned(
+            path,partitionBy,includeKeys,keysPreGrouped,maxRowsPerFile,approxBytesPerFile,
+            compression,compatLevel,recordBatchSize,recordBatchStatistics,maintainOrder,syncOnClose,mkdir,cloudOptions
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.SinkIpcMemory(IpcCompression, int, int, bool, bool)"/>
+    public byte[] WriteIpcMemory(
+        IpcCompression compression = IpcCompression.None,
+        int compatLevel = -1,
+        int recordBatchSize = 0,
+        bool recordBatchStatistics = true,
+        bool maintainOrder = true)
+    {
+        var lf = Lazy();
+        return lf.SinkIpcMemory(
+            compression,
+            compatLevel,
+            recordBatchSize,
+            recordBatchStatistics,
+            maintainOrder
+        );
+    }
     /// <summary>
     /// Write DataFrame to a JSON file.
     /// </summary>
@@ -2704,6 +2873,28 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return PolarsWrapper.WriteJsonMemory(
             Handle,
             jsonFormat.ToNative()
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.SinkJsonPartitioned"/>
+    public void WriteJsonPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool checkExtension = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.SinkJsonPartitioned(
+            path,partitionBy,includeKeys,keysPreGrouped,maxRowsPerFile,approxBytesPerFile,
+            compression,compressionLevel,checkExtension,maintainOrder,syncOnClose,mkdir,cloudOptions
         );
     }
 

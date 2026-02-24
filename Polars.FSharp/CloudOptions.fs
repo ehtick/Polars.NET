@@ -5,6 +5,9 @@ type CloudOptions =
         Provider: CloudProvider
         Credentials: Map<string, string>
         Retries: uint32
+        RetryTimeoutMs: uint64
+        RetryInitBackoffMs: uint64
+        RetryMaxBackoffMs: uint64
         CacheTTL: uint64
     }
     with
@@ -14,9 +17,36 @@ type CloudOptions =
                 Provider = CloudProvider.NotCloud
                 Credentials = Map.empty
                 Retries = 2u
+                RetryTimeoutMs = 0UL
+                RetryInitBackoffMs = 0UL
+                RetryMaxBackoffMs = 0UL
                 CacheTTL = 0UL
             }
+        /// <summary>
+        /// Internal helper to parse CloudOptions into native FFI primitives.
+        /// </summary>
+        static member ParseCloudOptions(cloudOptions: CloudOptions option) =
+            match cloudOptions with
+            | Some opts ->
+                // 1. Provider
+                let provider = opts.Provider.ToNative()
 
+                // 2. Integers (Assuming your F# CloudOptions record has these mapped)
+                let retries = unativeint opts.Retries
+                let timeoutMs = opts.RetryTimeoutMs
+                let initBackoffMs = opts.RetryInitBackoffMs
+                let maxBackoffMs = opts.RetryMaxBackoffMs
+                let cacheTtl = opts.CacheTTL
+
+                // 3. Credentials: Map -> Arrays
+                let keys = opts.Credentials |> Map.toSeq |> Seq.map fst |> Seq.toArray
+                let values = opts.Credentials |> Map.toSeq |> Seq.map snd |> Seq.toArray
+
+                provider, retries, timeoutMs, initBackoffMs, maxBackoffMs, cacheTtl, keys, values
+
+            | None ->
+                // Default: NotCloud
+                CloudProvider.NotCloud.ToNative(), unativeint 0, 0UL, 0UL, 0UL, 0UL, null, null
         // ==========================================
         // Helper Methods (Factory Functions)
         // ==========================================
@@ -74,7 +104,6 @@ type CloudOptions =
             
         /// HTTP
         static member Http(?headers: Map<string, string>) =
-            // F# 用户可以直接传 Map
             let creds = defaultArg headers Map.empty
             { CloudOptions.Default with Provider = CloudProvider.Http; Credentials = creds }
 

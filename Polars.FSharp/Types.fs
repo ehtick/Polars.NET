@@ -4338,7 +4338,6 @@ and LazyFrame(handle: LazyFrameHandle) =
             cLen
         )
         
-        // 返回 LazyFrame 实例
         new LazyFrame(handle)
     /// <summary>
     /// [Memory] Lazily read parquet from a byte array (in-memory buffer).
@@ -4436,7 +4435,8 @@ and LazyFrame(handle: LazyFrameHandle) =
                              ?ignoreErrors: bool,
                              ?rowIndexName: string,
                              ?rowIndexOffset: uint32,
-                             ?includePathColumn: string) : LazyFrame =
+                             ?includePathColumn: string,
+                             ?cloudOptions: CloudOptions) : LazyFrame =
         
         let schemaHandle = match schema with Some s -> s.Handle | None -> null
         let inferLen = Option.toNullable inferSchemaLen
@@ -4451,6 +4451,10 @@ and LazyFrame(handle: LazyFrameHandle) =
         let idxOffset = defaultArg rowIndexOffset 0u
         let pathCol = Option.toObj includePathColumn
 
+        // Parse Cloud Options
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
         let h = PolarsWrapper.ScanNdjson(
             path, 
             schemaHandle, 
@@ -4462,7 +4466,16 @@ and LazyFrame(handle: LazyFrameHandle) =
             ignoreErr, 
             idxName, 
             idxOffset, 
-            pathCol
+            pathCol,
+            // Cloud
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
         )
         new LazyFrame(h)
 
@@ -4537,98 +4550,161 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?rowIndexName=rowIndexName,
             ?rowIndexOffset=rowIndexOffset
         )
+    // ---------------------------------------------------------
+    // Scan IPC (File / Cloud / Glob)
+    // ---------------------------------------------------------
+
     /// <summary>
-    /// Lazily read an Arrow IPC (Feather v2) file.
+    /// Lazily read an Arrow IPC (Feather v2) file, multiple files via glob patterns, or cloud storage.
     /// </summary>
-    static member ScanIpc(path: string,
-                          ?schema: PolarsSchema,
-                          ?nRows: uint64,
-                          ?rechunk: bool,
-                          ?cache: bool,
-                          ?rowIndexName: string,
-                          ?rowIndexOffset: uint32,
-                          ?includePathColumn: string,
-                          ?hivePartitioning: bool) : LazyFrame =
+    static member ScanIpc(
+        path: string,
+        ?schema: PolarsSchema,
+        ?nRows: uint64,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?glob: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?hivePartitioning: bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool,
+        ?cloudOptions: CloudOptions
+    ) : LazyFrame =
         
+        // Resolve Optional Handles
         let schemaHandle = match schema with Some s -> s.Handle | None -> null
+        let hiveSchemaHandle = match hivePartitionSchema with Some s -> s.Handle | None -> null
+        
+        // Resolve Defaults
         let rows = Option.toNullable nRows
         let rechk = defaultArg rechunk false
         let useCache = defaultArg cache true 
+        let useGlob = defaultArg glob true
         let idxName = Option.toObj rowIndexName
         let idxOffset = defaultArg rowIndexOffset 0u
         let pathCol = Option.toObj includePathColumn
         let hive = defaultArg hivePartitioning false
+        let hiveDates = defaultArg tryParseHiveDates true
+
+        // Parse Cloud Options
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
 
         let h = PolarsWrapper.ScanIpc(
             path, 
-            schemaHandle, 
             rows, 
             rechk, 
             useCache, 
+            useGlob,
             idxName, 
             idxOffset, 
             pathCol, 
-            hive
+            schemaHandle,
+            hive,
+            hiveSchemaHandle,
+            hiveDates,
+            // Cloud
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
         )
         new LazyFrame(h)
+
+    // ---------------------------------------------------------
+    // Scan IPC (Memory / Bytes)
+    // ---------------------------------------------------------
 
     /// <summary>
     /// Lazily read Arrow IPC (Feather v2) from in-memory bytes.
     /// </summary>
-    static member ScanIpc(buffer: byte[],
-                          ?schema: PolarsSchema,
-                          ?nRows: uint64,
-                          ?rechunk: bool,
-                          ?cache: bool,
-                          ?rowIndexName: string,
-                          ?rowIndexOffset: uint32,
-                          ?hivePartitioning: bool) : LazyFrame =
+    static member ScanIpc(
+        buffer: byte[],
+        ?schema: PolarsSchema,
+        ?nRows: uint64,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?hivePartitioning: bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool
+    ) : LazyFrame =
         
         let schemaHandle = match schema with Some s -> s.Handle | None -> null
+        let hiveSchemaHandle = match hivePartitionSchema with Some s -> s.Handle | None -> null
+        
         let rows = Option.toNullable nRows
         let rechk = defaultArg rechunk false
         let useCache = defaultArg cache true
         let idxName = Option.toObj rowIndexName
         let idxOffset = defaultArg rowIndexOffset 0u
+        let pathCol = Option.toObj includePathColumn
         let hive = defaultArg hivePartitioning false
+        let hiveDates = defaultArg tryParseHiveDates false
 
         let h = PolarsWrapper.ScanIpc(
             buffer, 
-            schemaHandle, 
             rows, 
             rechk, 
             useCache, 
             idxName, 
             idxOffset, 
-            hive
+            pathCol,
+            schemaHandle, 
+            hive,
+            hiveSchemaHandle,
+            hiveDates
         )
         new LazyFrame(h)
+
+    // ---------------------------------------------------------
+    // Scan IPC (Stream)
+    // ---------------------------------------------------------
 
     /// <summary>
     /// Lazily read Arrow IPC (Feather v2) from a Stream.
     /// </summary>
-    static member ScanIpc(stream: Stream,
-                          ?schema: PolarsSchema,
-                          ?nRows: uint64,
-                          ?rechunk: bool,
-                          ?cache: bool,
-                          ?rowIndexName: string,
-                          ?rowIndexOffset: uint32,
-                          ?hivePartitioning: bool) : LazyFrame =
+    /// <remarks>
+    /// This reads the stream fully into memory to construct the Lazy execution plan.
+    /// </remarks>
+    static member ScanIpc(
+        stream: System.IO.Stream,
+        ?schema: PolarsSchema,
+        ?nRows: uint64,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?hivePartitioning: bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool
+    ) : LazyFrame =
         
-        use ms = new MemoryStream()
+        use ms = new System.IO.MemoryStream()
         stream.CopyTo(ms)
         let bytes = ms.ToArray()
 
         LazyFrame.ScanIpc(
             bytes,
-            ?schema=schema,
-            ?nRows=nRows,
-            ?rechunk=rechunk,
-            ?cache=cache,
-            ?rowIndexName=rowIndexName,
-            ?rowIndexOffset=rowIndexOffset,
-            ?hivePartitioning=hivePartitioning
+            ?schema = schema,
+            ?nRows = nRows,
+            ?rechunk = rechunk,
+            ?cache = cache,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?includePathColumn = includePathColumn,
+            ?hivePartitioning = hivePartitioning,
+            ?hivePartitionSchema = hivePartitionSchema,
+            ?tryParseHiveDates = tryParseHiveDates
         )
     
     // ==========================================
@@ -4754,19 +4830,286 @@ and LazyFrame(handle: LazyFrameHandle) =
                 base.Dispose()
                 scope.Dispose()
         }
-
-    /// <summary>   
-    /// Write LazyFrame execution result to Parquet (Streaming). 
+    /// <summary>
+    /// Execute the LazyFrame and sink the result to a CSV file.
+    /// <para>
+    /// This operation allows processing datasets larger than memory by streaming results 
+    /// directly to the file system.
+    /// </para>
     /// </summary>
-    /// <param name="path">Output file path.</param>
-    /// <param name="compression">Compression method. Defaults to Snappy.</param>
-    /// <param name="compressionLevel">Compression level for Gzip/Brotli/Zstd. -1 means default. Defaults to -1.</param>
-    /// <param name="statistics">Compute and write column statistics. Defaults to false.</param>
-    /// <param name="rowGroupSize">Number of rows per row group. 0 means use default.</param>
-    /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
-    /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
-    /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
-    /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
+    member this.SinkCsv(
+        path: string,
+        ?includeHeader: bool,
+        ?includeBom: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?quoteStyle: QuoteStyle,
+        ?nullValue: string,
+        ?lineTerminator: string,
+        ?floatScientific: bool,
+        ?floatPrecision: int,
+        ?decimalComma: bool,
+        ?dateFormat: string,
+        ?timeFormat: string,
+        ?datetimeFormat: string,
+        ?checkExtension: bool,
+        ?compression: ExternalCompression,
+        ?compressionLevel: int,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?batchSize: int,
+        ?cloudOptions: CloudOptions
+    ) =
+        // 1. Resolve Defaults
+        let incHdr = defaultArg includeHeader true
+        let incBom = defaultArg includeBom false
+        let sep = defaultArg separator ','
+        let qChar = defaultArg quoteChar '"'
+        let qStyle = defaultArg quoteStyle QuoteStyle.Necessary
+        let nVal = defaultArg nullValue null
+        let lTerm = defaultArg lineTerminator "\n"
+        let fSci = Option.toNullable floatScientific
+        let fPrec = Option.toNullable floatPrecision
+        let dComma = defaultArg decimalComma false
+        let dFmt = defaultArg dateFormat null
+        let tFmt = defaultArg timeFormat null
+        let dtFmt = defaultArg datetimeFormat null
+        let chkExt = defaultArg checkExtension true
+        let comp = defaultArg compression ExternalCompression.Uncompressed
+        let compLvl = defaultArg compressionLevel -1
+        let mo = defaultArg maintainOrder true
+        let sync = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkd = defaultArg mkdir false
+        let bSize = defaultArg batchSize 0
+
+        // 2. Unpack Cloud Options via external static helper
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        // 3. Native Call
+        PolarsWrapper.SinkCsv(
+            this.CloneHandle(),
+            path,
+            incHdr,
+            incBom,
+            bSize,
+            chkExt,
+            comp.ToNative(),
+            compLvl,
+            sep,
+            qChar,
+            qStyle.ToNative(),
+            nVal,
+            lTerm,
+            dFmt,
+            tFmt,
+            dtFmt,
+            fSci,
+            fPrec,
+            dComma,
+            mo,
+            sync.ToNative(),
+            mkd,
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
+        )
+
+    /// <summary>
+    /// Execute the LazyFrame and sink the result to a CSV file, partitioned by the given selector.
+    /// </summary>
+    member this.SinkCsvPartitioned(
+        path: string,
+        partitionBy: Selector,
+        ?includeKeys: bool,
+        ?keysPreGrouped: bool,
+        ?maxRowsPerFile: int,
+        ?approxBytesPerFile: int64,
+        ?includeHeader: bool,
+        ?includeBom: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?quoteStyle: QuoteStyle,
+        ?nullValue: string,
+        ?lineTerminator: string,
+        ?floatScientific: bool,
+        ?floatPrecision: int,
+        ?decimalComma: bool,
+        ?dateFormat: string,
+        ?timeFormat: string,
+        ?datetimeFormat: string,
+        ?checkExtension: bool,
+        ?compression: ExternalCompression,
+        ?compressionLevel: int,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?batchSize: int,
+        ?cloudOptions: CloudOptions
+    ) =
+        // 1. Resolve Defaults & Limits
+        let incKeys = defaultArg includeKeys true
+        let preGrouped = defaultArg keysPreGrouped false
+        let maxRows = defaultArg maxRowsPerFile 0
+        let approxBytes = defaultArg approxBytesPerFile 0L
+
+        let maxRowsNuint = if maxRows > 0 then unativeint maxRows else 0un
+        let approxBytesUlong = if approxBytes > 0L then uint64 approxBytes else 0UL
+
+        let incHdr = defaultArg includeHeader true
+        let incBom = defaultArg includeBom false
+        let sep = defaultArg separator ','
+        let qChar = defaultArg quoteChar '"'
+        let qStyle = defaultArg quoteStyle QuoteStyle.Necessary
+        let nVal = defaultArg nullValue null
+        let lTerm = defaultArg lineTerminator "\n"
+        let fSci = Option.toNullable floatScientific
+        let fPrec = Option.toNullable floatPrecision
+        let dComma = defaultArg decimalComma false
+        let dFmt = defaultArg dateFormat null
+        let tFmt = defaultArg timeFormat null
+        let dtFmt = defaultArg datetimeFormat null
+        let chkExt = defaultArg checkExtension true
+        let comp = defaultArg compression ExternalCompression.Uncompressed
+        let compLvl = defaultArg compressionLevel -1
+        let mo = defaultArg maintainOrder true
+        let sync = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkd = defaultArg mkdir false
+        let bSize = defaultArg batchSize 0
+
+        // 2. Unpack Cloud Options
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        // 3. Native Call
+        PolarsWrapper.SinkCsvPartitioned(
+            this.CloneHandle(),
+            path,
+            partitionBy.CloneHandle(),
+            incKeys,
+            preGrouped,
+            maxRowsNuint,
+            approxBytesUlong,
+            incHdr,
+            incBom,
+            bSize,
+            chkExt,
+            comp.ToNative(),
+            compLvl,
+            sep,
+            qChar,
+            qStyle.ToNative(),
+            nVal,
+            lTerm,
+            dFmt,
+            tFmt,
+            dtFmt,
+            fSci,
+            fPrec,
+            dComma,
+            mo,
+            sync.ToNative(),
+            mkd,
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
+        )
+
+    /// <summary>
+    /// Sink the LazyFrame to a CSV format in memory.
+    /// <para>
+    /// This allows for streaming execution directly into a byte array without writing to disk.
+    /// </para>
+    /// </summary>
+    /// <returns>A byte array containing the serialized CSV data.</returns>
+    member this.SinkCsvMemory(
+        ?includeBom: bool,
+        ?includeHeader: bool,
+        ?batchSize: int,
+        ?checkExtension: bool,
+        ?compressionCode: ExternalCompression,
+        ?compressionLevel: int,
+        ?dateFormat: string,
+        ?timeFormat: string,
+        ?datetimeFormat: string,
+        ?floatScientific: int, 
+        ?floatPrecision: int,
+        ?decimalComma: bool,
+        ?separator: byte,
+        ?quoteChar: byte,
+        ?nullValue: string,
+        ?lineTerminator: string,
+        ?quoteStyle: QuoteStyle,
+        ?maintainOrder: bool
+    ) =
+        let incBom = defaultArg includeBom false
+        let incHdr = defaultArg includeHeader true
+        let bSize = defaultArg batchSize 1024
+        let chkExt = defaultArg checkExtension false
+        let comp = defaultArg compressionCode ExternalCompression.Uncompressed
+        let compLvl = defaultArg compressionLevel 0
+        let dFmt = defaultArg dateFormat null
+        let tFmt = defaultArg timeFormat null
+        let dtFmt = defaultArg datetimeFormat null
+        let fSci = defaultArg floatScientific -1
+        let fPrec = defaultArg floatPrecision -1
+        let dComma = defaultArg decimalComma false
+        let sep = defaultArg separator (byte ',')
+        let qChar = defaultArg quoteChar (byte '"')
+        let nVal = defaultArg nullValue null
+        let lTerm = defaultArg lineTerminator "\n"
+        let qStyle = defaultArg quoteStyle QuoteStyle.Necessary
+        let mo = defaultArg maintainOrder true
+
+        PolarsWrapper.SinkCsvMemory(
+            this.CloneHandle(),
+            incBom,
+            incHdr,
+            bSize,
+            chkExt,
+            comp.ToNative(),
+            compLvl,
+            dFmt,
+            tFmt,
+            dtFmt,
+            fSci,
+            fPrec,
+            dComma,
+            sep,
+            qChar,
+            nVal,
+            lTerm,
+            qStyle.ToNative(),
+            mo
+        )
+    /// <summary>
+    /// Sink the LazyFrame to a Parquet file.
+    /// <para>
+    /// This allows for streaming execution, processing the data in chunks and writing it to the file
+    /// without loading the entire dataset into memory.
+    /// </para>
+    /// </summary>
+    /// <param name="path">Path to the output file.</param>
+    /// <param name="compression">Compression codec to use.</param>
+    /// <param name="compressionLevel">Compression level (depends on the codec).</param>
+    /// <param name="statistics">Write statistics to the parquet file.</param>
+    /// <param name="rowGroupSize">Target row group size (in rows).</param>
+    /// <param name="dataPageSize">Target data page size (in bytes).</param>
+    /// <param name="compatLevel">IPC format compatibility, -1: oldest, 0: default, 1: newest.</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
+    /// <param name="mkdir">Create parent directories if they don't exist (Local file system only).</param>
     /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     member this.SinkParquet(
         path: string,
@@ -4775,129 +5118,486 @@ and LazyFrame(handle: LazyFrameHandle) =
         ?statistics: bool,
         ?rowGroupSize: int,
         ?dataPageSize: int,
+        ?compatLevel: int,
         ?maintainOrder: bool,
         ?syncOnClose: SyncOnClose,
         ?mkdir: bool,
-        ?cloudOptions : CloudOptions
-    ) : unit =
-        let compression = defaultArg compression ParquetCompression.Snappy
-        let compressionLevel = defaultArg compressionLevel -1
-        let statistics = defaultArg statistics false
-        let rowGroupSize = defaultArg rowGroupSize 0
-        let dataPageSize = defaultArg dataPageSize 0
-        let maintainOrder = defaultArg maintainOrder true
-        let syncOnClose = defaultArg syncOnClose SyncOnClose.NoSync
-        let mkdir = defaultArg mkdir false
+        ?cloudOptions: CloudOptions
+    ) =
+        // 1. Resolve Defaults
+        let comp = defaultArg compression ParquetCompression.Snappy
+        let compLevel = defaultArg compressionLevel -1
+        let stats = defaultArg statistics false
+        let rgs = defaultArg rowGroupSize 0
+        let dps = defaultArg dataPageSize 0
+        let compat = defaultArg compatLevel -1
+        let mo = defaultArg maintainOrder true
+        let sync = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkd = defaultArg mkdir false
 
-        let cProvider, cRetries, cCacheTtl, cKeys, cValues, cLen =
-            match cloudOptions with
-            | Some opts ->
-                // 1. Provider
-                let provider = opts.Provider.ToNative()
+        // 2. Unpack Cloud Options via external static helper
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
 
-                // 2. Integers
-                let retries = unativeint opts.Retries
-                let cache = opts.CacheTTL
-
-                // 3. Credentials Map -> Arrays
-                let keys = opts.Credentials |> Map.toSeq |> Seq.map fst |> Seq.toArray
-                let values = opts.Credentials |> Map.toSeq |> Seq.map snd |> Seq.toArray
-                let len = unativeint keys.Length
-
-                provider, retries, cache, keys, values, len
-            
-            | None ->
-                // Default: NotCloud
-                PlCloudProvider.None, unativeint 0, 0UL, null, null, unativeint 0
+        // 3. Native Call
         PolarsWrapper.SinkParquet(
             this.CloneHandle(), 
             path,
-            compression.ToNative(),
-            compressionLevel,
-            statistics,
-            rowGroupSize,
-            dataPageSize,
-            maintainOrder,
-            syncOnClose.ToNative(),
-            mkdir,
-            cProvider,
-            cRetries,
-            cCacheTtl,
+            comp.ToNative(),
+            compLevel,
+            stats,
+            rgs,
+            dps,
+            compat,
+            mo,
+            sync.ToNative(),
+            mkd,
+            // Cloud
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
             cKeys,
-            cValues,
-            cLen
+            cVals
         )
+
     /// <summary>
-    /// Sink the LazyFrame to a JSON file.
+    /// Sink the LazyFrame to a set of Parquet files, partitioned by the specified selector.
+    /// <para>
+    /// This writes the dataset to a directory, splitting the data into multiple files based on the
+    /// partition key(s) defined in <paramref name="partitionBy"/>.
+    /// </para>
     /// </summary>
-    member this.SinkJson(
+    member this.SinkParquetPartitioned(
         path: string,
-        ?format: JsonFormat,
+        partitionBy: Selector,
+        ?includeKeys: bool,
+        ?keysPreGrouped: bool,
+        ?maxRowsPerFile: int,
+        ?approxBytesPerFile: int64,
+        ?compression: ParquetCompression,
+        ?compressionLevel: int,
+        ?statistics: bool,
+        ?rowGroupSize: int,
+        ?dataPageSize: int,
+        ?compatLevel: int,
         ?maintainOrder: bool,
         ?syncOnClose: SyncOnClose,
-        ?mkdir: bool
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
     ) =
-        let format = defaultArg format JsonFormat.Json
-        let maintainOrder = defaultArg maintainOrder true
-        let syncOnClose = defaultArg syncOnClose SyncOnClose.NoSync
-        let mkdir = defaultArg mkdir false
+        // 1. Resolve Defaults
+        let incKeys = defaultArg includeKeys true
+        let preGrouped = defaultArg keysPreGrouped false
+        let maxRows = defaultArg maxRowsPerFile 0
+        let approxBytes = defaultArg approxBytesPerFile 0L
 
+        let comp = defaultArg compression ParquetCompression.Snappy
+        let compLevel = defaultArg compressionLevel -1
+        let stats = defaultArg statistics false
+        let rgs = defaultArg rowGroupSize 0
+        let dps = defaultArg dataPageSize 0
+        let compat = defaultArg compatLevel -1
+        let mo = defaultArg maintainOrder true
+        let sync = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkd = defaultArg mkdir false
+
+        // 2. Type Conversions for Limits
+        let maxRowsNuint = if maxRows > 0 then unativeint maxRows else 0un
+        let approxBytesUlong = if approxBytes > 0L then uint64 approxBytes else 0UL
+
+        // 3. Unpack Cloud Options via external static helper
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        // 4. Native Call
+        PolarsWrapper.SinkParquetPartitioned(
+            this.CloneHandle(), 
+            path,
+            partitionBy.CloneHandle(), // Pass native handle of Selector
+            incKeys,
+            preGrouped,
+            maxRowsNuint,
+            approxBytesUlong,
+            comp.ToNative(),
+            compLevel,
+            stats,
+            rgs,
+            dps,
+            compat,
+            mo,
+            sync.ToNative(),
+            mkd,
+            // Cloud Params
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
+        )
+
+    /// <summary>
+    /// Sink the LazyFrame to a Parquet format in memory.
+    /// <para>
+    /// This allows for streaming execution directly into a byte array without writing to disk.
+    /// </para>
+    /// </summary>
+    /// <returns>A byte array containing the serialized Parquet data.</returns>
+    member this.SinkParquetMemory(
+        ?compression: ParquetCompression,
+        ?compressionLevel: int,
+        ?statistics: bool,
+        ?rowGroupSize: int,
+        ?dataPageSize: int,
+        ?compatLevel: int,
+        ?maintainOrder: bool
+    ) : byte[] =
+        // Note: For Memory Sink, ZSTD and Level 3 are the typical defaults used in the C# wrapper
+        let comp = defaultArg compression ParquetCompression.Zstd
+        let compLevel = defaultArg compressionLevel 3
+        let stats = defaultArg statistics true
+        let rgs = defaultArg rowGroupSize 0
+        let dps = defaultArg dataPageSize 0
+        let compat = defaultArg compatLevel -1
+        let mo = defaultArg maintainOrder true
+
+        PolarsWrapper.SinkParquetMemory(
+            this.CloneHandle(),
+            comp.ToNative(),
+            compLevel,
+            stats,
+            rgs,
+            dps,
+            compat,
+            mo
+        )
+    /// <summary>
+    /// Sink the LazyFrame to a NDJSON (Newline Delimited JSON) file.
+    /// </summary>
+    /// <param name="path">Output file path.</param>
+    /// <param name="compression">Compression method (Gzip/Zstd).</param>
+    /// <param name="compressionLevel">Compression level.</param>
+    /// <param name="checkExtension">Whether to check if the file extension matches '.json' or '.ndjson'.</param>
+    /// <param name="maintainOrder">Maintain the order of data.</param>
+    /// <param name="syncOnClose">Sync to disk on close.</param>
+    /// <param name="mkdir">Create parent directories.</param>
+    /// <param name="cloudOptions">Cloud storage options.</param>
+    member this.SinkJson(
+        path: string,
+        ?compression: ExternalCompression,
+        ?compressionLevel: int,
+        ?checkExtension: bool,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        // 1. Resolve Defaults
+        let comp = defaultArg compression ExternalCompression.Uncompressed
+        let compLevel = defaultArg compressionLevel -1
+        let chkExt = defaultArg checkExtension true
+        let mo = defaultArg maintainOrder true
+        let sync = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkd = defaultArg mkdir false
+
+        // 2. Unpack Cloud Options via external static helper
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        // 3. Native Call
         PolarsWrapper.SinkJson(
             this.CloneHandle(), 
             path,
-            format.ToNative(),
-            maintainOrder,
-            syncOnClose.ToNative(),
-            mkdir
+            comp.ToNative(),
+            compLevel,
+            chkExt,
+            mo,
+            sync.ToNative(),
+            mkd,
+            // Cloud
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
         )
 
     /// <summary>
-    /// Sink the LazyFrame to a NDJSON (JsonLines) file.
+    /// Sink the LazyFrame to a NDJSON (Newline Delimited JSON) file, partitioned by the given selector.
+    /// </summary>
+    member this.SinkJsonPartitioned(
+        path: string,
+        partitionBy: Selector,
+        ?includeKeys: bool,
+        ?keysPreGrouped: bool,
+        ?maxRowsPerFile: int,
+        ?approxBytesPerFile: int64,
+        ?compression: ExternalCompression,
+        ?compressionLevel: int,
+        ?checkExtension: bool,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        let incKeys = defaultArg includeKeys true
+        let preGrouped = defaultArg keysPreGrouped false
+        let maxRows = defaultArg maxRowsPerFile 0
+        let approxBytes = defaultArg approxBytesPerFile 0L
+        let comp = defaultArg compression ExternalCompression.Uncompressed
+        let compLevel = defaultArg compressionLevel -1
+        let chkExt = defaultArg checkExtension true
+        let mo = defaultArg maintainOrder true
+        let sync = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkd = defaultArg mkdir false
+
+        let maxRowsNuint = if maxRows > 0 then unativeint maxRows else 0un
+        let approxBytesUlong = if approxBytes > 0L then uint64 approxBytes else 0UL
+
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        PolarsWrapper.SinkJsonPartitioned(
+            this.CloneHandle(), 
+            path,
+            partitionBy.CloneHandle(),
+            incKeys,
+            preGrouped,
+            maxRowsNuint,
+            approxBytesUlong,
+            comp.ToNative(),
+            compLevel,
+            chkExt,
+            mo,
+            sync.ToNative(),
+            mkd,
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
+        )
+
+    /// <summary>
+    /// Alias for SinkJson (Lazily evaluated JSON is always NDJSON/JsonLines).
     /// </summary>
     member this.SinkNdJson(
         path: string,
+        ?compression: ExternalCompression,
+        ?compressionLevel: int,
+        ?checkExtension: bool,
         ?maintainOrder: bool,
         ?syncOnClose: SyncOnClose,
-        ?mkdir: bool
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
     ) =
         this.SinkJson(
             path, 
-            format = JsonFormat.JsonLines, 
+            ?compression = compression, 
+            ?compressionLevel = compressionLevel,
+            ?checkExtension = checkExtension,
             ?maintainOrder = maintainOrder, 
             ?syncOnClose = syncOnClose, 
-            ?mkdir = mkdir
+            ?mkdir = mkdir,
+            ?cloudOptions = cloudOptions
+        )
+
+    /// <summary>
+    /// Sink the LazyFrame to a NDJSON (Newline Delimited JSON) format in memory.
+    /// </summary>
+    /// <returns>A byte array containing the serialized NDJSON data.</returns>
+    member this.SinkJsonMemory(
+        ?compression: ExternalCompression,
+        ?compressionLevel: int,
+        ?checkExtension: bool,
+        ?maintainOrder: bool
+    ) : byte[] =
+        let comp = defaultArg compression ExternalCompression.Uncompressed
+        let compLevel = defaultArg compressionLevel -1
+        let chkExt = defaultArg checkExtension true
+        let mo = defaultArg maintainOrder true
+
+        PolarsWrapper.SinkJsonMemory(
+            this.CloneHandle(),
+            comp.ToNative(),
+            compLevel,
+            chkExt,
+            mo
         )
     /// <summary>
     /// Sink the LazyFrame to an IPC (Arrow) file.
+    /// <para>
+    /// This allows for streaming execution.
+    /// </para>
     /// </summary>
     /// <param name="path">Output file path.</param>
     /// <param name="compression">Compression method (NoCompression, LZ4, ZSTD). Defaults to NoCompression.</param>
+    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    /// <param name="recordBatchSize">Number of rows per record batch (0 = default).</param>
+    /// <param name="recordBatchStatistics">Write statistics to the record batch header. Defaults to true.</param>
     /// <param name="maintainOrder">Whether to maintain the order of the data. Defaults to true.</param>
     /// <param name="syncOnClose">File synchronization behavior on close. Defaults to None.</param>
     /// <param name="mkdir">Recursively create the directory if it does not exist. Defaults to false.</param>
-    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    /// <param name="cloudOptions">Options for cloud storage.</param>
     member this.SinkIpc(
         path: string, 
         ?compression: IpcCompression, 
+        ?compatLevel: int,
+        ?recordBatchSize: int,
+        ?recordBatchStatistics: bool,
         ?maintainOrder: bool, 
         ?syncOnClose: SyncOnClose, 
-        ?mkdir: bool, 
-        ?compatLevel: int
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
     ) =
-        let compression = defaultArg compression IpcCompression.NoCompression
-        let maintainOrder = defaultArg maintainOrder true
-        let syncOnClose = defaultArg syncOnClose SyncOnClose.NoSync
-        let mkdir = defaultArg mkdir false
-        let compatLevel = defaultArg compatLevel -1
+        // 1. Resolve Defaults
+        let comp = defaultArg compression IpcCompression.NoCompression
+        let compat = defaultArg compatLevel -1
+        let batchSize = defaultArg recordBatchSize 0
+        let batchStats = defaultArg recordBatchStatistics true
+        let mo = defaultArg maintainOrder true
+        let sync = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkd = defaultArg mkdir false
 
+        // 2. Unpack Cloud Options via Helper
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        // 3. Native Call
         PolarsWrapper.SinkIpc(
             this.CloneHandle(), 
             path,
-            compression.ToNative(),
-            compatLevel,
-            maintainOrder,
-            syncOnClose.ToNative(),
-            mkdir
+            comp.ToNative(),
+            compat,
+            batchSize,
+            batchStats,
+            mo,
+            sync.ToNative(),
+            mkd,
+            // Cloud
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
+        )
+    /// <summary>
+    /// Sink the LazyFrame to an IPC (Arrow) file, partitioned by the given selector.
+    /// </summary>
+    /// <param name="partitionBy">The selector(s) to partition the data by.</param>
+    /// <param name="includeKeys">Whether to include the partition keys in the output files.</param>
+    /// <param name="keysPreGrouped">
+    /// Assert that the keys are already pre-grouped. This can speed up the operation if true.
+    /// Use with caution: if the data is not grouped, the output may be incorrect.
+    /// </param>
+    /// <param name="maxRowsPerFile">Maximum number of rows per file. 0 means no limit.</param>
+    /// <param name="approxBytesPerFile">Approximate size in bytes per file. 0 means no limit.</param>
+    member this.SinkIpcPartitioned(
+        path: string,
+        partitionBy: Selector,
+        ?includeKeys: bool,
+        ?keysPreGrouped: bool,
+        ?maxRowsPerFile: int,
+        ?approxBytesPerFile: int64,
+        ?compression: IpcCompression,
+        ?compatLevel: int,
+        ?recordBatchSize: int,
+        ?recordBatchStatistics: bool,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        // 1. Resolve Defaults
+        let incKeys = defaultArg includeKeys true
+        let preGrouped = defaultArg keysPreGrouped false
+        let maxRows = defaultArg maxRowsPerFile 0
+        let approxBytes = defaultArg approxBytesPerFile 0L
+        let comp = defaultArg compression IpcCompression.NoCompression
+        let compat = defaultArg compatLevel -1
+        let batchSize = defaultArg recordBatchSize 0
+        let batchStats = defaultArg recordBatchStatistics true
+        let mo = defaultArg maintainOrder true
+        let sync = defaultArg syncOnClose SyncOnClose.NoSync
+        let mkd = defaultArg mkdir false
+
+        // 2. Type Conversions for Limits
+        let maxRowsNuint = if maxRows > 0 then unativeint maxRows else 0un
+        let approxBytesUlong = if approxBytes > 0L then uint64 approxBytes else 0UL
+
+        // 3. Unpack Cloud Options via external static helper
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        // 4. Native Call
+        PolarsWrapper.SinkIpcPartitioned(
+            this.CloneHandle(), 
+            path,
+            partitionBy.CloneHandle(), // Pass native handle of Selector
+            incKeys,
+            preGrouped,
+            maxRowsNuint,
+            approxBytesUlong,
+            comp.ToNative(),
+            compat,
+            batchSize,
+            batchStats,
+            mo,
+            sync.ToNative(),
+            mkd,
+            // Cloud
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
+        )
+
+    /// <summary>
+    /// Sink the LazyFrame to an IPC (Arrow) format in memory.
+    /// <para>
+    /// This allows for streaming execution directly into a byte array without writing to disk.
+    /// </para>
+    /// </summary>
+    member this.SinkIpcMemory(
+        ?compression: IpcCompression,
+        ?compatLevel: int,
+        ?recordBatchSize: int,
+        ?recordBatchStatistics: bool,
+        ?maintainOrder: bool
+    ) : byte[] =
+        // 1. Resolve Defaults
+        let comp = defaultArg compression IpcCompression.NoCompression
+        let compat = defaultArg compatLevel -1
+        let batchSize = defaultArg recordBatchSize 0
+        let batchStats = defaultArg recordBatchStatistics true
+        let mo = defaultArg maintainOrder true
+
+        // 2. Native Call (Returns byte[])
+        PolarsWrapper.SinkIpcMemory(
+            this.CloneHandle(),
+            comp.ToNative(),
+            compat,
+            batchSize,
+            batchStats,
+            mo
         )
     // ==========================================
     // Streaming Sink (Lazy)
@@ -4964,6 +5664,7 @@ and LazyFrame(handle: LazyFrameHandle) =
                      ?validation: JoinValidation,
                      ?coalesce: JoinCoalesce,
                      ?maintainOrder: JoinMaintainOrder,
+                     ?joinSide: JoinSide,
                      ?nullsEqual: bool,
                      ?sliceOffset: int64,
                      ?sliceLen: uint64) : LazyFrame =
@@ -4980,6 +5681,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         let coal = defaultArg coalesce JoinCoalesce.JoinSpecific
         let mo = defaultArg maintainOrder JoinMaintainOrder.NotMaintainOrder
         let ne = defaultArg nullsEqual false
+        let js = defaultArg joinSide JoinSide.LetPolarsDecide
         
         let so = Option.toNullable sliceOffset
         let sl = defaultArg sliceLen 0UL
@@ -4994,6 +5696,7 @@ and LazyFrame(handle: LazyFrameHandle) =
             valid.ToNative(),
             coal.ToNative(),
             mo.ToNative(),
+            js.ToNative(),
             ne,
             so,
             sl
@@ -5253,10 +5956,12 @@ and LazyFrame(handle: LazyFrameHandle) =
 
     member this.Melt(index: string list, on: string list) =
         this.Unpivot(index, on)
-    member this.Explode(selector: Selector) : LazyFrame =
+    member this.Explode(selector: Selector,?emptyAsNull:bool,?keepNulls:bool) : LazyFrame =
         let lfClone = this.CloneHandle()
         let sh = selector.CloneHandle()
-        new LazyFrame(PolarsWrapper.LazyExplode(lfClone, sh))
+        let ean = defaultArg emptyAsNull true
+        let kn = defaultArg keepNulls true
+        new LazyFrame(PolarsWrapper.LazyExplode(lfClone, sh, ean, kn))
 
     member this.Explode(columns: seq<string>) =
         let names = Seq.toArray columns
@@ -5286,6 +5991,7 @@ and LazyFrame(handle: LazyFrameHandle) =
                          ?validation: JoinValidation,
                          ?coalesce: JoinCoalesce,
                          ?maintainOrder: JoinMaintainOrder,
+                         ?joinSide: JoinSide,
                          ?nullsEqual: bool,
                          ?sliceOffset: int64,
                          ?sliceLen: uint64) : LazyFrame =
@@ -5310,6 +6016,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         let valid = defaultArg validation JoinValidation.ManyToMany
         let coal = defaultArg coalesce JoinCoalesce.JoinSpecific
         let mo = defaultArg maintainOrder JoinMaintainOrder.NotMaintainOrder
+        let js = defaultArg joinSide JoinSide.LetPolarsDecide
         
         // 4. Handle Bools & Strings
         let ae = defaultArg allowEq true
@@ -5341,6 +6048,7 @@ and LazyFrame(handle: LazyFrameHandle) =
             valid.ToNative(),
             coal.ToNative(),
             mo.ToNative(),
+            js.ToNative(),
             ne,
             sOff,
             sLen
