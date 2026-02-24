@@ -431,6 +431,19 @@ module pl =
     // Column Selectors (pl.cs)
     // ==========================================
     module cs =
+
+        /// <summary>
+        /// Select a single column by name.
+        /// </summary>
+        let inline col (name: string) =
+            new Selector(PolarsWrapper.SelectorCols [| name |])
+        
+        /// <summary>
+        /// Select multiple columns by their names.
+        /// Accepts any sequence (list, array, etc.) of strings.
+        /// </summary>
+        let inline cols (names: seq<string>) = 
+            new Selector(PolarsWrapper.SelectorCols(names |> Seq.toArray))
         
         /// <summary> Select all columns. </summary>
         let inline all () = 

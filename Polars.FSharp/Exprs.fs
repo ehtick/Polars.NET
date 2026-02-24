@@ -23,6 +23,7 @@ type IColumnExpr =
 and Expr(handle: ExprHandle) =
     member _.Handle = handle
     member internal this.CloneHandle() = PolarsWrapper.CloneExpr handle
+    interface IDisposable with member _.Dispose() = handle.Dispose()
 
     interface IColumnExpr with
         member this.ToExprs() = [this]
@@ -2203,8 +2204,10 @@ and Selector(handle: SelectorHandle) =
     interface IColumnExpr with
         member this.ToExprs() = [this.ToExpr()]
 
+    interface IDisposable with member _.Dispose() = handle.Dispose()
+
     // ==========================================
-    // Operators (The Magic 🪄)
+    // Operators
     // ==========================================
 
     /// <summary> NOT operator: ~selector </summary>

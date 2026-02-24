@@ -364,7 +364,7 @@ public class LazyFrame : IDisposable
 
         return new LazyFrame(h);
     }
-// ---------------------------------------------------------
+    // ---------------------------------------------------------
     // Scan IPC (File / Cloud)
     // ---------------------------------------------------------
 
@@ -1762,7 +1762,6 @@ public class LazyFrame : IDisposable
         bool maintainOrder = true,
         string? separator = null)
     {
-        // 构造临时 Selector
         using var sIndex = Selector.Cols(index);
         using var sColumns = Selector.Cols(columns);
         using var sValues = Selector.Cols(values);
@@ -1771,7 +1770,7 @@ public class LazyFrame : IDisposable
             sIndex,
             sColumns,
             sValues,
-            onColumns, // 透传
+            onColumns, 
             aggregateExpr: null,
             aggregateFunction: aggregateFunction,
             maintainOrder: maintainOrder,

@@ -1971,7 +1971,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         var dfList = dfs.ToList();
         if (dfList.Count == 0) return new DataFrame();
 
-
         var handles = dfList.Select(df => df.Clone().Handle).ToArray();
 
         var h = PolarsWrapper.Concat(handles, how, checkDuplicates,strict,unitLengthAsScalar);
@@ -2363,13 +2362,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool maintainOrder = true,
         string? separator = null)
     {
-        // 语法糖
         using var sIndex = Selector.Cols(index);
         using var sColumns = Selector.Cols(columns);
         using var sValues = Selector.Cols(values);
 
-        // 调用核心方法
-        // 此时 aggregateFunction 参数会被忽略（Rust 端优先使用 Expr）
         return Pivot(
             sIndex, 
             sColumns, 

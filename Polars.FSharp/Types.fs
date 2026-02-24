@@ -3156,7 +3156,7 @@ and DataFrame(handle: DataFrameHandle) =
     /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
     /// <param name="parallel">Write in parallel. Defaults to true.</param>
     member this.WriteParquet(path: string, ?compression: ParquetCompression, ?compressionLevel: int, ?statistics: bool, ?rowGroupSize: int, ?dataPageSize: int, ?parallelOn: bool) =
-        // 1. 处理默认值
+        
         let compression = defaultArg compression ParquetCompression.Snappy
         let compressionLevel = defaultArg compressionLevel -1
         let statistics = defaultArg statistics false
@@ -3412,6 +3412,7 @@ and DataFrame(handle: DataFrameHandle) =
                       ?validation: JoinValidation,
                       ?coalesce: JoinCoalesce,
                       ?maintainOrder: JoinMaintainOrder,
+                      ?joinSide: JoinSide,
                       ?nullsEqual: bool,
                       ?sliceOffset: int64,
                       ?sliceLen: uint64) : DataFrame =
@@ -3424,6 +3425,7 @@ and DataFrame(handle: DataFrameHandle) =
         let valid = defaultArg validation JoinValidation.ManyToMany
         let coal = defaultArg coalesce JoinCoalesce.JoinSpecific
         let mo = defaultArg maintainOrder JoinMaintainOrder.NotMaintainOrder
+        let js = defaultArg joinSide JoinSide.LetPolarsDecide
         let ne = defaultArg nullsEqual false
         
         // Slice logic
@@ -3440,6 +3442,7 @@ and DataFrame(handle: DataFrameHandle) =
             valid.ToNative(),
             coal.ToNative(),
             mo.ToNative(),
+            js.ToNative(),
             ne,
             so,
             sl
@@ -3515,7 +3518,7 @@ and DataFrame(handle: DataFrameHandle) =
     /// </summary>
     member this.JoinAsOf(other: DataFrame, leftOn: Expr, rightOn: Expr, tolerance: System.TimeSpan, 
                          ?strategy: AsofStrategy, ?byLeft: Expr list, ?byRight: Expr list) =
-        let tolStr = DurationFormatter.ToPolarsString(tolerance)
+        let tolStr = DurationFormatter.ToPolarsString tolerance
         this.JoinAsOfInternal(
             other, leftOn, rightOn, 
             tolerance = tolStr, 
@@ -3549,18 +3552,22 @@ and DataFrame(handle: DataFrameHandle) =
     /// General Concat method.
     /// checkDuplicates is only used when how = ConcatType.Horizontal.
     /// </summary>
-    static member internal Concat (dfs: seq<DataFrame>, how: ConcatType, ?checkDuplicates: bool) : DataFrame =
+    static member internal Concat (dfs: seq<DataFrame>, how: ConcatType, ?checkDuplicates: bool,?strict: bool, ?unitLengthAsScalar: bool) : DataFrame =
         let handles = dfs |> Seq.map (fun df -> df.CloneHandle()) |> Seq.toArray
         
         let check = defaultArg checkDuplicates true
-        let h = PolarsWrapper.Concat(handles, how.ToNative(), check)
+        let st = defaultArg strict true
+        let uni = defaultArg unitLengthAsScalar false
+        let h = PolarsWrapper.Concat(handles, how.ToNative(), check, st, uni)
         new DataFrame(h)
 
     /// <summary>
     /// Horizontal concatenation (Index alignment).
     /// </summary>
-    static member ConcatHorizontal (dfs: seq<DataFrame>, ?checkDuplicates: bool) : DataFrame =
-        DataFrame.Concat(dfs, ConcatType.Horizontal, ?checkDuplicates = checkDuplicates)
+    /// <param name="strict">For Horizontal: if true, error on height mismatch.</param>
+    /// <param name="unitLengthAsScalar">For Horizontal: if true, broadcast length-1 DataFrames to match height.</param>
+    static member ConcatHorizontal (dfs: seq<DataFrame>, ?checkDuplicates: bool,?strict: bool, ?unitLengthAsScalar: bool) : DataFrame =
+        DataFrame.Concat(dfs, ConcatType.Horizontal, ?checkDuplicates = checkDuplicates, ?strict=strict,?unitLengthAsScalar=unitLengthAsScalar)
 
     /// <summary>
     /// Vertical concatenation (Column alignment).
@@ -3587,23 +3594,25 @@ and DataFrame(handle: DataFrameHandle) =
     /// <summary> 
     /// Explode list columns to rows using a Selector.
     /// </summary>
-    member this.Explode(selector: Selector) : DataFrame =
+    member this.Explode(selector: Selector,?emptyAsNull:bool,?keepNulls:bool) : DataFrame =
         let sh = selector.CloneHandle()
-        let h = PolarsWrapper.Explode(this.Handle, sh)
+        let ean = defaultArg emptyAsNull true
+        let kn = defaultArg keepNulls true
+        let h = PolarsWrapper.Explode(this.Handle, sh,ean,kn)
         new DataFrame(h)
 
     /// <summary> 
     /// Explode list columns to rows using column names.
     /// </summary>
-    member this.Explode(columns: seq<string>) =
+    member this.Explode(columns: seq<string>,?emptyAsNull:bool,?keepNulls:bool) =
         let names = Seq.toArray columns
         let h = PolarsWrapper.SelectorCols names
         let sel = new Selector(h)
-        this.Explode sel
+        this.Explode(sel,?emptyAsNull=emptyAsNull,?keepNulls=keepNulls) 
 
     /// <summary>Explode a single column by name. </summary>
-    member this.Explode(column: string) =
-        this.Explode [column]
+    member this.Explode(column: string,?emptyAsNull:bool,?keepNulls:bool) =
+        this.Explode([column],?emptyAsNull=emptyAsNull,?keepNulls=keepNulls)                          
     /// <summary> Decompose a struct column into multiple columns. </summary>
     member this.UnnestColumn(column: string, ?separator: string) : DataFrame =
         let cols = [| column |]
@@ -3619,64 +3628,104 @@ and DataFrame(handle: DataFrameHandle) =
     /// <summary>
     /// Pivot the DataFrame from long to wide format.
     /// </summary>
-    /// <param name="index">Columns to use as index (keys).</param>
-    /// <param name="columns">Column defining the new column names.</param>
-    /// <param name="values">Column(s) defining the values.</param>
-    /// <param name="aggFn">Aggregation function for duplicates.</param>
-    member this.Pivot (index: string list, 
-                       columns: string list, 
-                       values: string list, 
-                       aggFn: PivotAgg, 
-                       ?sortColumns: bool, // 建议改名 sortColumns 跟 C# 保持一致
-                       ?separator: string) : DataFrame =
-        
-        let iArr = List.toArray index
-        let cArr = List.toArray columns
-        let vArr = List.toArray values
+    /// <param name="index">Selector for the index column(s) (the rows).</param>
+    /// <param name="columns">Selector for the column(s) to pivot (the new column headers).</param>
+    /// <param name="values">Selector for the value column(s) to populate the cells.</param>
+    /// <param name="aggregateExpr">Optional expression to aggregate the values. If null, uses <paramref name="aggregateFunction"/>.</param>
+    /// <param name="aggregateFunction">Aggregation function to use if <paramref name="aggregateExpr"/> is null. Default is First.</param>
+    /// <param name="sortColumns">Sort the pivoted columns.</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="separator">Separator used to combine column names when multiple value columns are selected.</param>
+    member this.Pivot(
+        index: Selector,
+        columns: Selector,
+        values: Selector,
+        ?aggregateExpr: Expr,
+        ?aggregateFunction: PivotAgg,
+        ?sortColumns: bool,
+        ?maintainOrder: bool,
+        ?separator: string
+    ) =
+        // 1. Resolve Defaults
+        let aggFunc = defaultArg aggregateFunction PivotAgg.First
         let sort = defaultArg sortColumns false
-        let sep = defaultArg separator null
+        let mo = defaultArg maintainOrder true
+        let sep = Option.toObj separator
 
+        // 2. Clone Handles
+        use indexH = index.CloneHandle()
+        use columnsH = columns.CloneHandle()
+        use valuesH = values.CloneHandle()
+        use aggExprH = 
+            match aggregateExpr with
+            | Some e -> e.CloneHandle()
+            | None -> null
+
+        // 3. Native Call
         let h = PolarsWrapper.Pivot(
-            this.Handle, 
-            iArr, 
-            cArr, 
-            vArr, 
-            null,               // aggExpr = null
-            aggFn.ToNative(), 
-            sort, 
+            this.Handle,
+            indexH,
+            columnsH,
+            valuesH,
+            aggExprH,
+            aggFunc.ToNative(),
+            sort,
+            mo,
             sep
         )
         new DataFrame(h)
 
-    // 2. Expr Version
-    member this.Pivot (index: string list, 
-                       columns: string list, 
-                       values: string list, 
-                       aggExpr: Expr,      
-                       ?sortColumns: bool,
-                       ?separator: string) : DataFrame =
-        
-        let iArr = List.toArray index
-        let cArr = List.toArray columns
-        let vArr = List.toArray values
-        let sort = defaultArg sortColumns false
-        let sep = defaultArg separator null
-        let exprH = aggExpr.CloneHandle()
+    /// <summary>
+    /// Pivot the DataFrame using column names.
+    /// </summary>
+    member this.Pivot(
+        index: seq<string>,
+        columns: seq<string>,
+        values: seq<string>,
+        ?aggregateFunction: PivotAgg,
+        ?sortColumns: bool,
+        ?maintainOrder: bool,
+        ?separator: string
+    ) =
+        use sIndex = new Selector(PolarsWrapper.SelectorCols(index |> Seq.toArray))
+        use sColumns = new Selector(PolarsWrapper.SelectorCols(columns |> Seq.toArray))
+        use sValues = new Selector(PolarsWrapper.SelectorCols(values |> Seq.toArray))
 
-        // 调用 Wrapper
-        // aggFn 传 0uy (Dummy value)
-        let h = PolarsWrapper.Pivot(
-            this.Handle, 
-            iArr, 
-            cArr, 
-            vArr, 
-            exprH,              // aggExpr handle
-            PivotAgg.First.ToNative(),                // aggFn (ignored)
-            sort, 
-            sep
+        this.Pivot(
+            sIndex,
+            sColumns,
+            sValues,
+            ?aggregateFunction = aggregateFunction,
+            ?sortColumns = sortColumns,
+            ?maintainOrder = maintainOrder,
+            ?separator = separator
         )
-        new DataFrame(h)
 
+    /// <summary>
+    /// Pivot the DataFrame using column names and a custom aggregation expression.
+    /// </summary>
+    member this.Pivot(
+        index: seq<string>,
+        columns: seq<string>,
+        values: seq<string>,
+        aggregateExpr: Expr,
+        ?sortColumns: bool,
+        ?maintainOrder: bool,
+        ?separator: string
+    ) =        
+        use sIndex = new Selector(PolarsWrapper.SelectorCols(index |> Seq.toArray))
+        use sColumns = new Selector(PolarsWrapper.SelectorCols(columns |> Seq.toArray))
+        use sValues = new Selector(PolarsWrapper.SelectorCols(values |> Seq.toArray))
+
+        this.Pivot(
+            sIndex,
+            sColumns,
+            sValues,
+            aggregateExpr = aggregateExpr,
+            ?sortColumns = sortColumns,
+            ?maintainOrder = maintainOrder,
+            ?separator = separator
+        )
     /// <summary> 
     /// Unpivot (Melt) the DataFrame from wide to long format using Selectors.
     /// This is the primary implementation backed by native binding.
@@ -4042,184 +4091,294 @@ and LazyFrame(handle: LazyFrameHandle) =
     member this.Explain(?optimized: bool) = 
         let opt = defaultArg optimized true
         PolarsWrapper.Explain(handle, opt)
+    // ---------------------------------------------------------
+    // Scan CSV (File / Cloud / Glob)
+    // ---------------------------------------------------------
+
     /// <summary>
-    /// Lazily read from a CSV file.
+    /// Lazily scans a CSV file into a LazyFrame.
+    /// <para>
+    /// This allows for query optimization (predicate pushdown, projection pushdown) 
+    /// and streaming processing of datasets larger than memory.
+    /// </para>
     /// </summary>
-    static member ScanCsv
-        (
-            path: string,
-            ?separator: char,
-            ?hasHeader: bool,
-            ?quoteChar: char,          // [NEW]
-            ?eolChar: char,            // [NEW]
-            ?ignoreErrors: bool,
-            ?skipRows: int64,
-            ?nRows: int64,
-            ?cache: bool,
-            ?rechunk: bool,
-            ?lowMemory: bool,
-            ?inferSchemaLength: int64,
-            ?schema: PolarsSchema,
-            ?tryParseDates: bool,
-            ?rowIndexName: string,
-            ?rowIndexOffset: uint64,   // [FIX] uint32 -> uint64 to match C# nuint
-            ?encoding: CsvEncoding,    // [FIX] Use new CsvEncoding enum
-            ?nullValues: string list,  // [NEW]
-            ?missingIsNull: bool,      // [NEW]
-            ?commentPrefix: string,    // [NEW]
-            ?decimalComma: bool,
-            ?chunkSize: uint64
-        ) =
-        // 1. Defaults
-        let pSep = defaultArg separator ','
-        let pHeader = defaultArg hasHeader true
-        let pQuote = defaultArg quoteChar '"'
-        let pEol = defaultArg eolChar '\n'
-        let pIgnoreErrors = defaultArg ignoreErrors false
+    static member ScanCsv(
+        path: string,
+        ?schema: PolarsSchema,
+        ?hasHeader: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?eolChar: char,
+        ?ignoreErrors: bool,
+        ?tryParseDates: bool,
+        ?lowMemory: bool,
+        ?cache: bool,
+        ?glob: bool,
+        ?rechunk: bool,
+        ?raiseIfEmpty: bool,
+        ?skipRows: uint64,
+        ?skipRowsAfterHeader: uint64,
+        ?skipLines: uint64,
+        ?nRows: uint64,
+        ?inferSchemaLength: uint64,
+        ?nThreads: uint64,
+        ?chunkSize: uint64,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint64,
+        ?includeFilePaths: string,
+        ?encoding: CsvEncoding,
+        ?nullValues: string list,
+        ?missingIsNull: bool,
+        ?commentPrefix: string,
+        ?decimalComma: bool,
+        ?truncateRaggedLines: bool,
+        ?cloudOptions: CloudOptions
+    ) : LazyFrame =
         
-        let pSkipRows = defaultArg skipRows 0L |> uint64
+        let schemaHandle = match schema with Some s -> s.Handle | None -> null
+        let pHasHdr = defaultArg hasHeader true
+        let pSep = defaultArg separator ','
+        let pQuote = match quoteChar with Some c -> System.Nullable c | None -> System.Nullable '"'
+        let pEol = defaultArg eolChar '\n'
+        let pIgnoreErr = defaultArg ignoreErrors false
+        let pTryDates = defaultArg tryParseDates true
+        let pLowMem = defaultArg lowMemory false
         let pCache = defaultArg cache true
+        let pGlob = defaultArg glob true
         let pRechunk = defaultArg rechunk false
-        let pLowMem = defaultArg lowMemory false
-        let pTryParseDates = defaultArg tryParseDates true
-        
-        let pRowIndexOffset = defaultArg rowIndexOffset 0UL
-        let pEncoding = defaultArg encoding CsvEncoding.UTF8
-        let pMissingIsNull = defaultArg missingIsNull true
-        let pDecimalComma = defaultArg decimalComma false
+        let pRaiseEmpty = defaultArg raiseIfEmpty true
+        let pSkipR = defaultArg skipRows 0UL
+        let pSkipRAH = defaultArg skipRowsAfterHeader 0UL
+        let pSkipL = defaultArg skipLines 0UL
+        let pNRows = Option.toNullable nRows
+        let pInferLen = match inferSchemaLength with Some v -> System.Nullable v | None -> System.Nullable 100UL
+        let pNTh = Option.toNullable nThreads
+        let pChunkSz = Option.toNullable chunkSize
+        let pRowIdxName = Option.toObj rowIndexName
+        let pRowIdxOff = defaultArg rowIndexOffset 0UL
+        let pIncPaths = Option.toObj includeFilePaths
+        let pEnc = defaultArg encoding CsvEncoding.UTF8
+        let pNullVals = nullValues |> Option.map List.toArray |> Option.toObj
+        let pMissNull = defaultArg missingIsNull true
+        let pComment = Option.toObj commentPrefix
+        let pDecComma = defaultArg decimalComma false
+        let pTruncRagged = defaultArg truncateRaggedLines false
 
-        // 2. Options -> Nullables / Objects
-        let pNRows = nRows |> Option.map uint64 |> Option.toNullable
-        let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
-        let pChunkSize = chunkSize |> Option.map uint64 |> Option.toNullable
-        
-        // NullValues: string list -> string[]
-        let pNullValues = 
-            nullValues
-            |> Option.map List.toArray
-            |> Option.toObj
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals =
+            CloudOptions.ParseCloudOptions cloudOptions
 
-        // Schema Handle (Reference Type)
-        let hSchema = 
-            schema 
-            |> Option.map (fun s -> s.Handle) 
-            |> Option.toObj
-            
-        // 3. Call Wrapper
-        let handle = PolarsWrapper.ScanCsv(
+        let h = PolarsWrapper.ScanCsv(
             path,
-            hSchema,
-            pHeader,
+            schemaHandle,
+            pHasHdr,
             pSep,
             pQuote,
             pEol,
-            pIgnoreErrors,
-            pTryParseDates,
+            pIgnoreErr,
+            pTryDates,
             pLowMem,
             pCache,
+            pGlob,
             pRechunk,
-            pSkipRows,
+            pRaiseEmpty,
+            pSkipR,
+            pSkipRAH,
+            pSkipL,
             pNRows,
-            pInfer,
-            Option.toObj rowIndexName,
-            pRowIndexOffset,
-            pEncoding.ToNative(),
-            pNullValues,
-            pMissingIsNull,
-            Option.toObj commentPrefix,
-            pDecimalComma,
-            pChunkSize
+            pInferLen,
+            pNTh,
+            pChunkSz,
+            pRowIdxName,
+            pRowIdxOff,
+            pIncPaths,
+            pEnc.ToNative(),
+            pNullVals,
+            pMissNull,
+            pComment,
+            pDecComma,
+            pTruncRagged,
+            cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals
         )
+        new LazyFrame(h)
 
-        new LazyFrame(handle)
+    // ---------------------------------------------------------
+    // Scan CSV (Memory / Bytes)
+    // ---------------------------------------------------------
 
     /// <summary>
-    /// [Memory] Lazily read CSV from a byte array.
+    /// Lazily scans a CSV from an in-memory byte array.
     /// </summary>
-    static member ScanCsv
-        (
-            buffer: byte[],
-            ?separator: char,
-            ?hasHeader: bool,
-            ?quoteChar: char,          // [NEW]
-            ?eolChar: char,            // [NEW]
-            ?ignoreErrors: bool,
-            ?skipRows: int64,
-            ?nRows: int64,
-            ?cache: bool,
-            ?rechunk: bool,
-            ?lowMemory: bool,
-            ?inferSchemaLength: int64,
-            ?schema: PolarsSchema,
-            ?tryParseDates: bool,
-            ?rowIndexName: string,
-            ?rowIndexOffset: uint64,   // [FIX] uint32 -> uint64
-            ?encoding: CsvEncoding,
-            ?nullValues: string list,  // [NEW]
-            ?missingIsNull: bool,      // [NEW]
-            ?commentPrefix: string,    // [NEW]
-            ?decimalComma: bool        // [NEW]
-        ) =
-        // 1. Defaults
+    static member ScanCsv(
+        buffer: byte[],
+        ?schema: PolarsSchema,
+        ?hasHeader: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?eolChar: char,
+        ?ignoreErrors: bool,
+        ?tryParseDates: bool,
+        ?lowMemory: bool,
+        ?cache: bool,
+        ?glob: bool,
+        ?rechunk: bool,
+        ?raiseIfEmpty: bool,
+        ?skipRows: uint64,
+        ?skipRowsAfterHeader: uint64,
+        ?skipLines: uint64,
+        ?nRows: uint64,
+        ?inferSchemaLength: uint64,
+        ?nThreads: uint64,
+        ?chunkSize: uint64,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint64,
+        ?includeFilePaths: string,
+        ?encoding: CsvEncoding,
+        ?nullValues: string list,
+        ?missingIsNull: bool,
+        ?commentPrefix: string,
+        ?decimalComma: bool,
+        ?truncateRaggedLines: bool
+    ) : LazyFrame =
+        
+        let schemaHandle = match schema with Some s -> s.Handle | None -> null
+        let pHasHdr = defaultArg hasHeader true
         let pSep = defaultArg separator ','
-        let pHeader = defaultArg hasHeader true
-        let pQuote = defaultArg quoteChar '"'
+        let pQuote = match quoteChar with Some c -> System.Nullable c | None -> System.Nullable '"'
         let pEol = defaultArg eolChar '\n'
-        let pIgnoreErrors = defaultArg ignoreErrors false
-        
-        let pSkipRows = defaultArg skipRows 0L |> uint64
-        let pCache = defaultArg cache true
-        let pRechunk = defaultArg rechunk true
+        let pIgnoreErr = defaultArg ignoreErrors false
+        let pTryDates = defaultArg tryParseDates true
         let pLowMem = defaultArg lowMemory false
-        let pTryParseDates = defaultArg tryParseDates true
-        
-        let pRowIndexOffset = defaultArg rowIndexOffset 0UL |> uint64
-        let pEncoding = defaultArg encoding CsvEncoding.UTF8
-        let pMissingIsNull = defaultArg missingIsNull true
-        let pDecimalComma = defaultArg decimalComma false
+        let pCache = defaultArg cache true
+        let pGlob = defaultArg glob true
+        let pRechunk = defaultArg rechunk false
+        let pRaiseEmpty = defaultArg raiseIfEmpty true
+        let pSkipR = defaultArg skipRows 0UL
+        let pSkipRAH = defaultArg skipRowsAfterHeader 0UL
+        let pSkipL = defaultArg skipLines 0UL
+        let pNRows = Option.toNullable nRows
+        let pInferLen = match inferSchemaLength with Some v -> System.Nullable v | None -> System.Nullable 100UL
+        let pNTh = Option.toNullable nThreads
+        let pChunkSz = Option.toNullable chunkSize
+        let pRowIdxName = Option.toObj rowIndexName
+        let pRowIdxOff = defaultArg rowIndexOffset 0UL
+        let pIncPaths = Option.toObj includeFilePaths
+        let pEnc = defaultArg encoding CsvEncoding.UTF8
+        let pNullVals = nullValues |> Option.map List.toArray |> Option.toObj
+        let pMissNull = defaultArg missingIsNull true
+        let pComment = Option.toObj commentPrefix
+        let pDecComma = defaultArg decimalComma false
+        let pTruncRagged = defaultArg truncateRaggedLines false
 
-        // 2. Options -> Nullables
-        let pNRows = nRows |> Option.map uint64 |> Option.toNullable
-        let pInfer = inferSchemaLength |> Option.map uint64 |> Option.toNullable
-        
-        let pNullValues = 
-            nullValues
-            |> Option.map List.toArray
-            |> Option.toObj
-
-        // 3. Schema Handle
-        let hSchema = 
-            schema 
-            |> Option.map (fun s -> s.Handle) 
-            |> Option.toObj
-
-        // 4. Call C# Wrapper (Memory Overload)
-        let handle = PolarsWrapper.ScanCsv(
+        let h = PolarsWrapper.ScanCsv(
             buffer,
-            hSchema,
-            pHeader,
+            schemaHandle,
+            pHasHdr,
             pSep,
             pQuote,
             pEol,
-            pIgnoreErrors,
-            pTryParseDates,
+            pIgnoreErr,
+            pTryDates,
             pLowMem,
             pCache,
+            pGlob,
             pRechunk,
-            pSkipRows,
+            pRaiseEmpty,
+            pSkipR,
+            pSkipRAH,
+            pSkipL,
             pNRows,
-            pInfer,
-            Option.toObj rowIndexName,
-            pRowIndexOffset,
-            pEncoding.ToNative(),
-            pNullValues,
-            pMissingIsNull,
-            Option.toObj commentPrefix,
-            pDecimalComma
+            pInferLen,
+            pNTh,
+            pChunkSz,
+            pRowIdxName,
+            pRowIdxOff,
+            pIncPaths,
+            pEnc.ToNative(),
+            pNullVals,
+            pMissNull,
+            pComment,
+            pDecComma,
+            pTruncRagged
         )
+        new LazyFrame(h)
 
-        new LazyFrame(handle)
-    /// <summary> Helper: Scan CSV with default settings </summary>
+    // ---------------------------------------------------------
+    // Scan CSV (Stream)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Lazily scans a CSV from a Stream.
+    /// <para>
+    /// This reads the stream fully into memory to construct the Lazy execution plan.
+    /// </para>
+    /// </summary>
+    static member ScanCsv(
+        stream: System.IO.Stream,
+        ?schema: PolarsSchema,
+        ?hasHeader: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?eolChar: char,
+        ?ignoreErrors: bool,
+        ?tryParseDates: bool,
+        ?lowMemory: bool,
+        ?cache: bool,
+        ?glob: bool,
+        ?rechunk: bool,
+        ?raiseIfEmpty: bool,
+        ?skipRows: uint64,
+        ?skipRowsAfterHeader: uint64,
+        ?skipLines: uint64,
+        ?nRows: uint64,
+        ?inferSchemaLength: uint64,
+        ?nThreads: uint64,
+        ?chunkSize: uint64,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint64,
+        ?includeFilePaths: string,
+        ?encoding: CsvEncoding,
+        ?nullValues: string list,
+        ?missingIsNull: bool,
+        ?commentPrefix: string,
+        ?decimalComma: bool,
+        ?truncateRaggedLines: bool
+    ) : LazyFrame =
+        
+        use ms = new System.IO.MemoryStream()
+        stream.CopyTo(ms)
+        let bytes = ms.ToArray()
+
+        LazyFrame.ScanCsv(
+            bytes,
+            ?schema = schema,
+            ?hasHeader = hasHeader,
+            ?separator = separator,
+            ?quoteChar = quoteChar,
+            ?eolChar = eolChar,
+            ?ignoreErrors = ignoreErrors,
+            ?tryParseDates = tryParseDates,
+            ?lowMemory = lowMemory,
+            ?cache = cache,
+            ?glob = glob,
+            ?rechunk = rechunk,
+            ?raiseIfEmpty = raiseIfEmpty,
+            ?skipRows = skipRows,
+            ?skipRowsAfterHeader = skipRowsAfterHeader,
+            ?skipLines = skipLines,
+            ?nRows = nRows,
+            ?inferSchemaLength = inferSchemaLength,
+            ?nThreads = nThreads,
+            ?chunkSize = chunkSize,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?includeFilePaths = includeFilePaths,
+            ?encoding = encoding,
+            ?nullValues = nullValues,
+            ?missingIsNull = missingIsNull,
+            ?commentPrefix = commentPrefix,
+            ?decimalComma = decimalComma,
+            ?truncateRaggedLines = truncateRaggedLines
+        )    /// <summary> Helper: Scan CSV with default settings </summary>
     static member ScanCsv(path: string) = 
         LazyFrame.ScanCsv(path, hasHeader=true)
     /// <summary> Scan a parquet file into a LazyFrame. </summary>
@@ -4292,26 +4451,8 @@ and LazyFrame(handle: LazyFrameHandle) =
             |> Option.toObj
 
         // Cloud Options Unwrapping Logic
-        let cProvider, cRetries, cCacheTtl, cKeys, cValues, cLen =
-            match cloudOptions with
-            | Some opts ->
-                // 1. Provider
-                let provider = opts.Provider.ToNative()
-
-                // 2. Integers
-                let retries = unativeint opts.Retries
-                let cache = opts.CacheTTL
-
-                // 3. Credentials: Map -> Arrays
-                let keys = opts.Credentials |> Map.toSeq |> Seq.map fst |> Seq.toArray
-                let values = opts.Credentials |> Map.toSeq |> Seq.map snd |> Seq.toArray
-                let len = unativeint keys.Length
-
-                provider, retries, cache, keys, values, len
-
-            | None ->
-                // Default: NotCloud
-                PlCloudProvider.None, unativeint 0, 0UL, null, null, unativeint 0
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
 
         // Call Wrapper
         let handle = PolarsWrapper.ScanParquet(
@@ -4330,12 +4471,14 @@ and LazyFrame(handle: LazyFrameHandle) =
             hSchema,
             hHiveSchema,
             pTryHive,
-            cProvider,
-            cRetries,
-            cCacheTtl,
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
             cKeys,
-            cValues,
-            cLen
+            cVals
         )
         
         new LazyFrame(handle)
@@ -5911,6 +6054,121 @@ and LazyFrame(handle: LazyFrameHandle) =
             let kExprs = keys |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
             let aExprs = aggs |> Seq.collect (fun x -> x.ToExprs()) |> Seq.toList
             this.GroupBy(kExprs, aExprs)
+    /// <summary>
+    /// Pivot the LazyFrame.
+    /// <para>
+    /// <b>Important:</b> Lazy pivot requires an eager <paramref name="onColumns"/> DataFrame 
+    /// to determine the output schema (column names) during the planning phase.
+    /// </para>
+    /// </summary>
+    /// <param name="index">Selector for the index column(s) (the rows).</param>
+    /// <param name="columns">Selector for the column(s) to pivot (the new column headers).</param>
+    /// <param name="values">Selector for the value column(s) to populate the cells.</param>
+    /// <param name="onColumns">
+    /// An <b>Eager DataFrame</b> containing the unique values of the <paramref name="columns"/>.
+    /// <br/>This is strictly used for schema inference.
+    /// </param>
+    /// <param name="aggregateExpr">Optional expression to aggregate the values. If null, uses <paramref name="aggregateFunction"/>.</param>
+    /// <param name="aggregateFunction">Aggregation function to use if <paramref name="aggregateExpr"/> is null. Default is First.</param>
+    /// <param name="maintainOrder">Sort the result by the index column.</param>
+    /// <param name="separator">Separator used to combine column names when multiple value columns are selected.</param>
+    /// <returns>A new LazyFrame with the pivot operation applied.</returns>
+    member this.Pivot(
+        index: Selector,
+        columns: Selector,
+        values: Selector,
+        onColumns: DataFrame,
+        ?aggregateExpr: Expr,
+        ?aggregateFunction: PivotAgg,
+        ?maintainOrder: bool,
+        ?separator: string
+    ) =
+        let aggFunc = defaultArg aggregateFunction PivotAgg.First
+        let mo = defaultArg maintainOrder true
+        let sep = Option.toObj separator
+
+        use indexH = index.CloneHandle()
+        use columnsH = columns.CloneHandle()
+        use valuesH = values.CloneHandle()
+        use aggExprH = 
+            match aggregateExpr with
+            | Some e -> e.CloneHandle()
+            | None -> null
+
+        let h = PolarsWrapper.LazyPivot(
+            this.CloneHandle(),
+            columnsH,           // on (columns selector)
+            onColumns.Handle,   // onColumns (Eager DF Handle - passed directly, not cloned/disposed here)
+            indexH,             // index
+            valuesH,            // values
+            aggExprH,           // aggExpr
+            aggFunc.ToNative(), // aggregateFunction mapping
+            mo,                 // maintainOrder
+            sep                 // separator
+        )
+
+        new LazyFrame(h)
+    /// <summary>
+    /// Pivot the LazyFrame using column names.
+    /// </summary>
+    /// <param name="index">Column names to use as the index.</param>
+    /// <param name="columns">Column names to use for the new column headers.</param>
+    /// <param name="values">Column names to use for the values.</param>
+    /// <param name="onColumns">
+    /// An <b>Eager DataFrame</b> containing the unique values of the <paramref name="columns"/>.
+    /// </param>
+    /// <param name="aggregateFunction">Aggregation function. Default is First.</param>
+    /// <param name="maintainOrder">Sort the result by the index column.</param>
+    /// <param name="separator">Separator for generated column names.</param>
+    member this.Pivot(
+        index: seq<string>,
+        columns: seq<string>,
+        values: seq<string>,
+        onColumns: DataFrame,
+        ?aggregateFunction: PivotAgg,
+        ?maintainOrder: bool,
+        ?separator: string
+    ) =
+        use sIndex = new Selector(PolarsWrapper.SelectorCols(index |> Seq.toArray))
+        use sColumns = new Selector(PolarsWrapper.SelectorCols(columns |> Seq.toArray))
+        use sValues = new Selector(PolarsWrapper.SelectorCols(values |> Seq.toArray))
+
+        this.Pivot(
+            sIndex,
+            sColumns,
+            sValues,
+            onColumns,
+            ?aggregateFunction = aggregateFunction,
+            ?maintainOrder = maintainOrder,
+            ?separator = separator
+        )
+
+    /// <summary>
+    /// Pivot the LazyFrame using column names and a custom aggregation expression.
+    /// </summary>
+    member this.Pivot(
+        index: seq<string>,
+        columns: seq<string>,
+        values: seq<string>,
+        onColumns: DataFrame,
+        aggregateExpr: Expr,
+        ?maintainOrder: bool,
+        ?separator: string
+    ) =
+        use sIndex = new Selector(PolarsWrapper.SelectorCols(index |> Seq.toArray))
+        use sColumns = new Selector(PolarsWrapper.SelectorCols(columns |> Seq.toArray))
+        use sValues = new Selector(PolarsWrapper.SelectorCols(values |> Seq.toArray))
+
+        this.Pivot(
+            sIndex,
+            sColumns,
+            sValues,
+            onColumns,
+            aggregateExpr = aggregateExpr,
+            // aggregateFunction is ignored when Expr is provided, but we pass default to match
+            ?maintainOrder = maintainOrder,
+            ?separator = separator
+        )
     /// <summary>
     /// Unpivot (Melt) the LazyFrame using Selectors.
     /// Primary overload backed by native binding.

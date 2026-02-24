@@ -1,157 +1,171 @@
+crc v2.1.0
+└── avro-schema v0.3.0
+    ├── polars-arrow v0.53.0
+    │   ├── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
+    │   ├── polars v0.53.0
+    │   │   └── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
+    │   ├── polars-compute v0.53.0
+    │   │   ├── polars v0.53.0 (*)
+    │   │   ├── polars-core v0.53.0
+    │   │   │   ├── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
+    │   │   │   ├── polars v0.53.0 (*)
+    │   │   │   ├── polars-expr v0.53.0
+    │   │   │   │   ├── polars-lazy v0.53.0
+    │   │   │   │   │   ├── polars v0.53.0 (*)
+    │   │   │   │   │   └── polars-sql v0.53.0
+    │   │   │   │   │       └── polars v0.53.0 (*)
+    │   │   │   │   ├── polars-mem-engine v0.53.0
+    │   │   │   │   │   ├── polars-lazy v0.53.0 (*)
+    │   │   │   │   │   └── polars-stream v0.53.0
+    │   │   │   │   │       └── polars-lazy v0.53.0 (*)
+    │   │   │   │   └── polars-stream v0.53.0 (*)
+    │   │   │   ├── polars-io v0.53.0
+    │   │   │   │   ├── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
+    │   │   │   │   ├── polars v0.53.0 (*)
+    │   │   │   │   ├── polars-expr v0.53.0 (*)
+    │   │   │   │   ├── polars-lazy v0.53.0 (*)
+    │   │   │   │   ├── polars-mem-engine v0.53.0 (*)
+    │   │   │   │   ├── polars-plan v0.53.0
+    │   │   │   │   │   ├── polars-expr v0.53.0 (*)
+    │   │   │   │   │   ├── polars-lazy v0.53.0 (*)
+    │   │   │   │   │   ├── polars-mem-engine v0.53.0 (*)
+    │   │   │   │   │   ├── polars-sql v0.53.0 (*)
+    │   │   │   │   │   └── polars-stream v0.53.0 (*)
+    │   │   │   │   └── polars-stream v0.53.0 (*)
+    │   │   │   ├── polars-lazy v0.53.0 (*)
+    │   │   │   ├── polars-mem-engine v0.53.0 (*)
+    │   │   │   ├── polars-ops v0.53.0
+    │   │   │   │   ├── polars v0.53.0 (*)
+    │   │   │   │   ├── polars-expr v0.53.0 (*)
+    │   │   │   │   ├── polars-lazy v0.53.0 (*)
+    │   │   │   │   ├── polars-mem-engine v0.53.0 (*)
+    │   │   │   │   ├── polars-plan v0.53.0 (*)
+    │   │   │   │   ├── polars-sql v0.53.0 (*)
+    │   │   │   │   ├── polars-stream v0.53.0 (*)
+    │   │   │   │   └── polars-time v0.53.0
+    │   │   │   │       ├── polars v0.53.0 (*)
+    │   │   │   │       ├── polars-expr v0.53.0 (*)
+    │   │   │   │       ├── polars-io v0.53.0 (*)
+    │   │   │   │       ├── polars-lazy v0.53.0 (*)
+    │   │   │   │       ├── polars-mem-engine v0.53.0 (*)
+    │   │   │   │       ├── polars-plan v0.53.0 (*)
+    │   │   │   │       ├── polars-sql v0.53.0 (*)
+    │   │   │   │       └── polars-stream v0.53.0 (*)
+    │   │   │   ├── polars-plan v0.53.0 (*)
+    │   │   │   ├── polars-sql v0.53.0 (*)
+    │   │   │   ├── polars-stream v0.53.0 (*)
+    │   │   │   └── polars-time v0.53.0 (*)
+    │   │   ├── polars-expr v0.53.0 (*)
+    │   │   ├── polars-io v0.53.0 (*)
+    │   │   ├── polars-json v0.53.0
+    │   │   │   ├── polars-expr v0.53.0 (*)
+    │   │   │   ├── polars-io v0.53.0 (*)
+    │   │   │   ├── polars-lazy v0.53.0 (*)
+    │   │   │   ├── polars-mem-engine v0.53.0 (*)
+    │   │   │   ├── polars-ops v0.53.0 (*)
+    │   │   │   ├── polars-plan v0.53.0 (*)
+    │   │   │   └── polars-stream v0.53.0 (*)
+    │   │   ├── polars-lazy v0.53.0 (*)
+    │   │   ├── polars-ops v0.53.0 (*)
+    │   │   ├── polars-parquet v0.53.0
+    │   │   │   ├── polars v0.53.0 (*)
+    │   │   │   ├── polars-io v0.53.0 (*)
+    │   │   │   ├── polars-plan v0.53.0 (*)
+    │   │   │   └── polars-stream v0.53.0 (*)
+    │   │   ├── polars-plan v0.53.0 (*)
+    │   │   ├── polars-row v0.53.0
+    │   │   │   ├── polars-core v0.53.0 (*)
+    │   │   │   └── polars-expr v0.53.0 (*)
+    │   │   ├── polars-stream v0.53.0 (*)
+    │   │   └── polars-time v0.53.0 (*)
+    │   ├── polars-core v0.53.0 (*)
+    │   ├── polars-dtype v0.53.0
+    │   │   ├── polars-core v0.53.0 (*)
+    │   │   └── polars-row v0.53.0 (*)
+    │   ├── polars-expr v0.53.0 (*)
+    │   ├── polars-io v0.53.0 (*)
+    │   ├── polars-json v0.53.0 (*)
+    │   ├── polars-lazy v0.53.0 (*)
+    │   ├── polars-mem-engine v0.53.0 (*)
+    │   ├── polars-ops v0.53.0 (*)
+    │   ├── polars-parquet v0.53.0 (*)
+    │   ├── polars-plan v0.53.0 (*)
+    │   ├── polars-row v0.53.0 (*)
+    │   ├── polars-stream v0.53.0 (*)
+    │   └── polars-time v0.53.0 (*)
+    └── polars-error v0.53.0
+        ├── polars v0.53.0 (*)
+        ├── polars-arrow v0.53.0 (*)
+        ├── polars-compute v0.53.0 (*)
+        ├── polars-core v0.53.0 (*)
+        ├── polars-dtype v0.53.0 (*)
+        ├── polars-io v0.53.0 (*)
+        ├── polars-json v0.53.0 (*)
+        ├── polars-mem-engine v0.53.0 (*)
+        ├── polars-ops v0.53.0 (*)
+        ├── polars-parquet v0.53.0 (*)
+        ├── polars-plan v0.53.0 (*)
+        ├── polars-row v0.53.0 (*)
+        ├── polars-schema v0.53.0
+        │   ├── polars-arrow v0.53.0 (*)
+        │   ├── polars-core v0.53.0 (*)
+        │   ├── polars-io v0.53.0 (*)
+        │   └── polars-ops v0.53.0 (*)
+        ├── polars-sql v0.53.0 (*)
+        ├── polars-stream v0.53.0 (*)
+        ├── polars-time v0.53.0 (*)
+        └── polars-utils v0.53.0
+            ├── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
+            ├── polars v0.53.0 (*)
+            ├── polars-arrow v0.53.0 (*)
+            ├── polars-compute v0.53.0 (*)
+            ├── polars-core v0.53.0 (*)
+            ├── polars-dtype v0.53.0 (*)
+            ├── polars-expr v0.53.0 (*)
+            ├── polars-io v0.53.0 (*)
+            ├── polars-json v0.53.0 (*)
+            ├── polars-lazy v0.53.0 (*)
+            ├── polars-mem-engine v0.53.0 (*)
+            ├── polars-ops v0.53.0 (*)
+            ├── polars-parquet v0.53.0 (*)
+            ├── polars-plan v0.53.0 (*)
+            ├── polars-row v0.53.0 (*)
+            ├── polars-schema v0.53.0 (*)
+            ├── polars-sql v0.53.0 (*)
+            ├── polars-stream v0.53.0 (*)
+            └── polars-time v0.53.0 (*)
+
+crc v3.4.0
+└── delta_kernel v0.19.2
+    ├── deltalake v0.31.0
+    │   └── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
+    └── deltalake-core v0.31.0
+        ├── deltalake v0.31.0 (*)
+        ├── deltalake-aws v0.14.0
+        │   └── deltalake v0.31.0 (*)
+        ├── deltalake-azure v0.14.0
+        │   └── deltalake v0.31.0 (*)
+        └── deltalake-gcp v0.15.0
+            └── deltalake v0.31.0 (*)
+
+crc-catalog v1.1.1
+└── crc v2.1.0 (*)
+
+crc-catalog v2.4.0
+└── crc v3.4.0 (*)
+
 foldhash v0.1.5
 └── hashbrown v0.15.5
     └── planus v1.1.1
         └── polars-arrow-format v0.2.1
-            ├── polars-arrow v0.53.0
-            │   ├── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
-            │   ├── polars v0.53.0
-            │   │   └── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
-            │   ├── polars-compute v0.53.0
-            │   │   ├── polars v0.53.0 (*)
-            │   │   ├── polars-core v0.53.0
-            │   │   │   ├── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
-            │   │   │   ├── polars v0.53.0 (*)
-            │   │   │   ├── polars-expr v0.53.0
-            │   │   │   │   ├── polars-lazy v0.53.0
-            │   │   │   │   │   ├── polars v0.53.0 (*)
-            │   │   │   │   │   └── polars-sql v0.53.0
-            │   │   │   │   │       └── polars v0.53.0 (*)
-            │   │   │   │   ├── polars-mem-engine v0.53.0
-            │   │   │   │   │   ├── polars-lazy v0.53.0 (*)
-            │   │   │   │   │   └── polars-stream v0.53.0
-            │   │   │   │   │       └── polars-lazy v0.53.0 (*)
-            │   │   │   │   └── polars-stream v0.53.0 (*)
-            │   │   │   ├── polars-io v0.53.0
-            │   │   │   │   ├── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
-            │   │   │   │   ├── polars v0.53.0 (*)
-            │   │   │   │   ├── polars-expr v0.53.0 (*)
-            │   │   │   │   ├── polars-lazy v0.53.0 (*)
-            │   │   │   │   ├── polars-mem-engine v0.53.0 (*)
-            │   │   │   │   ├── polars-plan v0.53.0
-            │   │   │   │   │   ├── polars-expr v0.53.0 (*)
-            │   │   │   │   │   ├── polars-lazy v0.53.0 (*)
-            │   │   │   │   │   ├── polars-mem-engine v0.53.0 (*)
-            │   │   │   │   │   ├── polars-sql v0.53.0 (*)
-            │   │   │   │   │   └── polars-stream v0.53.0 (*)
-            │   │   │   │   └── polars-stream v0.53.0 (*)
-            │   │   │   ├── polars-lazy v0.53.0 (*)
-            │   │   │   ├── polars-mem-engine v0.53.0 (*)
-            │   │   │   ├── polars-ops v0.53.0
-            │   │   │   │   ├── polars v0.53.0 (*)
-            │   │   │   │   ├── polars-expr v0.53.0 (*)
-            │   │   │   │   ├── polars-lazy v0.53.0 (*)
-            │   │   │   │   ├── polars-mem-engine v0.53.0 (*)
-            │   │   │   │   ├── polars-plan v0.53.0 (*)
-            │   │   │   │   ├── polars-sql v0.53.0 (*)
-            │   │   │   │   ├── polars-stream v0.53.0 (*)
-            │   │   │   │   └── polars-time v0.53.0
-            │   │   │   │       ├── polars v0.53.0 (*)
-            │   │   │   │       ├── polars-expr v0.53.0 (*)
-            │   │   │   │       ├── polars-io v0.53.0 (*)
-            │   │   │   │       ├── polars-lazy v0.53.0 (*)
-            │   │   │   │       ├── polars-mem-engine v0.53.0 (*)
-            │   │   │   │       ├── polars-plan v0.53.0 (*)
-            │   │   │   │       ├── polars-sql v0.53.0 (*)
-            │   │   │   │       └── polars-stream v0.53.0 (*)
-            │   │   │   ├── polars-plan v0.53.0 (*)
-            │   │   │   ├── polars-sql v0.53.0 (*)
-            │   │   │   ├── polars-stream v0.53.0 (*)
-            │   │   │   └── polars-time v0.53.0 (*)
-            │   │   ├── polars-expr v0.53.0 (*)
-            │   │   ├── polars-io v0.53.0 (*)
-            │   │   ├── polars-json v0.53.0
-            │   │   │   ├── polars-expr v0.53.0 (*)
-            │   │   │   ├── polars-io v0.53.0 (*)
-            │   │   │   ├── polars-lazy v0.53.0 (*)
-            │   │   │   ├── polars-mem-engine v0.53.0 (*)
-            │   │   │   ├── polars-ops v0.53.0 (*)
-            │   │   │   ├── polars-plan v0.53.0 (*)
-            │   │   │   └── polars-stream v0.53.0 (*)
-            │   │   ├── polars-lazy v0.53.0 (*)
-            │   │   ├── polars-ops v0.53.0 (*)
-            │   │   ├── polars-parquet v0.53.0
-            │   │   │   ├── polars v0.53.0 (*)
-            │   │   │   ├── polars-io v0.53.0 (*)
-            │   │   │   ├── polars-plan v0.53.0 (*)
-            │   │   │   └── polars-stream v0.53.0 (*)
-            │   │   ├── polars-plan v0.53.0 (*)
-            │   │   ├── polars-row v0.53.0
-            │   │   │   ├── polars-core v0.53.0 (*)
-            │   │   │   └── polars-expr v0.53.0 (*)
-            │   │   ├── polars-stream v0.53.0 (*)
-            │   │   └── polars-time v0.53.0 (*)
-            │   ├── polars-core v0.53.0 (*)
-            │   ├── polars-dtype v0.53.0
-            │   │   ├── polars-core v0.53.0 (*)
-            │   │   └── polars-row v0.53.0 (*)
-            │   ├── polars-expr v0.53.0 (*)
-            │   ├── polars-io v0.53.0 (*)
-            │   ├── polars-json v0.53.0 (*)
-            │   ├── polars-lazy v0.53.0 (*)
-            │   ├── polars-mem-engine v0.53.0 (*)
-            │   ├── polars-ops v0.53.0 (*)
-            │   ├── polars-parquet v0.53.0 (*)
-            │   ├── polars-plan v0.53.0 (*)
-            │   ├── polars-row v0.53.0 (*)
-            │   ├── polars-stream v0.53.0 (*)
-            │   └── polars-time v0.53.0 (*)
-            └── polars-error v0.53.0
-                ├── polars v0.53.0 (*)
-                ├── polars-arrow v0.53.0 (*)
-                ├── polars-compute v0.53.0 (*)
-                ├── polars-core v0.53.0 (*)
-                ├── polars-dtype v0.53.0 (*)
-                ├── polars-io v0.53.0 (*)
-                ├── polars-json v0.53.0 (*)
-                ├── polars-mem-engine v0.53.0 (*)
-                ├── polars-ops v0.53.0 (*)
-                ├── polars-parquet v0.53.0 (*)
-                ├── polars-plan v0.53.0 (*)
-                ├── polars-row v0.53.0 (*)
-                ├── polars-schema v0.53.0
-                │   ├── polars-arrow v0.53.0 (*)
-                │   ├── polars-core v0.53.0 (*)
-                │   ├── polars-io v0.53.0 (*)
-                │   └── polars-ops v0.53.0 (*)
-                ├── polars-sql v0.53.0 (*)
-                ├── polars-stream v0.53.0 (*)
-                ├── polars-time v0.53.0 (*)
-                └── polars-utils v0.53.0
-                    ├── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
-                    ├── polars v0.53.0 (*)
-                    ├── polars-arrow v0.53.0 (*)
-                    ├── polars-compute v0.53.0 (*)
-                    ├── polars-core v0.53.0 (*)
-                    ├── polars-dtype v0.53.0 (*)
-                    ├── polars-expr v0.53.0 (*)
-                    ├── polars-io v0.53.0 (*)
-                    ├── polars-json v0.53.0 (*)
-                    ├── polars-lazy v0.53.0 (*)
-                    ├── polars-mem-engine v0.53.0 (*)
-                    ├── polars-ops v0.53.0 (*)
-                    ├── polars-parquet v0.53.0 (*)
-                    ├── polars-plan v0.53.0 (*)
-                    ├── polars-row v0.53.0 (*)
-                    ├── polars-schema v0.53.0 (*)
-                    ├── polars-sql v0.53.0 (*)
-                    ├── polars-stream v0.53.0 (*)
-                    └── polars-time v0.53.0 (*)
+            ├── polars-arrow v0.53.0 (*)
+            └── polars-error v0.53.0 (*)
 
 foldhash v0.2.0
 ├── hashbrown v0.16.1
 │   ├── arrow-array v57.3.0
 │   │   ├── arrow v57.3.0
-│   │   │   ├── delta_kernel v0.19.2
-│   │   │   │   ├── deltalake v0.31.0
-│   │   │   │   │   └── native_shim v0.3.0 (/home/qinglei/Projects/Polars.NET/native_shim)
-│   │   │   │   └── deltalake-core v0.31.0
-│   │   │   │       ├── deltalake v0.31.0 (*)
-│   │   │   │       ├── deltalake-aws v0.14.0
-│   │   │   │       │   └── deltalake v0.31.0 (*)
-│   │   │   │       ├── deltalake-azure v0.14.0
-│   │   │   │       │   └── deltalake v0.31.0 (*)
-│   │   │   │       └── deltalake-gcp v0.15.0
-│   │   │   │           └── deltalake v0.31.0 (*)
+│   │   │   ├── delta_kernel v0.19.2 (*)
 │   │   │   └── deltalake-core v0.31.0 (*)
 │   │   ├── arrow-arith v57.3.0
 │   │   │   ├── arrow v57.3.0 (*)
@@ -209,7 +223,7 @@ foldhash v0.2.0
 │   │   │   │       │   └── deltalake-aws v0.14.0 (*)
 │   │   │   │       ├── aws-runtime v1.7.1
 │   │   │   │       │   ├── aws-config v1.8.14 (*)
-│   │   │   │       │   ├── aws-sdk-dynamodb v1.106.0
+│   │   │   │       │   ├── aws-sdk-dynamodb v1.107.0
 │   │   │   │       │   │   └── deltalake-aws v0.14.0 (*)
 │   │   │   │       │   ├── aws-sdk-sso v1.95.0
 │   │   │   │       │   │   └── aws-config v1.8.14 (*)
@@ -218,7 +232,7 @@ foldhash v0.2.0
 │   │   │   │       │   └── aws-sdk-sts v1.99.0
 │   │   │   │       │       ├── aws-config v1.8.14 (*)
 │   │   │   │       │       └── deltalake-aws v0.14.0 (*)
-│   │   │   │       ├── aws-sdk-dynamodb v1.106.0 (*)
+│   │   │   │       ├── aws-sdk-dynamodb v1.107.0 (*)
 │   │   │   │       ├── aws-sdk-sso v1.95.0 (*)
 │   │   │   │       ├── aws-sdk-ssooidc v1.97.0 (*)
 │   │   │   │       └── aws-sdk-sts v1.99.0 (*)
@@ -254,6 +268,7 @@ foldhash v0.2.0
 │   │   ├── polars-utils v0.53.0 (*)
 │   │   ├── serde_json v1.0.149
 │   │   │   ├── arrow-json v57.3.0 (*)
+│   │   │   ├── avro-schema v0.3.0 (*)
 │   │   │   ├── delta_kernel v0.19.2 (*)
 │   │   │   ├── deltalake-core v0.31.0 (*)
 │   │   │   ├── jsonpath_lib_polars_vendor v0.0.1
@@ -355,7 +370,7 @@ hashbrown v0.15.5 (*)
 hashbrown v0.16.1 (*)
 
 http v0.2.12
-├── aws-sdk-dynamodb v1.106.0 (*)
+├── aws-sdk-dynamodb v1.107.0 (*)
 ├── aws-sdk-sso v1.95.0 (*)
 ├── aws-sdk-ssooidc v1.97.0 (*)
 ├── aws-sdk-sts v1.99.0 (*)
@@ -367,7 +382,7 @@ http v0.2.12
 │   ├── aws-credential-types v1.2.13
 │   │   ├── aws-config v1.8.14 (*)
 │   │   ├── aws-runtime v1.7.1 (*)
-│   │   ├── aws-sdk-dynamodb v1.106.0 (*)
+│   │   ├── aws-sdk-dynamodb v1.107.0 (*)
 │   │   ├── aws-sdk-sso v1.95.0 (*)
 │   │   ├── aws-sdk-ssooidc v1.97.0 (*)
 │   │   ├── aws-sdk-sts v1.99.0 (*)
@@ -375,13 +390,13 @@ http v0.2.12
 │   │   ├── aws-types v1.3.13
 │   │   │   ├── aws-config v1.8.14 (*)
 │   │   │   ├── aws-runtime v1.7.1 (*)
-│   │   │   ├── aws-sdk-dynamodb v1.106.0 (*)
+│   │   │   ├── aws-sdk-dynamodb v1.107.0 (*)
 │   │   │   ├── aws-sdk-sso v1.95.0 (*)
 │   │   │   ├── aws-sdk-ssooidc v1.97.0 (*)
 │   │   │   └── aws-sdk-sts v1.99.0 (*)
 │   │   └── deltalake-aws v0.14.0 (*)
 │   ├── aws-runtime v1.7.1 (*)
-│   ├── aws-sdk-dynamodb v1.106.0 (*)
+│   ├── aws-sdk-dynamodb v1.107.0 (*)
 │   ├── aws-sdk-sso v1.95.0 (*)
 │   ├── aws-sdk-ssooidc v1.97.0 (*)
 │   ├── aws-sdk-sts v1.99.0 (*)
@@ -389,7 +404,7 @@ http v0.2.12
 │   ├── aws-smithy-http v0.63.5
 │   │   ├── aws-config v1.8.14 (*)
 │   │   ├── aws-runtime v1.7.1 (*)
-│   │   ├── aws-sdk-dynamodb v1.106.0 (*)
+│   │   ├── aws-sdk-dynamodb v1.107.0 (*)
 │   │   ├── aws-sdk-sso v1.95.0 (*)
 │   │   ├── aws-sdk-ssooidc v1.97.0 (*)
 │   │   ├── aws-sdk-sts v1.99.0 (*)
@@ -397,7 +412,7 @@ http v0.2.12
 │   │   └── aws-smithy-runtime v1.10.2 (*)
 │   ├── aws-smithy-http-client v1.1.11 (*)
 │   ├── aws-smithy-observability v0.2.5
-│   │   ├── aws-sdk-dynamodb v1.106.0 (*)
+│   │   ├── aws-sdk-dynamodb v1.107.0 (*)
 │   │   ├── aws-sdk-sso v1.95.0 (*)
 │   │   ├── aws-sdk-ssooidc v1.97.0 (*)
 │   │   ├── aws-sdk-sts v1.99.0 (*)
@@ -409,7 +424,7 @@ http v0.2.12
 │   ├── aws-config v1.8.14 (*)
 │   ├── aws-credential-types v1.2.13 (*)
 │   ├── aws-runtime v1.7.1 (*)
-│   ├── aws-sdk-dynamodb v1.106.0 (*)
+│   ├── aws-sdk-dynamodb v1.107.0 (*)
 │   ├── aws-sdk-sso v1.95.0 (*)
 │   ├── aws-sdk-ssooidc v1.97.0 (*)
 │   ├── aws-sdk-sts v1.99.0 (*)
@@ -418,7 +433,7 @@ http v0.2.12
 │   ├── aws-smithy-http-client v1.1.11 (*)
 │   ├── aws-smithy-json v0.62.4
 │   │   ├── aws-config v1.8.14 (*)
-│   │   ├── aws-sdk-dynamodb v1.106.0 (*)
+│   │   ├── aws-sdk-dynamodb v1.107.0 (*)
 │   │   ├── aws-sdk-sso v1.95.0 (*)
 │   │   ├── aws-sdk-ssooidc v1.97.0 (*)
 │   │   └── aws-sdk-sts v1.99.0 (*)
@@ -434,7 +449,7 @@ http v0.2.12
 http v1.4.0
 ├── aws-config v1.8.14 (*)
 ├── aws-runtime v1.7.1 (*)
-├── aws-sdk-dynamodb v1.106.0 (*)
+├── aws-sdk-dynamodb v1.107.0 (*)
 ├── aws-sdk-sso v1.95.0 (*)
 ├── aws-sdk-ssooidc v1.97.0 (*)
 ├── aws-sdk-sts v1.99.0 (*)
@@ -506,7 +521,7 @@ memchr v2.8.0
 │   │   ├── aws-config v1.8.14 (*)
 │   │   ├── aws-credential-types v1.2.13 (*)
 │   │   ├── aws-runtime v1.7.1 (*)
-│   │   ├── aws-sdk-dynamodb v1.106.0 (*)
+│   │   ├── aws-sdk-dynamodb v1.107.0 (*)
 │   │   ├── aws-sdk-sso v1.95.0 (*)
 │   │   ├── aws-sdk-ssooidc v1.97.0 (*)
 │   │   ├── aws-sdk-sts v1.99.0 (*)
