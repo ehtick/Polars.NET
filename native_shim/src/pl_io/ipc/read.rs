@@ -39,7 +39,6 @@ pub extern "C" fn pl_scan_ipc(
         let path = ptr_to_str(path_ptr)
             .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
 
-        // 构建 Cloud Options
         let cloud_opts = unsafe {
             crate::pl_io::io_utils::build_cloud_options(
                 cloud_provider, cloud_retries, cloud_retry_timeout_ms,

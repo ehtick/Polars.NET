@@ -422,6 +422,13 @@ public enum ExternalCompression: byte
     ZSTD=2
 }
 
+public enum AvroCompression: byte
+{
+    Uncompressed = 0,
+    Deflate=1,
+    Snappy=2
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -695,6 +702,13 @@ internal static class EnumExtensions
         DeltaSaveMode.ErrorIfExists => CoreEnums.PlDeltaSaveMode.ErrorIfExists,
         DeltaSaveMode.Ignore => CoreEnums.PlDeltaSaveMode.Ignore,
         _ => CoreEnums.PlDeltaSaveMode.Append
+    };
+    internal static CoreEnums.PlAvroCompression ToNative(this AvroCompression compression) => compression switch
+    {
+        AvroCompression.Uncompressed => CoreEnums.PlAvroCompression.Uncompressed,
+        AvroCompression.Snappy => CoreEnums.PlAvroCompression.Snappy,
+        AvroCompression.Deflate => CoreEnums.PlAvroCompression.Deflate,
+        _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
     };
 }
 

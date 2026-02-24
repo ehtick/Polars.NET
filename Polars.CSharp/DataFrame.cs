@@ -207,12 +207,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             cloudOptions
         );
 
-        // 2. 利用列投影下推 (Projection Pushdown) 优化 I/O
         if (columns != null && columns.Length > 0)
         {
             var colsToSelect = new List<string>(columns);
             
-            // 如果用户要求生成行号列，必须在 Select 中保留它
             if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
             {
                 colsToSelect.Add(rowIndexName);
@@ -226,7 +224,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
         }
 
-        // 3. 收集并触发执行
         return lf.Collect();
     }
 
@@ -277,7 +274,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         {
             var colsToSelect = new List<string>(columns);
             
-            // 如果用户要求生成行号列，必须在 Select 中保留它
             if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
             {
                 colsToSelect.Add(rowIndexName);
@@ -824,7 +820,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         {
             var colsToSelect = new List<string>(columns);
             
-            // 如果用户要求生成行号列，必须在 Select 中保留它
             if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
             {
                 colsToSelect.Add(rowIndexName);
@@ -838,10 +833,42 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
         }
 
-        // 3. 收集并触发执行
         return await lf.CollectAsync();
     }
-
+    /// <summary>
+    /// Read an Avro file into a DataFrame.
+    /// </summary>
+    /// <param name="path">The path to the Avro file.</param>
+    /// <param name="nRows">Stop reading when `nRows` are read.</param>
+    /// <param name="columns">Columns to select/project by name.</param>
+    /// <param name="projection">Columns to select/project by index.</param>
+    /// <returns>A new DataFrame.</returns>
+    public static DataFrame ReadAvro(
+        string path, 
+        ulong? nRows = null, 
+        string[]? columns = null, 
+        int[]? projection = null)
+    {
+        var handle = PolarsWrapper.ReadAvro(path, nRows, columns, projection);
+        return new DataFrame(handle);
+    }
+    /// <summary>
+    /// Read an Avro memory buffer into a DataFrame.
+    /// </summary>
+    /// <param name="buffer">The byte array containing Avro data.</param>
+    /// <param name="nRows">Stop reading when `nRows` are read.</param>
+    /// <param name="columns">Columns to select/project by name.</param>
+    /// <param name="projection">Columns to select/project by index.</param>
+    /// <returns>A new DataFrame.</returns>
+    public static DataFrame ReadAvro(
+        byte[] buffer, 
+        ulong? nRows = null, 
+        string[]? columns = null, 
+        int[]? projection = null)
+    {
+        var handle = PolarsWrapper.ReadAvro(buffer, nRows, columns, projection);
+        return new DataFrame(handle);
+    }
     /// <summary>
     /// Create a DataFrame directly from a <see cref="IDataReader"/>.
     /// <para>
@@ -2752,6 +2779,31 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             throw new ArgumentException("File path cannot be empty.", nameof(path));
 
         PolarsWrapper.WriteExcel(Handle, path, sheetName, dateFormat, datetimeFormat);
+    }
+    /// <summary>
+    /// Write the DataFrame to an Apache Avro file.
+    /// </summary>
+    /// <param name="path">The file path to write to.</param>
+    /// <param name="compression">The compression algorithm to use.</param>
+    /// <param name="name">The name of the Avro record.</param>
+    public void WriteAvro(
+        string path, 
+        AvroCompression compression = AvroCompression.Uncompressed, 
+        string name = "")
+    {
+        PolarsWrapper.WriteAvro(this.Handle, path, compression.ToNative(), name);
+    }
+    /// <summary>
+    /// Write the DataFrame to an Apache Avro memory buffer.
+    /// </summary>
+    /// <param name="compression">The compression algorithm to use.</param>
+    /// <param name="name">The name of the Avro record.</param>
+    /// <returns>A byte array containing the Avro data.</returns>
+    public byte[] WriteAvroMemory(
+        AvroCompression compression = AvroCompression.Uncompressed, 
+        string name = "")
+    {
+        return PolarsWrapper.WriteAvroToMemory(Handle, compression.ToNative(), name);
     }
     /// <summary>
     /// Export DataFrame to Record Batch

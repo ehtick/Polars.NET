@@ -677,4 +677,42 @@ unsafe internal partial class NativeBindings
         string? dateFormat,      // Option<&str>
         string? datetimeFormat   // Option<&str>
     );
+
+    // Avro
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_read_avro(
+        string path,
+        IntPtr nRowsPtr,
+        string[]? columns,
+        nuint columnsLen,
+        nuint[]? projection,
+        nuint projectionLen
+    );
+    // Avro - Memory Buffer
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static unsafe partial DataFrameHandle pl_read_avro_mem(
+        byte* bufferPtr,    
+        nuint bufferLen,
+        IntPtr nRowsPtr,
+        string[]? columns,
+        nuint columnsLen,
+        nuint[]? projection,
+        nuint projectionLen
+    );
+    // Write Avro
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_write_avro(
+        DataFrameHandle df, 
+        string path, 
+        PlAvroCompression compressionType, 
+        string name
+    );
+    // Write Avro Buffer
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_write_avro_mem(
+        DataFrameHandle df,
+        out FfiBuffer out_buffer,
+        PlAvroCompression compressionType,
+        string name
+    );
 }

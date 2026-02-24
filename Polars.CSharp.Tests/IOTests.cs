@@ -1500,4 +1500,132 @@ ID;ProductName;Weight;ReleaseDate
         Assert.Equal(99.5, dfRead.GetValue<double>(0, "score"));
         Assert.Equal(0u, dfRead.GetValue<uint>(0, "row_idx")); // 第一行的索引通常是 0
     }
+    [Fact]
+    [Trait("IO","AvroFile")]
+    public void Test_ReadWriteAvro_Advanced()
+    {
+        // 1. 准备测试数据
+        // 包含 Null 值以验证序列化/反序列化时的 Null 处理
+        using var sId = new Series("id", [1, 2, 3, 4, 5]);
+        using var sName = new Series("name", ["Alice", "Bob", null, "David", "Eve"]); 
+        using var df = new DataFrame(sId, sName);
+
+        // 创建临时文件
+        using var f = new DisposableFile(".avro");
+        
+        // ---------------------------------------------------------
+        // Test Write Options: 
+        // ---------------------------------------------------------
+        // 1. 使用 Deflate 压缩
+        // 2. 指定 Avro Record 名称为 "TestRecord"
+        df.WriteAvro(
+            f.Path,
+            compression: AvroCompression.Deflate,
+            name: "TestRecord"
+        );
+
+        // 验证文件已生成且有内容
+        Assert.True(File.Exists(f.Path));
+        Assert.True(new FileInfo(f.Path).Length > 0);
+
+        // ---------------------------------------------------------
+        // Case 1: 基础读取 (全量验证压缩文件可读性)
+        // ---------------------------------------------------------
+        using var dfFull = DataFrame.ReadAvro(f.Path);
+        Assert.Equal(5, dfFull.Height);
+        Assert.Equal(2, dfFull.Width);
+        Assert.Equal("Alice", dfFull.GetValue<string>(0, "name"));
+        Assert.Null(dfFull.GetValue<string>(2, "name")); // 验证 Null 保留
+
+        // ---------------------------------------------------------
+        // Case 2: 高级参数读取 (按列名投影, Limit 截断)
+        // ---------------------------------------------------------
+        using var dfPartialByName = DataFrame.ReadAvro(
+            f.Path,
+            columns: ["id"], // 列裁剪 (仅读取 id)
+            nRows: 3         // Limit 截断 (仅读取前 3 行)
+        );
+                
+        // 验证结构
+        Assert.Equal(3, dfPartialByName.Height); 
+        Assert.Equal(1, dfPartialByName.Width);  // 只有 id 被保留
+        
+        Assert.True(dfPartialByName.ColumnNames.Contains("id"));
+        Assert.False(dfPartialByName.ColumnNames.Contains("name"));
+
+        // ---------------------------------------------------------
+        // Case 3: 高级参数读取 (按列索引投影)
+        // ---------------------------------------------------------
+        using var dfPartialByIndex = DataFrame.ReadAvro(
+            f.Path,
+            projection: [1] // 索引为 1 的列是 "name"
+        );
+        
+        Assert.Equal(5, dfPartialByIndex.Height);
+        Assert.Equal(1, dfPartialByIndex.Width);
+        Assert.True(dfPartialByIndex.ColumnNames.Contains("name"));
+        Assert.False(dfPartialByIndex.ColumnNames.Contains("id"));
+    }
+    [Fact]
+    [Trait("IO","AvroMem")]
+    public void Test_ReadWriteAvro_MemoryBuffer()
+    {
+        // 1. 准备测试数据
+        using var sId = new Series("id", [1, 2, 3, 4, 5]);
+        using var sName = new Series("name", ["Alice", "Bob", null, "David", "Eve"]); 
+        using var df = new DataFrame(sId, sName);
+
+        // ---------------------------------------------------------
+        // Test Write to Memory Buffer:
+        // ---------------------------------------------------------
+        // 1. 使用 Snappy 压缩算法
+        // 2. 指定 Avro Record 名称为 "MemoryRecord"
+        byte[] buffer = df.WriteAvroMemory(
+            compression: AvroCompression.Snappy,
+            name: "MemoryRecord"
+        );
+        
+
+        // 验证缓冲区生成成功且包含数据
+        Assert.NotNull(buffer);
+        Assert.True(buffer.Length > 0);
+
+        // ---------------------------------------------------------
+        // Case 1: 基础读取 (全量验证内存字节数组的可读性)
+        // ---------------------------------------------------------
+        using var dfFull = DataFrame.ReadAvro(buffer);
+        Assert.Equal(5, dfFull.Height);
+        Assert.Equal(2, dfFull.Width);
+        Assert.Equal("Alice", dfFull.GetValue<string>(0, "name"));
+        Assert.Null(dfFull.GetValue<string>(2, "name")); // 验证 Null 保留
+
+        // ---------------------------------------------------------
+        // Case 2: 高级参数读取 (按列名投影, Limit 截断)
+        // ---------------------------------------------------------
+        using var dfPartialByName = DataFrame.ReadAvro(
+            buffer,
+            columns: ["name"], // 这次只读 name 列
+            nRows: 2           // 只读取前 2 行
+        );
+        
+        // 验证结构
+        Assert.Equal(2, dfPartialByName.Height); 
+        Assert.Equal(1, dfPartialByName.Width);  
+        
+        Assert.True(dfPartialByName.ColumnNames.Contains("name"));
+        Assert.False(dfPartialByName.ColumnNames.Contains("id"));
+
+        // ---------------------------------------------------------
+        // Case 3: 高级参数读取 (按列索引投影)
+        // ---------------------------------------------------------
+        using var dfPartialByIndex = DataFrame.ReadAvro(
+            buffer,
+            projection: [0] // 索引为 0 的列是 "id"
+        );
+        
+        Assert.Equal(5, dfPartialByIndex.Height);
+        Assert.Equal(1, dfPartialByIndex.Width);
+        Assert.True(dfPartialByIndex.ColumnNames.Contains("id"));
+        Assert.False(dfPartialByIndex.ColumnNames.Contains("name"));
+    }
 }

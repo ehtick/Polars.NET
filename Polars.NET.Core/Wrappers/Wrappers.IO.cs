@@ -1505,5 +1505,116 @@ public static partial class PolarsWrapper
             throw new ObjectDisposedException(nameof(handle), "DataFrame handle is invalid or closed.");
         NativeBindings.pl_write_excel(handle, path, sheetName, dateFormat, datetimeFormat);
     }
+    public static DataFrameHandle ReadAvro(
+        string path, 
+        ulong? nRows, 
+        string[]? columns, 
+        int[]? projection)
+    {
+        if (!File.Exists(path)) throw new FileNotFoundException($"Avro file not found: {path}");
+
+        unsafe
+        {
+            ulong rowsVal = nRows.GetValueOrDefault();
+            IntPtr rowsPtr = nRows.HasValue ? (IntPtr)(&rowsVal) : IntPtr.Zero;
+
+            nuint columnsLen = (nuint)(columns?.Length ?? 0);
+            
+            nuint[]? nativeProjection = null;
+            nuint projectionLen = 0;
+            if (projection != null)
+            {
+                nativeProjection = System.Array.ConvertAll(projection, x => (nuint)x);
+                projectionLen = (nuint)projection.Length;
+            }
+
+            var h = NativeBindings.pl_read_avro(
+                path,
+                rowsPtr,
+                columns,
+                columnsLen,
+                nativeProjection,
+                projectionLen
+            );
+
+            return ErrorHelper.Check(h);
+        }
+    }
+    public static DataFrameHandle ReadAvro(
+        byte[] buffer, 
+        ulong? nRows, 
+        string[]? columns, 
+        int[]? projection )
+    {
+        if (buffer == null || buffer.Length == 0) 
+            throw new ArgumentException("Buffer cannot be null or empty", nameof(buffer));
+
+        unsafe
+        {
+            ulong rowsVal = nRows.GetValueOrDefault();
+            IntPtr rowsPtr = nRows.HasValue ? (IntPtr)(&rowsVal) : IntPtr.Zero;
+
+            nuint columnsLen = (nuint)(columns?.Length ?? 0);
+            
+            nuint[]? nativeProjection = null;
+            nuint projectionLen = 0;
+            if (projection != null)
+            {
+                nativeProjection = System.Array.ConvertAll(projection, x => (nuint)x);
+                projectionLen = (nuint)projection.Length;
+            }
+
+            fixed (byte* pBuffer = buffer)
+            {
+                var h = NativeBindings.pl_read_avro_mem(
+                    pBuffer,
+                    (nuint)buffer.Length,
+                    rowsPtr,
+                    columns,
+                    columnsLen,
+                    nativeProjection,
+                    projectionLen
+                );
+
+                return ErrorHelper.Check(h);
+            }
+        }
+    }
+    public static void WriteAvro(
+        DataFrameHandle df, 
+        string path, 
+        PlAvroCompression compression, 
+        string name)
+    {
+        NativeBindings.pl_write_avro(df, path, compression, name ?? string.Empty);
+        ErrorHelper.CheckVoid();
+    }
+    public static byte[] WriteAvroToMemory(
+        DataFrameHandle df, 
+        PlAvroCompression compression, 
+        string name)
+    {
+        NativeBindings.pl_write_avro_mem(
+            df,
+            out var ffiBuffer,
+            compression,
+            name ?? string.Empty
+        );
+
+        ErrorHelper.CheckVoid();
+        try
+        {
+            unsafe
+            {
+                var span = new ReadOnlySpan<byte>(ffiBuffer.Data.ToPointer(), (int)ffiBuffer.Length);
+                
+                return span.ToArray();
+            }
+        }
+        finally
+        {
+            NativeBindings.pl_free_ffi_buffer(ffiBuffer);
+        }
+    }
 
 }

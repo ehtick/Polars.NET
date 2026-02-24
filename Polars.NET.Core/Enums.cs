@@ -309,3 +309,10 @@ public enum PlExternalCompression : byte
     Gzip = 1,
     ZSTD = 2
 }
+
+public enum PlAvroCompression : byte
+{
+    Uncompressed = 0,
+    Deflate = 1,
+    Snappy = 2
+}
