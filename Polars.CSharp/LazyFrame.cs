@@ -261,14 +261,14 @@ public class LazyFrame : IDisposable
     /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
     /// <param name="schema">
     /// Manually specify the schema of the file(s). 
-    /// Useful if the file footer is missing or to avoid I/O overhead of reading the schema.
-    /// </param>
+    /// Useful if the file footer is missing or to avoid I/O overhead of reading the schema.</param>
+    /// <param name="hivePartitioning">Enable Hive partitioning inference (default: false).</param>
     /// <param name="hivePartitionSchema">
     /// Manually specify the schema for Hive partitioning columns.
     /// Use this to ensure specific types for partition keys (e.g. string instead of int).
     /// </param>
     /// <param name="tryParseHiveDates">
-    /// Whether to try parsing dates in Hive partitioning paths (default: true).
+    /// Whether to try parsing dates in Hive partitioning paths (default: false).
     /// </param>
     /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public static LazyFrame ScanParquet(
@@ -870,6 +870,7 @@ public class LazyFrame : IDisposable
     /// <param name="cloudOptions">Options for cloud storage authentication (AWS S3, Azure, GCP, etc).</param>
     /// <param name="version">The version of the table to read (e.g., 0, 1). Mutually exclusive with <paramref name="datetime"/>.</param>
     /// <param name="datetime">The timestamp to read (ISO-8601 string, e.g., "2026-02-09T12:00:00Z"). Mutually exclusive with <paramref name="version"/>.</param>
+    /// <inheritdoc cref="LazyFrame.ScanParquet(string, ulong?, ParallelStrategy, bool, bool, bool, bool, bool, bool, string?, uint, string?, PolarsSchema?, bool, PolarsSchema?, bool, CloudOptions?)"/>
     /// <returns>A new LazyFrame.</returns>
     public static LazyFrame ScanDelta(
         string path,

@@ -2032,6 +2032,11 @@ type Series(handle: SeriesHandle) =
                 if t = typeof<float32 option> then box (Some v) |> unbox<'T>
                 else box v |> unbox<'T>
 
+            else if t = typeof<Half> || t = typeof<Half> || t = typeof<Nullable<Half>> then
+                let v = PolarsWrapper.SeriesGetDouble(handle, index).Value
+                if t = typeof<Half option> then box (Some v) |> unbox<'T>
+                else box v |> unbox<'T>
+
             // --- Boolean ---
             else if t = typeof<bool> || t = typeof<bool option> || t = typeof<Nullable<bool>> then
                 let v = PolarsWrapper.SeriesGetBool(handle, index).Value
@@ -2106,7 +2111,8 @@ type Series(handle: SeriesHandle) =
         | DataType.UInt32 -> box (this.GetValue<uint32 option> idx)
         | DataType.UInt64 -> box (this.GetValue<uint64 option> idx)
         | DataType.UInt128 -> box (this.GetValue<UInt128 option> idx)
-        
+
+        | DataType.Float16 -> box (this.GetValue<Half option> idx)
         | DataType.Float32 -> box (this.GetValue<float32 option> idx)
         | DataType.Float64 -> box (this.GetValue<double option> idx)
         
@@ -5391,7 +5397,99 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?hivePartitionSchema = hivePartitionSchema,
             ?tryParseHiveDates = tryParseHiveDates
         )
-    
+    // ---------------------------------------------------------
+    // Scan Delta Lake
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Create a LazyFrame by scanning a Delta Lake table.
+    /// </summary>
+    /// <param name="path">Path to the Delta Lake table (folder containing _delta_log).</param>
+    /// <param name="version">The version of the table to read (e.g., 0L, 1L). Mutually exclusive with <paramref name="datetime"/>.</param>
+    /// <param name="datetime">The timestamp to read (ISO-8601 string, e.g., "2026-02-09T12:00:00Z"). Mutually exclusive with <paramref name="version"/>.</param>
+    /// <returns>A new LazyFrame.</returns>
+    static member ScanDelta(
+        path: string,
+        ?version: int64,
+        ?datetime: string,
+        ?nRows: uint64,
+        ?parallelStrategy: ParallelStrategy,
+        ?lowMemory: bool,
+        ?useStatistics: bool,
+        ?glob: bool,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?schema: PolarsSchema,
+        ?hivePartitioning: bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool,
+        ?cloudOptions: CloudOptions
+    ) : LazyFrame =
+        
+        // Time Travel Mutual Exclusivity Check
+        if version.IsSome && datetime.IsSome then
+            invalidArg "version/datetime" "Cannot specify both 'version' and 'datetime' for Delta Time Travel."
+
+        // Resolve Defaults & Nullables
+        let pVersion = Option.toNullable version
+        let pDatetime = Option.toObj datetime
+        let pNRows = Option.toNullable nRows
+        
+        let pParallel = defaultArg parallelStrategy ParallelStrategy.Auto
+        let pLowMem = defaultArg lowMemory false
+        let pUseStats = defaultArg useStatistics true
+        let pGlob = defaultArg glob true
+        let pRechunk = defaultArg rechunk false
+        let pCache = defaultArg cache true
+        
+        let pRowIdxName = Option.toObj rowIndexName
+        let pRowIdxOff = defaultArg rowIndexOffset 0u
+        let pIncPathCol = Option.toObj includePathColumn
+        
+        let schemaHandle = match schema with Some s -> s.Handle | None -> null
+        
+        // Hive Defaults (Delta typically defaults to Hive partitioning = true)
+        let pHivePart = defaultArg hivePartitioning true
+        let hiveSchemaHandle = match hivePartitionSchema with Some s -> s.Handle | None -> null
+        let pTryHiveDates = defaultArg tryParseHiveDates true
+
+        // Cloud Options
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        let h = PolarsWrapper.ScanDelta(
+            path,
+            pVersion,
+            pDatetime,
+            pNRows,
+            pParallel.ToNative(),
+            pLowMem,
+            pUseStats,
+            pGlob,
+            pRechunk,
+            pCache,
+            pRowIdxName,
+            pRowIdxOff,
+            pIncPathCol,
+            schemaHandle,
+            pHivePart,
+            hiveSchemaHandle,
+            pTryHiveDates,
+            // Cloud
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
+        )
+
+        new LazyFrame(h)
     // ==========================================
     // Streaming Scan (Lazy)
     // ==========================================
@@ -6282,6 +6380,191 @@ and LazyFrame(handle: LazyFrameHandle) =
             batchSize,
             batchStats,
             mo
+        )
+    /// <summary>
+    /// Sink the LazyFrame to a Delta Lake table with partition discovery.
+    /// <para>
+    /// This operation performs a "blind write" of partitioned Parquet files (Hive-style) 
+    /// and then commits a transaction to the Delta Log, registering the new files.
+    /// </para>
+    /// </summary>
+    member this.SinkDelta(
+        path: string,
+        ?partitionBy: Selector,
+        ?mode: DeltaSaveMode,
+        ?canEvolve: bool,
+        ?includeKeys: bool,
+        ?keysPreGrouped: bool,
+        ?maxRowsPerFile: int,
+        ?approxBytesPerFile: int64,
+        ?compression: ParquetCompression,
+        ?compressionLevel: int,
+        ?statistics: bool,
+        ?rowGroupSize: uint32,
+        ?dataPageSize: uint32,
+        ?compatLevel: int,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        // 1. Resolve Defaults
+        let pMode = defaultArg mode DeltaSaveMode.Append
+        let pEvolve = defaultArg canEvolve false
+        let pIncKeys = defaultArg includeKeys true
+        let pPreGrouped = defaultArg keysPreGrouped false
+        let pMaxRows = defaultArg maxRowsPerFile 0
+        let pApproxBytes = defaultArg approxBytesPerFile 0L
+        
+        let pComp = defaultArg compression ParquetCompression.Snappy
+        let pCompLevel = defaultArg compressionLevel -1
+        let pStats = defaultArg statistics true
+        let pRowGrpSz = defaultArg rowGroupSize 0u
+        let pDataPgSz = defaultArg dataPageSize 0u
+        let pCompat = defaultArg compatLevel -1
+        
+        let pMaintain = defaultArg maintainOrder true
+        let pSync = defaultArg syncOnClose SyncOnClose.NoSync
+        let pMkdir = defaultArg mkdir false
+
+        // 2. Type Conversions for Limits (handling zero-checks safely)
+        let maxRowsNuint = if pMaxRows > 0 then unativeint pMaxRows else 0un
+        let approxBytesUlong = if pApproxBytes > 0L then uint64 pApproxBytes else 0UL
+        let rowGrpSzNuint = unativeint pRowGrpSz
+        let dataPgSzNuint = unativeint pDataPgSz
+
+        // 3. Unpack Cloud Options
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        // 4. Safe Handle Binding for Optional Selector
+        use partitionByH = 
+            match partitionBy with
+            | Some s -> s.CloneHandle()
+            | None -> null
+
+        // 5. Native Call
+        PolarsWrapper.SinkDelta(
+            this.CloneHandle(),
+            path,
+            
+            // --- Delta Options ---
+            pMode.ToNative(),
+            pEvolve,
+            
+            // --- Partition Params ---
+            partitionByH,
+            pIncKeys,
+            pPreGrouped,
+            maxRowsNuint,
+            approxBytesUlong,
+            
+            // --- Parquet Options ---
+            pComp.ToNative(),
+            pCompLevel,
+            pStats,
+            rowGrpSzNuint,  
+            dataPgSzNuint,
+            pCompat,
+            
+            // --- Unified Options ---
+            pMaintain,
+            pSync.ToNative(),
+            pMkdir,
+            
+            // --- Cloud Params ---
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
+        )
+    /// <summary>
+    /// Merge a LazyFrame into a Delta Lake table with full SQL MERGE semantics.
+    /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// </summary>
+    /// <param name="path">Uri to the Delta Lake table (local or cloud).</param>
+    /// <param name="mergeKeys">The column names to join on (must exist in both Source and Target).</param>
+    /// <param name="matchedUpdateCond">
+    /// Condition for 'WHEN MATCHED THEN UPDATE'. 
+    /// If null, defaults to true (always update when matched).
+    /// </param>
+    /// <param name="matchedDeleteCond">
+    /// Condition for 'WHEN MATCHED THEN DELETE'. 
+    /// If null, defaults to false (never delete when matched).
+    /// </param>
+    /// <param name="notMatchedInsertCond">
+    /// Condition for 'WHEN NOT MATCHED THEN INSERT'. 
+    /// If null, defaults to true (always insert new rows).
+    /// </param>
+    /// <param name="notMatchedBySourceDeleteCond">
+    /// Condition for 'WHEN NOT MATCHED BY SOURCE THEN DELETE' (Target rows not in Source). 
+    /// If null, defaults to false (retain target-only rows).
+    /// </param>
+    /// <param name="canEvolve">Allow schema evolution during the merge.</param>
+    /// <param name="cloudOptions">Cloud storage credentials and configuration.</param>
+    member this.MergeDelta(
+        path: string,
+        mergeKeys: seq<string>,
+        ?matchedUpdateCond: Expr,
+        ?matchedDeleteCond: Expr,
+        ?notMatchedInsertCond: Expr,
+        ?notMatchedBySourceDeleteCond: Expr,
+        ?canEvolve: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        // 1. Resolve Defaults & Sequences
+        let pEvolve = defaultArg canEvolve false
+        let keysArr = mergeKeys |> Seq.toArray
+
+        // 2. Parse Cloud Options
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        // 3. Clone Handles (safely disposing them at the end of the scope)
+        use clonedLf = this.CloneHandle()
+        
+        use hUpdate = 
+            match matchedUpdateCond with
+            | Some e -> e.CloneHandle()
+            | None -> null
+            
+        use hDelete = 
+            match matchedDeleteCond with
+            | Some e -> e.CloneHandle()
+            | None -> null
+            
+        use hInsert = 
+            match notMatchedInsertCond with
+            | Some e -> e.CloneHandle()
+            | None -> null
+            
+        use hSrcDelete = 
+            match notMatchedBySourceDeleteCond with
+            | Some e -> e.CloneHandle()
+            | None -> null
+
+        // 4. Native Call
+        PolarsWrapper.DeltaMerge(
+            clonedLf,
+            path,
+            keysArr,
+            hUpdate,
+            hDelete,
+            hInsert,
+            hSrcDelete,
+            pEvolve,
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
         )
     // ==========================================
     // Streaming Sink (Lazy)

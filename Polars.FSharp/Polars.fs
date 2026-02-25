@@ -4,6 +4,7 @@ open System
 open System.ComponentModel
 open Polars.NET.Core
 open System.Threading.Tasks
+open Polars.NET.Core.Helpers
 
 [<EditorBrowsable(EditorBrowsableState.Never)>]
 type LitMechanism = LitMechanism with
@@ -17,6 +18,7 @@ type LitMechanism = LitMechanism with
     static member ($) (LitMechanism, v: uint64) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: Int128) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: string) = new Expr(PolarsWrapper.Lit v)
+    static member ($) (LitMechanism, v: Half) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: float32) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: double) = new Expr(PolarsWrapper.Lit v)
     static member ($) (LitMechanism, v: DateTime) = new Expr(PolarsWrapper.Lit v)
@@ -29,6 +31,7 @@ type LitMechanism = LitMechanism with
     // --- List ---
     static member ($) (LitMechanism, v: int list)      = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: int64 list)    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+    static member ($) (LitMechanism, v: Half list)     = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: float list)    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle)) // double
     static member ($) (LitMechanism, v: float32 list)  = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: string list)   = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
@@ -38,6 +41,7 @@ type LitMechanism = LitMechanism with
 
     // --- Array (High Performance) ---
     static member ($) (LitMechanism, v: int[])      = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
+     static member ($) (LitMechanism, v: Half[])    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: int64[])    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: float[])    = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
     static member ($) (LitMechanism, v: float32[])  = new Expr(PolarsWrapper.Lit(Series.create("", v).Handle))
@@ -97,6 +101,30 @@ module pl =
     let litSeries (series: Series) = 
         let h = PolarsWrapper.CloneSeries series.Handle 
         new Expr(PolarsWrapper.Lit h)
+    // -------------------------------------------------------------------------
+    // Struct Literals
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Create a Struct Expression from a single anonymous record or class instance.
+    /// <para>Example: <c>pl.litStruct {| A = 1; B = "hi" |}</c></para>
+    /// </summary>
+    /// <param name="value">The object to pack into a struct.</param>
+    let litStruct (value: 'T when 'T : not struct) =
+        // C#'s StructPacker.Pack expects an array
+        let sHandle = StructPacker.Pack("literal", [| value |])
+        new Expr(PolarsWrapper.Lit sHandle)
+
+    /// <summary>
+    /// Create a Struct Expression from a sequence of objects.
+    /// <para>The properties of the objects become the fields of the struct.</para>
+    /// </summary>
+    /// <param name="values">The sequence of objects to pack.</param>
+    let litStructs (values: seq<'T>) =
+        // Convert to array for the C# StructPacker
+        let arr = values |> Seq.toArray
+        let sHandle = StructPacker.Pack("literal", arr)
+        new Expr(PolarsWrapper.Lit sHandle)
     // --- Expr Helpers ---
     /// <summary> Cast an expression to a different data type. </summary>
     let cast (dtype: DataType) (e: Expr) = e.Cast dtype

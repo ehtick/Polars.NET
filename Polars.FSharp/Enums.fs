@@ -30,7 +30,7 @@ and DataType =
     | Decimal of precision: int option * scale: int option
     | Unknown | SameAsInput | Null | List of DataType | Array of DataType * width: uint64
     | Struct of Field list 
-    | Int128 | UInt128
+    | Int128 | UInt128 | Float16
     member this.Code : int =
         match this with
         | Unknown | SameAsInput -> 0
@@ -59,6 +59,7 @@ and DataType =
         | Array _ -> 23
         | Int128 -> 24
         | UInt128 -> 25
+        | Float16 -> 26
     static member FromHandle (handle: DataTypeHandle) : DataType =
         let kind = PolarsWrapper.GetDataTypeKind handle
 
@@ -78,6 +79,7 @@ and DataType =
         | 13 -> Date
         | 24 -> Int128
         | 25 -> UInt128
+        | 26 -> Float16
         
         // --- Complex Type ---
         
@@ -152,7 +154,7 @@ and DataType =
         match this with
         | UInt8 | UInt16 | UInt32 | UInt64
         | Int8 | Int16 | Int32 | Int64
-        | Float32 | Float64 | Int128
+        | Float32 | Float64 | Int128 | Float16
         | Decimal _ -> true
         | _ -> false
 
@@ -188,6 +190,7 @@ and DataType =
         | Time -> PolarsWrapper.NewPrimitiveType 15
         | Int128 -> PolarsWrapper.NewPrimitiveType 24
         | UInt128 -> PolarsWrapper.NewPrimitiveType 25
+        | Float16 -> PolarsWrapper.NewPrimitiveType 26
         
         // --- Complex Type ---
 
