@@ -2482,136 +2482,205 @@ and DataFrame(handle: DataFrameHandle) =
         let handles = series |> Array.map (fun s -> s.Handle)
         let h = PolarsWrapper.DataFrameNew handles
         new DataFrame(h)
+    // ---------------------------------------------------------
+    // Read CSV (File / Cloud / Glob)
+    // ---------------------------------------------------------
+
     /// <summary>
-    /// Read a CSV file into a DataFrame.
+    /// Read a DataFrame from a CSV file.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanCsv and collects the result. 
+    /// For larger-than-memory datasets or better query optimization, consider using LazyFrame.ScanCsv directly.
+    /// </para>
     /// </summary>
-    /// <param name="path">Path to the CSV file.</param>
-    /// <param name="columns">Columns to select.</param>
-    /// <param name="schema">Overwrite the schema of the dataset.</param>
-    /// <param name="hasHeader">Indicate if the CSV file has a header line (default: true).</param>
-    /// <param name="separator">Character used as separator (default: ',').</param>
-    /// <param name="quoteChar">Character used for quoting (default: '"'). Set to '\0' to disable.</param>
-    /// <param name="eolChar">Character used as End-Of-Line (default: '\n').</param>
-    /// <param name="ignoreErrors">Ignore parsing errors (default: false).</param>
-    /// <param name="tryParseDates">Try to automatically parse dates (default: true).</param>
-    /// <param name="lowMemory">Reduce memory usage at expense of performance (default: false).</param>
-    /// <param name="skipRows">Number of rows to skip (default: 0).</param>
-    /// <param name="nRows">Stop reading after n rows.</param>
-    /// <param name="inferSchemaLength">Number of rows to scan for schema inference (default: 100).</param>
-    /// <param name="encoding">File encoding (UTF8 or LossyUTF8).</param>
-    /// <param name="nullValues">List of strings to consider as null values.</param>
-    /// <param name="missingIsNull">Treat missing fields as null (default: true).</param>
-    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
-    /// <param name="decimalComma">Use comma as decimal separator (default: false).</param>
-    /// <param name="truncateRaggedLines">Truncate lines longer than schema (default: false).</param>
-    /// <param name="rowIndexName">If provided, add a column with the row index.</param>
-    /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
-    static member ReadCsv
-        (
-            path: string,
-            ?columns: string list,
-            ?schema: PolarsSchema,
-            ?hasHeader: bool,
-            ?separator: char,
-            ?quoteChar: char,          
-            ?eolChar: char,            
-            ?ignoreErrors: bool,
-            ?tryParseDates: bool,
-            ?lowMemory: bool,
-            ?skipRows: int64,
-            ?nRows: int64,
-            ?inferSchemaLength: int64,
-            ?encoding: CsvEncoding,    
-            ?nullValues: string list,  
-            ?missingIsNull: bool,      
-            ?commentPrefix: string,    
-            ?decimalComma: bool,       
-            ?truncateRaggedLines: bool,
-            ?rowIndexName: string,     
-            ?rowIndexOffset: uint64    
-        ) : DataFrame =
+    static member ReadCsv(
+        path: string,
+        ?columns: seq<string>,
+        ?hasHeader: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?eolChar: char,
+        ?ignoreErrors: bool,
+        ?tryParseDates: bool,
+        ?lowMemory: bool,
+        ?skipRows: uint64,
+        ?nRows: uint64,
+        ?inferSchemaLength: uint64,
+        ?schema: PolarsSchema,
+        ?encoding: CsvEncoding,
+        ?nullValues: seq<string>,
+        ?missingIsNull: bool,
+        ?commentPrefix: string,
+        ?decimalComma: bool,
+        ?truncateRaggedLines: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint64,
+        ?cloudOptions: CloudOptions
+    ) : DataFrame =
         
-        // 1. Defaults
-        let pHeader = defaultArg hasHeader true
-        let pSep = defaultArg separator ',' |> byte
-        let pQuote = defaultArg quoteChar '"'
-        let pEol = defaultArg eolChar '\n' |> byte
-        let pIgnoreErrors = defaultArg ignoreErrors false
-        let pTryParseDates = defaultArg tryParseDates true
-        let pLowMem = defaultArg lowMemory false
-        let pSkipRows = defaultArg skipRows 0L |> unativeint
-        let pEncoding = defaultArg encoding CsvEncoding.UTF8
-        
-        let pMissingIsNull = defaultArg missingIsNull true
-        let pDecimalComma = defaultArg decimalComma false
-        let pTruncateRagged = defaultArg truncateRaggedLines false
-        let pRowIndexOffset = defaultArg rowIndexOffset 0UL |> unativeint
-
-        // 2. Complex Conversions
-        
-        // Columns: string list -> string[]
-        let pCols = 
-            columns 
-            |> Option.map List.toArray 
-            |> Option.toObj
-
-        // NullValues: string list -> string[]
-        let pNullValues = 
-            nullValues
-            |> Option.map List.toArray
-            |> Option.toObj
-
-        // Schema: Schema obj -> SchemaHandle
-        let hSchema = 
-            schema 
-            |> Option.map (fun s -> s.Handle) 
-            |> Option.toObj
-
-        // Nullable ulongs
-        let pNRows = 
-            nRows 
-            |> Option.map unativeint 
-            |> Option.toNullable
-        let pInfer = 
-            inferSchemaLength 
-            |> Option.map unativeint 
-            |> Option.toNullable
-
-        // 3. Call Wrapper
-        let handle = PolarsWrapper.ReadCsv(
+        let mutable lf = LazyFrame.ScanCsv(
             path,
-            pCols,
-            pHeader,
-            pSep,
-            pQuote,
-            pEol,
-            pIgnoreErrors,
-            pTryParseDates,
-            pLowMem,
-            pSkipRows,
-            pNRows,
-            pInfer,
-            hSchema,
-            pEncoding.ToNative(),
-            pNullValues,
-            pMissingIsNull,
-            Option.toObj commentPrefix,
-            pDecimalComma,
-            pTruncateRagged,
-            Option.toObj rowIndexName,
-            pRowIndexOffset
+            ?schema = schema,
+            ?hasHeader = hasHeader,
+            ?separator = separator,
+            ?quoteChar = quoteChar,
+            ?eolChar = eolChar,
+            ?ignoreErrors = ignoreErrors,
+            ?tryParseDates = tryParseDates,
+            ?lowMemory = lowMemory,
+            ?skipRows = skipRows,
+            ?nRows = nRows,
+            ?inferSchemaLength = inferSchemaLength,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?encoding = encoding,
+            ?nullValues = nullValues,
+            ?missingIsNull = missingIsNull,
+            ?commentPrefix = commentPrefix,
+            ?decimalComma = decimalComma,
+            ?truncateRaggedLines = truncateRaggedLines,
+            ?cloudOptions = cloudOptions
         )
 
-        new DataFrame(handle)
+        match columns with
+        | Some cols -> 
+            let colArray = cols |> Seq.toArray
+            if colArray.Length > 0 then
+                use sel = new Selector(PolarsWrapper.SelectorCols colArray)
+                lf <- lf.Select [sel :> IColumnExpr]
+        | None -> ()
 
+        lf.Collect()
+
+    // ---------------------------------------------------------
+    // Read CSV (Memory / Bytes)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read a DataFrame from a CSV memory buffer.
+    /// </summary>
+    static member ReadCsv(
+        buffer: byte[],
+        ?columns: seq<string>,
+        ?hasHeader: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?eolChar: char,
+        ?ignoreErrors: bool,
+        ?tryParseDates: bool,
+        ?lowMemory: bool,
+        ?skipRows: uint64,
+        ?nRows: uint64,
+        ?inferSchemaLength: uint64,
+        ?schema: PolarsSchema,
+        ?encoding: CsvEncoding,
+        ?nullValues: seq<string>,
+        ?missingIsNull: bool,
+        ?commentPrefix: string,
+        ?decimalComma: bool,
+        ?truncateRaggedLines: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint64
+    ) : DataFrame =
+        
+        let mutable lf = LazyFrame.ScanCsv(
+            buffer,
+            ?schema = schema,
+            ?hasHeader = hasHeader,
+            ?separator = separator,
+            ?quoteChar = quoteChar,
+            ?eolChar = eolChar,
+            ?ignoreErrors = ignoreErrors,
+            ?tryParseDates = tryParseDates,
+            ?lowMemory = lowMemory,
+            ?skipRows = skipRows,
+            ?nRows = nRows,
+            ?inferSchemaLength = inferSchemaLength,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?encoding = encoding,
+            ?nullValues = nullValues ,
+            ?missingIsNull = missingIsNull,
+            ?commentPrefix = commentPrefix,
+            ?decimalComma = decimalComma,
+            ?truncateRaggedLines = truncateRaggedLines
+        )
+
+        match columns with
+        | Some cols -> 
+            let colArray = cols |> Seq.toArray
+            if colArray.Length > 0 then
+                use sel = new Selector(PolarsWrapper.SelectorCols colArray)
+                lf <- lf.Select [sel :> IColumnExpr]
+        | None -> ()
+
+        lf.Collect()
+
+    // ---------------------------------------------------------
+    // Read CSV (Stream)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read a DataFrame from a CSV memory stream.
+    /// </summary>
+    static member ReadCsv(
+        stream: System.IO.Stream,
+        ?columns: seq<string>,
+        ?hasHeader: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?eolChar: char,
+        ?ignoreErrors: bool,
+        ?tryParseDates: bool,
+        ?lowMemory: bool,
+        ?skipRows: uint64,
+        ?nRows: uint64,
+        ?inferSchemaLength: uint64,
+        ?schema: PolarsSchema,
+        ?encoding: CsvEncoding,
+        ?nullValues: seq<string>,
+        ?missingIsNull: bool,
+        ?commentPrefix: string,
+        ?decimalComma: bool,
+        ?truncateRaggedLines: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint64
+    ) : DataFrame =
+        
+        use ms = new MemoryStream()
+        stream.CopyTo ms
+        let bytes = ms.ToArray()
+
+        DataFrame.ReadCsv(
+            bytes,
+            ?columns = columns,
+            ?hasHeader = hasHeader,
+            ?separator = separator,
+            ?quoteChar = quoteChar,
+            ?eolChar = eolChar,
+            ?ignoreErrors = ignoreErrors,
+            ?tryParseDates = tryParseDates,
+            ?lowMemory = lowMemory,
+            ?skipRows = skipRows,
+            ?nRows = nRows,
+            ?inferSchemaLength = inferSchemaLength,
+            ?schema = schema,
+            ?encoding = encoding,
+            ?nullValues = nullValues,
+            ?missingIsNull = missingIsNull,
+            ?commentPrefix = commentPrefix,
+            ?decimalComma = decimalComma,
+            ?truncateRaggedLines = truncateRaggedLines,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset
+        )
     /// <summary>
     /// Read a CSV file asynchronously into a DataFrame.
     /// </summary>
     static member ReadCsvAsync
         (
             path: string,
-            ?columns: string list,
-            ?schema: PolarsSchema,
+            ?columns: seq<string>,
             ?hasHeader: bool,
             ?separator: char,
             ?quoteChar: char,
@@ -2619,17 +2688,19 @@ and DataFrame(handle: DataFrameHandle) =
             ?ignoreErrors: bool,
             ?tryParseDates: bool,
             ?lowMemory: bool,
-            ?skipRows: int64,
-            ?nRows: int64,
-            ?inferSchemaLength: int64,
+            ?skipRows: uint64,
+            ?nRows: uint64,
+            ?inferSchemaLength: uint64,
+            ?schema: PolarsSchema,
             ?encoding: CsvEncoding,
-            ?nullValues: string list,
+            ?nullValues: seq<string>,
             ?missingIsNull: bool,
             ?commentPrefix: string,
             ?decimalComma: bool,
             ?truncateRaggedLines: bool,
             ?rowIndexName: string,
-            ?rowIndexOffset: uint64
+            ?rowIndexOffset: uint64,
+            ?cloudOptions: CloudOptions
         ) =
         task {
              return DataFrame.ReadCsv(
@@ -2653,7 +2724,8 @@ and DataFrame(handle: DataFrameHandle) =
                 ?decimalComma = decimalComma,
                 ?truncateRaggedLines = truncateRaggedLines,
                 ?rowIndexName = rowIndexName,
-                ?rowIndexOffset = rowIndexOffset
+                ?rowIndexOffset = rowIndexOffset,
+                ?cloudOptions = cloudOptions
             )
         }
     /// <summary>
@@ -2682,78 +2754,227 @@ and DataFrame(handle: DataFrameHandle) =
         else
             new DataFrame(handle)
 
-    /// <summary> Read a parquet file into a DataFrame (Eager). </summary>
-    static member ReadParquet(path: string, 
-                              ?columns: string list, 
-                              ?nRows: uint64, 
-                              ?parallelStrategy: ParallelStrategy,
-                              ?lowMemory: bool,
-                              ?rowIndexName: string,
-                              ?rowIndexOffset: uint32) =
+    // ---------------------------------------------------------
+    // Read Parquet (File / Cloud / Glob)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read a parquet file into a DataFrame (Eager).
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanParquet and collects the result.
+    /// </para>
+    /// </summary>
+    static member ReadParquet(
+        path: string,
+        ?columns: seq<string>,
+        ?nRows: uint64,
+        ?parallelStrategy: ParallelStrategy,
+        ?lowMemory: bool,
+        ?useStatistics: bool,
+        ?glob: bool,
+        ?allowMissingColumns: bool,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?schema: PolarsSchema,
+        ?hivePartitioning: bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool,
+        ?cloudOptions: CloudOptions
+    ) : DataFrame =
         
-        let cols = defaultArg columns [] |> List.toArray
-        let para = defaultArg parallelStrategy ParallelStrategy.Auto
-        let lowMem = defaultArg lowMemory false
-        let rName = defaultArg rowIndexName null
-        let rOff = defaultArg rowIndexOffset 0u
-        
-        let nRowsNullable = Option.toNullable nRows
-        
-        let h = PolarsWrapper.ReadParquet(
-            path, 
-            cols, 
-            nRowsNullable, 
-            para.ToNative(), 
-            lowMem, 
-            rName, 
-            rOff
+        let mutable (lf: LazyFrame) = LazyFrame.ScanParquet(
+            path,
+            ?nRows = nRows,
+            ?parallelStrategy = parallelStrategy,
+            ?lowMemory = lowMemory,
+            ?useStatistics = useStatistics,
+            ?glob = glob,
+            ?allowMissingColumns = allowMissingColumns,
+            ?rechunk = rechunk,
+            ?cache = cache,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?includePathColumn = includePathColumn,
+            ?schema = schema,
+            ?hivePartitioning = hivePartitioning,
+            ?hivePartitionSchema = hivePartitionSchema,
+            ?tryParseHiveDates = tryParseHiveDates,
+            ?cloudOptions = cloudOptions
         )
 
-        new DataFrame(h)
-    static member ReadParquet(buffer: byte[], 
-                              ?columns: string list, 
-                              ?nRows: uint64, 
-                              ?parallelStrategy: ParallelStrategy, 
-                              ?lowMemory: bool,
-                              ?rowIndexName: string,
-                              ?rowIndexOffset: uint32) : DataFrame =
-        
-        let cols = defaultArg columns [] |> List.toArray
-        let para = defaultArg parallelStrategy ParallelStrategy.Auto
-        let lowMem = defaultArg lowMemory false
-        let rName = defaultArg rowIndexName null
-        let rOff = defaultArg rowIndexOffset 0u
-        
-        let nRowsNullable = Option.toNullable nRows
+        match columns with
+        | Some cols -> 
+            let mutable colList = cols |> Seq.toList
+            if not (List.isEmpty colList) then
+                match rowIndexName with
+                | Some rName when not (List.contains rName colList) -> colList <- colList @ [rName]
+                | _ -> ()
 
-        let h = PolarsWrapper.ReadParquet(
-            buffer, 
-            cols, 
-            nRowsNullable, 
-            para.ToNative(), 
-            lowMem, 
-            rName, 
-            rOff
+                match includePathColumn with
+                | Some pName when not (List.contains pName colList) -> colList <- colList @ [pName]
+                | _ -> ()
+
+                use sel = new Selector(PolarsWrapper.SelectorCols (colList |> List.toArray))
+                lf <- lf.Select [sel :> IColumnExpr]
+        | None -> ()
+
+        lf.Collect()
+
+    // ---------------------------------------------------------
+    // Read Parquet (Memory / Bytes)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read Parquet from an in-memory byte array.
+    /// </summary>
+    static member ReadParquet(
+        buffer: byte[],
+        ?columns: seq<string>,
+        ?nRows: uint64,
+        ?parallelStrategy: ParallelStrategy,
+        ?lowMemory: bool,
+        ?useStatistics: bool,
+        ?allowMissingColumns: bool,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?schema: PolarsSchema,
+        ?hivePartitioning:bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool
+    ) : DataFrame =
+        
+        let mutable (lf: LazyFrame) = LazyFrame.ScanParquet(
+            buffer,
+            ?nRows = nRows,
+            ?parallelStrategy = parallelStrategy,
+            ?lowMemory = lowMemory,
+            ?useStatistics = useStatistics,
+            ?allowMissingColumns = allowMissingColumns,
+            ?rechunk = rechunk,
+            ?cache = cache,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?includePathColumn = includePathColumn,
+            ?schema = schema,
+            ?hivePartitioning = hivePartitioning,
+            ?hivePartitionSchema = hivePartitionSchema,
+            ?tryParseHiveDates = tryParseHiveDates
         )
 
-        new DataFrame(h)
+        match columns with
+        | Some cols -> 
+            let mutable colList = cols |> Seq.toList
+            if not (List.isEmpty colList) then
+                match rowIndexName with
+                | Some rName when not (List.contains rName colList) -> colList <- colList @ [rName]
+                | _ -> ()
+
+                match includePathColumn with
+                | Some pName when not (List.contains pName colList) -> colList <- colList @ [pName]
+                | _ -> ()
+
+                use sel = new Selector(PolarsWrapper.SelectorCols(colList |> List.toArray))
+                lf <- lf.Select [sel :> IColumnExpr]
+        | None -> ()
+
+        lf.Collect()
+
+    // ---------------------------------------------------------
+    // Read Parquet (Stream)
+    // ---------------------------------------------------------
+
+    /// <summary>
+    /// Read Parquet from a Stream.
+    /// </summary>
+    static member ReadParquet(
+        stream: System.IO.Stream,
+        ?columns: seq<string>,
+        ?nRows: uint64,
+        ?parallelStrategy: ParallelStrategy,
+        ?lowMemory: bool,
+        ?useStatistics: bool,
+        ?allowMissingColumns: bool,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?schema: PolarsSchema,
+        ?hivePartitioning:bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool
+    ) : DataFrame =
+        
+        use ms = new System.IO.MemoryStream()
+        stream.CopyTo ms
+        let bytes = ms.ToArray()
+
+        DataFrame.ReadParquet(
+            buffer = bytes,
+            ?columns = columns,
+            ?nRows = nRows,
+            ?parallelStrategy = parallelStrategy,
+            ?lowMemory = lowMemory,
+            ?useStatistics = useStatistics,
+            ?allowMissingColumns = allowMissingColumns,
+            ?rechunk = rechunk,
+            ?cache = cache,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?includePathColumn = includePathColumn,
+            ?schema = schema,
+            ?hivePartitioning = hivePartitioning,
+            ?hivePartitionSchema = hivePartitionSchema,
+            ?tryParseHiveDates = tryParseHiveDates
+        ) 
+
     /// <summary> Asynchronously read a Parquet file. </summary>
-    static member ReadParquetAsync (path: string,
-                            ?columns: string list, 
-                            ?nRows: uint64, 
-                            ?parallelStrategy: ParallelStrategy, 
-                            ?lowMemory: bool,
-                            ?rowIndexName: string,
-                            ?rowIndexOffset: uint32): Async<DataFrame> = 
-        let cols = defaultArg columns [] |> List.toArray
-        let para = defaultArg parallelStrategy ParallelStrategy.Auto
-        let lowMem = defaultArg lowMemory false
-        let rName = defaultArg rowIndexName null
-        let rOff = defaultArg rowIndexOffset 0u
-        let nRowsNullable = Option.toNullable nRows
-        async {
-            let! handle = PolarsWrapper.ReadParquetAsync(path,cols,nRowsNullable,para.ToNative(),lowMem,rName,rOff) |> Async.AwaitTask
-        return new DataFrame(handle)
+    static member ReadParquetAsync (        
+            path: string,
+            ?columns: seq<string>,
+            ?nRows: uint64,
+            ?parallelStrategy: ParallelStrategy,
+            ?lowMemory: bool,
+            ?useStatistics: bool,
+            ?glob: bool,
+            ?allowMissingColumns: bool,
+            ?rechunk: bool,
+            ?cache: bool,
+            ?rowIndexName: string,
+            ?rowIndexOffset: uint32,
+            ?includePathColumn: string,
+            ?schema: PolarsSchema,
+            ?hivePartitioning:bool,
+            ?hivePartitionSchema: PolarsSchema,
+            ?tryParseHiveDates: bool,
+            ?cloudOptions: CloudOptions) = 
+        task {
+            return DataFrame.ReadParquet(
+                path,
+                ?columns = columns,
+                ?nRows = nRows,
+                ?parallelStrategy = parallelStrategy,
+                ?lowMemory = lowMemory,
+                ?useStatistics = useStatistics,
+                ?glob = glob,
+                ?allowMissingColumns = allowMissingColumns,
+                ?rechunk = rechunk,
+                ?cache = cache,
+                ?rowIndexName = rowIndexName,
+                ?rowIndexOffset = rowIndexOffset,
+                ?includePathColumn = includePathColumn,
+                ?schema = schema,
+                ?hivePartitioning = hivePartitioning,
+                ?hivePartitionSchema = hivePartitionSchema,
+                ?tryParseHiveDates = tryParseHiveDates,
+                ?cloudOptions = cloudOptions
+            )
         }
 
     /// <summary>
@@ -2827,71 +3048,160 @@ and DataFrame(handle: DataFrameHandle) =
             ?ignoreErrors=ignoreErrors, 
             ?jsonFormat=jsonFormat
         )
+    // ---------------------------------------------------------
+    // Read IPC (File / Cloud / Glob)
+    // ---------------------------------------------------------
+
     /// <summary>
     /// Read an Arrow IPC (Feather v2) file into a DataFrame.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanIpc and collects the result.
+    /// </para>
     /// </summary>
-    static member ReadIpc(path: string,
-                          ?columns: string seq,
-                          ?nRows: uint64,
-                          ?rowIndexName: string,
-                          ?rowIndexOffset: uint32,
-                          ?rechunk: bool,
-                          ?memoryMap: bool,
-                          ?includePathColumn: string) : DataFrame =
+    static member ReadIpc(
+        path: string,
+        ?columns: seq<string>,
+        ?nRows: uint64,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?glob: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?schema: PolarsSchema,
+        ?hivePartitioning: bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool,
+        ?cloudOptions: CloudOptions
+    ) : DataFrame =
         
-        let cols = columns |> Option.map Seq.toArray |> Option.toObj
-        let rows = Option.toNullable nRows
-        let idxName = Option.toObj rowIndexName
-        let idxOffset = defaultArg rowIndexOffset 0u
-        let rechk = defaultArg rechunk false
-        let mmap = defaultArg memoryMap false 
-        let pathCol = Option.toObj includePathColumn
+        let mutable lf = LazyFrame.ScanIpc(
+            path,
+            ?nRows = nRows,
+            ?rechunk = rechunk,
+            ?cache = cache,
+            ?glob = glob,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?includePathColumn = includePathColumn,
+            ?schema = schema,
+            ?hivePartitioning = hivePartitioning,
+            ?hivePartitionSchema = hivePartitionSchema,
+            ?tryParseHiveDates = tryParseHiveDates,
+            ?cloudOptions = cloudOptions
+        )
 
-        let h = PolarsWrapper.ReadIpc(path, cols, rows, idxName, idxOffset, rechk, mmap, pathCol)
-        new DataFrame(h)
+        match columns with
+        | Some cols -> 
+            let mutable colList = cols |> Seq.toList
+            if not (List.isEmpty colList) then
+                match rowIndexName with
+                | Some rName when not (List.contains rName colList) -> colList <- colList @ [rName]
+                | _ -> ()
+
+                match includePathColumn with
+                | Some pName when not (List.contains pName colList) -> colList <- colList @ [pName]
+                | _ -> ()
+
+                use sel = new Selector(PolarsWrapper.SelectorCols(colList |> List.toArray))
+                lf <- lf.Select [sel :> IColumnExpr]
+        | None -> ()
+
+        lf.Collect()
+
+    // ---------------------------------------------------------
+    // Read IPC (Memory / Bytes)
+    // ---------------------------------------------------------
 
     /// <summary>
     /// Read IPC from in-memory bytes.
     /// </summary>
-    static member ReadIpc(buffer: byte[],
-                          ?columns: string seq,
-                          ?nRows: uint64,
-                          ?rowIndexName: string,
-                          ?rowIndexOffset: uint32,
-                          ?rechunk: bool,
-                          ?includePathColumn: string) : DataFrame =
+    static member ReadIpc(
+        buffer: byte[],
+        ?columns: seq<string>,
+        ?nRows: uint64,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?schema: PolarsSchema,
+        ?hivePartitioning: bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool
+    ) : DataFrame =
         
-        let cols = columns |> Option.map Seq.toArray |> Option.toObj
-        let rows = Option.toNullable nRows
-        let idxName = Option.toObj rowIndexName
-        let idxOffset = defaultArg rowIndexOffset 0u
-        let rechk = defaultArg rechunk false
-        let pathCol = Option.toObj includePathColumn
+        let mutable lf = LazyFrame.ScanIpc(
+            buffer,
+            ?nRows = nRows,
+            ?rechunk = rechunk,
+            ?cache = cache,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?includePathColumn = includePathColumn,
+            ?schema = schema,
+            ?hivePartitioning = hivePartitioning,
+            ?hivePartitionSchema = hivePartitionSchema,
+            ?tryParseHiveDates = tryParseHiveDates
+        )
 
-        let h = PolarsWrapper.ReadIpc(buffer, cols, rows, idxName, idxOffset, rechk, pathCol)
-        new DataFrame(h)
+        match columns with
+        | Some cols -> 
+            let mutable colList = cols |> Seq.toList
+            if not (List.isEmpty colList) then
+                match rowIndexName with
+                | Some rName when not (List.contains rName colList) -> colList <- colList @ [rName]
+                | _ -> ()
+
+                match includePathColumn with
+                | Some pName when not (List.contains pName colList) -> colList <- colList @ [pName]
+                | _ -> ()
+
+                use sel = new Selector(PolarsWrapper.SelectorCols(colList |> List.toArray))
+                lf <- lf.Select [sel :> IColumnExpr]
+        | None -> ()
+
+        lf.Collect()
+
+    // ---------------------------------------------------------
+    // Read IPC (Stream)
+    // ---------------------------------------------------------
 
     /// <summary>
     /// Read IPC from a Stream.
     /// </summary>
-    static member ReadIpc(stream: Stream,
-                          ?columns: string seq,
-                          ?nRows: uint64,
-                          ?rowIndexName: string,
-                          ?rowIndexOffset: uint32,
-                          ?rechunk: bool) : DataFrame =
+    static member ReadIpc(
+        stream: System.IO.Stream,
+        ?columns: seq<string>,
+        ?nRows: uint64,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?schema: PolarsSchema,
+        ?hivePartitioning: bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool
+    ) : DataFrame =
         
-        use ms = new MemoryStream()
-        stream.CopyTo ms
+        use ms = new System.IO.MemoryStream()
+        stream.CopyTo(ms)
         let bytes = ms.ToArray()
 
         DataFrame.ReadIpc(
-            bytes, 
-            ?columns=columns, 
-            ?nRows=nRows, 
-            ?rowIndexName=rowIndexName, 
-            ?rowIndexOffset=rowIndexOffset, 
-            ?rechunk=rechunk
+            bytes,
+            ?columns = columns,
+            ?nRows = nRows,
+            ?rechunk = rechunk,
+            ?cache = cache,
+            ?rowIndexName = rowIndexName,
+            ?rowIndexOffset = rowIndexOffset,
+            ?includePathColumn = includePathColumn,
+            ?schema = schema,
+            ?hivePartitioning = hivePartitioning,
+            ?hivePartitionSchema = hivePartitionSchema,
+            ?tryParseHiveDates = tryParseHiveDates
         )
     /// <summary>
     /// Read an Excel file (.xlsx) into a DataFrame using the high-performance Rust 'calamine' engine.
@@ -3066,136 +3376,364 @@ and DataFrame(handle: DataFrameHandle) =
         new DataFrame(PolarsWrapper.FromArrow batch)
     /// <summary>
     /// Write DataFrame to a comma-separated values (CSV) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
     /// </summary>
-    /// <param name="path">The output file path.</param>
-    /// <param name="hasHeader">Whether to include the header row (default: true).</param>
-    /// <param name="useBom">Whether to include the UTF-8 Byte Order Mark (BOM) (default: false).</param>
-    /// <param name="separator">Character used as separator (default: ',').</param>
-    /// <param name="quoteChar">Character used for quoting (default: '"').</param>
-    /// <param name="quoteStyle">The quoting style to use (default: Necessary).</param>
-    /// <param name="nullValue">String representation for null values (default: "").</param>
-    /// <param name="lineTerminator">Character sequence used to terminate lines (default: "\n").</param>
-    /// <param name="floatScientific">Always use scientific notation for floats.</param>
-    /// <param name="floatPrecision">Number of decimal places to write for floats.</param>
-    /// <param name="decimalComma">Use comma as decimal separator (default: false).</param>
-    /// <param name="dateFormat">Format string for Date columns.</param>
-    /// <param name="timeFormat">Format string for Time columns.</param>
-    /// <param name="datetimeFormat">Format string for Datetime columns.</param>
-    /// <param name="batchSize">Batch size for writing rows (default: 0 = Polars default).</param>
-    member this.WriteCsv
-        (
-            path: string,
-            ?hasHeader: bool,
-            ?useBom: bool,
-            ?separator: char,
-            ?quoteChar: char,
-            ?quoteStyle: QuoteStyle, 
-            ?nullValue: string,
-            ?lineTerminator: string,
-            ?floatScientific: bool,
-            ?floatPrecision: int,
-            ?decimalComma: bool,
-            ?dateFormat: string,
-            ?timeFormat: string,
-            ?datetimeFormat: string,
-            ?batchSize: int
-        ) = 
-        
-        // 1. Defaults
-        let pHeader = defaultArg hasHeader true
-        let pBom = defaultArg useBom false
-        let pSep = defaultArg separator ',' 
-        let pQuote = defaultArg quoteChar '"' 
-        let pStyle = defaultArg quoteStyle QuoteStyle.Necessary
-        let pLineTerm = defaultArg lineTerminator "\n"
-        let pDecimalComma = defaultArg decimalComma false
-        let pBatchSize = defaultArg batchSize 0
-
-        // 2. Optionals (Strings)
-        let pNullVal = Option.toObj nullValue
-        let pDateFmt = Option.toObj dateFormat
-        let pTimeFmt = Option.toObj timeFormat
-        let pDateTimeFmt = Option.toObj datetimeFormat
-
-        // 3. Nullables (Primitive Types)
-        // Option<bool> -> Nullable<bool>
-        let pFloatSci = Option.toNullable floatScientific
-        // Option<int> -> Nullable<int>
-        let pFloatPrec = Option.toNullable floatPrecision
-
-        // 4. Call Wrapper
-        PolarsWrapper.WriteCsv(
-            this.Handle,
+    member this.WriteCsv(
+        path: string,
+        ?includeHeader: bool,
+        ?includeBom: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?quoteStyle: QuoteStyle,
+        ?nullValue: string,
+        ?lineTerminator: string,
+        ?floatScientific: bool,
+        ?floatPrecision: int,
+        ?decimalComma: bool,
+        ?dateFormat: string,
+        ?timeFormat: string,
+        ?datetimeFormat: string,
+        ?checkExtension: bool,
+        ?compression: ExternalCompression,
+        ?compressionLevel: int,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?batchSize: int,
+        ?cloudOptions: CloudOptions
+    ) =
+        this.Lazy().SinkCsv(
             path,
-            pHeader,
-            pBom,
-            pBatchSize,
-            pSep,
-            pQuote,
-            pStyle.ToNative(),
-            pNullVal,
-            pLineTerm,
-            pDateFmt,
-            pTimeFmt,
-            pDateTimeFmt,
-            pFloatSci,
-            pFloatPrec,
-            pDecimalComma
+            ?includeHeader = includeHeader,
+            ?includeBom = includeBom,
+            ?separator = separator,
+            ?quoteChar = quoteChar,
+            ?quoteStyle = quoteStyle,
+            ?nullValue = nullValue,
+            ?lineTerminator = lineTerminator,
+            ?floatScientific = floatScientific,
+            ?floatPrecision = floatPrecision,
+            ?decimalComma = decimalComma,
+            ?dateFormat = dateFormat,
+            ?timeFormat = timeFormat,
+            ?datetimeFormat = datetimeFormat,
+            ?checkExtension = checkExtension,
+            ?compression = compression,
+            ?compressionLevel = compressionLevel,
+            ?maintainOrder = maintainOrder,
+            ?syncOnClose = syncOnClose,
+            ?mkdir = mkdir,
+            ?batchSize = batchSize,
+            ?cloudOptions = cloudOptions
         )
-        
-        // Return self for fluent API
         this
     /// <summary>
-    /// Write DataFrame to Parquet file.
+    /// Write DataFrame to a partitioned comma-separated values (CSV) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
     /// </summary>
-    /// <param name="path">Output file path.</param>
-    /// <param name="compression">Compression method. Defaults to Snappy.</param>
-    /// <param name="compressionLevel">Compression level for Gzip/Brotli/Zstd. -1 means default. Defaults to -1.</param>
-    /// <param name="statistics">Compute and write column statistics. Defaults to false.</param>
-    /// <param name="rowGroupSize">Number of rows per row group. 0 means use default.</param>
-    /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
-    /// <param name="parallel">Write in parallel. Defaults to true.</param>
-    member this.WriteParquet(path: string, ?compression: ParquetCompression, ?compressionLevel: int, ?statistics: bool, ?rowGroupSize: int, ?dataPageSize: int, ?parallelOn: bool) =
+    member this.WriteCsvPartitioned(
+        path: string,
+        partitionBy: Selector,
+        ?includeKeys: bool,
+        ?keysPreGrouped: bool,
+        ?maxRowsPerFile: int,
+        ?approxBytesPerFile: int64,
+        ?includeHeader: bool,
+        ?includeBom: bool,
+        ?separator: char,
+        ?quoteChar: char,
+        ?quoteStyle: QuoteStyle,
+        ?nullValue: string,
+        ?lineTerminator: string,
+        ?floatScientific: bool,
+        ?floatPrecision: int,
+        ?decimalComma: bool,
+        ?dateFormat: string,
+        ?timeFormat: string,
+        ?datetimeFormat: string,
+        ?checkExtension: bool,
+        ?compression: ExternalCompression,
+        ?compressionLevel: int,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?batchSize: int,
+        ?cloudOptions: CloudOptions
+    ) =
+        this.Lazy().SinkCsvPartitioned(
+            path,
+            partitionBy,
+            ?includeKeys = includeKeys,
+            ?keysPreGrouped = keysPreGrouped,
+            ?maxRowsPerFile = maxRowsPerFile,
+            ?approxBytesPerFile = approxBytesPerFile,
+            ?includeHeader = includeHeader,
+            ?includeBom = includeBom,
+            ?separator = separator,
+            ?quoteChar = quoteChar,
+            ?quoteStyle = quoteStyle,
+            ?nullValue = nullValue,
+            ?lineTerminator = lineTerminator,
+            ?floatScientific = floatScientific,
+            ?floatPrecision = floatPrecision,
+            ?decimalComma = decimalComma,
+            ?dateFormat = dateFormat,
+            ?timeFormat = timeFormat,
+            ?datetimeFormat = datetimeFormat,
+            ?checkExtension = checkExtension,
+            ?compression = compression,
+            ?compressionLevel = compressionLevel,
+            ?maintainOrder = maintainOrder,
+            ?syncOnClose = syncOnClose,
+            ?mkdir = mkdir,
+            ?batchSize = batchSize,
+            ?cloudOptions = cloudOptions
+        )
+        this
+    /// <summary>
+    /// Write DataFrame to a CSV format in memory.
+    /// </summary>
+    /// <returns>A byte array containing the serialized CSV data.</returns>
+    member this.WriteCsvMemory(
+        ?includeBom: bool,
+        ?includeHeader: bool,
+        ?batchSize: int,
+        ?checkExtension: bool,
+        ?compressionCode: ExternalCompression,
+        ?compressionLevel: int,
+        ?dateFormat: string,
+        ?timeFormat: string,
+        ?datetimeFormat: string,
+        ?floatScientific: int, 
+        ?floatPrecision: int,
+        ?decimalComma: bool,
+        ?separator: byte,
+        ?quoteChar: byte,
+        ?nullValue: string,
+        ?lineTerminator: string,
+        ?quoteStyle: QuoteStyle,
+        ?maintainOrder: bool
+    ) : byte[] =
+        this.Lazy().SinkCsvMemory(
+            ?includeBom = includeBom,
+            ?includeHeader = includeHeader,
+            ?batchSize = batchSize,
+            ?checkExtension = checkExtension,
+            ?compressionCode = compressionCode,
+            ?compressionLevel = compressionLevel,
+            ?dateFormat = dateFormat,
+            ?timeFormat = timeFormat,
+            ?datetimeFormat = datetimeFormat,
+            ?floatScientific = floatScientific,
+            ?floatPrecision = floatPrecision,
+            ?decimalComma = decimalComma,
+            ?separator = separator,
+            ?quoteChar = quoteChar,
+            ?nullValue = nullValue,
+            ?lineTerminator = lineTerminator,
+            ?quoteStyle = quoteStyle,
+            ?maintainOrder = maintainOrder
+        )
         
-        let compression = defaultArg compression ParquetCompression.Snappy
-        let compressionLevel = defaultArg compressionLevel -1
-        let statistics = defaultArg statistics false
-        let rowGroupSize = defaultArg rowGroupSize 0
-        let dataPageSize = defaultArg dataPageSize 0
-        let p = defaultArg parallelOn true
+/// <summary>
+    /// Write DataFrame to a Parquet file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming, statistics, and cloud storage.
+    /// </para>
+    /// </summary>
+    member this.WriteParquet(
+        path: string,
+        ?compression: ParquetCompression,
+        ?compressionLevel: int,
+        ?statistics: bool,
+        ?rowGroupSize: int,
+        ?dataPageSize: int,
+        ?compatLevel: int,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        this.Lazy().SinkParquet(
+            path,
+            ?compression = compression,
+            ?compressionLevel = compressionLevel,
+            ?statistics = statistics,
+            ?rowGroupSize = rowGroupSize,
+            ?dataPageSize = dataPageSize,
+            ?compatLevel = compatLevel,
+            ?maintainOrder = maintainOrder,
+            ?syncOnClose = syncOnClose,
+            ?mkdir = mkdir,
+            ?cloudOptions = cloudOptions
+        )
+        this
+    /// <summary>
+    /// Write DataFrame to a partitioned Parquet file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
+    /// </summary>
+    member this.WriteParquetPartitioned(
+        path: string,
+        partitionBy: Selector,
+        ?includeKeys: bool,
+        ?keysPreGrouped: bool,
+        ?maxRowsPerFile: int,
+        ?approxBytesPerFile: int64,
+        ?compression: ParquetCompression,
+        ?compressionLevel: int,
+        ?statistics: bool,
+        ?rowGroupSize: int,
+        ?dataPageSize: int,
+        ?compatLevel: int,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        this.Lazy().SinkParquetPartitioned(
+            path,
+            partitionBy,
+            ?includeKeys = includeKeys,
+            ?keysPreGrouped = keysPreGrouped,
+            ?maxRowsPerFile = maxRowsPerFile,
+            ?approxBytesPerFile = approxBytesPerFile,
+            ?compression = compression,
+            ?compressionLevel = compressionLevel,
+            ?statistics = statistics,
+            ?rowGroupSize = rowGroupSize,
+            ?dataPageSize = dataPageSize,
+            ?compatLevel = compatLevel,
+            ?maintainOrder = maintainOrder,
+            ?syncOnClose = syncOnClose,
+            ?mkdir = mkdir,
+            ?cloudOptions = cloudOptions
+        )
+        this
+    /// <summary>
+    /// Write DataFrame to a Parquet format in memory.
+    /// </summary>
+    /// <returns>A byte array containing the serialized Parquet data.</returns>
+    member this.WriteParquetMemory(
+        ?compression: ParquetCompression,
+        ?compressionLevel: int,
+        ?statistics: bool,
+        ?rowGroupSize: int,
+        ?dataPageSize: int,
+        ?compatLevel: int,
+        ?maintainOrder: bool
+    ) : byte[] =
+        this.Lazy().SinkParquetMemory(
+            ?compression = compression,
+            ?compressionLevel = compressionLevel,
+            ?statistics = statistics,
+            ?rowGroupSize = rowGroupSize,
+            ?dataPageSize = dataPageSize,
+            ?compatLevel = compatLevel,
+            ?maintainOrder = maintainOrder
+        )
+    /// <summary>
+    /// Write DataFrame to an IPC (Arrow/Feather) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
+    /// </summary>
+    member this.WriteIpc(
+        path: string,
+        ?compression: IpcCompression,
+        ?compatLevel: int,
+        ?recordBatchSize: int,
+        ?recordBatchStatistics: bool,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        this.Lazy().SinkIpc(
+            path,
+            ?compression = compression,
+            ?compatLevel = compatLevel,
+            ?recordBatchSize = recordBatchSize,
+            ?recordBatchStatistics = recordBatchStatistics,
+            ?maintainOrder = maintainOrder,
+            ?syncOnClose = syncOnClose,
+            ?mkdir = mkdir,
+            ?cloudOptions = cloudOptions
+        ) |> ignore
+        
+        this
 
-        PolarsWrapper.WriteParquet(
-            this.Handle, 
-            path, 
-            compression.ToNative(), 
-            compressionLevel, 
-            statistics, 
-            rowGroupSize, 
-            dataPageSize, 
-            p
-        )
+    /// <summary>
+    /// Write DataFrame to a partitioned IPC (Arrow/Feather) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
+    /// </summary>
+    member this.WriteIpcPartitioned(
+        path: string,
+        partitionBy: Selector,
+        ?includeKeys: bool,
+        ?keysPreGrouped: bool,
+        ?maxRowsPerFile: int,
+        ?approxBytesPerFile: int64,
+        ?compression: IpcCompression,
+        ?compatLevel: int,
+        ?recordBatchSize: int,
+        ?recordBatchStatistics: bool,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        this.Lazy().SinkIpcPartitioned(
+            path,
+            partitionBy,
+            ?includeKeys = includeKeys,
+            ?keysPreGrouped = keysPreGrouped,
+            ?maxRowsPerFile = maxRowsPerFile,
+            ?approxBytesPerFile = approxBytesPerFile,
+            ?compression = compression,
+            ?compatLevel = compatLevel,
+            ?recordBatchSize = recordBatchSize,
+            ?recordBatchStatistics = recordBatchStatistics,
+            ?maintainOrder = maintainOrder,
+            ?syncOnClose = syncOnClose,
+            ?mkdir = mkdir,
+            ?cloudOptions = cloudOptions
+        ) |> ignore
         
         this
+
     /// <summary>
-    /// Write DataFrame to IPC (Arrow) file.
+    /// Write DataFrame to an IPC (Arrow/Feather) format in memory.
     /// </summary>
-    /// <param name="path">The file path to write to.</param>
-    /// <param name="compression">Compression method (NoCompression, LZ4, ZSTD). Defaults to NoCompression.</param>
-    /// <param name="parallel">Whether to use parallel writing. Defaults to true.</param>
-    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
-    member this.WriteIpc(path: string, ?compression: IpcCompression, ?parallelStrategy: bool, ?compatLevel: int) =
-        let compression = defaultArg compression IpcCompression.NoCompression
-        let parallelOn = defaultArg parallelStrategy true
-        let compatLevel = defaultArg compatLevel -1
-        
-        PolarsWrapper.WriteIpc(this.Handle, path, compression.ToNative(), parallelOn, compatLevel)
+    /// <returns>A byte array containing the serialized IPC data.</returns>
+    member this.WriteIpcMemory(
+        ?compression: IpcCompression,
+        ?compatLevel: int,
+        ?recordBatchSize: int,
+        ?recordBatchStatistics: bool,
+        ?maintainOrder: bool
+    ) : byte[] =
+        this.Lazy().SinkIpcMemory(
+            ?compression = compression,
+            ?compatLevel = compatLevel,
+            ?recordBatchSize = recordBatchSize,
+            ?recordBatchStatistics = recordBatchStatistics,
+            ?maintainOrder = maintainOrder
+        )
     /// <summary>   
     /// Write DataFrame to a JSON file.
     /// </summary>
     member this.WriteJson(path: string, ?format: JsonFormat) =
         let format = defaultArg format JsonFormat.Json
         PolarsWrapper.WriteJson(this.Handle, path, format.ToNative())
-
+        this
     /// <summary>
     /// Write DataFrame to a NDJSON (JsonLines) file.
     /// </summary>
@@ -3682,7 +4220,7 @@ and DataFrame(handle: DataFrameHandle) =
         index: seq<string>,
         columns: seq<string>,
         values: seq<string>,
-        ?aggregateFunction: PivotAgg,
+        ?aggFn: PivotAgg,
         ?sortColumns: bool,
         ?maintainOrder: bool,
         ?separator: string
@@ -3695,7 +4233,7 @@ and DataFrame(handle: DataFrameHandle) =
             sIndex,
             sColumns,
             sValues,
-            ?aggregateFunction = aggregateFunction,
+            ?aggregateFunction = aggFn,
             ?sortColumns = sortColumns,
             ?maintainOrder = maintainOrder,
             ?separator = separator
@@ -3708,7 +4246,7 @@ and DataFrame(handle: DataFrameHandle) =
         index: seq<string>,
         columns: seq<string>,
         values: seq<string>,
-        aggregateExpr: Expr,
+        aggExpr: Expr,
         ?sortColumns: bool,
         ?maintainOrder: bool,
         ?separator: string
@@ -3721,7 +4259,7 @@ and DataFrame(handle: DataFrameHandle) =
             sIndex,
             sColumns,
             sValues,
-            aggregateExpr = aggregateExpr,
+            aggregateExpr = aggExpr,
             ?sortColumns = sortColumns,
             ?maintainOrder = maintainOrder,
             ?separator = separator
@@ -4127,7 +4665,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         ?rowIndexOffset: uint64,
         ?includeFilePaths: string,
         ?encoding: CsvEncoding,
-        ?nullValues: string list,
+        ?nullValues: seq<string>,
         ?missingIsNull: bool,
         ?commentPrefix: string,
         ?decimalComma: bool,
@@ -4158,7 +4696,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         let pRowIdxOff = defaultArg rowIndexOffset 0UL
         let pIncPaths = Option.toObj includeFilePaths
         let pEnc = defaultArg encoding CsvEncoding.UTF8
-        let pNullVals = nullValues |> Option.map List.toArray |> Option.toObj
+        let pNullVals = nullValues |> Option.map Seq.toArray |> Option.toObj
         let pMissNull = defaultArg missingIsNull true
         let pComment = Option.toObj commentPrefix
         let pDecComma = defaultArg decimalComma false
@@ -4233,7 +4771,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         ?rowIndexOffset: uint64,
         ?includeFilePaths: string,
         ?encoding: CsvEncoding,
-        ?nullValues: string list,
+        ?nullValues: seq<string>,
         ?missingIsNull: bool,
         ?commentPrefix: string,
         ?decimalComma: bool,
@@ -4263,7 +4801,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         let pRowIdxOff = defaultArg rowIndexOffset 0UL
         let pIncPaths = Option.toObj includeFilePaths
         let pEnc = defaultArg encoding CsvEncoding.UTF8
-        let pNullVals = nullValues |> Option.map List.toArray |> Option.toObj
+        let pNullVals = nullValues |> Option.map Seq.toArray |> Option.toObj
         let pMissNull = defaultArg missingIsNull true
         let pComment = Option.toObj commentPrefix
         let pDecComma = defaultArg decimalComma false
@@ -4337,7 +4875,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         ?rowIndexOffset: uint64,
         ?includeFilePaths: string,
         ?encoding: CsvEncoding,
-        ?nullValues: string list,
+        ?nullValues: seq<string>,
         ?missingIsNull: bool,
         ?commentPrefix: string,
         ?decimalComma: bool,
@@ -4398,13 +4936,13 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <param name="rowIndexOffset">Start index for the row index column.</param>
     /// <param name="includePathColumn">If provided, add a column with the path of the file.</param>
     /// <param name="schema">Overwrite the schema of the dataset.</param>
-    /// <param name="hiveSchema">The schema of the hive partitions.</param>
+    /// <param name="hivePartitionSchema">The schema of the hive partitions.</param>
     /// <param name="tryParseHiveDates">Attempt to parse hive values as Date/Datetime.</param>
     /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     static member ScanParquet
         (
             path: string,
-            ?nRows: int64,
+            ?nRows: uint64,
             ?parallelStrategy: ParallelStrategy,
             ?lowMemory: bool,
             ?useStatistics: bool,
@@ -4416,7 +4954,8 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?rowIndexOffset: uint32,
             ?includePathColumn: string,
             ?schema: PolarsSchema,
-            ?hiveSchema: PolarsSchema,
+            ?hivePartitioning: bool,
+            ?hivePartitionSchema: PolarsSchema,
             ?tryParseHiveDates: bool,
             ?cloudOptions: CloudOptions
         ) =
@@ -4430,13 +4969,13 @@ and LazyFrame(handle: LazyFrameHandle) =
         let pTryHive = defaultArg tryParseHiveDates false
         let pRechunk = defaultArg rechunk false
         let pCache = defaultArg cache false
+        let pHivePartitioning = defaultArg hivePartitioning false
 
         // F# Types -> C# Interop Types
         
-        // nRows: int64 option -> ulong? (Nullable<ulong>)
+        // nRows: uint64 option -> ulong? (Nullable<ulong>)
         let pNRows = 
             nRows 
-            |> Option.map uint64 
             |> Option.toNullable
 
         // Schema: Schema Object -> SchemaHandle (Raw Pointer holder)
@@ -4446,7 +4985,7 @@ and LazyFrame(handle: LazyFrameHandle) =
             |> Option.toObj
 
         let hHiveSchema = 
-            hiveSchema 
+            hivePartitionSchema 
             |> Option.map (fun s -> s.Handle) 
             |> Option.toObj
 
@@ -4469,6 +5008,7 @@ and LazyFrame(handle: LazyFrameHandle) =
             pRowIndexOffset,
             Option.toObj includePathColumn,
             hSchema,
+            pHivePartitioning,
             hHiveSchema,
             pTryHive,
             cProv,
@@ -4498,12 +5038,12 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <param name="rowIndexOffset">Start index for the row index column.</param>
     /// <param name="includePathColumn">If provided, add a column with the path (usually irrelevant for memory).</param>
     /// <param name="schema">Overwrite the schema of the dataset.</param>
-    /// <param name="hiveSchema">The schema of the hive partitions.</param>
+    /// <param name="hivePartitionSchema">The schema of the hive partitions.</param>
     /// <param name="tryParseHiveDates">Attempt to parse hive values as Date/Datetime.</param>
     static member ScanParquet
         (
             buffer: byte[],
-            ?nRows: int64,
+            ?nRows: uint64,
             ?parallelStrategy: ParallelStrategy,
             ?lowMemory: bool,
             ?useStatistics: bool,
@@ -4515,23 +5055,24 @@ and LazyFrame(handle: LazyFrameHandle) =
             ?rowIndexOffset: uint32,
             ?includePathColumn: string,
             ?schema: PolarsSchema,       
-            ?hiveSchema: PolarsSchema,   
+            ?hivePartitioning: bool,
+            ?hivePartitionSchema: PolarsSchema,   
             ?tryParseHiveDates: bool
         ) =
         let pParallel = defaultArg parallelStrategy ParallelStrategy.Auto
         let pLowMem = defaultArg lowMemory false
         let pStats = defaultArg useStatistics true
-        let pGlob = defaultArg glob true
+        let _pGlob = defaultArg glob true
         let pAllowMissing = defaultArg allowMissingColumns false
         let pRowIndexOffset = defaultArg rowIndexOffset 0u
         let pTryHive = defaultArg tryParseHiveDates false
         let pRechunk = defaultArg rechunk false
         let pCache = defaultArg cache false
+        let pHivePartitioning = defaultArg hivePartitioning false
 
         // 2. Type Conversions
         let pNRows = 
             nRows 
-            |> Option.map uint64 
             |> Option.toNullable
 
         // Extract Handle from PolarsSchema wrapper
@@ -4541,7 +5082,7 @@ and LazyFrame(handle: LazyFrameHandle) =
             |> Option.toObj
 
         let hHiveSchema = 
-            hiveSchema 
+            hivePartitionSchema 
             |> Option.map (fun s -> s.Handle) 
             |> Option.toObj
 
@@ -4560,6 +5101,7 @@ and LazyFrame(handle: LazyFrameHandle) =
             pRowIndexOffset,
             Option.toObj includePathColumn,
             hSchema,
+            pHivePartitioning,
             hHiveSchema,
             pTryHive
         )
@@ -5726,14 +6268,13 @@ and LazyFrame(handle: LazyFrameHandle) =
         ?recordBatchStatistics: bool,
         ?maintainOrder: bool
     ) : byte[] =
-        // 1. Resolve Defaults
+    
         let comp = defaultArg compression IpcCompression.NoCompression
         let compat = defaultArg compatLevel -1
         let batchSize = defaultArg recordBatchSize 0
         let batchStats = defaultArg recordBatchStatistics true
         let mo = defaultArg maintainOrder true
 
-        // 2. Native Call (Returns byte[])
         PolarsWrapper.SinkIpcMemory(
             this.CloneHandle(),
             comp.ToNative(),
@@ -5860,7 +6401,7 @@ and LazyFrame(handle: LazyFrameHandle) =
         
         let h = PolarsWrapper.LazySelect(lfClone, handles)
         new LazyFrame(h)
-    member this.Select(columns: seq<#IColumnExpr>) =
+    member this.Select(columns: seq<IColumnExpr>) =
             let exprs = 
                 columns 
                 |> Seq.collect (fun x -> x.ToExprs()) 

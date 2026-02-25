@@ -253,6 +253,7 @@ unsafe internal partial class NativeBindings
         uint row_index_offset,
         string? include_path_col,
         IntPtr schema,
+        [MarshalAs(UnmanagedType.I1)] bool hive_partitioning,
         IntPtr hive_schema,
         [MarshalAs(UnmanagedType.I1)] bool try_parse_hive_dates,
         // Cloud Options
@@ -282,6 +283,7 @@ unsafe internal partial class NativeBindings
         uint row_index_offset,
         string? include_path_col,
         IntPtr schema,
+        [MarshalAs(UnmanagedType.I1)] bool hive_partitioning,
         IntPtr hive_schema,
         [MarshalAs(UnmanagedType.I1)] bool try_parse_hive_dates
     );

@@ -108,6 +108,7 @@ unsafe internal partial class NativeBindings
         string? include_path_col,
         // --- Schema ---
         IntPtr schema,
+        [MarshalAs(UnmanagedType.I1)] bool hive_partitioning,
         IntPtr hive_schema,
         [MarshalAs(UnmanagedType.I1)] bool try_parse_hive_dates,
         // --- Cloud Options (Must match pl_scan_parquet pattern) ---

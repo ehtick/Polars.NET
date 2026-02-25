@@ -285,8 +285,9 @@ public class LazyFrame : IDisposable
         uint rowIndexOffset = 0,
         string? includePathColumn = null,
         PolarsSchema? schema = null,
+        bool hivePartitioning = false,
         PolarsSchema? hivePartitionSchema = null,
-        bool tryParseHiveDates = true,
+        bool tryParseHiveDates = false,
         CloudOptions? cloudOptions = null) 
     {
         var schemaHandle = schema?.Handle;
@@ -308,6 +309,7 @@ public class LazyFrame : IDisposable
             rowIndexOffset,
             includePathColumn,
             schemaHandle,     
+            hivePartitioning,
             hiveSchemaHandle, 
             tryParseHiveDates,
             provider.ToNative(),
@@ -338,6 +340,7 @@ public class LazyFrame : IDisposable
         uint rowIndexOffset = 0,
         string? includePathColumn = null,
         PolarsSchema? schema = null,
+        bool hivePartitioning = false,
         PolarsSchema? hivePartitionSchema = null,
         bool tryParseHiveDates = false)
     {
@@ -358,6 +361,7 @@ public class LazyFrame : IDisposable
             rowIndexOffset,
             includePathColumn,
             schemaHandle,
+            hivePartitioning,
             hiveSchemaHandle,
             tryParseHiveDates
         );
@@ -882,6 +886,7 @@ public class LazyFrame : IDisposable
         uint rowIndexOffset = 0,
         string? includePathColumn = null,
         PolarsSchema? schema = null,
+        bool hivePartitioning = true,
         PolarsSchema? hivePartitionSchema = null,
         bool tryParseHiveDates = true,
         CloudOptions? cloudOptions = null)
@@ -911,6 +916,7 @@ public class LazyFrame : IDisposable
             rowIndexOffset,
             includePathColumn,
             schemaHandle,     
+            hivePartitioning,
             hiveSchemaHandle, 
             tryParseHiveDates,
             provider.ToNative(),

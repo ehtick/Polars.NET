@@ -196,6 +196,7 @@ public static partial class PolarsWrapper
         uint rowIndexOffset,
         string? includePathColumn,
         SchemaHandle? schema,
+        bool hivePartitioning,
         SchemaHandle? hivePartitionSchema,
         bool tryParseHiveDates,
         PlCloudProvider cloudProvider,
@@ -237,6 +238,7 @@ public static partial class PolarsWrapper
                 rowIndexOffset,
                 includePathColumn,
                 schemaPtr,
+                hivePartitioning,
                 hiveSchemaPtr,
                 tryParseHiveDates,
                 // Cloud Options
@@ -267,7 +269,8 @@ public static partial class PolarsWrapper
         string? rowIndexName,
         uint rowIndexOffset,
         string? includePathColumn,
-        SchemaHandle? schema,              
+        SchemaHandle? schema,      
+        bool hivePartitioning,
         SchemaHandle? hivePartitionSchema, 
         bool tryParseHiveDates)
     {
@@ -302,6 +305,7 @@ public static partial class PolarsWrapper
                     rowIndexOffset, 
                     includePathColumn,
                     schemaPtr,
+                    hivePartitioning,
                     hiveSchemaPtr,
                     tryParseHiveDates
                 );

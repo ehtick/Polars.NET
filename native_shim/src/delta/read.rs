@@ -32,6 +32,7 @@ pub extern "C" fn pl_scan_delta(
     include_path_col_ptr: *const c_char,
     // --- Schema ---
     schema_ptr: *mut SchemaContext, 
+    hive_partitioning: bool,
     hive_schema_ptr: *mut SchemaContext,
     try_parse_hive_dates: bool,
     // --- Cloud Options ---
@@ -106,7 +107,7 @@ pub extern "C" fn pl_scan_delta(
             n_rows, parallel_code, low_memory, use_statistics, 
             glob, allow_missing_columns, 
             row_index_name_ptr, row_index_offset, include_path_col_ptr,
-            schema_ptr, 
+            schema_ptr, hive_partitioning,
             hive_schema_ptr, try_parse_hive_dates,
             rechunk, cache,
             cloud_provider, cloud_retries,    cloud_retry_timeout_ms,      

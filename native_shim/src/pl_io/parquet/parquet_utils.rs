@@ -19,6 +19,7 @@ pub(crate)fn build_scan_args(
     row_index_offset: u32,
     include_path_col_ptr: *const c_char,
     schema_ptr: *mut SchemaContext,        
+    hive_partitioning: bool,
     hive_schema_ptr: *mut SchemaContext,   
     try_parse_hive_dates: bool,      
     rechunk: bool,
@@ -64,7 +65,7 @@ pub(crate)fn build_scan_args(
     // --- HiveOptions ---
     let hive_schema = unsafe { ptr_to_schema_ref(hive_schema_ptr) };
     
-    let hive_enabled = hive_schema.is_some() || try_parse_hive_dates;
+    let hive_enabled = hive_partitioning;
     
     args.hive_options = HiveOptions {
         enabled: Some(hive_enabled), 

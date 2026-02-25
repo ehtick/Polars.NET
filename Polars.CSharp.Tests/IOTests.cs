@@ -310,7 +310,6 @@ public class IoTests
             rowIndexName: "row_idx", // 生成行号
             rowIndexOffset: 10   
         );
-        dfPartial.Show();
         // 验证结构
         Assert.Equal(3, dfPartial.Height); 
         Assert.Equal(2, dfPartial.Width);  // id + row_idx (name 被裁剪)
@@ -324,6 +323,7 @@ public class IoTests
         Assert.Equal(12UL, dfPartial.GetValue<ulong>(2, "row_idx"));
     }
     [Fact]
+    [Trait("IO","ParquetMemory")]
     public void Test_ReadParquet_Memory_And_Stream()
     {
         // 1. 准备初始数据
@@ -339,7 +339,6 @@ public class IoTests
         // 确保成功拿到数据
         Assert.NotNull(parquetBytes);
         Assert.True(parquetBytes.Length > 0);
-
         // --- Case 1: Read from byte[] (Memory) ---
         // 场景：从 Redis/数据库/网络 拿到了 byte[]
         using var dfFromBytes = DataFrame.ReadParquet(parquetBytes);
@@ -404,6 +403,7 @@ public class IoTests
                 path: Path.Combine(baseDir, "**/*.parquet"),
                 glob: true,
                 schema: fileSchema,               // <--- 核心测试点 1
+                hivePartitioning: true,
                 hivePartitionSchema: hiveSchema,  // <--- 核心测试点 2
                 tryParseHiveDates: true
             );

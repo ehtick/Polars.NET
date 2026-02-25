@@ -70,11 +70,13 @@ pub(crate) unsafe fn apply_unified_scan_args(
     }
 
     // 6. Hive Options
+    
     args.hive_options.enabled = Some(hive_partitioning);
     args.hive_options.try_parse_dates = try_parse_hive_dates;
     if !hive_schema_ptr.is_null() {
         args.hive_options.schema = Some(unsafe { (*hive_schema_ptr).schema.clone() });
     }
+    // args.hive_options.enabled = Some(args.hive_options.schema.is_some() || try_parse_hive_dates);
 
     // 7. Cloud Options
     args.cloud_options = cloud_options;
