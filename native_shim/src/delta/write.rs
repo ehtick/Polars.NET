@@ -88,6 +88,18 @@ ffi_try_void!({
         };
         // 3. Build Cloud Options & Delta Table
         let delta_storage_options = build_delta_storage_options_map(cloud_keys, cloud_values, cloud_len);
+
+        // =========================================================
+        // Handle mkdir for local paths BEFORE delta init
+        // =========================================================
+        if mkdir {
+            let is_local = !base_path_str.contains("://") || base_path_str.starts_with("file://");
+            if is_local {
+                let local_path = base_path_str.strip_prefix("file://").unwrap_or(&base_path_str);
+                std::fs::create_dir_all(local_path)
+                    .map_err(|e| PolarsError::ComputeError(format!("Failed to create directory {}: {}", local_path, e).into()))?;
+            }
+        }
         
         let (mut table, should_skip) = rt.block_on(async {
             let table_url = parse_table_url(base_path_str)?;

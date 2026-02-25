@@ -6388,6 +6388,39 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// and then commits a transaction to the Delta Log, registering the new files.
     /// </para>
     /// </summary>
+    /// <param name="path">
+    /// Path to the root of the Delta Table. Can be local (e.g. "./data/table") 
+    /// or remote (e.g. "s3://bucket/table").
+    /// </param>
+    /// <param name="partitionBy">
+    /// The selector(s) to partition the data by. 
+    /// Directories will be created in the format "col=value".
+    /// </param>
+    /// <param name="mode">
+    /// Save mode (Append, Overwrite, ErrorIfExists, Ignore). Default is Append.
+    /// </param>
+    /// <param name="includeKeys">
+    /// Whether to include the partition keys in the Parquet files themselves. 
+    /// Default is true (recommended for Delta Lake compatibility).
+    /// </param>
+    /// <param name="keysPreGrouped">
+    /// Assert that the keys are already pre-grouped. This can speed up the operation if true.
+    /// </param>
+    /// <param name="maxRowsPerFile">Maximum number of rows per file. 0 means no limit.</param>
+    /// <param name="approxBytesPerFile">Approximate size in bytes per file. 0 means no limit.</param>
+    /// <param name="compression">Compression codec to use (Snappy, Zstd, etc.).</param>
+    /// <param name="compressionLevel">Compression level (depends on the codec).</param>
+    /// <param name="statistics">
+    /// Write statistics to the Parquet file. 
+    /// Delta Lake uses these stats for data skipping, so 'true' is highly recommended.
+    /// </param>
+    /// <param name="rowGroupSize">Target row group size (in rows).</param>
+    /// <param name="dataPageSize">Target data page size (in bytes).</param>
+    /// <param name="compatLevel">IPC format compatibility.</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
+    /// <param name="mkdir">Create parent directories if they don't exist.</param>
+    /// <param name="cloudOptions">Options for cloud storage authentication and configuration.</param>
     member this.SinkDelta(
         path: string,
         ?partitionBy: Selector,

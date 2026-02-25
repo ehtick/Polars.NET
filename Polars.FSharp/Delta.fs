@@ -271,7 +271,7 @@ type Delta =
         
         // Fetch JSON string from Rust core
         let json = PolarsWrapper.History(path, pLimit, cKeys, cVals)
-        let buffer = System.Text.Encoding.UTF8.GetBytes(json)
+        let buffer = System.Text.Encoding.UTF8.GetBytes json
         
         let mutable df = DataFrame.ReadJson(buffer, jsonFormat = JsonFormat.Json, inferSchemaLen = 2000UL)
 
@@ -342,7 +342,7 @@ type Delta =
         ?cloudOptions: CloudOptions
     ) : int64 =
         // 1. Validation
-        if System.String.IsNullOrWhiteSpace(path) then
+        if System.String.IsNullOrWhiteSpace path then
             invalidArg "path" "Path cannot be empty."
 
         let pTargetSize = defaultArg targetSizeMb 128L
