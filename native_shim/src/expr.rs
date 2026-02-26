@@ -260,6 +260,7 @@ macro_rules! gen_ewm_op {
 gen_lit_ctor!(pl_expr_lit_i32, i32);
 gen_lit_ctor!(pl_expr_lit_i64, i64);
 gen_lit_ctor!(pl_expr_lit_bool, bool);
+gen_lit_ctor!(pl_expr_lit_f16, pf16);
 gen_lit_ctor!(pl_expr_lit_f32, f32);
 gen_lit_ctor!(pl_expr_lit_f64, f64);
 gen_lit_ctor!(pl_expr_lit_i8, i8);
@@ -270,12 +271,35 @@ gen_lit_ctor!(pl_expr_lit_u32, u32);
 gen_lit_ctor!(pl_expr_lit_u64, u64);
 
 // --- Group 2: String col and lit ---
-gen_str_ctor!(pl_expr_col, col);
+// gen_str_ctor!(pl_expr_col, col);
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_col(name: *const c_char) -> *mut ExprContext {
+    ffi_try!({
+        let name_str = if name.is_null() {
+            ""
+        } else {
+            unsafe {
+                CStr::from_ptr(name)
+                    .to_str()
+                    .map_err(|e| PolarsError::ComputeError(format!("Invalid UTF-8 in column name: {}", e).into()))?
+            }
+        };
+
+        let expr = if name_str.is_empty() {
+            polars::lazy::dsl::Expr::Element
+        } else {
+            col(name_str)
+        };
+
+        Ok(Box::into_raw(Box::new(ExprContext { inner: expr })))
+    })
+}
 gen_str_ctor!(pl_expr_lit_str, lit);
 
 // --- Group 3: Unarp Ops ---
 gen_unary_op!(pl_expr_sum, sum);
 gen_unary_op!(pl_expr_mean, mean);
+
 gen_unary_op!(pl_expr_max, max);
 gen_unary_op!(pl_expr_min, min);
 gen_unary_op!(pl_expr_abs, abs);
@@ -345,14 +369,17 @@ gen_binary_op!(pl_expr_or, or);   // |
 gen_binary_op!(pl_expr_xor, xor); // xor
 // Null Ops
 gen_binary_op!(pl_expr_fill_null, fill_null);
+gen_binary_op!(pl_expr_interpolate_by, interpolate_by);
 // Math Ops
 gen_binary_op!(pl_expr_pow,pow);
+gen_binary_op!(pl_expr_dot, dot);
 // --- Cumulative Functions ---
 gen_unary_op_arg_bool!(pl_expr_cum_sum, cum_sum);
 gen_unary_op_arg_bool!(pl_expr_cum_max, cum_max);
 gen_unary_op_arg_bool!(pl_expr_cum_min, cum_min);
 gen_unary_op_arg_bool!(pl_expr_cum_prod, cum_prod);
 gen_unary_op_arg_bool!(pl_expr_cum_count, cum_count);
+gen_unary_op_arg_bool!(pl_expr_mode, mode);
 
 // --- EWM Functions ---
 // Mean/Std/Var all share the same signature now
@@ -1488,10 +1515,18 @@ pub extern "C" fn pl_expr_array_get(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_array_explode(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+pub extern "C" fn pl_expr_array_explode(
+    expr_ptr: *mut ExprContext,
+    empty_as_null: bool,
+    keep_nulls: bool
+) -> *mut ExprContext {
     ffi_try!({
+        let options = ExplodeOptions {
+            empty_as_null,
+            keep_nulls,
+        };
         let ctx = unsafe { Box::from_raw(expr_ptr) };
-        let new_expr = ctx.inner.arr().explode();
+        let new_expr = ctx.inner.arr().explode(options);
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
@@ -2059,6 +2094,27 @@ pub extern "C" fn pl_expr_backward_fill(
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }
+// ==========================================
+// Interpolate
+// ==========================================
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_expr_interpolate(
+    expr_ptr: *mut ExprContext,
+    method: u8 // 0=Linear, 1=Nearest
+) -> *mut ExprContext {
+    ffi_try!({
+        let ctx = unsafe { Box::from_raw(expr_ptr) };
+        
+        let interp_method = match method {
+            1 => InterpolationMethod::Nearest,
+            _ => InterpolationMethod::Linear,
+        };
+
+        let new_expr = ctx.inner.interpolate(interp_method);
+        
+        Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
+    })
+}
 
 // Logic: when(predicate).then(truthy).otherwise(falsy)
 #[unsafe(no_mangle)]
@@ -2302,10 +2358,19 @@ pub extern "C" fn pl_expr_bottom_k_by(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_expr_explode(expr_ptr: *mut ExprContext) -> *mut ExprContext {
+pub extern "C" fn pl_expr_explode(
+    expr_ptr: *mut ExprContext,
+    empty_as_null: bool,
+    keep_nulls: bool
+) -> *mut ExprContext {
     ffi_try!({
         let ctx = unsafe { Box::from_raw(expr_ptr) };
-        let new_expr = ctx.inner.explode();
+        
+        let options = ExplodeOptions {
+            empty_as_null,
+            keep_nulls,
+        };
+        let new_expr = ctx.inner.explode(options);
         Ok(Box::into_raw(Box::new(ExprContext { inner: new_expr })))
     })
 }

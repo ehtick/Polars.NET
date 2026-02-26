@@ -39,7 +39,7 @@ type IOTests() =
         // 3. rowIndexOffset (uint) -> "idx" 应该从 100 开始
         let lf = LazyFrame.ScanParquet(
             tempPath, 
-            nRows = 3L, 
+            nRows = 3UL, 
             rowIndexName = "idx", 
             rowIndexOffset = 100u
         )
@@ -135,7 +135,7 @@ type IOTests() =
             // 2. 调用全参数 readCsv
             let df = DataFrame.ReadCsv(
                 path,
-                skipRows = 1L,       // 注意：F# 中 int64 字面量通常带 L，或者依赖自动转换
+                skipRows = 1UL,       // 注意：F# 中 int64 字面量通常带 L，或者依赖自动转换
                 separator = ';',
                 tryParseDates = true,
                 schema = mySchema
@@ -175,7 +175,7 @@ Charlie,35,true"""
         let lf = LazyFrame.ScanCsv(
             bytes, 
             hasHeader = true,
-            nRows = 2L // 只读前两行
+            nRows = 2UL // 只读前两行
         )
 
         // 3. 执行
@@ -355,8 +355,7 @@ Charlie,35,true"""
                 use df = DataFrame.ReadIpc(
                     path, 
                     columns=["val"], 
-                    nRows=3UL, 
-                    memoryMap=true
+                    nRows=3UL
                 )
 
                 Assert.Equal(3L, df.Rows)   // 验证 nRows

@@ -84,6 +84,7 @@ unsafe internal partial class NativeBindings
         PlJoinValidation validation,
         PlJoinCoalesce coalesce,
         PlJoinMaintainOrder maintainOrder,
+        PlJoinSide joinSide,
         [MarshalAs(UnmanagedType.U1)] bool nullsEqual,
         IntPtr sliceOffset,
         UIntPtr sliceLen
@@ -110,6 +111,7 @@ unsafe internal partial class NativeBindings
         PlJoinValidation validation,
         PlJoinCoalesce coalesce,
         PlJoinMaintainOrder maintainOrder,
+        PlJoinSide joinSide,
         [MarshalAs(UnmanagedType.U1)] bool nullsEqual,
         IntPtr sliceOffset, // *const i64
         UIntPtr sliceLen
@@ -122,24 +124,40 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial LazyFrameHandle pl_lazy_limit(LazyFrameHandle lf, uint n);
     [LibraryImport(LibName)] public static partial LazyFrameHandle pl_lazy_with_columns(LazyFrameHandle lf, IntPtr[] exprs, UIntPtr len);
     [LibraryImport(LibName)] 
-    public static partial LazyFrameHandle pl_lazy_explode(LazyFrameHandle lf, SelectorHandle selector);
+    public static partial LazyFrameHandle pl_lazyframe_explode(
+        LazyFrameHandle lf,
+        SelectorHandle selector,
+        [MarshalAs(UnmanagedType.U1)] bool emptyAsNull,
+        [MarshalAs(UnmanagedType.U1)] bool keepNulls);
     // --- Reshaping (Lazy) ---
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_lazyframe_rename(
         LazyFrameHandle lf, 
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] existing, 
+        string[] existing, 
         UIntPtr existingLen, 
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] newNames, 
+        string[] newNames, 
         UIntPtr newLen, 
         [MarshalAs(UnmanagedType.U1)] bool strict
     );
-    [LibraryImport(LibName)] 
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial LazyFrameHandle pl_lazyframe_pivot(
+        LazyFrameHandle lf,
+        SelectorHandle on,
+        DataFrameHandle onColumns,
+        SelectorHandle index,
+        SelectorHandle values,
+        IntPtr aggExpr,
+        PlPivotAgg aggCode, 
+        [MarshalAs(UnmanagedType.U1)] bool maintainOrder,
+        string? separator
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
     public static partial LazyFrameHandle pl_lazyframe_unpivot(
         LazyFrameHandle lf,
         SelectorHandle index,
-        SelectorHandle on,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? varName,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? valName
+        SelectorHandle? on, // Nullable
+        string? varName,
+        string? valName
     );
     [LibraryImport(LibName)] 
     public static partial LazyFrameHandle pl_lazy_concat(
@@ -153,7 +171,7 @@ unsafe internal partial class NativeBindings
     public static partial LazyFrameHandle pl_lazyframe_unnest(
         LazyFrameHandle lf, 
         SelectorHandle selector,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? separator
+        string? separator
     );
     [LibraryImport(LibName)]
     public static partial LazyFrameHandle pl_lazyframe_drop(
@@ -169,7 +187,6 @@ unsafe internal partial class NativeBindings
     // --- Streaming & Sink ---
     [LibraryImport(LibName)] 
     public static partial DataFrameHandle pl_lazy_collect_streaming(LazyFrameHandle lf);
-
 
     [LibraryImport(LibName)]
     [UnmanagedCallConv(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]

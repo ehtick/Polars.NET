@@ -40,7 +40,7 @@ pub fn write_excel_native(
     }
 
     // Write data
-    for (col_idx, series) in df.get_columns().iter().enumerate() {
+    for (col_idx, series) in df.columns().iter().enumerate() {
         let col_u16 = col_idx as u16;
 
         match series.dtype() {

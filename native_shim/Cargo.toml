@@ -1,39 +1,50 @@
 [package]
 name = "native_shim"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
-polars = { version = "0.52.0", features = ["lazy", "csv","dtype-date","parquet","strings","regex",
+polars = { version = "0.53.0", features = ["lazy", "csv","parquet","strings","regex","cloud","dot_product","dot_diagram","mode","interpolate","interpolate_by",
 "timezones","semi_anti_join","cross_join","iejoin","is_between","is_in","is_unique","log","random","array_arithmetic","list_arithmetic",
-"abs","round_series","dtype-struct","dtype-array","array_any_all","array_to_struct","pivot","sql","diff","rolling_window","rolling_window_by",
-"json","ipc","asof_join","diagonal_concat","top_k","rank","moment","pct_change","ewma","ewma_by","product","new_streaming",
-"dtype-categorical","serde","dynamic_group_by","business","dtype-u8","dtype-u16","dtype-i8","dtype-i16","dtype-i128","dtype-u128"] }
-polars-core = { version = "0.52.0" }
-polars-arrow = { version = "0.52.0" }
-polars-io = { version = "0.52.0", features = ["parquet","cloud"] }
-polars-utils = { version = "0.52.0" }
+"abs","round_series","dtype-full","array_any_all","array_to_struct","pivot","sql","diff","rolling_window","rolling_window_by","avro",
+"json","ipc","asof_join","diagonal_concat","top_k","rank","moment","pct_change","ewma","ewma_by","product","new_streaming","dataframe_arithmetic",
+"aws","azure","gcp","http","dynamic_group_by","business"] }
+polars-core = { version = "0.53.0" }
+polars-arrow = { version = "0.53.0" }
+polars-io = { version = "0.53.0",features =["file_cache"] }
+polars-utils = { version = "0.53.0" }
+polars-buffer = {version="0.53.0"}
 flate2 = { version = "1.1.8", features = ["rust_backend"] }
-serde_json = "1.0.145"
-calamine = { version = "0.32", features = ["dates","chrono"] }
-chrono = "0.4.43"
+serde_json = "*"
+calamine = { version = "0.33", features = ["dates","chrono"] }
+chrono = "0.4.41"
 rust_xlsxwriter = { version = "0.93", features = ["chrono"] }
-openssl = { version ="0.10", features=["vendored"]}
 mimalloc = { version = "*", default-features = false }
+deltalake = { version = "0.31.0", default-features = false, features = ["s3", "azure", "gcs", "rustls"] }
+tokio = { version = "1.49.0"}
+url = "2.5.8"
+uuid = {version="1.20.0", features=["v4"]}
+futures = "0.3.31"
+urlencoding = "2.1.3"
+rand = "0.9.2"
+roaring = "0.11.3"
+z85 = "3.0.7"
 [lib]
 crate-type = ["cdylib"]
 
 # Debug
 [profile.dev]
 debug = 0            
-strip = "debuginfo"  
+strip = true 
 opt-level = 0        
 panic = "abort"      
+lto = false
+codegen-units = 16 
 
 # Release:
 [profile.release]
 strip = true        #  Strip symbols
 opt-level = 3       # Max :3
-lto = true          # Link time optimize
+lto = "fat"          # Link time optimize
 codegen-units = 1   # set 1 for better binary layout
-panic = "abort"     
+panic = "unwind"     

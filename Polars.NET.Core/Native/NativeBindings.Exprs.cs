@@ -40,6 +40,7 @@ unsafe internal partial class NativeBindings
         long high, 
         uint scale
     );
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_f16(Half val);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_f32(float val);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_null();
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_lit_str([MarshalAs(UnmanagedType.LPUTF8Str)] string val);
@@ -148,6 +149,10 @@ unsafe internal partial class NativeBindings
     // null ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_fill_null(ExprHandle expr, ExprHandle fillValue);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_fill_nan(ExprHandle expr, ExprHandle fillValue);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_interpolate(ExprHandle expr, PlInterpolationMethod method);
+    [LibraryImport(LibName)]
+    public static partial ExprHandle pl_expr_interpolate_by(ExprHandle expr, ExprHandle by);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_null(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_is_not_null(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_drop_nulls(ExprHandle expr);
@@ -162,6 +167,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_unique_stable(ExprHandle expr);
     // Math ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_pow(ExprHandle baseExpr, ExprHandle exponent);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_dot(ExprHandle left, ExprHandle right);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_sqrt(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_cbrt(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_exp(ExprHandle expr);
@@ -321,7 +327,11 @@ unsafe internal partial class NativeBindings
     // List Ops
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_first(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_get(ExprHandle expr, long index);
-    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_explode(ExprHandle expr);
+    [LibraryImport(LibName)] 
+    public static partial ExprHandle pl_expr_explode(
+        ExprHandle expr,
+        [MarshalAs(UnmanagedType.U1)] bool emptyAsNull,
+        [MarshalAs(UnmanagedType.U1)] bool keepNulls);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_implode(ExprHandle expr);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_join(ExprHandle expr, [MarshalAs(UnmanagedType.LPUTF8Str)] string sep);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_list_len(ExprHandle expr);
@@ -401,7 +411,10 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.I1)] bool nullOnOob
     );
     [LibraryImport(LibName)]
-    public static partial ExprHandle pl_expr_array_explode(ExprHandle expr);
+    public static partial ExprHandle pl_expr_array_explode(
+        ExprHandle expr,
+        [MarshalAs(UnmanagedType.U1)] bool emptyAsNull,
+        [MarshalAs(UnmanagedType.U1)] bool keepNulls);
     [LibraryImport(LibName)]
     public static partial ExprHandle pl_expr_array_to_list(ExprHandle expr);
     [LibraryImport(LibName)]
@@ -541,6 +554,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_if_else(ExprHandle pred, ExprHandle ifTrue, ExprHandle ifFalse);
     // Statistical
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_count(ExprHandle e);
+    [LibraryImport(LibName)] public static partial ExprHandle pl_expr_mode(ExprHandle e);
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_std(ExprHandle e, byte ddof);
 
     [LibraryImport(LibName)] public static partial ExprHandle pl_expr_var(ExprHandle e, byte ddof);

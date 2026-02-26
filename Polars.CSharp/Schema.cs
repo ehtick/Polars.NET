@@ -125,8 +125,7 @@ public class PolarsSchema : IDisposable
             for (ulong i = 0; i < len; i++)
             {
                 PolarsWrapper.GetSchemaFieldAt(Handle, i, out string name, out DataTypeHandle dtHandle);
-                
-                // 这里的 DataType 最好也重写 ToString()，比如返回 "Int64", "Utf8"
+
                 using var dt = new DataType(dtHandle); 
                 sb.Append($"{name}: {dt.Kind}");
 

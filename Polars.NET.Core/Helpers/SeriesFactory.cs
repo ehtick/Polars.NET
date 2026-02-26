@@ -73,6 +73,8 @@ public static class SeriesFactory
             // ==========================================
             // 3. Floating Point
             // ==========================================
+            Half[] v   => PolarsWrapper.SeriesNew(name, v, null),
+            Half?[] v  => NewNullable(name, v, arr => ArrayHelper.UnzipNullable(arr, Half.NaN), PolarsWrapper.SeriesNew),
             float[] v   => PolarsWrapper.SeriesNew(name, v, null),
             float?[] v  => NewNullable(name, v, arr => ArrayHelper.UnzipNullable(arr, float.NaN), PolarsWrapper.SeriesNew),
 
@@ -119,6 +121,7 @@ public static class SeriesFactory
             uint[,] v    => PolarsWrapper.SeriesNewFixedArray(name, v),
             long[,] v    => PolarsWrapper.SeriesNewFixedArray(name, v),
             ulong[,] v   => PolarsWrapper.SeriesNewFixedArray(name, v),
+            Half[,] v   => PolarsWrapper.SeriesNewFixedArray(name, v),
             float[,] v   => PolarsWrapper.SeriesNewFixedArray(name, v),
             double[,] v  => PolarsWrapper.SeriesNewFixedArray(name, v),
             decimal[,] v => PolarsWrapper.SeriesNewFixedArray(name, v),
@@ -130,7 +133,7 @@ public static class SeriesFactory
             // ==========================================
             
             // 1. Primitives (Generic UnzipOption)
-
+            FSharpOption<Half>[] v    => CreateFSOpt(name, v, FSharpHelper.UnzipOption, PolarsWrapper.SeriesNew),
             FSharpOption<byte>[] v    => CreateFSOpt(name, v, FSharpHelper.UnzipOption, PolarsWrapper.SeriesNew),
             FSharpOption<sbyte>[] v    => CreateFSOpt(name, v, FSharpHelper.UnzipOption, PolarsWrapper.SeriesNew),
             FSharpOption<short>[] v    => CreateFSOpt(name, v, FSharpHelper.UnzipOption, PolarsWrapper.SeriesNew),
@@ -165,6 +168,7 @@ public static class SeriesFactory
             // ==========================================
             
             // 1. Primitives
+            FSharpValueOption<Half>[] v    => CreateFSVOpt(name, v, FSharpHelper.UnzipValueOption, PolarsWrapper.SeriesNew),
             FSharpValueOption<byte>[] v    => CreateFSVOpt(name, v, FSharpHelper.UnzipValueOption, PolarsWrapper.SeriesNew),
             FSharpValueOption<sbyte>[] v    => CreateFSVOpt(name, v, FSharpHelper.UnzipValueOption, PolarsWrapper.SeriesNew),
             FSharpValueOption<short>[] v    => CreateFSVOpt(name, v, FSharpHelper.UnzipValueOption, PolarsWrapper.SeriesNew),

@@ -1263,4 +1263,55 @@ public void Test_Series_Ewm_Methods()
         Assert.Null(s.GetValue<int?>(0));
         Assert.Equal(1, s.GetValue<int?>(1));
     }
+    [Fact]
+    public void Test_Series_Dot_Product()
+    {
+        using var s1 = Series.From("a", new[] { 1, 2, 3 });
+        using var s2 = Series.From("b", new[] { 4, 5, 6 });
+
+        // 1. 测试返回 Series 版本
+        using var resSeries = s1.Dot(s2);
+        Assert.Equal(1, resSeries.Length);
+        Assert.Equal(32L, resSeries.GetValue<long>(0));
+
+        // 2. 测试直接返回标量版本
+        var resScalar = s1.Dot<long>(s2);
+        Assert.Equal(32L, resScalar);
+        
+        // 3. 测试同名 Series (ApplyBinaryExpr 应该自动处理改名)
+        using var s3 = Series.From("a", new[] { 10, 20, 30 }); // 名字也是 'a'
+        var resSameName = s1.Dot<long>(s3);
+        // 1*10 + 2*20 + 3*30 = 10 + 40 + 90 = 140
+        Assert.Equal(140L, resSameName);
+    }
+    [Fact]
+    public void Test_InterpolateBy_Series_Timestamp()
+    {
+        // 模拟时间序列数据
+        // T1: 10:00 (Val=10)
+        // T2: 10:15 (Val=null) <- 我们要插值这个点
+        // T3: 11:00 (Val=70)
+        
+        // T2 距离 T1 是 15分钟，距离 T3 是 45分钟。
+        // 总间隔 60分钟。T2 位于 15/60 = 1/4 处。
+        // Val = 10 + (70-10) * 0.25 = 10 + 15 = 25.
+
+        var baseTime = new DateTime(2024, 1, 1, 10, 0, 0);
+        
+        using var times = Series.From("time", new[]
+        {
+            baseTime,
+            baseTime.AddMinutes(15), 
+            baseTime.AddHours(1)
+        });
+
+        using var values = Series.From("val", new double?[] { 10.0, null, 70.0 });
+
+        // Act
+        using var interpolated = values.InterpolateBy(times);
+
+        // Assert
+        var result = interpolated.GetValue<double>(1);
+        Assert.Equal(25.0, result);
+    }
 }

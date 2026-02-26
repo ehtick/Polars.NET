@@ -2,54 +2,82 @@ using System.Runtime.InteropServices;
 
 namespace Polars.NET.Core.Native;
 
+[StructLayout(LayoutKind.Sequential)]
+public struct FfiBuffer
+{
+    public IntPtr Data;
+    public nuint Length;
+    public nuint Capacity;
+}
+
+
 unsafe internal partial class NativeBindings
 {
     const string LibName = "native_shim";
+    [LibraryImport(LibName)]
+    public static partial void pl_free_ffi_buffer(FfiBuffer buffer);
     // CSV
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial DataFrameHandle pl_read_csv(
+    public static partial LazyFrameHandle pl_scan_csv(
         string path,
-
-        // --- 1. Columns ---
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[]? col_names,
-        nuint col_names_len,
-
-        // --- 2. Core Configs ---
+        
+        // --- 1. Core Configs ---
         [MarshalAs(UnmanagedType.U1)] bool has_header,
         byte separator,
-        byte quote_char,
-        byte eol_char,
+        byte quote_char,       
+        byte eol_char,         
         [MarshalAs(UnmanagedType.U1)] bool ignore_errors,
         [MarshalAs(UnmanagedType.U1)] bool try_parse_dates,
         [MarshalAs(UnmanagedType.U1)] bool low_memory,
+        [MarshalAs(UnmanagedType.U1)] bool cache,
+        [MarshalAs(UnmanagedType.U1)] bool glob,
+        [MarshalAs(UnmanagedType.U1)] bool rechunk,
+        [MarshalAs(UnmanagedType.U1)] bool raise_if_empty,
 
-        // --- 3. Optional Sizes (Pointers for Option<usize>) ---
+        // --- 2. Sizes & Threads ---
         nuint skip_rows,
-        IntPtr n_rows_ptr,          // nuint*
-        IntPtr infer_schema_len_ptr,// nuint*
+        nuint skip_rows_after_header,
+        nuint skip_lines,
+        IntPtr n_rows_ptr,
+        IntPtr infer_schema_len_ptr,
+        IntPtr n_threads_ptr,
+        nuint chunk_size,
+
+        // --- 3. Row Index & Path ---
+        string? row_index_name,
+        nuint row_index_offset,
+        string? include_file_paths,
 
         // --- 4. Schema & Encoding ---
-        SchemaHandle schema,        // Nullable handle
+        SchemaHandle schema,
         PlCsvEncoding encoding,
 
         // --- 5. Advanced Parsing ---
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[]? null_values,
+        string[]? null_values, 
         nuint null_values_len,
         [MarshalAs(UnmanagedType.U1)] bool missing_is_null,
         string? comment_prefix,
         [MarshalAs(UnmanagedType.U1)] bool decimal_comma,
         [MarshalAs(UnmanagedType.U1)] bool truncate_ragged_lines,
-
-        // --- 6. Row Index ---
-        string? row_index_name,
-        nuint row_index_offset
+        
+        // --- 6. Cloud Params ---
+        PlCloudProvider cloud_provider,
+        nuint cloud_retries,
+        ulong cloud_retry_timeout_ms,      
+        ulong cloud_retry_init_backoff_ms, 
+        ulong cloud_retry_max_backoff_ms,  
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
     );
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial LazyFrameHandle pl_scan_csv(
-        string path,
+    public static unsafe partial LazyFrameHandle pl_scan_csv_mem(
+        byte* bufferPtr,        // Buffer Pointer
+        UIntPtr bufferLen,      // Buffer Length
         
-        // --- Core ---
+        // --- 1. Core Configs ---
         [MarshalAs(UnmanagedType.U1)] bool has_header,
         byte separator,
         byte quote_char,       
@@ -58,197 +86,286 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool try_parse_dates,
         [MarshalAs(UnmanagedType.U1)] bool low_memory,
         [MarshalAs(UnmanagedType.U1)] bool cache,
+        [MarshalAs(UnmanagedType.U1)] bool glob,
         [MarshalAs(UnmanagedType.U1)] bool rechunk,
+        [MarshalAs(UnmanagedType.U1)] bool raise_if_empty,
 
-        // --- Sizes ---
+        // --- 2. Sizes & Threads ---
         nuint skip_rows,
+        nuint skip_rows_after_header,
+        nuint skip_lines,
         IntPtr n_rows_ptr,
         IntPtr infer_schema_len_ptr,
+        IntPtr n_threads_ptr,
+        nuint chunk_size,
 
-        // --- Row Index ---
+        // --- 3. Row Index & Path ---
         string? row_index_name,
         nuint row_index_offset,
+        string? include_file_paths,
 
-        // --- Schema ---
+        // --- 4. Schema & Encoding ---
         SchemaHandle schema,
         PlCsvEncoding encoding,
 
-        // --- Advanced ---
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[]? null_values, 
+        // --- 5. Advanced Parsing ---
+        string[]? null_values, 
         nuint null_values_len,
         [MarshalAs(UnmanagedType.U1)] bool missing_is_null,
         string? comment_prefix,
         [MarshalAs(UnmanagedType.U1)] bool decimal_comma,
-        nuint chunkSize
+        [MarshalAs(UnmanagedType.U1)] bool truncate_ragged_lines
     );
+ 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial LazyFrameHandle pl_scan_csv_mem(
-        byte* bufferPtr,        // Buffer Pointer
-        UIntPtr bufferLen,      // Buffer Length
-        // --- Core ---
-        [MarshalAs(UnmanagedType.U1)] bool has_header,
-        byte separator,
-        byte quote_char,       
-        byte eol_char,         
-        [MarshalAs(UnmanagedType.U1)] bool ignore_errors,
-        [MarshalAs(UnmanagedType.U1)] bool try_parse_dates,
-        [MarshalAs(UnmanagedType.U1)] bool low_memory,
-        [MarshalAs(UnmanagedType.U1)] bool cache,
-        [MarshalAs(UnmanagedType.U1)] bool rechunk,
-
-        // --- Sizes ---
-        nuint skip_rows,
-        IntPtr n_rows_ptr,
-        IntPtr infer_schema_len_ptr,
-
-        // --- Row Index ---
-        string? row_index_name,
-        nuint row_index_offset,
-
-        // --- Schema ---
-        SchemaHandle schema,
-        PlCsvEncoding encoding,
-
-        // --- Advanced ---
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[]? null_values, 
-        nuint null_values_len,
-        [MarshalAs(UnmanagedType.U1)] bool missing_is_null,
-        string? comment_prefix,
-        [MarshalAs(UnmanagedType.U1)] bool decimal_comma
-    );
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void pl_dataframe_write_csv(
-        DataFrameHandle df, 
+    public static partial void pl_lazyframe_sink_csv(
+        LazyFrameHandle lf,
         string path,
-        
-        // CsvWriter Specific
-        [MarshalAs(UnmanagedType.U1)] bool has_header,
-        [MarshalAs(UnmanagedType.U1)] bool use_bom,
-        nuint batch_size,
 
-        // SerializeOptions
-        byte separator,
-        byte quote_char,
-        PlQuoteStyle quote_style,
-        string? null_value,        
-        string? line_terminator,
+        // --- CSV Writer Options ---
+        [MarshalAs(UnmanagedType.U1)] bool include_bom,
+        [MarshalAs(UnmanagedType.U1)] bool include_header,
+        nuint batch_size,
+        [MarshalAs(UnmanagedType.U1)] bool check_extension, 
+
+        // --- Compression ---
+        PlExternalCompression compression_code, 
+        int compression_level, 
+
+        // --- SerializeOptions  ---
         string? date_format,
         string? time_format,
         string? datetime_format,
-        int float_scientific,       // -1: null, 0: false, 1: true
-        int float_precision,        // -1: null, >=0: precision
-        [MarshalAs(UnmanagedType.U1)] bool decimal_comma
-    );
-
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void pl_lazyframe_sink_csv(
-        LazyFrameHandle lf, 
-        string path,
-        
-        // CsvWriterOptions
-        [MarshalAs(UnmanagedType.U1)] bool include_header,
-        [MarshalAs(UnmanagedType.U1)] bool include_bom,
-        nuint batch_size,
-        
-        // SinkOptions
-        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
-        PlSyncOnClose sync_on_close,
-        [MarshalAs(UnmanagedType.U1)] bool mkdir,
-
-        // SerializeOptions
+        int float_scientific, // -1: None, 0: False, 1: True
+        int float_precision,  // -1: None, >=0: value
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma,
         byte separator,
         byte quote_char,
-        PlQuoteStyle quote_style,
         string? null_value,
         string? line_terminator,
+        PlQuoteStyle quote_style, 
+
+        // --- UnifiedSinkArgs ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close, 
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Options ---
+        PlCloudProvider cloud_provider,
+        nuint cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_csv_partitioned(
+        LazyFrameHandle lf,
+        string path,
+        // --- Partition Params ---
+        SelectorHandle partition_by,
+        [MarshalAs(UnmanagedType.U1)] bool include_keys,
+        [MarshalAs(UnmanagedType.U1)] bool keys_pre_grouped,
+        nuint max_rows_per_file,
+        ulong approx_bytes_per_file,
+        // --- CSV Writer Options ---
+        [MarshalAs(UnmanagedType.U1)] bool include_bom,
+        [MarshalAs(UnmanagedType.U1)] bool include_header,
+        nuint batch_size,
+        [MarshalAs(UnmanagedType.U1)] bool check_extension, 
+
+        // --- Compression ---
+        PlExternalCompression compression_code, 
+        int compression_level, 
+
+        // --- SerializeOptions  ---
+        string? date_format,
+        string? time_format,
+        string? datetime_format,
+        int float_scientific, // -1: None, 0: False, 1: True
+        int float_precision,  // -1: None, >=0: value
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma,
+        byte separator,
+        byte quote_char,
+        string? null_value,
+        string? line_terminator,
+        PlQuoteStyle quote_style, 
+
+        // --- UnifiedSinkArgs ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close, 
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Options ---
+        PlCloudProvider cloud_provider,
+        nuint cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_csv_memory(
+        LazyFrameHandle lf,
+        out FfiBuffer out_buffer,
+        // --- CSV Specific Params ---
+        [MarshalAs(UnmanagedType.U1)] bool include_bom,
+        [MarshalAs(UnmanagedType.U1)] bool include_header,
+        nuint batch_size,
+        [MarshalAs(UnmanagedType.U1)] bool check_extension,
+        // Compression
+        PlExternalCompression compression_code,
+        int compression_level,
+        // Serialize Options
         string? date_format,
         string? time_format,
         string? datetime_format,
         int float_scientific,
         int float_precision,
-        [MarshalAs(UnmanagedType.U1)] bool decimal_comma
+        [MarshalAs(UnmanagedType.U1)] bool decimal_comma,
+        byte separator,
+        byte quote_char,
+        string? null_value,
+        string? line_terminator,
+        PlQuoteStyle quote_style,
+        // --- Unified Options ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order
     );
-
     // Parquet
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_parquet(
         string path,
-        IntPtr nRows,               // *const usize
-        PlParallelStrategy parallel,
-        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
-        [MarshalAs(UnmanagedType.U1)] bool useStatistics,
-        [MarshalAs(UnmanagedType.U1)] bool glob,
-        [MarshalAs(UnmanagedType.U1)] bool allowMissingColumns,
-        string? rowIndexName,
-        uint rowIndexOffset,
-        string? includePathColumn,
-        IntPtr schema,              // *mut SchemaContext (Override Schema)
-        IntPtr hiveSchema,          // *mut SchemaContext (Hive Partition Schema)
-        [MarshalAs(UnmanagedType.U1)] bool tryParseHiveDates
+        IntPtr n_rows, // null for None
+        PlParallelStrategy parallel_code,
+        [MarshalAs(UnmanagedType.I1)] bool low_memory,
+        [MarshalAs(UnmanagedType.I1)] bool use_statistics,
+        [MarshalAs(UnmanagedType.I1)] bool glob,
+        [MarshalAs(UnmanagedType.I1)] bool allow_missing_columns,
+        [MarshalAs(UnmanagedType.I1)] bool rechunk, 
+        [MarshalAs(UnmanagedType.I1)] bool cache,   
+        string? row_index_name,
+        uint row_index_offset,
+        string? include_path_col,
+        IntPtr schema,
+        [MarshalAs(UnmanagedType.I1)] bool hive_partitioning,
+        IntPtr hive_schema,
+        [MarshalAs(UnmanagedType.I1)] bool try_parse_hive_dates,
+        // Cloud Options
+        PlCloudProvider cloud_provider,
+        UIntPtr cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        UIntPtr cloud_len
     );
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(LibName,StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_parquet_memory(
-        IntPtr buffer, UIntPtr bufferLen,
-        IntPtr nRows,               // *const usize
-        PlParallelStrategy parallel,
-        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
-        [MarshalAs(UnmanagedType.U1)] bool useStatistics,
-        [MarshalAs(UnmanagedType.U1)] bool glob,
-        [MarshalAs(UnmanagedType.U1)] bool allowMissingColumns,
-        string? rowIndexName,
-        uint rowIndexOffset,
-        string? includePathColumn,
-        IntPtr schema,              // *mut SchemaContext
-        IntPtr hiveSchema,          // *mut SchemaContext
-        [MarshalAs(UnmanagedType.U1)] bool tryParseHiveDates
-    );
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial DataFrameHandle pl_read_parquet(
-        string path,
-        IntPtr[] columns, UIntPtr columnsLen,
-        IntPtr limit, 
-        PlParallelStrategy parallel,
-        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
-        string? rowIndexName,
-        uint rowIndexOffset
-    );
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial DataFrameHandle pl_read_parquet_memory(
-        IntPtr buffer, UIntPtr bufferLen,
-        IntPtr[] columns, UIntPtr columnsLen,
-        IntPtr limit,
-        PlParallelStrategy parallel,
-        [MarshalAs(UnmanagedType.U1)] bool lowMemory,
-        string? rowIndexName,
-        uint rowIndexOffset
-    );
-
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void pl_dataframe_write_parquet(
-        DataFrameHandle df, 
-        string path,
-        PlParquetCompression compression,
-        int compression_level,      // -1 default
-        [MarshalAs(UnmanagedType.U1)] bool statistics,
-        nuint row_group_size,       // usize -> nuint, 0 default
-        nuint data_page_size,       // usize -> nuint, 0 default
-        [MarshalAs(UnmanagedType.U1)] bool parallel
+        IntPtr buffer_ptr,
+        UIntPtr buffer_len,
+        IntPtr n_rows,
+        PlParallelStrategy parallel_code,
+        [MarshalAs(UnmanagedType.I1)] bool low_memory,
+        [MarshalAs(UnmanagedType.I1)] bool use_statistics,
+        [MarshalAs(UnmanagedType.I1)] bool glob,
+        [MarshalAs(UnmanagedType.I1)] bool allow_missing_columns,
+        [MarshalAs(UnmanagedType.I1)] bool rechunk, 
+        [MarshalAs(UnmanagedType.I1)] bool cache,   
+        string? row_index_name,
+        uint row_index_offset,
+        string? include_path_col,
+        IntPtr schema,
+        [MarshalAs(UnmanagedType.I1)] bool hive_partitioning,
+        IntPtr hive_schema,
+        [MarshalAs(UnmanagedType.I1)] bool try_parse_hive_dates
     );
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial void pl_lazyframe_sink_parquet(
         LazyFrameHandle lf, 
         string path,
+        // --- ParquetWriteOptions ---
         PlParquetCompression compression,
         int compression_level,
         [MarshalAs(UnmanagedType.U1)] bool statistics,
         nuint row_group_size,
         nuint data_page_size,
+        int compat_level,
+        // --- UnifiedSinkArgs ---
         [MarshalAs(UnmanagedType.U1)] bool maintain_order,
         PlSyncOnClose sync_on_close,
-        [MarshalAs(UnmanagedType.U1)] bool mkdir
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+        PlCloudProvider cloud_provider,
+        // --- Cloud Params ---
+        UIntPtr cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        UIntPtr cloud_len
     );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_parquet_partitioned(
+        LazyFrameHandle lf,
+        string base_path,
 
+        // --- Partition Params ---
+        SelectorHandle partition_by,
+        [MarshalAs(UnmanagedType.U1)] bool include_keys,
+        [MarshalAs(UnmanagedType.U1)] bool keys_pre_grouped,
+        nuint max_rows_per_file,
+        ulong approx_bytes_per_file,
+
+        // --- Parquet Options ---
+        PlParquetCompression compression,
+        int compression_level,
+        [MarshalAs(UnmanagedType.U1)] bool statistics,
+        nuint row_group_size,
+        nuint data_page_size,
+        int compat_level,
+
+        // --- Unified Options ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Params ---
+        PlCloudProvider cloud_provider,
+        nuint cloud_retries,
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName)]
+    public static partial void pl_lazyframe_sink_parquet_memory(
+        LazyFrameHandle lf,
+        out FfiBuffer out_buffer,
+
+        // --- Parquet Options ---
+        PlParquetCompression compression, 
+        int compression_level,
+        [MarshalAs(UnmanagedType.U1)] bool statistics,       
+        nuint row_group_size,  
+        nuint data_page_size,
+        int compat_level,
+        
+        // --- Unified Options ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order
+    );
     // ---------------------------------------------------------
     // Read JSON (File)
     // ---------------------------------------------------------
@@ -298,7 +415,17 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool ignoreErrors,
         string? rowIndexName,
         uint rowIndexOffset,
-        string? includePathColumn
+        string? includePathColumn,
+        // --- Cloud Params ---
+        PlCloudProvider cloud_provider,         // u8
+        nuint cloud_retries,                    // usize
+        ulong cloud_retry_timeout_ms,           // u64
+        ulong cloud_retry_init_backoff_ms,      // u64
+        ulong cloud_retry_max_backoff_ms,       // u64
+        ulong cloud_cache_ttl,                  // u64
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
     );
 
     // ---------------------------------------------------------
@@ -328,102 +455,214 @@ unsafe internal partial class NativeBindings
         string path,
         PlJsonFormat jsonFormat
     );
+    [LibraryImport(LibName)]
+    public static partial void pl_dataframe_write_json_memory(
+        DataFrameHandle df, 
+        out FfiBuffer out_buffer,
+        PlJsonFormat jsonFormat
+    );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial void pl_lazyframe_sink_json(
-        LazyFrameHandle lf, 
+        LazyFrameHandle lf,
         string path,
-        PlJsonFormat json_format,
+
+        // --- NDJson Params ---
+        PlExternalCompression compression_code, // u8
+        int compression_level,                  // i32
+        [MarshalAs(UnmanagedType.U1)] bool check_extension, // bool
+
+        // --- UnifiedSinkArgs ---
         [MarshalAs(UnmanagedType.U1)] bool maintain_order,
-        PlSyncOnClose sync_on_close,
-        [MarshalAs(UnmanagedType.U1)] bool mkdir
+        PlSyncOnClose sync_on_close,            // u8
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Params ---
+        PlCloudProvider cloud_provider,         // u8
+        nuint cloud_retries,                    // usize
+        ulong cloud_retry_timeout_ms,           // u64
+        ulong cloud_retry_init_backoff_ms,      // u64
+        ulong cloud_retry_max_backoff_ms,       // u64
+        ulong cloud_cache_ttl,                  // u64
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_json_partitioned(
+        LazyFrameHandle lf,
+        string path,
+        // --- Partition Params ---
+        SelectorHandle partition_by,
+        [MarshalAs(UnmanagedType.U1)] bool include_keys,
+        [MarshalAs(UnmanagedType.U1)] bool keys_pre_grouped,
+        nuint max_rows_per_file,
+        ulong approx_bytes_per_file,
+        // --- NDJson Params ---
+        PlExternalCompression compression_code, // u8
+        int compression_level,                  // i32
+        [MarshalAs(UnmanagedType.U1)] bool check_extension, // bool
+
+        // --- UnifiedSinkArgs ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,            // u8
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Params ---
+        PlCloudProvider cloud_provider,         // u8
+        nuint cloud_retries,                    // usize
+        ulong cloud_retry_timeout_ms,           // u64
+        ulong cloud_retry_init_backoff_ms,      // u64
+        ulong cloud_retry_max_backoff_ms,       // u64
+        ulong cloud_cache_ttl,                  // u64
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_json_memory(
+        LazyFrameHandle lf,
+        out FfiBuffer out_buffer,
+
+        // --- NDJson Params ---
+        PlExternalCompression compression_code, // u8
+        int compression_level,                  // i32
+        [MarshalAs(UnmanagedType.U1)] bool check_extension, // bool
+
+        // --- UnifiedSinkArgs ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order
+
     );
 
     // IPC
     // ---------------------------------------------------------
-    // Read IPC (File)
-    // ---------------------------------------------------------
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial DataFrameHandle pl_read_ipc(
-        string path,
-        // Options
-        IntPtr[] columns, 
-        UIntPtr columnsLen,
-        IntPtr nRows,               // *const usize
-        string? rowIndexName,
-        uint rowIndexOffset,
-        [MarshalAs(UnmanagedType.U1)] bool rechunk,
-        [MarshalAs(UnmanagedType.U1)] bool memoryMap,
-        string? includePathColumn
-    );
-
-    // ---------------------------------------------------------
-    // Read IPC (Memory)
-    // ---------------------------------------------------------
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial DataFrameHandle pl_read_ipc_memory(
-        IntPtr buffer, 
-        UIntPtr bufferLen,
-        // Options (Same as above)
-        IntPtr[] columns, 
-        UIntPtr columnsLen,
-        IntPtr nRows,
-        string? rowIndexName,
-        uint rowIndexOffset,
-        [MarshalAs(UnmanagedType.U1)] bool rechunk,
-        string? includePathColumn
-    );
-    // ---------------------------------------------------------
-    // Scan IPC (File)
+    // Scan IPC (File / Cloud)
     // ---------------------------------------------------------
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial LazyFrameHandle pl_scan_ipc(
         string path,
-        // Unified Args
-        IntPtr schema,              // *mut SchemaContext
-        IntPtr nRows,               // *const usize (PreSlice)
+        
+        // --- Unified Args ---
+        IntPtr nRows,
         [MarshalAs(UnmanagedType.U1)] bool rechunk,
         [MarshalAs(UnmanagedType.U1)] bool cache,
+        [MarshalAs(UnmanagedType.U1)] bool glob,
         string? rowIndexName,
         uint rowIndexOffset,
         string? includePathColumn,
-        [MarshalAs(UnmanagedType.U1)] bool hivePartitioning
+        
+        // --- Schema & Hive ---
+        IntPtr schema,
+        [MarshalAs(UnmanagedType.U1)] bool hivePartitioning,
+        IntPtr hiveSchema,
+        [MarshalAs(UnmanagedType.U1)] bool tryParseHiveDates,
+        
+        // --- Cloud Params ---
+        PlCloudProvider cloudProvider,
+        nuint cloudRetries,
+        ulong cloudRetryTimeoutMs,      
+        ulong cloudRetryInitBackoffMs, 
+        ulong cloudRetryMaxBackoffMs,  
+        ulong cloudCacheTtl,
+        string[]? cloudKeys,
+        string[]? cloudValues,
+        nuint cloudLen
     );
 
     // ---------------------------------------------------------
     // Scan IPC (Memory)
     // ---------------------------------------------------------
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial LazyFrameHandle pl_scan_ipc_memory(
-        IntPtr buffer, UIntPtr bufferLen,
-        // Unified Args
-        IntPtr schema,
+    public static unsafe partial LazyFrameHandle pl_scan_ipc_memory(
+        byte* buffer, 
+        UIntPtr bufferLen,
+        
+        // --- Unified Args ---
         IntPtr nRows,
         [MarshalAs(UnmanagedType.U1)] bool rechunk,
         [MarshalAs(UnmanagedType.U1)] bool cache,
         string? rowIndexName,
         uint rowIndexOffset,
         string? includePathColumn,
-        [MarshalAs(UnmanagedType.U1)] bool hivePartitioning
-    );
-    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial void pl_dataframe_write_ipc(
-        DataFrameHandle df, 
-        string path, 
-        PlIpcCompression compression, 
-        [MarshalAs(UnmanagedType.U1)] bool parallel, 
-        int compat_level
+        
+        // --- Schema & Hive ---
+        IntPtr schema,
+        [MarshalAs(UnmanagedType.U1)] bool hivePartitioning,
+        IntPtr hiveSchema,
+        [MarshalAs(UnmanagedType.U1)] bool tryParseHiveDates
     );
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial void pl_lazyframe_sink_ipc(
-        LazyFrameHandle lf, 
+        LazyFrameHandle lf,
         string path,
-        PlIpcCompression compression,
-        int compat_level,
-        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
-        PlSyncOnClose sync_on_close,
-        [MarshalAs(UnmanagedType.U1)] bool mkdir
-    );
 
+        // --- IpcWriterOptions params ---
+        PlIpcCompression compression, 
+        int compat_level,
+        nuint record_batch_size,      
+        [MarshalAs(UnmanagedType.U1)] bool record_batch_statistics, 
+
+        // --- UnifiedSinkArgs params ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,  
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Options ---
+        PlCloudProvider cloud_provider, 
+        nuint cloud_retries,            
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_lazyframe_sink_ipc_partitioned(
+        LazyFrameHandle lf,
+        string path,
+        // --- Partition Params ---
+        SelectorHandle partition_by,
+        [MarshalAs(UnmanagedType.U1)] bool include_keys,
+        [MarshalAs(UnmanagedType.U1)] bool keys_pre_grouped,
+        nuint max_rows_per_file,
+        ulong approx_bytes_per_file,
+        // --- IpcWriterOptions params ---
+        PlIpcCompression compression, 
+        int compat_level,
+        nuint record_batch_size,      
+        [MarshalAs(UnmanagedType.U1)] bool record_batch_statistics, 
+
+        // --- UnifiedSinkArgs params ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order,
+        PlSyncOnClose sync_on_close,  
+        [MarshalAs(UnmanagedType.U1)] bool mkdir,
+
+        // --- Cloud Options ---
+        PlCloudProvider cloud_provider, 
+        nuint cloud_retries,            
+        ulong cloud_retry_timeout_ms,
+        ulong cloud_retry_init_backoff_ms,
+        ulong cloud_retry_max_backoff_ms,
+        ulong cloud_cache_ttl,
+        string[]? cloud_keys,
+        string[]? cloud_values,
+        nuint cloud_len
+    );
+    [LibraryImport(LibName)]
+    public static partial void pl_lazyframe_sink_ipc_memory(
+        LazyFrameHandle lf,
+        out FfiBuffer out_buffer,
+
+        // --- IpcWriterOptions params ---
+        PlIpcCompression compression, 
+        int compat_level,
+        nuint record_batch_size,      
+        [MarshalAs(UnmanagedType.U1)] bool record_batch_statistics, 
+
+        // --- UnifiedSinkArgs params ---
+        [MarshalAs(UnmanagedType.U1)] bool maintain_order
+    );
     // ---------------------------------------------------------
     // Read Excel (Calamine Engine)
     // ---------------------------------------------------------
@@ -451,4 +690,41 @@ unsafe internal partial class NativeBindings
         string? datetimeFormat   // Option<&str>
     );
 
+    // Avro
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial DataFrameHandle pl_read_avro(
+        string path,
+        IntPtr nRowsPtr,
+        string[]? columns,
+        nuint columnsLen,
+        nuint[]? projection,
+        nuint projectionLen
+    );
+    // Avro - Memory Buffer
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static unsafe partial DataFrameHandle pl_read_avro_mem(
+        byte* bufferPtr,    
+        nuint bufferLen,
+        IntPtr nRowsPtr,
+        string[]? columns,
+        nuint columnsLen,
+        nuint[]? projection,
+        nuint projectionLen
+    );
+    // Write Avro
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_write_avro(
+        DataFrameHandle df, 
+        string path, 
+        PlAvroCompression compressionType, 
+        string name
+    );
+    // Write Avro Buffer
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial void pl_write_avro_mem(
+        DataFrameHandle df,
+        out FfiBuffer out_buffer,
+        PlAvroCompression compressionType,
+        string name
+    );
 }

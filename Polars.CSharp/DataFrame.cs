@@ -11,6 +11,8 @@ using System.Text;
 using Apache.Arrow.Types;
 using System.Reflection;
 using Polars.NET.Core.Helpers;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 
 namespace Polars.CSharp;
 
@@ -63,6 +65,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     /// <summary>
     /// Read a DataFrame from a CSV file.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanCsv and collects the result. 
+    /// For larger-than-memory datasets or better query optimization, consider using LazyFrame.ScanCsv" directly.
+    /// </para>
     /// </summary>
     /// <param name="path">Path to the CSV file.</param>
     /// <param name="columns">Columns to select. If null, select all columns.</param>
@@ -75,7 +81,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
     /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
     /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
-    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default (100).</param>
     /// <param name="schema">Provide a schema to ignore schema inference.</param>
     /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
     /// <param name="nullValues">List of strings to consider as null values.</param>
@@ -85,6 +91,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
     /// <param name="rowIndexName">If provided, add a column with the row index.</param>
     /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
+    /// <param name="cloudOptions">Options for cloud storage authentication and configuration.</param>
     public static DataFrame ReadCsv(
         string path,
         string[]? columns = null,
@@ -106,98 +113,395 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool decimalComma = false,
         bool truncateRaggedLines = false,
         string? rowIndexName = null,
-        ulong rowIndexOffset = 0)
+        ulong rowIndexOffset = 0,
+        CloudOptions? cloudOptions = null)
     {
-        var handle = PolarsWrapper.ReadCsv(
-            path,
-            columns,
-            hasHeader,
-            (byte)separator,
-            quoteChar,
-            (byte)eolChar,
-            ignoreErrors,
-            tryParseDates,
-            lowMemory,
-            (nuint)skipRows,
-            nRows.HasValue ? (nuint)nRows.Value : null,
-            inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
-            schema?.Handle,
-            encoding.ToNative(),
-            nullValues,
-            missingIsNull,
-            commentPrefix,
-            decimalComma,
-            truncateRaggedLines,
-            rowIndexName,
-            (nuint)rowIndexOffset
+        var lf = LazyFrame.ScanCsv(
+            path: path,
+            schema: schema,
+            hasHeader: hasHeader,
+            separator: separator,
+            quoteChar: quoteChar,
+            eolChar: eolChar,
+            ignoreErrors: ignoreErrors,
+            tryParseDates: tryParseDates,
+            lowMemory: lowMemory,
+            skipRows: skipRows >= 0 ? (ulong)skipRows : 0,
+            nRows: nRows.HasValue ? (ulong)nRows.Value : null,
+            inferSchemaLength: inferSchemaLength.HasValue ? (ulong)inferSchemaLength.Value : 100,
+            rowIndexName: rowIndexName,
+            rowIndexOffset: rowIndexOffset,
+            encoding: encoding,
+            nullValues: nullValues,
+            missingIsNull: missingIsNull,
+            commentPrefix: commentPrefix,
+            decimalComma: decimalComma,
+            truncateRaggedLines: truncateRaggedLines,
+            cloudOptions: cloudOptions
         );
 
-        return new DataFrame(handle);
+        if (columns != null && columns.Length > 0)
+        {
+            lf = lf.Select(Selector.Cols(columns));
+        }
+
+        return lf.Collect();
     }
     /// <summary>
-    /// Read Parquet File
+    /// Read a DataFrame from a CSV memory buffer.
     /// </summary>
+    /// <param name="buffer">Memory buffer with the CSV file.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <param name="hasHeader">Whether the CSV file has a header. Defaults to true.</param>
+    /// <param name="separator">Character used as separator. Defaults to ','.</param>
+    /// <param name="quoteChar">Character used for quoting. Defaults to '"'. Set to '\0' to disable.</param>
+    /// <param name="eolChar">Character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Try to keep reading lines if some are invalid. Defaults to false.</param>
+    /// <param name="tryParseDates">Try to automatically parse dates. Defaults to true.</param>
+    /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default (100).</param>
+    /// <param name="schema">Provide a schema to ignore schema inference.</param>
+    /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
+    /// <param name="nullValues">List of strings to consider as null values.</param>
+    /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    /// <param name="decimalComma">Use comma as decimal separator. Defaults to false.</param>
+    /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
+    /// <param name="rowIndexName">If provided, add a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
+    public static DataFrame ReadCsv(
+        byte[] buffer,
+        string[]? columns = null,
+        bool hasHeader = true,
+        char separator = ',',
+        char? quoteChar = '"',
+        char eolChar = '\n',
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
+        int skipRows = 0,
+        int? nRows = null,
+        int? inferSchemaLength = null,
+        PolarsSchema? schema = null,
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,
+        bool missingIsNull = true,
+        string? commentPrefix = null,
+        bool decimalComma = false,
+        bool truncateRaggedLines = false,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0
+    )
+    {
+        var lf = LazyFrame.ScanCsv(
+            buffer,
+            schema: schema,
+            hasHeader: hasHeader,
+            separator: separator,
+            quoteChar: quoteChar,
+            eolChar: eolChar,
+            ignoreErrors: ignoreErrors,
+            tryParseDates: tryParseDates,
+            lowMemory: lowMemory,
+            skipRows: skipRows >= 0 ? (ulong)skipRows : 0,
+            nRows: nRows.HasValue ? (ulong)nRows.Value : null,
+            inferSchemaLength: inferSchemaLength.HasValue ? (ulong)inferSchemaLength.Value : 100,
+            rowIndexName: rowIndexName,
+            rowIndexOffset: rowIndexOffset,
+            encoding: encoding,
+            nullValues: nullValues,
+            missingIsNull: missingIsNull,
+            commentPrefix: commentPrefix,
+            decimalComma: decimalComma,
+            truncateRaggedLines: truncateRaggedLines
+        );
+
+        if (columns != null && columns.Length > 0)
+        {
+            lf = lf.Select(Selector.Cols(columns));
+        }
+
+        return lf.Collect();
+    }
+    /// <summary>
+    /// Read a DataFrame from a CSV memory stream.
+    /// </summary>
+    /// <param name="stream">Memory stream with the CSV file.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <param name="hasHeader">Whether the CSV file has a header. Defaults to true.</param>
+    /// <param name="separator">Character used as separator. Defaults to ','.</param>
+    /// <param name="quoteChar">Character used for quoting. Defaults to '"'. Set to '\0' to disable.</param>
+    /// <param name="eolChar">Character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Try to keep reading lines if some are invalid. Defaults to false.</param>
+    /// <param name="tryParseDates">Try to automatically parse dates. Defaults to true.</param>
+    /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default (100).</param>
+    /// <param name="schema">Provide a schema to ignore schema inference.</param>
+    /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
+    /// <param name="nullValues">List of strings to consider as null values.</param>
+    /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    /// <param name="decimalComma">Use comma as decimal separator. Defaults to false.</param>
+    /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
+    /// <param name="rowIndexName">If provided, add a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
+    public static DataFrame ReadCsv(
+        Stream stream,
+        string[]? columns = null,
+        bool hasHeader = true,
+        char separator = ',',
+        char? quoteChar = '"',
+        char eolChar = '\n',
+        bool ignoreErrors = false,
+        bool tryParseDates = true,
+        bool lowMemory = false,
+        int skipRows = 0,
+        int? nRows = null,
+        int? inferSchemaLength = null,
+        PolarsSchema? schema = null,
+        CsvEncoding encoding = CsvEncoding.UTF8,
+        string[]? nullValues = null,
+        bool missingIsNull = true,
+        string? commentPrefix = null,
+        bool decimalComma = false,
+        bool truncateRaggedLines = false,
+        string? rowIndexName = null,
+        ulong rowIndexOffset = 0
+    )
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        var lf = LazyFrame.ScanCsv(
+            ms.ToArray(),
+            schema: schema,
+            hasHeader: hasHeader,
+            separator: separator,
+            quoteChar: quoteChar,
+            eolChar: eolChar,
+            ignoreErrors: ignoreErrors,
+            tryParseDates: tryParseDates,
+            lowMemory: lowMemory,
+            skipRows: skipRows >= 0 ? (ulong)skipRows : 0,
+            nRows: nRows.HasValue ? (ulong)nRows.Value : null,
+            inferSchemaLength: inferSchemaLength.HasValue ? (ulong)inferSchemaLength.Value : 100,
+            rowIndexName: rowIndexName,
+            rowIndexOffset: rowIndexOffset,
+            encoding: encoding,
+            nullValues: nullValues,
+            missingIsNull: missingIsNull,
+            commentPrefix: commentPrefix,
+            decimalComma: decimalComma,
+            truncateRaggedLines: truncateRaggedLines
+        );
+
+        if (columns != null && columns.Length > 0)
+        {
+            lf = lf.Select(Selector.Cols(columns));
+        }
+
+        return lf.Collect();
+    }
+    /// <summary>
+    /// Read a DataFrame from a Parquet file or multiple files via glob patterns.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanParquet and collects the result. 
+    /// For larger-than-memory datasets or better query optimization, consider using LazyFrame.ScanParquet directly.
+    /// </para>
+    /// </summary>
+    /// <param name="path">Path to file or glob pattern (e.g. "data/*.parquet" or "s3://bucket/data.parquet").</param>
+    /// <param name="columns">Columns to select. If null, select all columns. (Optimized via projection pushdown).</param>
+    /// <param name="nRows">Limit number of rows to read (optimization).</param>
+    /// <param name="parallel">Parallel strategy.</param>
+    /// <param name="lowMemory">Reduce memory usage at the expense of performance.</param>
+    /// <param name="useStatistics">Use parquet statistics to optimize the query plan.</param>
+    /// <param name="glob">Expand glob patterns (default: true).</param>
+    /// <param name="allowMissingColumns">Allow missing columns when reading multiple files.</param>
+    /// <param name="rechunk">Rechunk the memory to contiguous chunks when reading. (default: false)</param>
+    /// <param name="cache">Cache the result after reading. (default: true)</param>
+    /// <param name="rowIndexName">If provided, adds a column with the row number.</param>
+    /// <param name="rowIndexOffset">Offset for the row index.</param>
+    /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    /// <param name="schema">Manually specify the schema of the file(s).</param>
+    /// <param name="hivePartitionSchema">Manually specify the schema for Hive partitioning columns.</param>
+    /// <param name="tryParseHiveDates">Whether to try parsing dates in Hive partitioning paths (default: true).</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public static DataFrame ReadParquet(
         string path,
         string[]? columns = null,
         ulong? nRows = null,
         ParallelStrategy parallel = ParallelStrategy.Auto,
         bool lowMemory = false,
+        bool useStatistics = true,
+        bool glob = true,
+        bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
         string? rowIndexName = null,
-        uint rowIndexOffset = 0)
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false,
+        CloudOptions? cloudOptions = null)
     {
-        var h = PolarsWrapper.ReadParquet(
+        var lf = LazyFrame.ScanParquet(
             path,
-            columns ?? [],
-            nRows, 
-            parallel.ToNative(),
+            nRows,
+            parallel,
             lowMemory,
+            useStatistics,
+            glob,
+            allowMissingColumns,
+            rechunk,
+            cache,
             rowIndexName,
-            rowIndexOffset
+            rowIndexOffset,
+            includePathColumn,
+            schema,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates,
+            cloudOptions
         );
 
-        return new DataFrame(h);
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        return lf.Collect();
     }
 
     /// <summary>
-    /// Read Parquet from a byte array (Memory).
+    /// Read Parquet from an in-memory byte array.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanParquet and collects the result.
+    /// </para>
     /// </summary>
+    /// <param name="buffer">The byte array containing the parquet file.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <inheritdoc cref="ReadParquet(string, string[], ulong?, ParallelStrategy, bool, bool, bool, bool, bool, bool, string?, uint, string?, PolarsSchema?,bool, PolarsSchema?, bool, CloudOptions?)"/>
     public static DataFrame ReadParquet(
         byte[] buffer,
         string[]? columns = null,
         ulong? nRows = null,
         ParallelStrategy parallel = ParallelStrategy.Auto,
         bool lowMemory = false,
+        bool useStatistics = true,
+        bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
         string? rowIndexName = null,
-        uint rowIndexOffset = 0)
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
-        var h = PolarsWrapper.ReadParquet(
+        var lf = LazyFrame.ScanParquet(
             buffer,
-            columns ?? [],
             nRows,
-            parallel.ToNative(),
+            parallel,
             lowMemory,
+            useStatistics,
+            allowMissingColumns,
+            rechunk,
+            cache,
             rowIndexName,
-            rowIndexOffset
+            rowIndexOffset,
+            includePathColumn,
+            schema,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates
         );
 
-        return new DataFrame(h);
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        return lf.Collect();
     }
+
     /// <summary>
     /// Read Parquet from a Stream.
+    /// <para>
+    /// Note: This method copies the stream to memory and then uses the Lazy execution engine.
+    /// </para>
     /// </summary>
+    /// <param name="stream">The input stream containing the parquet file.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <inheritdoc cref="ReadParquet(string, string[], ulong?, ParallelStrategy, bool, bool, bool, bool, bool, bool, string?, uint, string?, PolarsSchema?,bool, PolarsSchema?, bool, CloudOptions?)"/>
     public static DataFrame ReadParquet(
         Stream stream,
         string[]? columns = null,
         ulong? nRows = null,
         ParallelStrategy parallel = ParallelStrategy.Auto,
         bool lowMemory = false,
+        bool useStatistics = true,
+        bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
         string? rowIndexName = null,
-        uint rowIndexOffset = 0)
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
-        return ReadParquet(ms.ToArray(), columns, nRows, parallel, lowMemory, rowIndexName, rowIndexOffset);
+        
+        return ReadParquet(
+            ms.ToArray(),
+            columns,
+            nRows,
+            parallel,
+            lowMemory,
+            useStatistics,
+            allowMissingColumns,
+            rechunk,
+            cache,
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schema,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates
+        );
     }
 
     /// <summary>
@@ -299,51 +603,80 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     }
 
     // ---------------------------------------------------------
-    // Read IPC (File)
+    // Read IPC (File / Cloud)
     // ---------------------------------------------------------
 
     /// <summary>
     /// Read an Arrow IPC (Feather v2) file into a DataFrame.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanIpc and collects the result. 
+    /// For larger-than-memory datasets or better query optimization, consider using LazyFrame.ScanIpc directly.
+    /// </para>
     /// </summary>
-    /// <param name="path">Path to the IPC file.</param>
-    /// <param name="columns">Columns to select (projection).</param>
-    /// <param name="nRows">Stop reading after n rows.</param>
+    /// <param name="path">Path to the IPC file, glob pattern, or cloud path (e.g., "s3://...").</param>
+    /// <param name="columns">Columns to select. If null, select all columns. (Optimized via projection pushdown).</param>
+    /// <param name="schema">Optional schema to enforce. If not provided, the schema is inferred from the file footer.</param>
+    /// <param name="nRows">Limit the number of rows to scan.</param>
+    /// <param name="rechunk">Make sure the DataFrame is contiguous in memory (default: false).</param>
+    /// <param name="cache">Cache the result of the scan (default: true).</param>
+    /// <param name="glob">Expand glob patterns (default: true).</param>
     /// <param name="rowIndexName">If provided, adds a column with the row index.</param>
     /// <param name="rowIndexOffset">Offset for the row index (default: 0).</param>
-    /// <param name="rechunk">Make sure the DataFrame is contiguous in memory (default: false).</param>
-    /// <param name="memoryMap">
-    /// Use memory mapping for zero-copy reading. 
-    /// Highly recommended for large, uncompressed files (default: false).
-    /// <br/>
-    /// <b>Warning:</b> This MUST be set to <c>false</c> if the IPC file is compressed (e.g. LZ4, ZSTD).
-    /// Attempting to memory map a compressed file will result in a runtime exception.
-    /// </param>
     /// <param name="includePathColumn">If provided, adds a column with the source file path.</param>
+    /// <param name="hivePartitioning">Enable Hive partitioning inference (default: false).</param>
+    /// <param name="hivePartitionSchema">Manually specify the schema for Hive partitioning columns.</param>
+    /// <param name="tryParseHiveDates">Whether to try parsing dates in Hive partitioning paths (default: true).</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public static DataFrame ReadIpc(
         string path,
         string[]? columns = null,
+        PolarsSchema? schema = null,
         ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
+        bool glob = true,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
-        bool rechunk = false,
-        bool memoryMap = false, 
-        string? includePathColumn = null)
+        string? includePathColumn = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = true,
+        CloudOptions? cloudOptions = null)
     {
-        if (!File.Exists(path)) 
-            throw new FileNotFoundException($"IPC file not found: {path}");
-
-        var h = PolarsWrapper.ReadIpc(
+        var lf = LazyFrame.ScanIpc(
             path,
-            columns,
+            schema,
             nRows,
+            rechunk,
+            cache,
+            glob,
             rowIndexName,
             rowIndexOffset,
-            rechunk,
-            memoryMap,
-            includePathColumn
+            includePathColumn,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates,
+            cloudOptions
         );
 
-        return new DataFrame(h);
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        return lf.Collect();
     }
 
     // ---------------------------------------------------------
@@ -352,27 +685,59 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
     /// <summary>
     /// Read Arrow IPC (Feather v2) from in-memory bytes.
+    /// <para>
+    /// Note: This method internally uses LazyFrame.ScanIpc and collects the result.
+    /// </para>
     /// </summary>
+    /// <param name="buffer">The byte array containing the IPC data.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <inheritdoc cref="ReadIpc(string, string[], PolarsSchema?, ulong?, bool, bool, bool, string?, uint, string?, bool, PolarsSchema?, bool, CloudOptions?)"/>
     public static DataFrame ReadIpc(
         byte[] buffer,
         string[]? columns = null,
+        PolarsSchema? schema = null,
         ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
-        bool rechunk = false)
+        string? includePathColumn = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
-
-        var h = PolarsWrapper.ReadIpc(
+        var lf = LazyFrame.ScanIpc(
             buffer,
-            columns,
+            schema,
             nRows,
+            rechunk,
+            cache,
             rowIndexName,
             rowIndexOffset,
-            rechunk,
-            null
+            includePathColumn,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates
         );
 
-        return new DataFrame(h);
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        return lf.Collect();
     }
 
     // ---------------------------------------------------------
@@ -381,14 +746,26 @@ public class DataFrame : IDisposable,IEnumerable<Series>
 
     /// <summary>
     /// Read Arrow IPC (Feather v2) from a Stream.
+    /// <para>
+    /// Note: This reads the stream fully into memory and then uses the Lazy execution engine.
+    /// </para>
     /// </summary>
+    /// <param name="stream">The input stream containing the IPC data.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <inheritdoc cref="ReadIpc(string, string[], PolarsSchema?, ulong?, bool, bool, bool, string?, uint, string?, bool, PolarsSchema?, bool, CloudOptions?)"/>
     public static DataFrame ReadIpc(
         Stream stream,
         string[]? columns = null,
+        PolarsSchema? schema = null,
         ulong? nRows = null,
+        bool rechunk = false,
+        bool cache = true,
         string? rowIndexName = null,
         uint rowIndexOffset = 0,
-        bool rechunk = false)
+        string? includePathColumn = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false)
     {
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
@@ -396,10 +773,16 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return ReadIpc(
             ms.ToArray(),
             columns,
+            schema,
             nRows,
+            rechunk,
+            cache,
             rowIndexName,
             rowIndexOffset,
-            rechunk
+            includePathColumn,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates
         );
     }
     // ---------------------------------------------------------
@@ -466,14 +849,36 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         return new DataFrame(handle);
     }
     /// <summary>
-    /// Transfer a RecordBatch to Arrow
+    /// Transfer a DataFrame to Arrow
     /// </summary>
     /// <returns></returns>
     public RecordBatch ToArrow()
         => ArrowFfiBridge.ExportDataFrame(Handle);
     /// <summary>
-    /// Asynchronously reads a CSV file into a DataFrame.
+    /// Asynchronously read a DataFrame from a CSV file.
     /// </summary>
+    /// <param name="path">Path to the CSV file.</param>
+    /// <param name="columns">Columns to select. If null, select all columns.</param>
+    /// <param name="hasHeader">Whether the CSV file has a header. Defaults to true.</param>
+    /// <param name="separator">Character used as separator. Defaults to ','.</param>
+    /// <param name="quoteChar">Character used for quoting. Defaults to '"'. Set to '\0' to disable.</param>
+    /// <param name="eolChar">Character used as End-Of-Line. Defaults to '\n'.</param>
+    /// <param name="ignoreErrors">Try to keep reading lines if some are invalid. Defaults to false.</param>
+    /// <param name="tryParseDates">Try to automatically parse dates. Defaults to true.</param>
+    /// <param name="lowMemory">Use valid JSON lines to reduce memory usage. Defaults to false.</param>
+    /// <param name="skipRows">Number of rows to skip from the start. Defaults to 0.</param>
+    /// <param name="nRows">Stop reading after n rows. If null, read all.</param>
+    /// <param name="inferSchemaLength">Number of rows to scan for schema inference. If null, use Polars default (100).</param>
+    /// <param name="schema">Provide a schema to ignore schema inference.</param>
+    /// <param name="encoding">Encoding of the CSV file. Defaults to Utf8.</param>
+    /// <param name="nullValues">List of strings to consider as null values.</param>
+    /// <param name="missingIsNull">Treat missing fields as null. Defaults to true.</param>
+    /// <param name="commentPrefix">Lines starting with this prefix will be ignored.</param>
+    /// <param name="decimalComma">Use comma as decimal separator. Defaults to false.</param>
+    /// <param name="truncateRaggedLines">Truncate lines that are longer than the schema. Defaults to false.</param>
+    /// <param name="rowIndexName">If provided, add a column with the row index.</param>
+    /// <param name="rowIndexOffset">Offset for the row index. Defaults to 0.</param>
+    /// <param name="cloudOptions">Options for cloud storage authentication and configuration.</param>
     public static async Task<DataFrame> ReadCsvAsync(
         string path,
         string[]? columns = null,
@@ -495,33 +900,46 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool decimalComma = false,
         bool truncateRaggedLines = false,
         string? rowIndexName = null,
-        ulong rowIndexOffset = 0)
+        ulong rowIndexOffset = 0,
+        CloudOptions? cloudOptions = null)
     {
-        var handle = await PolarsWrapper.ReadCsvAsync(
-            path, 
-            columns,
-            hasHeader,
-            (byte)separator, 
-            quoteChar,
-            (byte)eolChar, 
-            ignoreErrors,
-            tryParseDates,
-            lowMemory,
-            (nuint)skipRows,
-            nRows.HasValue ? (nuint)nRows.Value : null,
-            inferSchemaLength.HasValue ? (nuint)inferSchemaLength.Value : null,
-            schema?.Handle,
-            encoding.ToNative(),
-            nullValues,
-            missingIsNull,
-            commentPrefix,
-            decimalComma,
-            truncateRaggedLines,
-            rowIndexName,
-            (nuint)rowIndexOffset
+        var lf = LazyFrame.ScanCsv(
+            path: path,
+            schema: schema,
+            hasHeader: hasHeader,
+            separator: separator,
+            quoteChar: quoteChar,
+            eolChar: eolChar,
+            ignoreErrors: ignoreErrors,
+            tryParseDates: tryParseDates,
+            lowMemory: lowMemory,
+            skipRows: skipRows >= 0 ? (ulong)skipRows : 0,
+            nRows: nRows.HasValue ? (ulong)nRows.Value : null,
+            inferSchemaLength: inferSchemaLength.HasValue ? (ulong)inferSchemaLength.Value : 100,
+            rowIndexName: rowIndexName,
+            rowIndexOffset: rowIndexOffset,
+            encoding: encoding,
+            nullValues: nullValues,
+            missingIsNull: missingIsNull,
+            commentPrefix: commentPrefix,
+            decimalComma: decimalComma,
+            truncateRaggedLines: truncateRaggedLines,
+            cloudOptions: cloudOptions
         );
 
-        return new DataFrame(handle);
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        return await lf.CollectAsync();
     }
     /// <summary>
     /// Read a Parquet file asynchronously.
@@ -532,20 +950,160 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         ulong? nRows = null,
         ParallelStrategy parallel = ParallelStrategy.Auto,
         bool lowMemory = false,
+        bool useStatistics = true,
+        bool glob = true,
+        bool allowMissingColumns = false,
+        bool rechunk = false, 
+        bool cache = true,    
         string? rowIndexName = null,
-        uint rowIndexOffset = 0)
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        bool hivePartitioning = false,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = false,
+        CloudOptions? cloudOptions = null)
     {
-        var handle = await PolarsWrapper.ReadParquetAsync(
+        var lf = LazyFrame.ScanParquet(
             path,
-            columns ?? [],
-            nRows, 
-            parallel.ToNative(),
+            nRows,
+            parallel,
             lowMemory,
+            useStatistics,
+            glob,
+            allowMissingColumns,
+            rechunk,
+            cache,
             rowIndexName,
-            rowIndexOffset);
+            rowIndexOffset,
+            includePathColumn,
+            schema,
+            hivePartitioning,
+            hivePartitionSchema,
+            tryParseHiveDates,
+            cloudOptions
+        );
+
+        if (columns != null && columns.Length > 0)
+        {
+            var colsToSelect = new List<string>(columns);
+            
+            if (!string.IsNullOrEmpty(rowIndexName) && !colsToSelect.Contains(rowIndexName))
+            {
+                colsToSelect.Add(rowIndexName);
+            }
+
+            if (!string.IsNullOrEmpty(includePathColumn) && !colsToSelect.Contains(includePathColumn))
+            {
+                colsToSelect.Add(includePathColumn);
+            }
+
+            lf = lf.Select(Selector.Cols(colsToSelect.ToArray()));
+        }
+
+        return await lf.CollectAsync();
+    }
+    /// <summary>
+    /// Read an Avro file into a DataFrame.
+    /// </summary>
+    /// <param name="path">The path to the Avro file.</param>
+    /// <param name="nRows">Stop reading when `nRows` are read.</param>
+    /// <param name="columns">Columns to select/project by name.</param>
+    /// <param name="projection">Columns to select/project by index.</param>
+    /// <returns>A new DataFrame.</returns>
+    public static DataFrame ReadAvro(
+        string path, 
+        ulong? nRows = null, 
+        string[]? columns = null, 
+        int[]? projection = null)
+    {
+        var handle = PolarsWrapper.ReadAvro(path, nRows, columns, projection);
         return new DataFrame(handle);
     }
+    /// <summary>
+    /// Read an Avro memory buffer into a DataFrame.
+    /// </summary>
+    /// <param name="buffer">The byte array containing Avro data.</param>
+    /// <param name="nRows">Stop reading when `nRows` are read.</param>
+    /// <param name="columns">Columns to select/project by name.</param>
+    /// <param name="projection">Columns to select/project by index.</param>
+    /// <returns>A new DataFrame.</returns>
+    public static DataFrame ReadAvro(
+        byte[] buffer, 
+        ulong? nRows = null, 
+        string[]? columns = null, 
+        int[]? projection = null)
+    {
+        var handle = PolarsWrapper.ReadAvro(buffer, nRows, columns, projection);
+        return new DataFrame(handle);
+    }
+    /// <summary>
+    /// Read an Avro memory Stream into a DataFrame.
+    /// </summary>
+    /// <param name="stream">The stream containing Avro data.</param>
+    /// <param name="nRows">Stop reading when `nRows` are read.</param>
+    /// <param name="columns">Columns to select/project by name.</param>
+    /// <param name="projection">Columns to select/project by index.</param>
+    /// <returns>A new DataFrame.</returns>
+    public static DataFrame ReadAvro(
+        Stream stream, 
+        ulong? nRows = null, 
+        string[]? columns = null, 
+        int[]? projection = null)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        var handle = PolarsWrapper.ReadAvro(ms.ToArray(), nRows, columns, projection);
+        return new DataFrame(handle);
+    }
+    /// <summary>
+    /// Read a delta table into a new DataFrame
+    /// </summary>
+    /// <inheritdoc cref="LazyFrame.ScanDelta"/>
+    public static DataFrame ReadDelta(
+        string path,
+        long? version = null,
+        string? datetime = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        bool useStatistics = true,
+        bool glob = true,
+        bool rechunk = false, 
+        bool cache = true,    
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        bool hivePartitioning = true,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = true,
+        CloudOptions? cloudOptions = null)
+    {
+        
+        var lf = LazyFrame.ScanDelta(
+            path,
+            version,
+            datetime,
+            nRows,
+            parallel,
+            lowMemory,
+            useStatistics,
+            glob,
+            rechunk, 
+            cache,   
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schema,     
+            hivePartitioning,
+            hivePartitionSchema, 
+            tryParseHiveDates,
+            cloudOptions
+        );
 
+        return lf.Collect();
+    }
     /// <summary>
     /// Create a DataFrame directly from a <see cref="IDataReader"/>.
     /// <para>
@@ -1067,12 +1625,20 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <summary>
     /// Explode list/array columns into multiple rows using selector.
     /// </summary>
-    /// <param name="selector"></param>
-    /// <returns></returns>
-    public DataFrame Explode(Selector selector)
+    /// <param name="selector">Column Selector</param>
+    /// <param name="emptyAsNull">
+    /// If <c>true</c>, empty lists are exploded into a single <c>null</c> value. 
+    /// If <c>false</c>, rows with empty lists are removed from the result.
+    /// </param>
+    /// <param name="keepNulls">
+    /// If <c>true</c>, <c>null</c> values in the column are preserved as <c>null</c> in the result. 
+    /// If <c>false</c>, rows with <c>null</c> values are removed.
+    /// </param>
+        /// <returns></returns>
+    public DataFrame Explode(Selector selector,bool emptyAsNull=true, bool keepNulls=true)
     {
         var sh = selector.CloneHandle();
-        return new DataFrame(PolarsWrapper.Explode(Handle, sh));
+        return new DataFrame(PolarsWrapper.Explode(Handle, sh,emptyAsNull,keepNulls));
     }
     /// <summary>
     /// Decompose a struct column into multiple columns.
@@ -1240,6 +1806,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="validation">Check if join keys are unique.</param>
     /// <param name="coalesce">How to coalesce the join keys.</param>
     /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="joinSide">Specifies the strategy for the hash join build side.</param>
     /// <param name="nullsEqual">Consider nulls as equal.</param>
     /// <param name="sliceOffset">Slice the result starting at this offset.</param>
     /// <param name="sliceLen">Length of the slice.</param>
@@ -1252,6 +1819,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1271,6 +1839,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             validation.ToNative(),
             coalesce.ToNative(),
             maintainOrder.ToNative(),
+            joinSide.ToNative(),
             nullsEqual,
             sliceOffset,
             sliceLen
@@ -1289,6 +1858,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="validation">Check if join keys are unique.</param>
     /// <param name="coalesce">How to coalesce the join keys.</param>
     /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="joinSide">Specifies the strategy for the hash join build side.</param>
     /// <param name="nullsEqual">Consider nulls as equal.</param>
     /// <param name="sliceOffset">Slice the result starting at this offset.</param>
     /// <param name="sliceLen">Length of the slice.</param>
@@ -1338,6 +1908,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1353,6 +1924,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             validation, 
             coalesce, 
             maintainOrder, 
+            joinSide,
             nullsEqual, 
             sliceOffset, 
             sliceLen
@@ -1370,10 +1942,11 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="validation">Check if join keys are unique.</param>
     /// <param name="coalesce">How to coalesce the join keys.</param>
     /// <param name="maintainOrder">How to maintain the order of the join.</param>
+    /// <param name="joinSide">Specifies the strategy for the hash join build side.</param>
     /// <param name="nullsEqual">Consider nulls as equal.</param>
     /// <param name="sliceOffset">Slice the result starting at this offset.</param>
     /// <param name="sliceLen">Length of the slice.</param>
-    /// <seealso cref="Join(DataFrame, string[], string[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,bool,long?,ulong)"/>
+    /// <seealso cref="Join(DataFrame, string[], string[], JoinType,string?,JoinValidation,JoinCoalesce,JoinMaintainOrder,JoinSide,bool,long?,ulong)"/>
     public DataFrame Join(
         DataFrame other, 
         string leftOn, 
@@ -1383,6 +1956,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1396,12 +1970,13 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             validation, 
             coalesce, 
             maintainOrder, 
+            joinSide,
             nullsEqual, 
             sliceOffset, 
             sliceLen
         );
     }
-    /// <inheritdoc cref="LazyFrame.JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="LazyFrame.JoinAsOf(LazyFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     /// <example>
     /// <code>
     /// // Trades: Events happening at specific times
@@ -1457,6 +2032,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1476,13 +2052,14 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             validation,
             coalesce,
             maintainOrder,
+            joinSide,
             nullsEqual,
             sliceOffset,
             sliceLen
         ).Collect();
     }
 
-    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -1496,6 +2073,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1507,11 +2085,11 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             tolerance,
             null,null,
             strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
-            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+            validation,coalesce,maintainOrder,joinSide,nullsEqual,sliceOffset,sliceLen
         );
     }
 
-    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -1525,6 +2103,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1536,10 +2115,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             DurationFormatter.ToPolarsString(tolerance),
             null,null,
             strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
-            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+            validation,coalesce,maintainOrder,joinSide,nullsEqual,sliceOffset,sliceLen
         );
     }
-    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -1553,6 +2132,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1564,10 +2144,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             null,
             tolerance,null,
             strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
-            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+            validation,coalesce,maintainOrder,joinSide,nullsEqual,sliceOffset,sliceLen
         );
     }
-    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder, bool, long?, ulong)"/>
+    /// <inheritdoc cref="JoinAsOf(DataFrame, Expr, Expr, string?, long?, double?, AsofStrategy, Expr[], Expr[], bool, bool, string?, JoinValidation, JoinCoalesce, JoinMaintainOrder,JoinSide, bool, long?, ulong)"/>
     public DataFrame JoinAsOf(
         DataFrame other, 
         Expr leftOn, Expr rightOn, 
@@ -1581,6 +2161,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         JoinValidation validation = JoinValidation.ManyToMany,
         JoinCoalesce coalesce = JoinCoalesce.JoinSpecific,
         JoinMaintainOrder maintainOrder = JoinMaintainOrder.None,
+        JoinSide joinSide = JoinSide.LetPolarsDecide,
         bool nullsEqual = false,
         long? sliceOffset = null,
         ulong sliceLen = 0)
@@ -1592,19 +2173,23 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             null,
             null,tolerance,
             strategy,leftBy,rightBy,allowEq,checkSorted,suffix,
-            validation,coalesce,maintainOrder,nullsEqual,sliceOffset,sliceLen
+            validation,coalesce,maintainOrder,joinSide,nullsEqual,sliceOffset,sliceLen
         );
     }
 
-    private static DataFrame ConcatInternal(IEnumerable<DataFrame> dfs, PlConcatType how, bool checkDuplicates)
+    private static DataFrame ConcatInternal(
+        IEnumerable<DataFrame> dfs, 
+        PlConcatType how, 
+        bool checkDuplicates,
+        bool strict = true,
+        bool unitLengthAsScalar = false)
     {
         var dfList = dfs.ToList();
         if (dfList.Count == 0) return new DataFrame();
 
-
         var handles = dfList.Select(df => df.Clone().Handle).ToArray();
 
-        var h = PolarsWrapper.Concat(handles, how, checkDuplicates);
+        var h = PolarsWrapper.Concat(handles, how, checkDuplicates,strict,unitLengthAsScalar);
         return new DataFrame(h);
     }
     /// <summary>
@@ -1672,9 +2257,15 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// If true, check that the column names are unique. 
     /// If multiple columns have the same name, they will be dropped.
     /// </param>
-    public static DataFrame ConcatHorizontal(IEnumerable<DataFrame> dfs, bool checkDuplicates = true)
+    /// <param name="strict">For Horizontal: if true, error on height mismatch.</param>
+    /// <param name="unitLengthAsScalar">For Horizontal: if true, broadcast length-1 DataFrames to match height.</param>
+    public static DataFrame ConcatHorizontal(
+        IEnumerable<DataFrame> dfs,
+        bool checkDuplicates = true,
+        bool strict = true,
+        bool unitLengthAsScalar = false)
     {
-        return ConcatInternal(dfs, PlConcatType.Horizontal, checkDuplicates);
+        return ConcatInternal(dfs, PlConcatType.Horizontal, checkDuplicates, strict,unitLengthAsScalar);
     }
     /// <summary>
     /// Diagonal concatenation of DataFrames.
@@ -1859,6 +2450,47 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // Pivot / Unpivot
     // ==========================================
     /// <summary>
+    /// Pivot the DataFrame using Selectors for column selection. 
+    /// This is the most flexible pivot method.
+    /// </summary>
+    /// <param name="index">Selector for the index column(s).</param>
+    /// <param name="columns">Selector for the column(s) to pivot.</param>
+    /// <param name="values">Selector for the value column(s).</param>
+    /// <param name="aggregateExpr">Optional expression to aggregate the values. If null, uses <paramref name="aggregateFunction"/>.</param>
+    /// <param name="aggregateFunction">Aggregation function to use if <paramref name="aggregateExpr"/> is null. Default is First.</param>
+    /// <param name="sortColumns">Sort the transposed columns by name.</param>
+    /// <param name="maintainOrder">Keep the original order of the rows (index).</param>
+    /// <param name="separator">Separator used to combine column names when multiple value columns are selected.</param>
+    public DataFrame Pivot(
+        Selector index, 
+        Selector columns, 
+        Selector values, 
+        Expr? aggregateExpr = null, 
+        PivotAgg aggregateFunction = PivotAgg.First,
+        bool sortColumns = false, 
+        bool maintainOrder = true,
+        string? separator = null)
+    {
+        using var indexH = index.CloneHandle();
+        using var columnsH = columns.CloneHandle();
+        using var valuesH = values.CloneHandle();
+        using var aggExprH = aggregateExpr?.CloneHandle(); 
+
+        var h = PolarsWrapper.Pivot(
+            Handle,
+            indexH,
+            columnsH,
+            valuesH,
+            aggExprH, 
+            aggregateFunction.ToNative(),
+            sortColumns,
+            maintainOrder,
+            separator
+        );
+
+        return new DataFrame(h);
+    }
+    /// <summary>
     /// Pivot the DataFrame from long to wide format.
     /// <para>
     /// This creates a new column for each unique value in the <paramref name="columns"/> argument.
@@ -1870,6 +2502,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="values">Column names to use for the values in the cells.</param>
     /// <param name="aggregateFunction">Aggregation function to use if multiple values exist for an index/column pair. Default is First.</param>
     /// <param name="sortColumns">Sort the transposed columns by name. Default is by order of discovery.</param>
+    /// <param name="maintainOrder">Keep the original order of the rows.</param>
     /// <param name="separator">Used as separator/delimiter in generated column names in case of multiple values columns.</param>
     /// <returns>A wide-format DataFrame.</returns>
     /// <example>
@@ -1902,8 +2535,23 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg aggregateFunction = PivotAgg.First,bool sortColumns =false,string? separator=null)
-        => new(PolarsWrapper.Pivot(Handle, index, columns, values,null, aggregateFunction.ToNative(),sortColumns,separator));
+    public DataFrame Pivot(string[] index, string[] columns, string[] values, PivotAgg aggregateFunction = PivotAgg.First,bool sortColumns =false,bool maintainOrder = true,string? separator=null)
+    {
+        using var sIndex = Selector.Cols(index);
+        using var sColumns = Selector.Cols(columns);
+        using var sValues = Selector.Cols(values);
+
+        return Pivot(
+            sIndex, 
+            sColumns, 
+            sValues, 
+            aggregateExpr: null, 
+            aggregateFunction: aggregateFunction, 
+            sortColumns: sortColumns, 
+            maintainOrder: maintainOrder, 
+            separator: separator
+        );
+    }
     /// <summary>
     /// Pivot a DataFrame with a custom aggregation expression.
     /// </summary>
@@ -1919,6 +2567,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="separator">
     /// Separator used to combine column names when multiple value columns are selected.
     /// </param>
+    /// <param name="maintainOrder">Keep the original order of the rows.</param>
     /// <returns>Pivoted DataFrame.</returns>
     public DataFrame Pivot(
         string[] index,
@@ -1926,27 +2575,27 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         string[] values,
         Expr aggregateExpr,
         bool sortColumns = false,
+        bool maintainOrder = true,
         string? separator = null)
     {
-        var exprHandle = PolarsWrapper.CloneExpr(aggregateExpr.Handle);
+        using var sIndex = Selector.Cols(index);
+        using var sColumns = Selector.Cols(columns);
+        using var sValues = Selector.Cols(values);
 
-        var h = PolarsWrapper.Pivot(
-            Handle,
-            index,
-            columns,
-            values,
-            exprHandle,
-            (PlPivotAgg)0, // Dummy value, ignored by Rust when Expr is present
-            sortColumns,
-            separator
+        return Pivot(
+            sIndex, 
+            sColumns, 
+            sValues, 
+            aggregateExpr: aggregateExpr, 
+            sortColumns: sortColumns, 
+            maintainOrder: maintainOrder, 
+            separator: separator
         );
-
-        return new DataFrame(h);
     }
     /// <summary>
     /// Unpivot (Melt) the DataFrame from wide to long format.
     /// <para>
-    /// This is the reverse of <see cref="Pivot(string[], string[], string[], PivotAgg, bool, string?)"/>. It collapses multiple columns into key-value pairs.
+    /// This is the reverse of <see cref="Pivot(string[], string[], string[], PivotAgg, bool,bool, string?)"/>. It collapses multiple columns into key-value pairs.
     /// </para>
     /// </summary>
     /// <param name="index">Column names to keep as identifiers (id_vars).</param>
@@ -1983,10 +2632,10 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// */
     /// </code>
     /// </example>
-    public DataFrame Unpivot(string[] index, string[] on, string variableName = "variable", string valueName = "value")
+    public DataFrame Unpivot(string[] index, string[]? on, string variableName = "variable", string valueName = "value")
     {
         using var sIndex = Selector.Cols(index);
-        using var sOn = Selector.Cols(on);
+        using var sOn = on is not null ? Selector.Cols(on) : null;
 
         return Unpivot(sIndex, sOn, variableName, valueName);
     }
@@ -1998,17 +2647,17 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// <param name="variableName"></param>
     /// <param name="valueName"></param>
     /// <returns></returns>
-    public DataFrame Unpivot(Selector index, Selector on, string variableName = "variable", string valueName = "value")
+    public DataFrame Unpivot(Selector index, Selector? on, string variableName = "variable", string valueName = "value")
     {
         var indexClone = index.CloneHandle();
-        var onClone = on.CloneHandle();
+        var onClone = on?.CloneHandle();
         return new DataFrame(PolarsWrapper.Unpivot(Handle, indexClone, onClone, variableName, valueName));
     }
     /// <summary>
     /// Alias for <see cref="Unpivot(string[], string[], string, string)"/>. Melts the DataFrame from wide to long format.
     /// </summary>
     /// <seealso cref="Unpivot(string[], string[], string, string)"/>
-    public DataFrame Melt(string[] index, string[] on, string variableName = "variable", string valueName = "value") 
+    public DataFrame Melt(string[] index, string[]? on, string variableName = "variable", string valueName = "value") 
         => Unpivot(index, on, variableName, valueName);
 
     // ==========================================
@@ -2016,10 +2665,13 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     // ==========================================
     /// <summary>
     /// Write DataFrame to a comma-separated values (CSV) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
     /// </summary>
     /// <param name="path">The output file path.</param>
-    /// <param name="hasHeader">Whether to include the header row. Defaults to true.</param>
-    /// <param name="useBom">Whether to include the UTF-8 Byte Order Mark (BOM). Useful for Excel compatibility. Defaults to false.</param>
+    /// <param name="includeHeader">Whether to include the header row. Defaults to true.</param>
+    /// <param name="includeBom">Whether to include the UTF-8 Byte Order Mark (BOM). Defaults to false.</param>
     /// <param name="separator">The character used as a field separator. Defaults to ','.</param>
     /// <param name="quoteChar">The character used for quoting fields. Defaults to '"'.</param>
     /// <param name="quoteStyle">The quoting style to use. Defaults to <see cref="QuoteStyle.Necessary"/>.</param>
@@ -2033,19 +2685,28 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     /// The number of decimal places to write for floats. 
     /// If null (default), uses full precision.
     /// </param>
-    /// <param name="decimalComma">Whether to use a comma ',' as the decimal separator (European style). Defaults to false.</param>
+    /// <param name="decimalComma">Whether to use a comma ',' as the decimal separator. Defaults to false.</param>
     /// <param name="dateFormat">Format string for Date columns. If null, uses ISO 8601.</param>
     /// <param name="timeFormat">Format string for Time columns. If null, uses ISO 8601.</param>
     /// <param name="datetimeFormat">Format string for Datetime columns. If null, uses ISO 8601.</param>
+    /// <param name="checkExtension">Whether to check if the file extension matches '.csv'. Defaults to true.</param>
+    /// <param name="compression">Compression method (Gzip/Zstd). Defaults to None.</param>
+    /// <param name="compressionLevel">Compression level (depends on the codec). -1 for default.</param>
+    /// <param name="maintainOrder">
+    /// Whether to maintain the order of the data. 
+    /// Setting this to false can improve performance in streaming mode. Defaults to true.
+    /// </param>
+    /// <param name="syncOnClose">File synchronization behavior on close (e.g., flush to disk). Defaults to None.</param>
+    /// <param name="mkdir">Recursively create the output directory if it does not exist. Defaults to false.</param>
     /// <param name="batchSize">
     /// The batch size for writing rows. 
-    /// Larger values may improve performance but consume more memory. 
     /// 0 means use the Polars default.
     /// </param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public void WriteCsv(
         string path,
-        bool hasHeader = true,
-        bool useBom = false,
+        bool includeHeader = true,
+        bool includeBom = false,
         char separator = ',',
         char quoteChar = '"',
         QuoteStyle quoteStyle = QuoteStyle.Necessary,
@@ -2057,37 +2718,178 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         string? dateFormat = null,
         string? timeFormat = null,
         string? datetimeFormat = null,
-        int batchSize = 0)
+        bool checkExtension = true,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        int batchSize = 0,
+        CloudOptions? cloudOptions = null)
     {
-        PolarsWrapper.WriteCsv(
-            Handle, 
-            path, 
-            hasHeader, 
-            useBom, 
-            batchSize,
-            separator, 
-            quoteChar, 
-            quoteStyle.ToNative(),
-            nullValue, 
+
+        var lf = Lazy();
+
+        lf.SinkCsv(
+            path,
+            includeHeader,
+            includeBom,
+            separator,
+            quoteChar,
+            quoteStyle,
+            nullValue,
             lineTerminator,
-            dateFormat, 
-            timeFormat, 
+            floatScientific,
+            floatPrecision,
+            decimalComma,
+            dateFormat,
+            timeFormat,
             datetimeFormat,
-            floatScientific, 
-            floatPrecision, 
-            decimalComma
+            checkExtension,
+            compression,
+            compressionLevel,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            batchSize,
+            cloudOptions
         );
     }
     /// <summary>
-    /// Write DataFrame to Parquet file.
+    /// Write DataFrame to a partitioned comma-separated values (CSV) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
+    /// </summary>
+    /// <param name="path">The output base directory path.</param>
+    /// <param name="partitionBy">The selector(s) to partition the data by.</param>
+    /// <param name="includeKeys">Whether to include the partition keys in the output files.</param>
+    /// <param name="keysPreGrouped">
+    /// Assert that the keys are already pre-grouped. This can speed up the operation if true.
+    /// Use with caution: if the data is not grouped, the output may be incorrect.
+    /// </param>
+    /// <param name="maxRowsPerFile">Maximum number of rows per file. 0 means no limit.</param>
+    /// <param name="approxBytesPerFile">Approximate size in bytes per file. 0 means no limit.</param>
+    /// <inheritdoc cref="WriteCsv"/>
+    public void WriteCsvPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        bool includeHeader = true,
+        bool includeBom = false,
+        char separator = ',',
+        char quoteChar = '"',
+        QuoteStyle quoteStyle = QuoteStyle.Necessary,
+        string? nullValue = null,
+        string? lineTerminator = "\n",
+        bool? floatScientific = null,
+        int? floatPrecision = null,
+        bool decimalComma = false,
+        string? dateFormat = null,
+        string? timeFormat = null,
+        string? datetimeFormat = null,
+        bool checkExtension = true,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        int batchSize = 0,
+        CloudOptions? cloudOptions = null)
+    {
+
+        var lf = Lazy();
+
+        lf.SinkCsvPartitioned(
+            path,
+            // --- Partition Params ---
+            partitionBy, 
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
+            includeHeader,
+            includeBom,
+            separator,
+            quoteChar,
+            quoteStyle,
+            nullValue,
+            lineTerminator,
+            floatScientific,
+            floatPrecision,
+            decimalComma,
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            checkExtension,
+            compression,
+            compressionLevel,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            batchSize,
+            cloudOptions
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.SinkCsvMemory"/>
+    public byte[] WriteCsvMemory(
+        bool includeBom = false,
+        bool includeHeader = true,
+        int batchSize = 1024,
+        bool checkExtension = false, 
+        ExternalCompression compressionCode = 0,    
+        int compressionLevel = 0,
+        string? dateFormat = null,
+        string? timeFormat = null,
+        string? datetimeFormat = null,
+        int floatScientific = -1,
+        int floatPrecision = -1,
+        bool decimalComma = false,
+        byte separator = (byte)',',
+        byte quoteChar = (byte)'"',
+        string? nullValue = null,
+        string? lineTerminator = "\n",
+        QuoteStyle quoteStyle = QuoteStyle.Necessary,         
+        bool maintainOrder = true)
+    {
+        var lf = Lazy();
+        return lf.SinkCsvMemory(
+            includeBom,
+            includeHeader,
+            batchSize,
+            checkExtension,
+            compressionCode,
+            compressionLevel,
+            dateFormat,
+            timeFormat,
+            datetimeFormat,
+            floatScientific,
+            floatPrecision,
+            decimalComma,
+            separator,
+            quoteChar,
+            nullValue,
+            lineTerminator,
+            quoteStyle,
+            maintainOrder
+        );
+    }
+    /// <summary>
+    /// Write DataFrame to a Parquet file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming, statistics, and cloud storage.
+    /// </para>
     /// </summary>
     /// <param name="path">Output file path.</param>
-    /// <param name="compression">Compression method. Defaults to Snappy (common standard) or Uncompressed depending on preference. Let's default to Snappy.</param>
-    /// <param name="compressionLevel">Compression level for Gzip/Brotli/Zstd. -1 means default.</param>
-    /// <param name="statistics">Compute and write column statistics. Defaults to false (faster).</param>
+    /// <param name="compression">Compression method. Defaults to Snappy.</param>
+    /// <param name="compressionLevel">Compression level. -1 means default.</param>
+    /// <param name="statistics">Compute and write column statistics. Defaults to false.</param>
     /// <param name="rowGroupSize">Number of rows per row group. 0 means use default.</param>
     /// <param name="dataPageSize">Size of data page in bytes. 0 means use default.</param>
-    /// <param name="parallel">Write in parallel. Defaults to true.</param>
+    /// <param name="cloudOptions">Options for cloud storage (AWS S3, Azure Blob, GCS, etc.).</param>
     public void WriteParquet(
         string path,
         ParquetCompression compression = ParquetCompression.Snappy,
@@ -2095,33 +2897,175 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         bool statistics = false,
         int rowGroupSize = 0,
         int dataPageSize = 0,
-        bool parallel = true)
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
     {
-        PolarsWrapper.WriteParquet(
-            Handle,
+        var lf = Lazy();
+
+        lf.SinkParquet(
             path,
-            compression.ToNative(),
+            compression,
             compressionLevel,
             statistics,
             rowGroupSize,
             dataPageSize,
-            parallel
+            compatLevel,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            cloudOptions
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.SinkParquetPartitioned"/>
+    public void WriteParquetPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = false,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.SinkParquetPartitioned(
+            path,
+            
+            // --- Partition Params ---
+            partitionBy, 
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
+
+            // --- Parquet Options ---
+            compression,
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            compatLevel,
+
+            // --- Unified Options ---
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            cloudOptions
+
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.SinkParquetMemory"/>
+    public byte[] WriteParquetMemory(
+        ParquetCompression compression = ParquetCompression.ZSTD,
+        int compressionLevel = 3, 
+        bool statistics = true,
+        int rowGroupSize = 0,
+        int dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true)
+    {
+        var lf = Lazy();
+        return lf.SinkParquetMemory(
+            compression,
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            compatLevel,
+            maintainOrder
         );
     }
     /// <summary>
-    /// Write DataFrame to IPC (Arrow) file with compression and parallel options.
+    /// Write DataFrame to an IPC (Arrow/Feather) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming and cloud storage.
+    /// </para>
     /// </summary>
-    /// <param name="path">The file path to write to.</param>
+    /// <param name="path">The output file path.</param>
     /// <param name="compression">Compression method (None, LZ4, ZSTD). Defaults to None.</param>
-    /// <param name="parallel">Whether to use parallel writing. Defaults to true.</param>
-    /// <param name="compatLevel">Arrow compatibility level. -1 means newest. Defaults to -1.</param>
+    /// <param name="compatLevel">Compatibility level (default -1 = newest).</param>
+    /// <param name="recordBatchSize">Number of rows per record batch (0 = default).</param>
+    /// <param name="recordBatchStatistics">Write statistics to the record batch header (default = true).</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
+    /// <param name="mkdir">Create parent directories if they don't exist (Local file system only).</param>
+    /// <param name="cloudOptions">Options for cloud storage.</param>
     public void WriteIpc(
-        string path, 
-        IpcCompression compression = IpcCompression.None, 
-        bool parallel = true, 
-        int compatLevel = -1)
-            => PolarsWrapper.WriteIpc(Handle, path, compression.ToNative(), parallel, compatLevel);
+        string path,
+        IpcCompression compression = IpcCompression.None,
+        int compatLevel = -1,
+        int recordBatchSize = 0,
+        bool recordBatchStatistics = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
 
+        lf.SinkIpc(
+            path,
+            compression,
+            compatLevel,
+            recordBatchSize,
+            recordBatchStatistics,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            cloudOptions
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.SinkIpcPartitioned"/>
+    public void WriteIpcPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        IpcCompression compression = IpcCompression.None,
+        int compatLevel = -1,
+        int recordBatchSize = 0,
+        bool recordBatchStatistics = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.SinkIpcPartitioned(
+            path,partitionBy,includeKeys,keysPreGrouped,maxRowsPerFile,approxBytesPerFile,
+            compression,compatLevel,recordBatchSize,recordBatchStatistics,maintainOrder,syncOnClose,mkdir,cloudOptions
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.SinkIpcMemory(IpcCompression, int, int, bool, bool)"/>
+    public byte[] WriteIpcMemory(
+        IpcCompression compression = IpcCompression.None,
+        int compatLevel = -1,
+        int recordBatchSize = 0,
+        bool recordBatchStatistics = true,
+        bool maintainOrder = true)
+    {
+        var lf = Lazy();
+        return lf.SinkIpcMemory(
+            compression,
+            compatLevel,
+            recordBatchSize,
+            recordBatchStatistics,
+            maintainOrder
+        );
+    }
     /// <summary>
     /// Write DataFrame to a JSON file.
     /// </summary>
@@ -2131,11 +3075,78 @@ public class DataFrame : IDisposable,IEnumerable<Series>
     {
         PolarsWrapper.WriteJson(Handle, path, format.ToNative());
     }
+    /// <summary>
+    /// Writes the DataFrame to a JSON format in memory.
+    /// </summary>
+    /// <param name="jsonFormat">The JSON format to use (Json or JsonLines).</param>
+    /// <returns>A byte array containing the JSON data.</returns>
+    public byte[] WriteJsonMemory(JsonFormat jsonFormat = JsonFormat.Json)
+    {
+        return PolarsWrapper.WriteJsonMemory(
+            Handle,
+            jsonFormat.ToNative()
+        );
+    }
+    /// <inheritdoc cref="LazyFrame.SinkJsonPartitioned"/>
+    public void WriteJsonPartitioned(
+        string path,
+        Selector partitionBy,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool checkExtension = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.SinkJsonPartitioned(
+            path,partitionBy,includeKeys,keysPreGrouped,maxRowsPerFile,approxBytesPerFile,
+            compression,compressionLevel,checkExtension,maintainOrder,syncOnClose,mkdir,cloudOptions
+        );
+    }
 
     /// <summary>
-    /// Alias for WriteJson with format=JsonLines.
+    /// Write DataFrame to a Newline Delimited JSON (NDJSON) file.
+    /// <para>
+    /// This uses the Lazy execution engine internally to support streaming, compression, and cloud storage.
+    /// </para>
     /// </summary>
-    public void WriteNdJson(string path) => WriteJson(path, JsonFormat.JsonLines);
+    /// <param name="path">Output file path.</param>
+    /// <param name="compression">Compression method (Gzip/Zstd). Defaults to None.</param>
+    /// <param name="compressionLevel">Compression level. -1 for default.</param>
+    /// <param name="checkExtension">Whether to check if the file extension matches '.json' or '.ndjson'.</param>
+    /// <param name="maintainOrder">Maintain the order of data.</param>
+    /// <param name="syncOnClose">Sync to disk on close.</param>
+    /// <param name="mkdir">Create parent directories.</param>
+    /// <param name="cloudOptions">Cloud storage options.</param>
+    public void WriteNdJson(
+        string path,
+        ExternalCompression compression = ExternalCompression.Uncompressed,
+        int compressionLevel = -1,
+        bool checkExtension = true,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+
+        lf.SinkJson(
+            path,
+            compression,
+            compressionLevel,
+            checkExtension,
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+            cloudOptions
+        );
+    }
     // ---------------------------------------------------------
     // Write Excel (Native)
     // ---------------------------------------------------------
@@ -2173,6 +3184,170 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         PolarsWrapper.WriteExcel(Handle, path, sheetName, dateFormat, datetimeFormat);
     }
     /// <summary>
+    /// Write the DataFrame to an Apache Avro file.
+    /// </summary>
+    /// <param name="path">The file path to write to.</param>
+    /// <param name="compression">The compression algorithm to use.</param>
+    /// <param name="name">The name of the Avro record.</param>
+    public void WriteAvro(
+        string path, 
+        AvroCompression compression = AvroCompression.Uncompressed, 
+        string name = "")
+    {
+        PolarsWrapper.WriteAvro(this.Handle, path, compression.ToNative(), name);
+    }
+    /// <summary>
+    /// Write the DataFrame to an Apache Avro memory buffer.
+    /// </summary>
+    /// <param name="compression">The compression algorithm to use.</param>
+    /// <param name="name">The name of the Avro record.</param>
+    /// <returns>A byte array containing the Avro data.</returns>
+    public byte[] WriteAvroMemory(
+        AvroCompression compression = AvroCompression.Uncompressed, 
+        string name = "")
+    {
+        return PolarsWrapper.WriteAvroToMemory(Handle, compression.ToNative(), name);
+    }
+    /// <summary>
+    /// Write a DataFrame into a delta table
+    /// </summary>
+    /// <inheritdoc cref="LazyFrame.SinkDelta(string, Selector?, DeltaSaveMode, bool, bool, bool, int, long, ParquetCompression, int, bool, uint, uint, int, bool, SyncOnClose, bool, CloudOptions?)"/>
+    public void WriteDelta(
+        string path,
+        Selector? partitionBy = null,
+        DeltaSaveMode mode = DeltaSaveMode.Append,
+        bool canEvolve=false,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = true, 
+        uint rowGroupSize = 0,
+        uint dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.SinkDelta(
+            path,
+            partitionBy,
+            // --- Delta Options ---
+            mode, 
+            canEvolve,
+            // --- Partition Params ---
+            
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
+
+            // --- Parquet Options ---
+            compression,
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            compatLevel, 
+
+            // --- Unified Options ---
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+
+            // --- Cloud Params ---
+            cloudOptions
+        );
+    }
+    /// <inheritdoc cref="WriteDelta(string, Selector?, DeltaSaveMode, bool, bool, bool, int, long, ParquetCompression, int, bool, uint, uint, int, bool, SyncOnClose, bool, CloudOptions?)"/>
+    public void WriteDelta(
+        string path,
+        string[]? partitionBy,
+        DeltaSaveMode mode = DeltaSaveMode.Append,
+        bool canEvolve = false,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = true, 
+        uint rowGroupSize = 0,
+        uint dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        using var selector = (partitionBy != null && partitionBy.Length > 0) 
+            ? Selector.Cols(partitionBy) 
+            : null;
+
+        WriteDelta(
+            path, selector, mode, canEvolve, includeKeys, keysPreGrouped, maxRowsPerFile, 
+            approxBytesPerFile, compression, compressionLevel, statistics, rowGroupSize, 
+            dataPageSize, compatLevel, maintainOrder, syncOnClose, mkdir, cloudOptions
+        );
+    }
+
+    /// <inheritdoc cref="WriteDelta(string, Selector?, DeltaSaveMode, bool, bool, bool, int, long, ParquetCompression, int, bool, uint, uint, int, bool, SyncOnClose, bool, CloudOptions?)"/>
+    public void WriteDelta(
+        string path,
+        string partitionBy,
+        DeltaSaveMode mode = DeltaSaveMode.Append,
+        bool canEvolve = false,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = true, 
+        uint rowGroupSize = 0,
+        uint dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+            => WriteDelta(
+                path, [partitionBy], mode, canEvolve, includeKeys, keysPreGrouped, 
+                maxRowsPerFile, approxBytesPerFile, compression, compressionLevel, statistics, 
+                rowGroupSize, dataPageSize, compatLevel, maintainOrder, syncOnClose, mkdir, cloudOptions
+            );
+    /// <summary>
+    /// Merge a DataFrame into a Delta Lake table with full SQL MERGE semantics.
+    /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// </summary>
+    /// <inheritdoc cref="LazyFrame.MergeDelta(string, string[], Expr?, Expr?, Expr?, Expr?, bool, CloudOptions?)"/>
+    public void MergeDelta(
+        string path,
+        string[] mergeKeys,
+        Expr? matchedUpdateCond = null,
+        Expr? matchedDeleteCond = null,
+        Expr? notMatchedInsertCond = null,
+        Expr? notMatchedBySourceDeleteCond = null,
+        bool canEvolve=false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.MergeDelta(
+            path,
+            mergeKeys,
+            matchedUpdateCond,
+            matchedDeleteCond,
+            notMatchedInsertCond,
+            notMatchedBySourceDeleteCond,
+            canEvolve,
+            cloudOptions
+        );
+    }
+    /// <summary>
     /// Export DataFrame to Record Batch
     /// </summary>
     /// <param name="onBatchReceived">Receive RecordBatch Callback</param>
@@ -2188,7 +3363,7 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         // Consumer Task
         var consumerTask = Task.Run(() => 
         {
-            using var reader = new ArrowToDbStream(buffer.GetConsumingEnumerable(),typeOverrides = null);
+            using var reader = new ArrowToDbStream(buffer.GetConsumingEnumerable(),typeOverrides);
             
             writerAction(reader);
         });
@@ -2229,7 +3404,6 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             throw new InvalidOperationException("No numeric columns to describe.");
 
         // 2. Define statistical metrics
-        // (这部分逻辑保持不变，依然非常优雅)
         var metrics = new List<(string Name, Func<string, Expr> Op)>
         {
             ("count",      c => Polars.Col(c).Count().Cast(DataType.Float64)),

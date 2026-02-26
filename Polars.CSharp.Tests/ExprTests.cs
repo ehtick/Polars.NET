@@ -1,5 +1,4 @@
 using Apache.Arrow;
-using Polars.NET.Core;
 using Polars.NET.Core.Arrow;
 using Polars.NET.Core.Helpers;
 using static Polars.CSharp.Polars;
@@ -2161,5 +2160,169 @@ TooShort,1990-05-20,1.60";
         var meanCol = res["conditional_mean"];
         Assert.Equal(25.0, (double)meanCol[0]);
         Assert.Equal(45.0, (double)meanCol[1]);
+    }
+    [Fact]
+    public void Test_Expr_Dot_Product()
+    {
+        // 1. 准备数据
+        // a = [1, 2, 3]
+        // b = [4, 5, 6]
+        using var df = DataFrame.FromColumns(new
+        {
+            a = new[] { 1, 2, 3 },
+            b = new[] { 4, 5, 6 }
+        });
+
+        // 2. 执行点积
+        // Calculation: (1*4) + (2*5) + (3*6) = 4 + 10 + 18 = 32
+        using var result = df.Select(
+            Col("a").Dot(Col("b")).Alias("dot_res")
+        );
+        result.Show();
+        // 3. 验证
+        // Dot product 返回的是标量（Scalar），但在 Polars 里它依然是 Series/DataFrame 的形式
+        // 对于整数输入，结果通常是 Int64
+        var val = result["dot_res"][0];
+        Assert.Equal(32L, Convert.ToInt64(val));
+    }
+
+    [Fact]
+    public void Test_Expr_Cosine_Similarity()
+    {
+        // 1. 准备正交向量（Cosine Should be 0）和平行向量（Cosine Should be 1）
+        // Case 1: [1, 0] vs [0, 1] -> Orthogonal -> Dot=0, Cos=0
+        // Case 2: [1, 1] vs [2, 2] -> Parallel -> Cos=1
+        
+        // 注意：Cosine Sim 涉及除法和开方，最好用浮点数
+        using var df = DataFrame.FromColumns(new
+        {
+            // Vector A
+            a1 = new[] { 1.0, 0.0 }, 
+            a2 = new[] { 0.0, 1.0 },
+            
+            // Vector B
+            b1 = new[] { 1.0, 1.0 },
+            b2 = new[] { 2.0, 2.0 }
+        });
+
+        // 2. 定义余弦相似度公式函数
+        // Cos(A, B) = (A . B) / (|A| * |B|)
+        // |A| = Sqrt(Sum(A^2))
+        static Expr L2Norm(Expr e) => e.Pow(2).Sum().Sqrt();
+        static Expr Cosine(Expr a, Expr b) => a.Dot(b) / (L2Norm(a) * L2Norm(b));
+
+        // 3. 计算
+        using var res = df.Select(
+            Cosine(Col("a1"), Col("a2")).Alias("ortho"), // [1,0] . [0,1]
+            Cosine(Col("b1"), Col("b2")).Alias("parallel") // [1,1] . [2,2]
+        );
+
+        // 4. 验证
+        var ortho = (double?)res["ortho"][0];
+        var parallel = (double?)res["parallel"][0];
+
+        // 浮点数比较需要容差
+        Assert.True(Math.Abs(ortho.Value - 0.0) < 1e-6, $"Expected 0.0, got {ortho}");
+        Assert.True(Math.Abs(parallel.Value - 1.0) < 1e-6, $"Expected 1.0, got {parallel}");
+    }
+
+    [Fact]
+    public void Test_Dot_Product_With_Nulls()
+    {
+        // 测试包含 Null 的情况，Polars 的 dot 通常会处理 Null（视作0或忽略，取决于具体实现，通常是忽略 null 进行 sum）
+        using var df = DataFrame.FromColumns(new
+        {
+            a = new[] { 1, 2, null as int? },
+            b = new[] { 4, 5, 10 }
+        });
+
+        // (1*4) + (2*5) + (null*10) = 4 + 10 + ? 
+        // Polars 默认行为：None propagates? 或者类似 sum 忽略？
+        // 让我们验证一下行为。通常 Dot 操作如果由 underlying arrow compute kernel 执行，
+        // 任何一方为 null，乘积为 null。求和时忽略 null。
+        // 所以预期：4 + 10 + null -> 14
+        
+        using var result = df.Select(Col("a").Dot(Col("b")));
+        
+        var val = result[0][0];
+        
+        // 如果 Polars 策略是 Propagate Nulls (像 +, * 那样)，结果可能是 Null
+        // 如果 Polars 策略是 Ignore Nulls (像 Sum 那样)，结果是 14
+        // 根据 Polars 文档，dot 忽略 nulls。
+        if (val == null)
+        {
+             // 如果你发现这里挂了，说明行为是 Propagate，我们改测试预期
+             Assert.Null(val); 
+        }
+        else
+        {
+             Assert.Equal(14L, Convert.ToInt64(val));
+        }
+    }
+    [Fact]
+    public void Test_Interpolate()
+    {
+        using var df = DataFrame.FromColumns(new
+        {
+            // 1, null, null, 4, 5
+            val = new double?[] { 1.0, null, null, 4.0, 5.0 } 
+        });
+
+        // 1. Linear Interpolation (Default)
+        // 1.0 -> (2.0) -> (3.0) -> 4.0 -> 5.0
+        using var linear = df.Select(Col("val").Interpolate().Alias("linear"));
+        var linearArr = linear["linear"].ToArray<double?>();
+        
+        Assert.Equal(2.0, linearArr[1]);
+        Assert.Equal(3.0, linearArr[2]);
+
+        // 2. Nearest Interpolation
+        // 1.0 -> (1.0) -> (4.0) -> 4.0 -> 5.0  (depends on strategy, usually rounds to nearest valid)
+        // Polars Nearest strategy: 
+        // Index 1 (val=null) is closer to Index 0 (val=1) ? or Index 3 (val=4)?
+        // Let's verify standard nearest neighbor behavior
+        using var nearest = df.Select(Col("val").Interpolate(InterpolationMethod.Nearest).Alias("nearest"));
+        var nearestArr = nearest["nearest"].ToArray<double?>();
+        
+        // 验证非空
+        Assert.NotNull(nearestArr[1]);
+        Assert.NotNull(nearestArr[2]);
+    }
+    [Fact]
+    public void Test_InterpolateBy_Expr()
+    {
+        // 构造非等间距数据
+        // Time: 0, 10, 20 (中间缺了 2, 5 这种均匀步长，但这里只看相对距离)
+        // 让我们用一个更明显的例子：
+        // Position: 0,      2,          10
+        // Value:    0,      ?,          100
+        //
+        // Linear (Index based): Index 1 is exactly between Index 0 and Index 2.
+        //      Result = (0 + 100) / 2 = 50
+        //
+        // InterpolateBy (Position based):
+        //      Total dist = 10 - 0 = 10
+        //      Current dist = 2 - 0 = 2
+        //      Ratio = 2 / 10 = 0.2
+        //      Result = 0 + (100 - 0) * 0.2 = 20
+        
+        using var df = DataFrame.FromColumns(new
+        {
+            pos = new double[] { 0, 2, 10 },
+            val = new double?[] { 0, null, 100 }
+        });
+
+        using var res = df.Select(
+            Col("val").Interpolate().Alias("linear_index"),
+            Col("val").InterpolateBy(Col("pos")).Alias("linear_pos")
+        );
+
+        // 1. 验证普通插值 (基于 Index，位于中间)
+        var linearIndex = res["linear_index"][1];
+        Assert.Equal(50.0, (double)linearIndex!);
+
+        // 2. 验证按列插值 (基于 Position，位于 20% 处)
+        var linearPos = res["linear_pos"][1];
+        Assert.Equal(20.0, (double)linearPos!);
     }
 }

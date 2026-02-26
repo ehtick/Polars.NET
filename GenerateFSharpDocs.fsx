@@ -13,11 +13,11 @@ let outputDir = "docs/api/fsharp_generated"
 let targetTypes = ["pl"; "Series"; "DataFrame"; "Expr";"LazyFrame"] 
 // =========================================
 
-let binDir = Path.GetDirectoryName(Path.GetFullPath(dllPath))
+let binDir = Path.GetDirectoryName(Path.GetFullPath dllPath)
 AppDomain.CurrentDomain.add_AssemblyResolve(fun _ args ->
     let assemblyName = (new AssemblyName(args.Name)).Name
     let depPath = Path.Combine(binDir, assemblyName + ".dll")
-    if File.Exists(depPath) then Assembly.LoadFrom(depPath) else null
+    if File.Exists depPath then Assembly.LoadFrom depPath else null
 )
 
 type DocMetadata = {
@@ -107,7 +107,7 @@ let tryParseMember (rawMemberXml: string) : option<string * DocMetadata> =
         try
             // --- 尝试 Plan A: 严格解析 ---
             let safeXml = sanitizeFragment rawMemberXml
-            let el = XElement.Parse(safeXml)
+            let el = XElement.Parse safeXml
             
             let getPart name = 
                 let node = el.Element(XName.Get name)
@@ -120,7 +120,7 @@ let tryParseMember (rawMemberXml: string) : option<string * DocMetadata> =
                 let pNameAttr = p.Attribute(XName.Get "name")
                 if pNameAttr <> null then
                     let pDesc = p.Nodes() |> Seq.map xmlNodeToMarkdown |> String.concat "" |> fun s -> s.Trim()
-                    if not (paramDict.ContainsKey(pNameAttr.Value)) then
+                    if not (paramDict.ContainsKey pNameAttr.Value) then
                         paramDict.Add(pNameAttr.Value, pDesc)
 
             Some(fullId, {
@@ -255,7 +255,7 @@ let generateDocForType (typeName: string) =
                 let mutable doc = { Summary = "*No documentation found.*"; Params = new Dictionary<string,string>(); Returns=""; Remarks=""; Example="" }
                 let searchKey = m.Name.ToLowerInvariant()
                 
-                if xmlLookup.ContainsKey(searchKey) then
+                if xmlLookup.ContainsKey searchKey then
                     let candidates = xmlLookup.[searchKey]
                     let bestMatch = 
                         candidates 
@@ -289,10 +289,10 @@ let generateDocForType (typeName: string) =
                 // Parameters
                 if paramsInfo.Length > 0 then
                     sb.AppendLine() |> ignore
-                    sb.AppendLine("**Parameters**") |> ignore
+                    sb.AppendLine "**Parameters**" |> ignore
                     sb.AppendLine() |> ignore
-                    sb.AppendLine("| Name | Type | Description |") |> ignore
-                    sb.AppendLine("| :--- | :--- | :--- |") |> ignore
+                    sb.AppendLine "| Name | Type | Description |" |> ignore
+                    sb.AppendLine "| :--- | :--- | :--- |" |> ignore
                     for p in paramsInfo do
                         let pName = p.Name
                         let rawType = formatType p.ParameterType
@@ -300,9 +300,9 @@ let generateDocForType (typeName: string) =
                         let tableDesc = cleanForTable rawDesc
                         sb.AppendLine(sprintf "| `%s` | `%s` | %s |" pName rawType tableDesc) |> ignore
                 
-                if not (String.IsNullOrWhiteSpace(doc.Returns)) then
+                if not (String.IsNullOrWhiteSpace doc.Returns) then
                     sb.AppendLine() |> ignore
-                    sb.AppendLine("**Returns**") |> ignore
+                    sb.AppendLine "**Returns**" |> ignore
                     sb.AppendLine() |> ignore
                     sb.AppendLine(doc.Returns) |> ignore
 

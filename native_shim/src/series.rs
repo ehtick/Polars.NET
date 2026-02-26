@@ -6,7 +6,7 @@ use std::os::raw::c_char;
 use crate::types::{DataFrameContext, DataTypeContext, SeriesContext};
 use crate::utils::*;
 use polars_arrow::datatypes::ArrowDataType;
-use polars_arrow::buffer::Buffer;
+use polars_buffer::Buffer;
 use polars_arrow::array::PrimitiveArray;
 use polars_arrow::array::BooleanArray;
 use polars_arrow::bitmap::Bitmap;
@@ -72,10 +72,67 @@ gen_series_new!(pl_series_new_i32, i32, Int32Type);
 gen_series_new!(pl_series_new_u32, u32, UInt32Type);
 gen_series_new!(pl_series_new_i64, i64, Int64Type);
 gen_series_new!(pl_series_new_u64, u64, UInt64Type);
+gen_series_new!(pl_series_new_f16, pf16, Float16Type);
 gen_series_new!(pl_series_new_f32, f32, Float32Type);
 gen_series_new!(pl_series_new_f64, f64, Float64Type);
 gen_series_new!(pl_series_new_i128, i128, Int128Type);
 gen_series_new!(pl_series_new_u128, u128, UInt128Type);
+
+// macro_rules! gen_series_new_128 {
+//     ($func_name:ident, $rs_type:ty, $pl_type:ty) => {
+//         #[unsafe(no_mangle)]
+//         pub unsafe extern "C" fn $func_name(
+//             name: *const c_char,
+//             ptr: *const u64, 
+//             validity: *const u8, 
+//             len: usize,
+//         ) -> *mut SeriesContext {
+//             ffi_try!({
+//                 let name = unsafe {CStr::from_ptr(name).to_string_lossy()};
+                
+//                 let slice_u64 = unsafe { std::slice::from_raw_parts(ptr, len * 2) };
+                
+//                 let values_vec: Vec<$rs_type> = slice_u64
+//                     .chunks_exact(2)
+//                     .map(|chunk| {
+//                         let low = chunk[0];
+//                         let high = chunk[1];
+//                         ((high as $rs_type) << 64) | (low as $rs_type)
+//                     })
+//                     .collect();
+
+//                 let values_buffer = Buffer::from(values_vec);
+
+//                 let validity_bitmap = if validity.is_null() {
+//                     None
+//                 } else {
+//                     let bytes_len = (len + 7) / 8;
+//                     let v_slice =unsafe { std::slice::from_raw_parts(validity, bytes_len)};
+//                     let v_vec = v_slice.to_vec(); 
+//                     Some(Bitmap::try_new(v_vec, len).unwrap())
+//                 };
+
+//                 let arrow_dtype = <$pl_type as PolarsDataType>::get_static_dtype().to_arrow(CompatLevel::newest());
+                
+//                 let arrow_array = PrimitiveArray::new(
+//                     arrow_dtype,
+//                     values_buffer,
+//                     validity_bitmap
+//                 );
+
+//                 let ca = ChunkedArray::<$pl_type>::with_chunk(
+//                     PlSmallStr::from_str(name.as_ref()), 
+//                     arrow_array,
+//                 );
+                
+//                 Ok(Box::into_raw(Box::new(SeriesContext { series: ca.into_series() })))
+//             })
+//         }
+//     };
+// }
+
+// gen_series_new_128!(pl_series_new_i128, i128, Int128Type);
+// gen_series_new_128!(pl_series_new_u128, u128, UInt128Type);
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_series_new_bool(
@@ -442,13 +499,14 @@ impl_fixed_list_ffi!(pl_series_new_array_u64, u64, ArrowDataType::UInt64);
 impl_fixed_list_ffi!(pl_series_new_array_u128, u128, ArrowDataType::UInt128);
 
 // Float
+impl_fixed_list_ffi!(pl_series_new_array_f16, pf16, ArrowDataType::Float16);
 impl_fixed_list_ffi!(pl_series_new_array_f32, f32, ArrowDataType::Float32);
 impl_fixed_list_ffi!(pl_series_new_array_f64, f64, ArrowDataType::Float64);
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pl_series_new_array_decimal(
     name: *const c_char,
-    flat_ptr: *const i128,      
+    flat_ptr: *const u64,       
     flat_len: usize,
     validity: *const u8,
     parent_len: usize,
@@ -459,16 +517,22 @@ pub unsafe extern "C" fn pl_series_new_array_decimal(
         let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
 
         // 1. Build Inner Child (PrimitiveArray<i128>)
-        let slice = unsafe { std::slice::from_raw_parts(flat_ptr, flat_len) };
-        let vec = slice.to_vec();
+        let slice_u64 = unsafe { std::slice::from_raw_parts(flat_ptr, flat_len * 2) };
+        let vec_i128: Vec<i128> = slice_u64
+            .chunks_exact(2)
+            .map(|chunk| {
+                let low = chunk[0];
+                let high = chunk[1];
+                ((high as i128) << 64) | (low as i128)
+            })
+            .collect();
 
-        // Decimal128 Type: Precision=38 (Polars default), Scale=dynamic
         let decimal_dtype = ArrowDataType::Decimal(38, scale);
 
         let inner_array = PrimitiveArray::new(
-            decimal_dtype.clone(), // Pass the full Decimal DataType
-            vec.into(),
-            None // Inner validity (assuming dense flat array implies no inner nulls for now, or match outer logic)
+            decimal_dtype.clone(), 
+            vec_i128.into(), // Vec<i128> -> Buffer
+            None // Inner validity (assuming dense flat array implies no inner nulls for now)
         );
 
         // 2. Build Validity Bitmap (Parent List Validity)
@@ -501,7 +565,6 @@ pub unsafe extern "C" fn pl_series_new_array_decimal(
         Ok(Box::into_raw(Box::new(SeriesContext { series: s })))
     })
 }
-
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_series_new_struct(
     name: *const c_char,
@@ -620,7 +683,7 @@ pub fn upgrade_to_large_list(array: Box<dyn Array>) -> Box<dyn Array> {
             let offsets_i64: Vec<i64> = offsets_i32.iter().map(|&x| x as i64).collect();
             
             // Convert Arrow Buffer
-            let raw_buffer = polars_arrow::buffer::Buffer::from(offsets_i64);
+            let raw_buffer = Buffer::from(offsets_i64);
             let offsets_buffer = polars_arrow::offset::OffsetsBuffer::try_from(raw_buffer).unwrap();
 
             // Deal Values Recursively
@@ -839,44 +902,59 @@ pub extern "C" fn pl_series_get_i64(s_ptr: *mut SeriesContext, idx: usize, out_v
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_series_get_i128(s_ptr: *mut SeriesContext, idx: usize, out_val: *mut i128) -> bool {
+pub extern "C" fn pl_series_get_i128(
+    s_ptr: *mut SeriesContext, 
+    idx: usize, 
+    out_val: *mut u64 
+) -> bool {
     let ctx = unsafe { &*s_ptr };
     if idx >= ctx.series.len() { return false; }
 
-    match ctx.series.get(idx) {
-        Ok(AnyValue::Int128(v)) => { unsafe { *out_val = v }; true }
-        
-        Ok(AnyValue::Int64(v))  => { unsafe { *out_val = v as i128 }; true }
-        Ok(AnyValue::Int32(v))  => { unsafe { *out_val = v as i128 }; true }
-        Ok(AnyValue::Int16(v))  => { unsafe { *out_val = v as i128 }; true }
-        Ok(AnyValue::Int8(v))   => { unsafe { *out_val = v as i128 }; true }
-        
-        Ok(AnyValue::UInt64(v)) => { unsafe { *out_val = v as i128 }; true }
-        Ok(AnyValue::UInt32(v)) => { unsafe { *out_val = v as i128 }; true }
-        Ok(AnyValue::UInt16(v)) => { unsafe { *out_val = v as i128 }; true }
-        Ok(AnyValue::UInt8(v))  => { unsafe { *out_val = v as i128 }; true }
-        
-        _ => false // Null or mismatch
+    let val = match ctx.series.get(idx) {
+        Ok(AnyValue::Int128(v)) => v,
+        Ok(AnyValue::Int64(v))  => v as i128,
+        Ok(AnyValue::Int32(v))  => v as i128,
+        Ok(AnyValue::Int16(v))  => v as i128,
+        Ok(AnyValue::Int8(v))   => v as i128,
+        Ok(AnyValue::UInt64(v)) => v as i128,
+        Ok(AnyValue::UInt32(v)) => v as i128,
+        Ok(AnyValue::UInt16(v)) => v as i128,
+        Ok(AnyValue::UInt8(v))  => v as i128,
+        _ => return false // Null or mismatch
+    };
+
+
+    unsafe {
+        *out_val = val as u64; 
+        *out_val.add(1) = (val >> 64) as u64; 
     }
+    true
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_series_get_u128(s_ptr: *mut SeriesContext, idx: usize, out_val: *mut u128) -> bool {
+pub extern "C" fn pl_series_get_u128(
+    s_ptr: *mut SeriesContext, 
+    idx: usize, 
+    out_val: *mut u64 
+) -> bool {
     let ctx = unsafe { &*s_ptr };
     if idx >= ctx.series.len() { return false; }
 
-    match ctx.series.get(idx) {
-        Ok(AnyValue::UInt128(v)) => { unsafe { *out_val = v }; true }
-        
-        Ok(AnyValue::UInt64(v)) => { unsafe { *out_val = v as u128 }; true }
-        Ok(AnyValue::UInt32(v)) => { unsafe { *out_val = v as u128 }; true }
-        Ok(AnyValue::UInt16(v)) => { unsafe { *out_val = v as u128 }; true }
-        Ok(AnyValue::UInt8(v))  => { unsafe { *out_val = v as u128 }; true }
-        
-        Ok(AnyValue::Int64(v)) if v >= 0 => { unsafe { *out_val = v as u128 }; true }
+    let val = match ctx.series.get(idx) {
+        Ok(AnyValue::UInt128(v)) => v,
+        Ok(AnyValue::UInt64(v)) => v as u128,
+        Ok(AnyValue::UInt32(v)) => v as u128,
+        Ok(AnyValue::UInt16(v)) => v as u128,
+        Ok(AnyValue::UInt8(v))  => v as u128,
+        Ok(AnyValue::Int64(v)) if v >= 0 => v as u128,
+        _ => return false
+    };
 
-        _ => false
+    unsafe {
+        *out_val = val as u64;
+        *out_val.add(1) = (val >> 64) as u64;
     }
+    true
 }
 
 #[unsafe(no_mangle)]
@@ -887,6 +965,7 @@ pub extern "C" fn pl_series_get_f64(s_ptr: *mut SeriesContext, idx: usize, out_v
     match ctx.series.get(idx) {
         Ok(AnyValue::Float64(v)) => { unsafe { *out_val = v }; true }
         Ok(AnyValue::Float32(v)) => { unsafe { *out_val = v as f64 }; true }
+        Ok(AnyValue::Float16(v)) => { unsafe { *out_val = f64::from(v) }; true }
         _ => false
     }
 }

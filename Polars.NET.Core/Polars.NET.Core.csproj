@@ -9,7 +9,6 @@
     <IsPackable>true</IsPackable>
 
     <PackageId>Polars.NET.Core</PackageId>
-    <Version>0.2.1-beta1</Version>
     <Authors>ErrorLSC</Authors>
     <Description>Core infrastructure and native bindings for Polars.NET. Not intended for direct use.</Description>
     <PackageTags>internal;native</PackageTags>
@@ -23,45 +22,38 @@
     <BuildRustNative Condition="'$(BuildRustNative)' == ''">true</BuildRustNative>
   </PropertyGroup>
 
-  <Target Name="BuildRustShim" BeforeTargets="BeforeBuild" Condition="'$(BuildRustNative)' == 'true'">
-    <Message Text="[Dev] Building Rust Native Shim..." Importance="high" />
-    <Exec Command="cargo build --release" 
-          WorkingDirectory="$(RustProjectDir)" 
+  <PropertyGroup>
+    <RustBuildProfile Condition="'$(Configuration)' == 'Debug'"></RustBuildProfile>
+    <RustBuildProfile Condition="'$(Configuration)' == 'Release'">--release</RustBuildProfile>
+    
+    <RustTargetDir Condition="'$(Configuration)' == 'Debug'">debug</RustTargetDir>
+    <RustTargetDir Condition="'$(Configuration)' == 'Release'">release</RustTargetDir>
+  </PropertyGroup>
+
+  <Target Name="BuildRustShim" BeforeTargets="BeforeBuild" Condition="'$(BuildRustNative)' == 'true' And '$(SkipRust)' != 'true'">
+    <Message Text="[Dev] Building Rust Native Shim (Profile: $(Configuration))..." Importance="high" />
+    
+    <Exec Command="cargo build $(RustBuildProfile)" 
+          WorkingDirectory="$(RustProjectDir)"
           EnvironmentVariables="RUSTFLAGS=-C target-cpu=x86-64-v3" />
   </Target>
 
   <ItemGroup Condition="'$(BuildRustNative)' == 'true'">
-    <Content Include="$(RustProjectDir)\target\release\native_shim.dll" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <Content Include="$(RustProjectDir)\target\$(RustTargetDir)\native_shim.dll" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
       <Link>native_shim.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>
     </Content>
-    <Content Include="$(RustProjectDir)\target\release\libnative_shim.so" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <Content Include="$(RustProjectDir)\target\$(RustTargetDir)\libnative_shim.so" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
       <Link>libnative_shim.so</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>
     </Content>
-    <Content Include="$(RustProjectDir)\target\release\libnative_shim.dylib" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <Content Include="$(RustProjectDir)\target\$(RustTargetDir)\libnative_shim.dylib" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
       <Link>libnative_shim.dylib</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>
     </Content>
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(Configuration)' == 'Release' And '$(BuildRustNative)' != 'true'">
-    
-    <None Include="..\libs\win-x64\native_shim.dll" Pack="true" PackagePath="runtimes\win-x64\native\native_shim.dll" Visible="false" />
-    
-    <None Include="..\libs\linux-x64\libnative_shim.so" Pack="true" PackagePath="runtimes\linux-x64\native\libnative_shim.so" Visible="false" />
-    
-    <None Include="..\libs\linux-musl-x64\libnative_shim.so" Pack="true" PackagePath="runtimes\linux-musl-x64\native\libnative_shim.so" Visible="false" />
-    
-    <None Include="..\libs\linux-arm64\libnative_shim.so" Pack="true" PackagePath="runtimes\linux-arm64\native\libnative_shim.so" Visible="false" />
-    
-    <None Include="..\libs\linux-musl-arm64\libnative_shim.so" Pack="true" PackagePath="runtimes\linux-musl-arm64\native\libnative_shim.so" Visible="false" />
-    
-    <None Include="..\libs\osx-arm64\libnative_shim.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native\libnative_shim.dylib" Visible="false" />
-
   </ItemGroup>
 
   <ItemGroup>

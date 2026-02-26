@@ -37,8 +37,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     public static partial UIntPtr pl_dataframe_width(DataFrameHandle df);
     [LibraryImport(LibName)] public static partial IntPtr pl_dataframe_get_column_name(DataFrameHandle df, UIntPtr index);
-    [LibraryImport(LibName)]
-    public static partial IntPtr pl_dataframe_to_string(DataFrameHandle df);
+    [LibraryImport(LibName)] public static partial IntPtr pl_dataframe_to_string(DataFrameHandle df);
     // Scalars
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     [return: MarshalAs(UnmanagedType.U1)]
@@ -62,8 +61,8 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName)]
     public static partial LazyFrameHandle pl_dataframe_lazy(DataFrameHandle df);
 
-    [LibraryImport(LibName)] 
-    public static partial IntPtr pl_dataframe_get_string(DataFrameHandle df, [MarshalAs(UnmanagedType.LPUTF8Str)] string colName, UIntPtr row);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
+    public static partial IntPtr pl_dataframe_get_string(DataFrameHandle df, string colName, UIntPtr row);
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_head(DataFrameHandle df, UIntPtr n);
     [LibraryImport(LibName)]
@@ -86,7 +85,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial DataFrameHandle pl_df_unique_stable(
         DataFrameHandle df,
-        [In, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] 
+        [In] 
         string[]? subset,
         UIntPtr subset_len,
         PlUniqueKeepStrategy keep,
@@ -96,16 +95,16 @@ unsafe internal partial class NativeBindings
     );
 
     [LibraryImport(LibName)]
-    public static unsafe partial DataFrameHandle pl_dataframe_sample_n(DataFrameHandle df, UIntPtr n, [MarshalAs(UnmanagedType.U1)] bool replacement, [MarshalAs(UnmanagedType.I1)] bool shuffle, ulong* seed);
+    public static partial DataFrameHandle pl_dataframe_sample_n(DataFrameHandle df, UIntPtr n, [MarshalAs(UnmanagedType.U1)] bool replacement, [MarshalAs(UnmanagedType.I1)] bool shuffle, ulong* seed);
 
     [LibraryImport(LibName)]
-    public static unsafe partial DataFrameHandle pl_dataframe_sample_frac(DataFrameHandle df, double frac, [MarshalAs(UnmanagedType.U1)] bool replacement, [MarshalAs(UnmanagedType.I1)] bool shuffle, ulong* seed);
-    [LibraryImport(LibName)]
+    public static partial DataFrameHandle pl_dataframe_sample_frac(DataFrameHandle df, double frac, [MarshalAs(UnmanagedType.U1)] bool replacement, [MarshalAs(UnmanagedType.I1)] bool shuffle, ulong* seed);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial DataFrameHandle pl_dataframe_unnest(
         DataFrameHandle df,
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string[] cols,
+        string[] cols,
         UIntPtr len,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? separator
+        string? separator
     );
     [LibraryImport(LibName)]
     public static partial DataFrameHandle pl_select(DataFrameHandle df, IntPtr[] exprs, UIntPtr len);
@@ -129,6 +128,7 @@ unsafe internal partial class NativeBindings
         PlJoinValidation validation,
         PlJoinCoalesce coalesce,
         PlJoinMaintainOrder maintainOrder,
+        PlJoinSide joinSide,
         [MarshalAs(UnmanagedType.U1)] bool nullsEqual,
         IntPtr sliceOffset,
         UIntPtr sliceLen
@@ -145,33 +145,40 @@ unsafe internal partial class NativeBindings
         [MarshalAs(UnmanagedType.U1)] bool maintainOrder
     );
     [LibraryImport(LibName)] 
-    public static partial DataFrameHandle pl_explode(DataFrameHandle df, SelectorHandle selector);
+    public static partial DataFrameHandle pl_dataframe_explode(
+        DataFrameHandle df, 
+        SelectorHandle selector,
+        [MarshalAs(UnmanagedType.U1)] bool emptyAsNull,
+        [MarshalAs(UnmanagedType.U1)] bool keepNulls);
     [LibraryImport(LibName)] 
-    public static partial DataFrameHandle pl_concat(
+    public static partial DataFrameHandle pl_dataframe_concat(
         IntPtr[] dfs, 
         UIntPtr len,
         PlConcatType how,
-        [MarshalAs(UnmanagedType.U1)] bool checkDuplicates
+        [MarshalAs(UnmanagedType.U1)] bool checkDuplicates,
+        [MarshalAs(UnmanagedType.U1)] bool strict,
+        [MarshalAs(UnmanagedType.U1)] bool unitLengthAsScalar
     );
     // --- Reshaping (Eager) ---
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    public static partial DataFrameHandle pl_pivot(
+    public static partial DataFrameHandle pl_dataframe_pivot(
         DataFrameHandle df,
-        IntPtr[] values, UIntPtr valuesLen,
-        IntPtr[] index, UIntPtr indexLen,
-        IntPtr[] columns, UIntPtr columnsLen,
-        PlPivotAgg aggCode,
-        IntPtr aggExpr,
+        SelectorHandle on,      // on_ptr (columns)
+        SelectorHandle index,   // index_ptr
+        SelectorHandle values,  // values_ptr
+        IntPtr aggExpr,     // agg_expr_ptr
+        PlPivotAgg aggCode,     // agg_code
+        [MarshalAs(UnmanagedType.U1)] bool maintainOrder,
         [MarshalAs(UnmanagedType.U1)] bool sortColumns,
-        string? separator // Option<&str>
+        string? separator       // separator_ptr
     );
-    [LibraryImport(LibName)] 
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)] 
     public static partial DataFrameHandle pl_unpivot(
         DataFrameHandle df,
         SelectorHandle index, 
-        SelectorHandle on, 
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? varName,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? valName
+        SelectorHandle? on, // Nullable
+        string? varName,
+        string? valName
     );
 
     [LibraryImport(LibName)]

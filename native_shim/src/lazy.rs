@@ -3,7 +3,7 @@ use std::ffi::{CStr, c_char};
 use polars::prelude::*;
 use crate::types::*;
 use polars::lazy::dsl::UnpivotArgsDSL;
-use crate::utils::{consume_exprs_array, map_asof_strategy, map_coalesce, map_jointype, map_maintain_order, map_validation, parse_keep_strategy, ptr_to_str, ptr_to_vec_string};
+use crate::utils::{consume_exprs_array, map_asof_strategy, map_coalesce, map_join_side, map_jointype, map_maintain_order, map_validation, parse_keep_strategy, ptr_to_str, ptr_to_vec_string};
 
 // ==========================================
 // Macro Definition
@@ -360,20 +360,26 @@ pub unsafe extern "C" fn pl_lazy_group_by_dynamic(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn pl_lazy_explode(
+pub extern "C" fn pl_lazyframe_explode(
     lf_ptr: *mut LazyFrameContext,
     selector_ptr: *mut SelectorContext,
+    empty_as_null: bool,
+    keep_nulls: bool,
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         let sel_ctx = unsafe { Box::from_raw(selector_ptr) };
 
-        let new_lf = lf_ctx.inner.explode(sel_ctx.inner);
+        let options = ExplodeOptions {
+            empty_as_null,
+            keep_nulls,
+        };
+
+        let new_lf = lf_ctx.inner.explode(sel_ctx.inner, options);
         
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
     })
 }
-
 #[unsafe(no_mangle)]
 pub extern "C" fn pl_lazyframe_unnest(
     lf_ptr: *mut LazyFrameContext,
@@ -448,7 +454,12 @@ pub extern "C" fn pl_lazyframe_unpivot(
     ffi_try!({
         let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
         let index_ctx = unsafe { Box::from_raw(index_ptr) };
-        let on_ctx = unsafe { Box::from_raw(on_ptr) };
+        let on = if on_ptr.is_null() {
+            None
+        } else {
+            let on_ctx = unsafe { Box::from_raw(on_ptr) };
+            Some(on_ctx.inner)
+        };
 
         let variable_name = if variable_name_ptr.is_null() { 
             None 
@@ -464,13 +475,76 @@ pub extern "C" fn pl_lazyframe_unpivot(
 
         let args = UnpivotArgsDSL {
             index: index_ctx.inner, 
-            on: on_ctx.inner,       
+            on,       
             variable_name,
             value_name,
         };
 
         let new_lf = lf_ctx.inner.unpivot(args);
         
+        Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pl_lazyframe_pivot(
+    lf_ptr: *mut LazyFrameContext,
+    on_ptr: *mut SelectorContext,
+    on_columns_ptr: *mut DataFrameContext,
+    index_ptr: *mut SelectorContext,
+    values_ptr: *mut SelectorContext,
+    agg_expr_ptr: *mut ExprContext,
+    agg_code: u8, 
+    maintain_order: bool,
+    separator_ptr: *const c_char,
+) -> *mut LazyFrameContext {
+    ffi_try!({
+        // 1. Unbox Contexts
+        let lf_ctx = unsafe { Box::from_raw(lf_ptr) };
+        let on_ctx = unsafe { Box::from_raw(on_ptr) };
+        let index_ctx = unsafe { Box::from_raw(index_ptr) };
+        let values_ctx = unsafe { Box::from_raw(values_ptr) };
+        
+        let on_columns_ctx = unsafe {&*on_columns_ptr};
+        let on_columns = Arc::new(on_columns_ctx.df.clone());
+
+        // 2. Handle Agg Expr
+        let agg_expr = if !agg_expr_ptr.is_null() {
+            let e_ctx = unsafe { Box::from_raw(agg_expr_ptr) };
+            e_ctx.inner
+        } else {
+            let el = Expr::Element;
+            match agg_code {
+                1 => el.sum(),
+                2 => el.min(),
+                3 => el.max(),
+                4 => el.mean(),
+                5 => el.median(),
+                6 => polars::prelude::len(), // Count
+                7 => polars::prelude::len(), // Count
+                8 => el.last(),
+                _ => el.first(),
+            }
+        };
+
+        // 3. Handle Separator String
+        let separator = if separator_ptr.is_null() {
+            PlSmallStr::EMPTY
+        } else {
+            PlSmallStr::from_str(ptr_to_str(separator_ptr).map_err(|e| PolarsError::ComputeError(e.to_string().into()))?)
+        };
+
+        // 4. Call LazyFrame::pivot
+        let new_lf = lf_ctx.inner.pivot(
+            on_ctx.inner,
+            on_columns,
+            index_ctx.inner,
+            values_ctx.inner,
+            agg_expr,
+            maintain_order,
+            separator,
+        );
+
         Ok(Box::into_raw(Box::new(LazyFrameContext { inner: new_lf })))
     })
 }
@@ -481,9 +555,15 @@ pub extern "C" fn pl_lazyframe_unpivot(
 pub extern "C" fn pl_lazy_concat(
     lfs_ptr: *const *mut LazyFrameContext, 
     len: usize,
-    how: i32,        // 0=Vert, 1=Horz, 2=Diag
-    rechunk: bool,   
-    parallel: bool   
+    how: i32,                    // 0=Vertical, 1=Horizontal, 2=Diagonal
+    // Common / UnionArgs
+    parallel: bool,
+    rechunk: bool,
+    to_supertypes: bool,         
+    maintain_order: bool,        
+    // Horizontal / Strict
+    strict: bool,                
+    broadcast_unit_length: bool  
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let mut lfs = Vec::with_capacity(len);
@@ -498,21 +578,45 @@ pub extern "C" fn pl_lazy_concat(
              return Err(PolarsError::ComputeError("Cannot concat empty list of LazyFrames".into()));
         }
 
-        let args = UnionArgs {
-            rechunk,
-            parallel,
-            ..Default::default()
-        };
-
         let new_lf = match how {
-            // Vertical
-            0 => concat(lfs, args)?,
+            // Vertical (Union)
+            0 => {
+                let args = UnionArgs {
+                    parallel,
+                    rechunk,
+                    to_supertypes,
+                    maintain_order,
+                    strict, 
+                    diagonal: false,
+                    from_partitioned_ds: false, 
+                };
+                polars::prelude::concat(lfs, args)?
+            },
             
             // Horizontal
-            1 => concat_lf_horizontal(lfs, args)?,
+            1 => {
+                let options = HConcatOptions {
+                    parallel,
+                    strict, // 这里的 strict 指代高度一致性检查
+                    broadcast_unit_length,
+                };
+                polars::prelude::concat_lf_horizontal(lfs, options)?
+            },
 
-            // Diagonal
-            2 => concat_lf_diagonal(lfs, args)?,
+            // Diagonal (Union with diagonal=true)
+            2 => {
+                // Polars 0.53 中，Diagonal 也是通过 concat + UnionArgs 实现的
+                let args = UnionArgs {
+                    parallel,
+                    rechunk,
+                    to_supertypes,
+                    maintain_order,
+                    strict,
+                    diagonal: true, // 关键点
+                    from_partitioned_ds: false,
+                };
+                polars::prelude::concat(lfs, args)?
+            },
 
             _ => return Err(PolarsError::ComputeError("Invalid lazy concat strategy".into())),
         };
@@ -536,6 +640,7 @@ pub extern "C" fn pl_lazyframe_join(
     validation_code: u8,
     coalesce_code: u8,
     maintain_order_code: u8,
+    join_build_side_code: u8,
     nulls_equal: bool,
     slice_offset_ptr: *const i64, // Nullable pointer for Slice Offset
     slice_len: usize              // Slice Length
@@ -562,6 +667,11 @@ pub extern "C" fn pl_lazyframe_join(
         let validation = map_validation(validation_code);
         let coalesce = map_coalesce(coalesce_code);
         let maintain_order = map_maintain_order(maintain_order_code);
+        let build_side = if join_build_side_code == 0 {
+            None
+        } else {
+            Some(map_join_side(join_build_side_code))
+        };
 
         // 3. Map Slice (Option<(i64, usize)>)
         let slice = if slice_offset_ptr.is_null() {
@@ -579,6 +689,7 @@ pub extern "C" fn pl_lazyframe_join(
             nulls_equal,
             coalesce,
             maintain_order,
+            build_side
         };
         
         let res_lf = left_ctx.inner.join(right_ctx.inner, left_on, right_on, args);
@@ -622,9 +733,11 @@ pub extern "C" fn pl_lazyframe_join_asof(
     validation_code: u8,
     coalesce_code: u8,
     maintain_order_code: u8,
+    join_build_side_code: u8,
     nulls_equal: bool,
     slice_offset_ptr: *const i64,     // Slice Offset
     slice_len: usize                  // Slice Len
+    
 ) -> *mut LazyFrameContext {
     ffi_try!({
         let left_ctx = unsafe { Box::from_raw(left_ptr) };
@@ -678,6 +791,11 @@ pub extern "C" fn pl_lazyframe_join_asof(
         let validation = map_validation(validation_code);
         let coalesce = map_coalesce(coalesce_code);
         let maintain_order = map_maintain_order(maintain_order_code);
+        let build_side = if join_build_side_code == 0 {
+            None
+        } else {
+            Some(map_join_side(join_build_side_code))
+        };
 
         let slice = if slice_offset_ptr.is_null() {
             None
@@ -693,6 +811,7 @@ pub extern "C" fn pl_lazyframe_join_asof(
             nulls_equal,
             coalesce,
             maintain_order,
+            build_side
         };
 
         let new_lf = left_ctx.inner.join(right_ctx.inner, left_on, right_on, args);
@@ -849,9 +968,6 @@ impl AnonymousScan for CSharpStreamScanner {
         false 
     }
     fn allows_projection_pushdown(&self) -> bool {
-        true 
-    }
-    fn allows_slice_pushdown(&self) -> bool {
         true 
     }
 }

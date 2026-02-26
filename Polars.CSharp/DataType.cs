@@ -167,7 +167,7 @@ public class DataType : IDisposable, IEquatable<DataType>
         DataTypeKind.Int8 or DataTypeKind.Int16 or DataTypeKind.Int32 or DataTypeKind.Int64 or
         DataTypeKind.UInt8 or DataTypeKind.UInt16 or DataTypeKind.UInt32 or DataTypeKind.UInt64 or
         DataTypeKind.Float32 or DataTypeKind.Float64 or DataTypeKind.Decimal or 
-        DataTypeKind.Int128 or DataTypeKind.UInt128=> true,
+        DataTypeKind.Int128 or DataTypeKind.UInt128 or DataTypeKind.Float16=> true,
         _ => false
     };
 
@@ -187,6 +187,7 @@ public class DataType : IDisposable, IEquatable<DataType>
     public static DataType UInt32  => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.UInt32), DataTypeKind.UInt32);
     public static DataType UInt64  => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.UInt64), DataTypeKind.UInt64);
     public static DataType UInt128   => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.UInt128), DataTypeKind.UInt128);
+    public static DataType Float16 => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.Float16), DataTypeKind.Float16);
     public static DataType Float32 => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.Float32), DataTypeKind.Float32);
     public static DataType Float64 => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.Float64), DataTypeKind.Float64);
     public static DataType String  => new(PolarsWrapper.NewPrimitiveType((int)PlDataType.String), DataTypeKind.String);

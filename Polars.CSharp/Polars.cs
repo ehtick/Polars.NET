@@ -1,4 +1,5 @@
 #pragma warning disable CS1591
+using System.Text;
 using Polars.NET.Core;
 using Polars.NET.Core.Helpers;
 namespace Polars.CSharp;
@@ -52,6 +53,7 @@ public static class Polars
     public static Expr Lit(TimeOnly value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(TimeSpan value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(bool value) => new(PolarsWrapper.Lit(value));
+    public static Expr Lit(Half value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(float value) => new(PolarsWrapper.Lit(value));
     public static Expr Lit(decimal value) => new(PolarsWrapper.Lit(value));
     public static Expr LitNull() => new(PolarsWrapper.LitNull());
@@ -259,4 +261,7 @@ public static class Polars
     /// </example>
     public static Expr CombineDateAndTime(Expr date, Expr time, TimeUnit tu = TimeUnit.Microseconds)
         => date.Dt.Combine(time, tu);
+
+
 }
+

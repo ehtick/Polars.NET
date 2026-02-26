@@ -80,6 +80,8 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_u128(string name, UInt128[] ptr, byte[]? validity, UIntPtr len);
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    public static partial SeriesHandle pl_series_new_f16(string name, Half[] ptr, byte[]? validity, UIntPtr len);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_f32(string name, float[] ptr, byte[]? validity, UIntPtr len);
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
@@ -96,7 +98,7 @@ unsafe internal partial class NativeBindings
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_str(
         string name, 
-        [In, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str)] string?[] strs, 
+        [In] string?[] strs, 
         UIntPtr len
         );
     [LibraryImport(LibName)]
@@ -108,14 +110,14 @@ unsafe internal partial class NativeBindings
         IntPtr validity_ptr,  // Validity (IntPtr.Zero allowed)
         UIntPtr len // Row count
     );
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     public static partial SeriesHandle pl_series_new_datetime(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        string name,
         ref long ptr,
         IntPtr validity,
         UIntPtr len,
         PlTimeUnit unit, // 0=ns, 1=us, 2=ms
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string? zone
+        string? zone
     );
     [LibraryImport(LibName)]
     public static partial SeriesHandle pl_series_new_date(
@@ -261,7 +263,16 @@ unsafe internal partial class NativeBindings
 
     #endregion
 
-    #region Floats (f32, f64) and Decimal
+    #region Floats (f16, f32, f64) and Decimal
+    [LibraryImport(LibName)]
+    public static partial SeriesHandle pl_series_new_array_f16(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
+        Half* flat_ptr,
+        UIntPtr flat_len,
+        IntPtr validity,
+        UIntPtr parent_len,
+        UIntPtr width
+    );
 
     [LibraryImport(LibName)]
     public static partial SeriesHandle pl_series_new_array_f32(

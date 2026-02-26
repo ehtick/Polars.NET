@@ -39,6 +39,7 @@ public class Expr : IDisposable
             // --- Float ---
             double d => new Expr(PolarsWrapper.Lit(d)),
             float f => new Expr(PolarsWrapper.Lit(f)),
+            Half h => new Expr(PolarsWrapper.Lit(h)),
 
             // --- String and Boolean ---
             string str => new Expr(PolarsWrapper.Lit(str)),
@@ -671,7 +672,27 @@ public class Expr : IDisposable
     /// Calculate the power of the expression with a given numeric exponent.
     /// </summary>
     public Expr Pow(double exponent) => new(PolarsWrapper.Pow(CloneHandle(), PolarsWrapper.Lit(exponent)));
-
+    /// <summary>
+    /// Compute the dot/inner product between two expressions.
+    /// <para>
+    /// The dot product is the sum of the products of the corresponding entries of the two sequences of numbers.
+    /// </para>
+    /// </summary>
+    /// <param name="other">The other expression to compute the dot product with.</param>
+    /// <returns>A scalar expression representing the dot product result.</returns>
+    /// <example>
+    /// <code>
+    /// var df = DataFrame.FromColumns(new 
+    /// {
+    ///     a = new[] { 1, 2, 3 },
+    ///     b = new[] { 4, 5, 6 }
+    /// });
+    /// 
+    /// // (1*4) + (2*5) + (3*6) = 4 + 10 + 18 = 32
+    /// df.Select(Col("a").Dot(Col("b"))).Show();
+    /// </code>
+    /// </example>
+    public Expr Dot(Expr other) => new(PolarsWrapper.Dot(CloneHandle(), other.CloneHandle()));
     /// <summary>
     /// Calculate the power of the Euler's number.
     /// </summary>
@@ -757,6 +778,23 @@ public class Expr : IDisposable
     /// Fill null values with a specific strategy (Backward).
     /// </summary>
     public Expr BackwardFill(uint? limit = null) => new(PolarsWrapper.BackwardFill(CloneHandle(), limit ?? 0));
+    /// <summary>
+    /// Interpolate intermediate values. The interpolation method can be configured.
+    /// <para>Nulls at the beginning and end of the series remain null.</para>
+    /// </summary>
+    /// <param name="method">Interpolation method (Linear or Nearest).</param>
+    public Expr Interpolate(InterpolationMethod method = InterpolationMethod.Linear)
+        => new(PolarsWrapper.Interpolate(CloneHandle(), method.ToNative()));
+    /// <summary>
+    /// Interpolate intermediate values based on the values of another column.
+    /// <para>
+    /// This is useful when the data is not equally spaced, for example when interpolating based on a timestamp column.
+    /// </para>
+    /// </summary>
+    /// <param name="by">The column to use for interpolation (e.g. a timestamp column).</param>
+    /// <returns>A new expression with interpolated values.</returns>
+    public Expr InterpolateBy(Expr by) 
+        => new(PolarsWrapper.InterpolateBy(CloneHandle(), by.CloneHandle()));
     /// <summary>
     /// Evaluate whether the expression is null.
     /// </summary>
@@ -918,6 +956,11 @@ public class Expr : IDisposable
     /// </summary>
     /// <returns>A series which length is 1</returns>
     public Expr Median() => new(PolarsWrapper.Median(CloneHandle()));
+    /// <summary>
+    /// Get the mode value.
+    /// </summary>
+    /// <returns>A series which length is 1</returns>
+    public Expr Mode() => new(PolarsWrapper.Mode(CloneHandle()));
     /// <summary>
     /// Compute the sample skewness of a data set.
     /// </summary>
@@ -1936,6 +1979,14 @@ public class Expr : IDisposable
     /// Use <see cref="DataFrame.Explode(string[])"/> for safely exploding columns while repeating others.
     /// </para>
     /// </summary>
+    /// <param name="emptyAsNull">
+    /// If <c>true</c>, empty lists are exploded into a single <c>null</c> value. 
+    /// If <c>false</c>, rows with empty lists are removed from the result.
+    /// </param>
+    /// <param name="keepNulls">
+    /// If <c>true</c>, <c>null</c> values in the column are preserved as <c>null</c> in the result. 
+    /// If <c>false</c>, rows with <c>null</c> values are removed.
+    /// </param>
     /// <example>
     /// <code>
     /// var df = DataFrame.FromColumns(new
@@ -1965,7 +2016,7 @@ public class Expr : IDisposable
     /// // df.Explode("tags").Show();
     /// </code>
     /// </example>
-    public Expr Explode() => new(PolarsWrapper.Explode(CloneHandle()));
+    public Expr Explode(bool emptyAsNull=true,bool keepNulls=true) => new(PolarsWrapper.Explode(CloneHandle(),emptyAsNull,keepNulls));
     /// <summary>
     /// Aggregate values into a list.
     /// <para>
@@ -2946,7 +2997,11 @@ public class ArrayOps
         return new Expr(PolarsWrapper.ArrayJoin(h, separator, ignoreNulls));
     }
 
-    public Expr Explode() => Wrap(PolarsWrapper.ArrayExplode); // New
+    public Expr Explode(bool emptyAsNull=true,bool keepNulls = true)
+    {
+        var h = PolarsWrapper.CloneExpr(_expr.Handle);
+        return new Expr(PolarsWrapper.ArrayExplode(h,emptyAsNull,keepNulls)); 
+    }
 
     /// <summary>
     /// Convert array to struct. Fields will be named field_0, field_1, etc.

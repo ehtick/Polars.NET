@@ -166,6 +166,8 @@ public partial class Series : IDisposable
 
         if (underlying == typeof(float)) 
             return (T?)(object?)(float?)PolarsWrapper.SeriesGetDouble(Handle, index);
+        if (underlying == typeof(Half)) 
+            return (T?)(object?)(Half?)PolarsWrapper.SeriesGetDouble(Handle, index);
 
         // 2. Boolean
         if (underlying == typeof(bool)) 
@@ -241,6 +243,7 @@ public partial class Series : IDisposable
                     DataTypeKind.Decimal => GetValue<decimal?>(index),
 
                     // float
+                    DataTypeKind.Float16 => GetValue<Half?>(index),
                     DataTypeKind.Float32 => GetValue<float?>(index),
                     DataTypeKind.Float64 => GetValue<double?>(index),
 
@@ -347,6 +350,27 @@ public partial class Series : IDisposable
     /// <param name="baseVal"></param>
     /// <returns></returns>
     public Series Ln(double baseVal = Math.E) => ApplyExpr(Polars.Col(Name).Ln(baseVal));
+    // ==========================================
+    // Linear Algebra (Dot Product)
+    // ==========================================
+
+    /// <summary>
+    /// Compute the dot/inner product between two Series.
+    /// <para>
+    /// The behavior is equivalent to `(this * other).Sum()`.
+    /// </para>
+    /// </summary>
+    /// <param name="other">The other Series to compute the dot product with.</param>
+    /// <returns>A Series of length 1 containing the result.</returns>
+    public Series Dot(Series other)
+        => ApplyBinaryExpr(other, (left, right) => left.Dot(right));
+    /// <summary>
+    /// Compute the dot/inner product and return the scalar value directly.
+    /// </summary>
+    /// <typeparam name="T">The type of the result (e.g. double, long).</typeparam>
+    /// <param name="other">The other Series.</param>
+    /// <returns>The dot product value.</returns>
+    public T? Dot<T>(Series other) => Dot(other).GetValue<T>(0);
     /// <summary>
     /// Round the number
     /// </summary>
@@ -637,6 +661,8 @@ public partial class Series : IDisposable
     public Series(string name, UInt128?[] data) => Handle = SeriesFactory.Create(name, data);
 
     // 3. Floating Point
+    public Series(string name, Half[] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, Half?[] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, float[] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, float?[] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, double[] data) => Handle = SeriesFactory.Create(name, data);
@@ -670,6 +696,7 @@ public partial class Series : IDisposable
     public Series(string name, uint[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, long[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, ulong[,] data) => Handle = SeriesFactory.Create(name, data);
+    public Series(string name, Half[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, float[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, double[,] data) => Handle = SeriesFactory.Create(name, data);
     public Series(string name, decimal[,] data) => Handle = SeriesFactory.Create(name, data);
@@ -791,6 +818,22 @@ public partial class Series : IDisposable
     /// </summary>
     public Series BackwardFill(uint? limit = null) => ApplyExpr(Polars.Col(Name).BackwardFill(limit));
     /// <summary>
+    /// Interpolate intermediate values.
+    /// </summary>
+    /// <inheritdoc cref="Expr.Interpolate(InterpolationMethod)"/>
+    public Series Interpolate(InterpolationMethod method = InterpolationMethod.Linear)
+        => ApplyExpr(Polars.Col(Name).Interpolate(method));
+    /// <summary>
+    /// Interpolate intermediate values based on the values of another Series.
+    /// <para>
+    /// Useful for linear interpolation across unevenly spaced data.
+    /// </para>
+    /// </summary>
+    /// <param name="by">The Series to use for interpolation (e.g. timestamps).</param>
+    /// <returns>A new Series with interpolated values.</returns>
+    public Series InterpolateBy(Series by)
+        => ApplyBinaryExpr(by, (left, right) => left.InterpolateBy(right));
+    /// <summary>
     /// Fill floating point NaN values with a specified value.
     /// Note: This is different from FillNull. It only handles IEEE 754 NaN.
     /// </summary>
@@ -874,6 +917,11 @@ public partial class Series : IDisposable
     /// </summary>
     /// <returns>A new <see cref="Series"/> containing the median value (length 1).</returns>
     public Series Median() => ApplyExpr(Polars.Col(Name).Median());
+    /// <summary>
+    /// <inheritdoc cref="Expr.Median()" path="/summary"/>
+    /// </summary>
+    /// <returns>A new <see cref="Series"/> containing the mode value (length 1).</returns>
+    public Series Mode() => ApplyExpr(Polars.Col(Name).Mode());
 
     /// <summary>
     /// <inheritdoc cref="Expr.Skew(bool)" path="/summary"/>
@@ -1097,7 +1145,7 @@ public partial class Series : IDisposable
     /// Explode a list column into multiple rows.
     /// The resulting Series will be longer than the original.
     /// </summary>
-    public Series Explode() => ApplyExpr(Polars.Col(Name).Explode());
+    public Series Explode(bool emptyAsNull=true,bool keepNulls=true) => ApplyExpr(Polars.Col(Name).Explode(emptyAsNull,keepNulls));
     /// <summary>
     /// Aggregate values into a list.
     /// Result is a Series with 1 row containing a List of all values.

@@ -2,8 +2,9 @@ use std::ffi::{CStr, c_char};
 use polars::frame::UniqueKeepStrategy;
 use polars_arrow::ffi::ArrowArray;
 use polars_arrow::ffi::{export_array_to_c,export_field_to_c};
-use polars::prelude::{ArrowSchema, AsofStrategy, CsvEncoding, Expr, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin, ParallelStrategy, SchemaRef};
+use polars::prelude::{ArrowSchema, AsofStrategy,  Expr, JoinBuildSide, JoinCoalesce, JoinType, JoinValidation, MaintainOrderJoin, ParallelStrategy, PlSmallStr,  SchemaRef};
 use polars_arrow::datatypes::Field;
+use polars_io::ExternalCompression;
 use polars_io::prelude::JsonFormat;
 use polars_io::utils::sync_on_close::SyncOnCloseType;
 
@@ -84,14 +85,6 @@ pub unsafe fn ptr_to_vec_string(ptr: *const *const c_char, len: usize) -> Vec<St
     res
 }
 
-pub unsafe fn ptr_to_opt_string(ptr: *const c_char) -> Option<String> {
-    if ptr.is_null() {
-        None
-    } else {
-       unsafe {CStr::from_ptr(ptr).to_str().ok().map(|s| s.to_string())}
-    }
-}
-
 pub fn ptr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, std::str::Utf8Error> {
     if ptr.is_null() { 
         panic!("Null pointer passed to ptr_to_str"); 
@@ -115,6 +108,22 @@ pub(crate) unsafe fn ptr_to_schema_ref(ptr: *mut SchemaContext) -> Option<Schema
     } else {
         let ctx = unsafe { &*ptr };
         Some(ctx.schema.clone())
+    }
+}
+
+pub(crate) unsafe fn ptr_to_opt_pl_str(ptr: *const c_char) -> Option<PlSmallStr> {
+    if ptr.is_null() {
+        None
+    } else {
+        ptr_to_str(ptr).ok().map(PlSmallStr::from_str)
+    }
+}
+
+pub(crate) unsafe fn ptr_to_pl_str(ptr: *const c_char, default: &str) -> PlSmallStr {
+    if ptr.is_null() {
+        PlSmallStr::from_str(default)
+    } else {
+        ptr_to_str(ptr).ok().map(PlSmallStr::from_str).unwrap_or_else(|| PlSmallStr::from_str(default))
     }
 }
 
@@ -161,6 +170,17 @@ pub fn map_maintain_order(code: u8) -> MaintainOrderJoin {
     }
 }
 
+#[inline]
+pub fn map_join_side(code: u8) -> JoinBuildSide {
+    match code {
+        1 => JoinBuildSide::PreferLeft,
+        2 => JoinBuildSide::ForceLeft,
+        3 => JoinBuildSide::PreferRight,
+        4 => JoinBuildSide::ForceRight,
+        _ => JoinBuildSide::PreferLeft, 
+    }
+}
+
 pub(crate) fn map_asof_strategy(code: u8) -> AsofStrategy {
     match code {
         0 => AsofStrategy::Backward,
@@ -193,15 +213,6 @@ pub(crate) fn map_parallel_strategy(code: u8) -> ParallelStrategy {
 }
 
 #[inline]
-pub(crate) fn map_csv_encoding(encoding: u8) -> CsvEncoding {
-    match encoding {
-        0 => CsvEncoding::Utf8,
-        1 => CsvEncoding::LossyUtf8,
-        _ => CsvEncoding::Utf8,
-    }
-}
-
-#[inline]
 pub(crate) fn map_json_format(code: u8) -> JsonFormat {
     match code {
         1 => JsonFormat::JsonLines, // .jsonl / .ndjson
@@ -217,3 +228,29 @@ pub fn map_sync_on_close(val: u8) -> SyncOnCloseType {
         _ => SyncOnCloseType::None,
     }
 }
+
+#[inline]
+pub(crate) fn map_external_compression(
+    compression_code: u8, 
+    compression_level: i32
+) -> ExternalCompression {
+
+    let get_level = || -> Option<u32> {
+        if compression_level >= 0 {
+            Some(compression_level as u32)
+        } else {
+            None
+        }
+    };
+
+    match compression_code {
+        1 => ExternalCompression::Gzip {
+            level: get_level(),
+        },
+        2 => ExternalCompression::Zstd {
+            level: get_level(),
+        },
+        _ => ExternalCompression::Uncompressed,
+    }
+}
+

@@ -28,7 +28,8 @@ public enum PlDataType : int
     Decimal=22,
     Array = 23,
     Int128= 24,
-    UInt128 =25
+    UInt128 =25,
+    Float16=26
 }
 
 public enum PlJoinType : byte
@@ -187,6 +188,36 @@ public enum PlJoinMaintainOrder: byte
     RightLeft =4
 }
 
+public enum PlJoinSide : byte
+{
+    /// <summary>
+    /// Let Polars decide the best join strategy (Optimizer's choice).
+    /// </summary>
+    None = 0,
+    
+    /// <summary>
+    /// Prefer using the left side as the build side (hash table).
+    /// Optimizer may override this if the right side is significantly smaller.
+    /// </summary>
+    PreferLeft = 1,
+    
+    /// <summary>
+    /// Force using the left side as the build side.
+    /// </summary>
+    ForceLeft = 2,
+    
+    /// <summary>
+    /// Prefer using the right side as the build side (hash table).
+    /// Optimizer may override this if the left side is significantly smaller.
+    /// </summary>
+    PreferRight = 3,
+    
+    /// <summary>
+    /// Force using the right side as the build side.
+    /// </summary>
+    ForceRight = 4
+}
+
 public enum PlAsofStrategy: byte  
 {
     // Default
@@ -236,7 +267,7 @@ public enum PlParquetCompression : byte
     Snappy = 1,
     Gzip = 2,
     Brotli = 3,
-    Zstd = 4,
+    ZSTD = 4,
     Lz4Raw = 5
 }
 
@@ -246,4 +277,42 @@ public enum PlQuoteStyle : byte
     Always = 1,
     NonNumeric = 2,
     Never = 3
+}
+
+public enum PlInterpolationMethod
+{
+    Linear = 0,
+    Nearest = 1
+}
+
+public enum PlCloudProvider : byte
+{
+    None = 0,
+    Aws = 1,
+    Azure = 2,
+    Gcp = 3,
+    Http = 4,
+    HuggingFace = 5
+}
+
+public enum PlDeltaSaveMode : byte
+{
+    Append = 0,
+    Overwrite = 1,
+    ErrorIfExists = 2,
+    Ignore = 3
+}
+
+public enum PlExternalCompression : byte
+{
+    Uncompressed = 0,
+    Gzip = 1,
+    ZSTD = 2
+}
+
+public enum PlAvroCompression : byte
+{
+    Uncompressed = 0,
+    Deflate = 1,
+    Snappy = 2
 }

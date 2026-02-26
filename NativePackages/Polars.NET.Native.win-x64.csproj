@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    
+    <PackageId>Polars.NET.Native.win-x64</PackageId>
+    <Authors>ErrorLSC</Authors>
+    <Description>Windows x64 native binaries for Polars.NET.</Description>
+    <PackageTags>polars;native;win-x64</PackageTags>
+    <RepositoryUrl>https://github.com/ErrorLSC/Polars.NET</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\libs\win-x64\native_shim.dll" 
+          Pack="true" 
+          PackagePath="runtimes\win-x64\native\native_shim.dll" 
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

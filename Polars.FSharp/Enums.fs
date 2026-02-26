@@ -30,7 +30,7 @@ and DataType =
     | Decimal of precision: int option * scale: int option
     | Unknown | SameAsInput | Null | List of DataType | Array of DataType * width: uint64
     | Struct of Field list 
-    | Int128 | UInt128
+    | Int128 | UInt128 | Float16
     member this.Code : int =
         match this with
         | Unknown | SameAsInput -> 0
@@ -59,6 +59,7 @@ and DataType =
         | Array _ -> 23
         | Int128 -> 24
         | UInt128 -> 25
+        | Float16 -> 26
     static member FromHandle (handle: DataTypeHandle) : DataType =
         let kind = PolarsWrapper.GetDataTypeKind handle
 
@@ -78,6 +79,7 @@ and DataType =
         | 13 -> Date
         | 24 -> Int128
         | 25 -> UInt128
+        | 26 -> Float16
         
         // --- Complex Type ---
         
@@ -152,7 +154,7 @@ and DataType =
         match this with
         | UInt8 | UInt16 | UInt32 | UInt64
         | Int8 | Int16 | Int32 | Int64
-        | Float32 | Float64 | Int128
+        | Float32 | Float64 | Int128 | Float16
         | Decimal _ -> true
         | _ -> false
 
@@ -188,6 +190,7 @@ and DataType =
         | Time -> PolarsWrapper.NewPrimitiveType 15
         | Int128 -> PolarsWrapper.NewPrimitiveType 24
         | UInt128 -> PolarsWrapper.NewPrimitiveType 25
+        | Float16 -> PolarsWrapper.NewPrimitiveType 26
         
         // --- Complex Type ---
 
@@ -253,6 +256,21 @@ type JoinType =
         | Cross -> PlJoinType.Cross
         | Semi -> PlJoinType.Semi
         | Anti -> PlJoinType.Anti
+
+type JoinSide =
+    | LetPolarsDecide
+    | PreferLeft
+    | ForceLeft
+    | PreferRight
+    | ForceRight
+    member internal this.ToNative() =
+        match this with
+        | LetPolarsDecide -> PlJoinSide.None
+        | PreferRight -> PlJoinSide.PreferRight
+        | PreferLeft -> PlJoinSide.PreferLeft
+        | ForceLeft -> PlJoinSide.ForceLeft
+        | ForceRight -> PlJoinSide.ForceRight
+
 
 /// <summary>
 /// Specifies the aggregation function for pivot operations.
@@ -491,7 +509,7 @@ type ParquetCompression =
         | Snappy -> PlParquetCompression.Snappy
         | Gzip -> PlParquetCompression.Gzip
         | Brotli -> PlParquetCompression.Brotli
-        | Zstd -> PlParquetCompression.Zstd
+        | Zstd -> PlParquetCompression.ZSTD
         | Lz4Raw -> PlParquetCompression.Lz4Raw
 
 type QuoteStyle =
@@ -505,3 +523,63 @@ type QuoteStyle =
         | Necessary -> PlQuoteStyle.Necessary
         | Never -> PlQuoteStyle.Never
         | NonNumeric -> PlQuoteStyle.NonNumeric
+
+type InterpolationMethod =
+    | Nearest
+    | Linear
+    member internal this.ToNative() =
+        match this with
+        | Nearest -> PlInterpolationMethod.Nearest
+        | Linear -> PlInterpolationMethod.Linear
+
+type CloudProvider =
+    | NotCloud
+    | Aws
+    | Azure
+    | Gcp
+    | Http
+    | HuggingFace
+    member internal this.ToNative() =
+        match this with
+        | NotCloud -> PlCloudProvider.None
+        | Aws -> PlCloudProvider.Aws
+        | Azure -> PlCloudProvider.Azure
+        | Gcp -> PlCloudProvider.Gcp
+        | Http -> PlCloudProvider.Http
+        | HuggingFace -> PlCloudProvider.HuggingFace
+
+/// <summary>
+/// mode for saving delta lake table
+/// </summary>
+type DeltaSaveMode =
+    | Append
+    | Overwrite
+    | ErrorIfExists
+    | Ignore
+    member internal this.ToNative() = 
+        match this with 
+        | Append -> PlDeltaSaveMode.Append
+        | Overwrite -> PlDeltaSaveMode.Overwrite
+        | ErrorIfExists -> PlDeltaSaveMode.ErrorIfExists
+        | Ignore -> PlDeltaSaveMode.Ignore
+
+type ExternalCompression =
+    | Uncompressed
+    | Gzip
+    | ZSTD
+    member internal this.ToNative() =
+        match this with
+        | Uncompressed -> PlExternalCompression.Uncompressed
+        | Gzip -> PlExternalCompression.Gzip
+        | ZSTD -> PlExternalCompression.ZSTD
+
+type AvroCompression =
+    | Uncompressed
+    | Deflate
+    | Snappy
+    member internal this.ToNative() =
+        match this with
+        | Uncompressed -> PlAvroCompression.Uncompressed
+        | Deflate -> PlAvroCompression.Deflate
+        | Snappy -> PlAvroCompression.Snappy
+

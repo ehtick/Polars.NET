@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text;
 using static Polars.CSharp.Polars;
 
@@ -48,7 +49,7 @@ public class IoTests
 
             using var df = DataFrame.ReadJson(
                 path,
-                columns: new[] { "age" },       // 只读 age 列
+                columns: ["age"],       // 只读 age 列
                 schema: schema,                 // 强制类型转换
                 jsonFormat: JsonFormat.JsonLines,
                 ignoreErrors: false
@@ -79,54 +80,91 @@ public class IoTests
         }
     }
     [Fact]
-    public void Test_ReadJson_Memory_Bytes()
+    public void Test_SinkAndReadJsonLines_Memory_Bytes()
     {
         // ---------------------------------------------------
-        // 场景：从内存 byte[] 读取标准 JSON 数组
-        // 验证：NativeBinding -> Wrapper -> 内存指针传递链路
+        // 场景：验证 NDJSON (JsonLines) 格式的内存双向传递
+        // 链路：String -> 内存流读取 -> 转换为 LazyFrame -> Sink 到内存 -> 再次从内存读取
+        // 验证：NativeBinding -> Wrapper -> 内存指针双向传递的正确性
         // ---------------------------------------------------
 
-        var jsonContent = @"
-            [
-                {""id"": 1, ""val"": true},
-                {""id"": 2, ""val"": false}
-            ]";
+        // 1. 准备标准 NDJSON (JsonLines) 格式字符串 (每行一个完整的 JSON 对象)
+        var ndjsonContent = 
+            "{\"id\": 1, \"val\": true}\n" +
+            "{\"id\": 2, \"val\": false}\n";
         
-        byte[] buffer = Encoding.UTF8.GetBytes(jsonContent);
+        byte[] inputBuffer = Encoding.UTF8.GetBytes(ndjsonContent);
 
-        // 这里不传 Schema，让 Polars 自动推断
-        using var df = DataFrame.ReadJson(
-            buffer,
-            jsonFormat: JsonFormat.Json // 默认值，显式写出来以示清晰
+        // 2. 从内存读取 NDJSON 以构建初始 DataFrame
+        using var originalDf = DataFrame.ReadJson(
+            inputBuffer,
+            jsonFormat: JsonFormat.JsonLines // 显式指定为 JsonLines
         );
 
-        Assert.Equal(2, df.Height);
-        Assert.Equal(1, df.GetValue<int>(0, "id"));
-        Assert.True(df.GetValue<bool>(0, "val"));
-        Assert.False(df.GetValue<bool>(1, "val"));
-    }
+        // 3. 核心测试：调用你刚写的 SinkJsonMemory 
+        // 注意：SinkJsonMemory 是 LazyFrame 的方法，所以先调用 .Lazy()
+        byte[] sinkBuffer = originalDf.Lazy().SinkJsonMemory();
 
+        // 简单断言确保成功拿到了数据
+        Assert.NotNull(sinkBuffer);
+        Assert.True(sinkBuffer.Length > 0);
+
+        // 4. 将 Sink 生成的 byte[] 重新读取回 DataFrame 进行验证
+        using var readDf = DataFrame.ReadJson(
+            sinkBuffer,
+            jsonFormat: JsonFormat.JsonLines
+        );
+
+        // 5. 验证闭环后的数据完整性和准确性
+        Assert.Equal(2, readDf.Height);
+        
+        // 第一行断言
+        Assert.Equal(1, readDf.GetValue<int>(0, "id"));
+        Assert.True(readDf.GetValue<bool>(0, "val"));
+        
+        // 第二行断言
+        Assert.Equal(2, readDf.GetValue<int>(1, "id"));
+        Assert.False(readDf.GetValue<bool>(1, "val"));
+    }
     [Fact]
-    public void Test_ReadJson_Stream()
+    public void Test_WriteAndReadJson_Stream_And_Memory()
     {
         // ---------------------------------------------------
-        // 场景：从 Stream 读取
-        // 验证：API 层 Stream -> MemoryStream -> byte[] 的转换逻辑
+        // 场景：验证从 Stream 读取并写入到内存 (标准 JSON) 的完整闭环
+        // 链路：String -> Stream 读取 -> DataFrame -> 写入内存 (byte[]) -> 再次转为 Stream 读取
+        // 验证：Stream API 转换逻辑 + DataFrame -> JsonWriter 内存指针双向传递
         // ---------------------------------------------------
 
+        // 1. 准备标准 JSON 数组数据
         var jsonContent = @"[{""city"": ""New York""}, {""city"": ""London""}]";
         byte[] bytes = Encoding.UTF8.GetBytes(jsonContent);
 
-        using var stream = new MemoryStream(bytes);
+        // 2. 验证 Stream 读取逻辑
+        using var inputStream = new MemoryStream(bytes);
+        using var originalDf = DataFrame.ReadJson(
+            inputStream, 
+            jsonFormat: JsonFormat.Json // 显式声明为标准 JSON
+        );
 
-        // 模拟流的位置不在开头的情况 (Polars API 层应该处理 copy，所以这里位置不重要，
-        // 但通常 Stream.CopyTo 是从当前位置开始复制，所以我们要确保流是 Ready 的)
+        Assert.Equal(2, originalDf.Height);
         
-        using var df = DataFrame.ReadJson(stream);
+        // 3. 核心测试：调用基于 DataFrame 的内存写入 (标准 JSON 格式)
+        byte[] outputBytes = originalDf.WriteJsonMemory(JsonFormat.Json);
 
-        Assert.Equal(2, df.Height);
-        Assert.Equal("New York", df.GetValue<string>(0, "city"));
-        Assert.Equal("London", df.GetValue<string>(1, "city"));
+        Assert.NotNull(outputBytes);
+        Assert.True(outputBytes.Length > 0);
+
+        // 4. 将输出的 byte[] 再次包装成 Stream，测试读取的闭环
+        using var readStream = new MemoryStream(outputBytes);
+        using var readDf = DataFrame.ReadJson(
+            readStream, 
+            jsonFormat: JsonFormat.Json
+        );
+
+        // 5. 验证闭环后的数据完整性和准确性
+        Assert.Equal(2, readDf.Height);
+        Assert.Equal("New York", readDf.GetValue<string>(0, "city"));
+        Assert.Equal("London", readDf.GetValue<string>(1, "city"));
     }
 
     [Fact]
@@ -243,7 +281,7 @@ public class IoTests
         // 3. 强制极小的 RowGroupSize (2行一组) -> 理论上产生 3 个 Group
         df.WriteParquet(
             f.Path,
-            compression: ParquetCompression.Zstd,
+            compression: ParquetCompression.ZSTD,
             compressionLevel: 3,
             statistics: true,
             rowGroupSize: 2
@@ -272,10 +310,10 @@ public class IoTests
             rowIndexName: "row_idx", // 生成行号
             rowIndexOffset: 10   
         );
-
         // 验证结构
         Assert.Equal(3, dfPartial.Height); 
         Assert.Equal(2, dfPartial.Width);  // id + row_idx (name 被裁剪)
+
         
         Assert.True(dfPartial.ColumnNames.Contains("id"));
         Assert.False(dfPartial.ColumnNames.Contains("name"));
@@ -285,29 +323,22 @@ public class IoTests
         Assert.Equal(12UL, dfPartial.GetValue<ulong>(2, "row_idx"));
     }
     [Fact]
+    [Trait("IO","ParquetMemory")]
     public void Test_ReadParquet_Memory_And_Stream()
     {
-        // 1. 准备二进制 Parquet 数据 (Blob)
-        using var dfOriginal = DataFrame.FromColumns(new
-        {
-            timestamp = new[] { DateTime.Now, DateTime.Now.AddSeconds(1) },
-            status = new[] { "OK", "FAIL" }
-        });
+        // 1. 准备初始数据
+        using var dfOriginal = new DataFrame(
+            new Series("timestamp", [DateTime.Now, DateTime.Now.AddSeconds(1)]),
+            new Series("status", ["OK", "FAIL"])
+        );
 
-        // 为了获取合法的 Parquet bytes，我们先写到临时文件再读出来
-        // (如果以后实现了 WriteParquet(Stream) 可以直接写流)
-        string tempPath = Path.GetTempFileName();
-        byte[] parquetBytes;
-        try
-        {
-            dfOriginal.WriteParquet(tempPath);
-            parquetBytes = File.ReadAllBytes(tempPath);
-        }
-        finally
-        {
-            if (File.Exists(tempPath)) File.Delete(tempPath);
-        }
-
+        // 2. 闭环自举：直接利用刚刚写的 SinkMemoryParquet 将数据写入内存 Buffer
+        // 不再需要任何临时文件和 File.ReadAllBytes!
+        byte[] parquetBytes = dfOriginal.Lazy().SinkParquetMemory();
+        
+        // 确保成功拿到数据
+        Assert.NotNull(parquetBytes);
+        Assert.True(parquetBytes.Length > 0);
         // --- Case 1: Read from byte[] (Memory) ---
         // 场景：从 Redis/数据库/网络 拿到了 byte[]
         using var dfFromBytes = DataFrame.ReadParquet(parquetBytes);
@@ -317,21 +348,16 @@ public class IoTests
         Assert.Equal("FAIL", dfFromBytes.GetValue<string>(1, "status"));
 
         // --- Case 2: Read from Stream ---
-        // 场景：从 ASP.NET Core Request.Body 或 S3 Stream 读取
+        // 场景：从 ASP.NET Core Request.Body 或云端 Stream 读取
         using var ms = new MemoryStream(parquetBytes);
         
-        // 测试 Stream 重载
-        // 同时测试一下 nRows 参数在 Stream 模式下是否依然有效
+        // 测试 Stream 重载，并验证 nRows (Limit) 参数在流模式下是否依然有效
         using var dfFromStream = DataFrame.ReadParquet(ms, nRows: 1);
 
         Assert.Equal(1, dfFromStream.Height); // Limit 生效
         Assert.Equal("OK", dfFromStream.GetValue<string>(0, "status"));
-
-        // 确保没有读第二行
-        // Assert.Single(dfFromStream.Column("status"));
     }
     [Fact]
-    // [Trait("Category","Debug")]
     public void Test_ScanParquet_File_Hive_Schema()
     {
         // ---------------------------------------------------
@@ -377,6 +403,7 @@ public class IoTests
                 path: Path.Combine(baseDir, "**/*.parquet"),
                 glob: true,
                 schema: fileSchema,               // <--- 核心测试点 1
+                hivePartitioning: true,
                 hivePartitionSchema: hiveSchema,  // <--- 核心测试点 2
                 tryParseHiveDates: true
             );
@@ -470,12 +497,11 @@ public class IoTests
         // 1. 写入压缩文件
         dfOriginal.WriteIpc(
             f.Path, 
-            compression: IpcCompression.LZ4, 
-            parallel: true
+            compression: IpcCompression.LZ4
         );
 
         // 2. 读取验证 (注意：压缩文件不应开启 memoryMap)
-        using var df = DataFrame.ReadIpc(f.Path, memoryMap: false);
+        using var df = DataFrame.ReadIpc(f.Path);
 
         Assert.Equal(3, df.Height);
         Assert.Equal("val", df.ColumnNames[1]);
@@ -502,8 +528,7 @@ public class IoTests
         // 1. 写入 (无压缩，兼容 Mmap)
         dfOriginal.WriteIpc(
             f.Path, 
-            compression: IpcCompression.None, 
-            parallel: true
+            compression: IpcCompression.None
         );
 
         // =================================================================
@@ -514,8 +539,7 @@ public class IoTests
             using var df = DataFrame.ReadIpc(
                 f.Path, 
                 columns: new[] { "id", "val" }, // 列裁剪
-                nRows: 3,                       // 行限制
-                memoryMap: true                 // 启用 mmap (无压缩时安全)
+                nRows: 3
             );
 
             Assert.Equal(3, df.Height);
@@ -641,7 +665,7 @@ public class IoTests
             // ---------------------------------------------------
             df.WriteCsv(
                 path,
-                hasHeader: true,
+                includeHeader: true,
                 separator: '|',               // 使用竖线作为分隔符
                 quoteChar: '\'',              // 使用单引号作为引用符
                 quoteStyle: QuoteStyle.NonNumeric, // 非数字类型强制加引号
@@ -736,7 +760,7 @@ public class IoTests
             // - SyncOnClose: All (验证 Sync 枚举传递)
             df.Lazy().SinkParquet(
                 path,
-                compression: ParquetCompression.Zstd,
+                compression: ParquetCompression.ZSTD,
                 compressionLevel: 3, // 指定压缩等级
                 statistics: true,
                 rowGroupSize: 2,
@@ -768,6 +792,7 @@ public class IoTests
         }
     }
     [Fact]
+    // [Trait("Category","Debug")]
     public void Test_Streaming_SinkParquet_EndToEnd()
     {
         // ====================================================
@@ -909,43 +934,81 @@ public class IoTests
             if (File.Exists(path)) File.Delete(path);
         }
     }
-        [Fact]
-        public void Test_SinkIpc_Advanced_Options()
-        {
-            // 1. 准备数据
-            var df = new DataFrame(
-                new Series("id", new[] { 1, 2, 3 }),
-                new Series("val", new[] { "A", "B", "C" })
-            );
+    [Fact]
+    public void Test_SinkIpc_Advanced_Options()
+    {
+        // 1. 准备数据
+        var df = new DataFrame(
+            new Series("id", new[] { 1, 2, 3 }),
+            new Series("val", new[] { "A", "B", "C" })
+        );
 
-            // 转为 LazyFrame
-            var lf = df.Lazy();
+        // 转为 LazyFrame
+        var lf = df.Lazy();
 
-            // 2. 准备输出文件
-            using var f = new DisposableFile(".ipc");
+        // 2. 准备输出文件
+        using var f = new DisposableFile(".ipc");
 
-            // 3. 执行 SinkIpc
-            // 测试点：启用 LZ4 压缩，要求保持顺序，且关闭时执行完整 Sync
-            lf.SinkIpc(
-                f.Path, 
-                compression: IpcCompression.LZ4, 
-                maintainOrder: true, 
-                syncOnClose: SyncOnClose.All
-            );
+        // 3. 执行 SinkIpc
+        // 测试点：启用 LZ4 压缩，要求保持顺序，且关闭时执行完整 Sync
+        lf.SinkIpc(
+            f.Path, 
+            compression: IpcCompression.LZ4, 
+            maintainOrder: true, 
+            syncOnClose: SyncOnClose.All
+        );
 
-            // 4. 验证结果
-            // 因为写入的是压缩文件，读取时必须显式 memoryMap: false (我们在 I/O 升级里特别强调的)
-            using var dfRead = DataFrame.ReadIpc(f.Path, memoryMap: false);
+        // 4. 验证结果
+        // 因为写入的是压缩文件，读取时必须显式 memoryMap: false (我们在 I/O 升级里特别强调的)
+        using var dfRead = DataFrame.ReadIpc(f.Path);
 
-            Assert.Equal(3, dfRead.Height);
-            Assert.Equal("val", dfRead.ColumnNames[1]);
-            Assert.Equal("B", dfRead.GetValue<string>(1, "val"));
-            
-            // 验证文件确实存在且非空
-            var fileInfo = new FileInfo(f.Path);
-            Assert.True(fileInfo.Exists);
-            Assert.True(fileInfo.Length > 0);
-        }
+        Assert.Equal(3, dfRead.Height);
+        Assert.Equal("val", dfRead.ColumnNames[1]);
+        Assert.Equal("B", dfRead.GetValue<string>(1, "val"));
+        
+        // 验证文件确实存在且非空
+        var fileInfo = new FileInfo(f.Path);
+        Assert.True(fileInfo.Exists);
+        Assert.True(fileInfo.Length > 0);
+    }
+    [Fact]
+    public void Test_SinkMemoryIpc_Advanced_Options()
+    {
+        // 1. 准备数据
+        var df = new DataFrame(
+            new Series("id", [1, 2, 3]),
+            new Series("val", ["A", "B", "C"])
+        );
+
+        // 转为 LazyFrame
+        var lf = df.Lazy();
+
+        // 2. 执行 SinkMemoryIpc
+        // 测试点：直接 sink 进内存，启用 LZ4 压缩，要求保持顺序
+        byte[] ipcBytes = lf.SinkIpcMemory(
+            compression: IpcCompression.LZ4, 
+            maintainOrder: true
+        );
+
+        // 3. 验证内存 Buffer
+        // 确保成功返回了数据且长度大于 0
+        Assert.NotNull(ipcBytes);
+        Assert.True(ipcBytes.Length > 0);
+
+        // 4. 验证数据完整性
+        // 借用 DisposableFile 将内存字节流落盘，以验证其确实是合法的 Polars IPC 格式
+        using var f = new DisposableFile(".ipc");
+        File.WriteAllBytes(f.Path, ipcBytes);
+
+        using var dfRead = DataFrame.ReadIpc(f.Path);
+
+        // 验证读取出来的数据与源数据一致
+        Assert.Equal(3, dfRead.Height);
+        Assert.Equal(2, dfRead.Width);
+        Assert.Equal("val", dfRead.ColumnNames[1]);
+        Assert.Equal("B", dfRead.GetValue<string>(1, "val"));
+        Assert.Equal(2, dfRead.GetValue<int>(1, "id"));
+    }
 
     // --- 辅助 POCO ---
     private class ComplexPoco
@@ -1397,30 +1460,172 @@ ID;ProductName;Weight;ReleaseDate
         Assert.Equal(99.99m, Convert.ToDecimal(val1));
     }
     [Fact]
-    public void Test_ScanCsv_From_Memory()
+    public void Test_SinkCsvMemory_And_Scan()
     {
-        // 1. 模拟 CSV 数据 (In-Memory)
-        string csvString = "id,name,score\n1,Alice,99.5\n2,Bob,88.0";
-        byte[] csvBytes = System.Text.Encoding.UTF8.GetBytes(csvString);
+        // 1. 准备初始数据
+        using var dfOriginal = new DataFrame(
+            new Series("id", [1L, 2L]), // 使用 long 对应 Int64
+            new Series("name", ["Alice", "Bob"]),
+            new Series("score", [99.5, 88.0]) // 使用 double 对应 Float64
+        );
 
-        // 2. 内存扫描 (不落盘!)
+        // 2. 闭环自举：Sink 进内存 Buffer
+        // 测试点：不落盘直接拿到 CSV 的 UTF-8 字节流
+        byte[] csvBytes = dfOriginal.Lazy().SinkCsvMemory(includeHeader: true);
+
+        // 验证内存分配成功
+        Assert.NotNull(csvBytes);
+        Assert.True(csvBytes.Length > 0);
+
+        // 3. 内存扫描 (依然不落盘!)
         using var lf = LazyFrame.ScanCsv(
             csvBytes,
             hasHeader: true,
             rowIndexName: "row_idx" // 顺便测测参数传递
         );
 
-        // 3. 验证 Schema (Metadata)
+        // 4. 验证 Schema (Metadata)
         using var schema = lf.Schema;
         Assert.Equal(DataTypeKind.Int64, schema["id"].Kind);
         Assert.Equal(DataTypeKind.String, schema["name"].Kind);
         Assert.Equal(DataTypeKind.Float64, schema["score"].Kind);
         Assert.Equal(DataTypeKind.UInt32, schema["row_idx"].Kind); // 行号列
 
-        // 4. Collect 验证数据
-        using var df = lf.Collect();
-        Assert.Equal(2, df.Height);
-        Assert.Equal("Alice", df["name"][0]);
-        Assert.Equal(99.5, df["score"][0]);
+        // 5. Collect 验证数据完整性
+        using var dfRead = lf.Collect();
+        Assert.Equal(2, dfRead.Height);
+        Assert.Equal(4, dfRead.Width); // 包含了额外的 row_idx 列
+        
+        Assert.Equal("Alice", dfRead.GetValue<string>(0, "name"));
+        Assert.Equal(99.5, dfRead.GetValue<double>(0, "score"));
+        Assert.Equal(0u, dfRead.GetValue<uint>(0, "row_idx")); // 第一行的索引通常是 0
+    }
+    [Fact]
+    [Trait("IO","AvroFile")]
+    public void Test_ReadWriteAvro_Advanced()
+    {
+        // 1. 准备测试数据
+        // 包含 Null 值以验证序列化/反序列化时的 Null 处理
+        using var sId = new Series("id", [1, 2, 3, 4, 5]);
+        using var sName = new Series("name", ["Alice", "Bob", null, "David", "Eve"]); 
+        using var df = new DataFrame(sId, sName);
+
+        // 创建临时文件
+        using var f = new DisposableFile(".avro");
+        
+        // ---------------------------------------------------------
+        // Test Write Options: 
+        // ---------------------------------------------------------
+        // 1. 使用 Deflate 压缩
+        // 2. 指定 Avro Record 名称为 "TestRecord"
+        df.WriteAvro(
+            f.Path,
+            compression: AvroCompression.Deflate,
+            name: "TestRecord"
+        );
+
+        // 验证文件已生成且有内容
+        Assert.True(File.Exists(f.Path));
+        Assert.True(new FileInfo(f.Path).Length > 0);
+
+        // ---------------------------------------------------------
+        // Case 1: 基础读取 (全量验证压缩文件可读性)
+        // ---------------------------------------------------------
+        using var dfFull = DataFrame.ReadAvro(f.Path);
+        Assert.Equal(5, dfFull.Height);
+        Assert.Equal(2, dfFull.Width);
+        Assert.Equal("Alice", dfFull.GetValue<string>(0, "name"));
+        Assert.Null(dfFull.GetValue<string>(2, "name")); // 验证 Null 保留
+
+        // ---------------------------------------------------------
+        // Case 2: 高级参数读取 (按列名投影, Limit 截断)
+        // ---------------------------------------------------------
+        using var dfPartialByName = DataFrame.ReadAvro(
+            f.Path,
+            columns: ["id"], // 列裁剪 (仅读取 id)
+            nRows: 3         // Limit 截断 (仅读取前 3 行)
+        );
+                
+        // 验证结构
+        Assert.Equal(3, dfPartialByName.Height); 
+        Assert.Equal(1, dfPartialByName.Width);  // 只有 id 被保留
+        
+        Assert.True(dfPartialByName.ColumnNames.Contains("id"));
+        Assert.False(dfPartialByName.ColumnNames.Contains("name"));
+
+        // ---------------------------------------------------------
+        // Case 3: 高级参数读取 (按列索引投影)
+        // ---------------------------------------------------------
+        using var dfPartialByIndex = DataFrame.ReadAvro(
+            f.Path,
+            projection: [1] // 索引为 1 的列是 "name"
+        );
+        
+        Assert.Equal(5, dfPartialByIndex.Height);
+        Assert.Equal(1, dfPartialByIndex.Width);
+        Assert.True(dfPartialByIndex.ColumnNames.Contains("name"));
+        Assert.False(dfPartialByIndex.ColumnNames.Contains("id"));
+    }
+    [Fact]
+    [Trait("IO","AvroMem")]
+    public void Test_ReadWriteAvro_MemoryBuffer()
+    {
+        // 1. 准备测试数据
+        using var sId = new Series("id", [1, 2, 3, 4, 5]);
+        using var sName = new Series("name", ["Alice", "Bob", null, "David", "Eve"]); 
+        using var df = new DataFrame(sId, sName);
+
+        // ---------------------------------------------------------
+        // Test Write to Memory Buffer:
+        // ---------------------------------------------------------
+        // 1. 使用 Snappy 压缩算法
+        // 2. 指定 Avro Record 名称为 "MemoryRecord"
+        byte[] buffer = df.WriteAvroMemory(
+            compression: AvroCompression.Snappy,
+            name: "MemoryRecord"
+        );
+        
+
+        // 验证缓冲区生成成功且包含数据
+        Assert.NotNull(buffer);
+        Assert.True(buffer.Length > 0);
+
+        // ---------------------------------------------------------
+        // Case 1: 基础读取 (全量验证内存字节数组的可读性)
+        // ---------------------------------------------------------
+        using var dfFull = DataFrame.ReadAvro(buffer);
+        Assert.Equal(5, dfFull.Height);
+        Assert.Equal(2, dfFull.Width);
+        Assert.Equal("Alice", dfFull.GetValue<string>(0, "name"));
+        Assert.Null(dfFull.GetValue<string>(2, "name")); // 验证 Null 保留
+
+        // ---------------------------------------------------------
+        // Case 2: 高级参数读取 (按列名投影, Limit 截断)
+        // ---------------------------------------------------------
+        using var dfPartialByName = DataFrame.ReadAvro(
+            buffer,
+            columns: ["name"], // 这次只读 name 列
+            nRows: 2           // 只读取前 2 行
+        );
+        
+        // 验证结构
+        Assert.Equal(2, dfPartialByName.Height); 
+        Assert.Equal(1, dfPartialByName.Width);  
+        
+        Assert.True(dfPartialByName.ColumnNames.Contains("name"));
+        Assert.False(dfPartialByName.ColumnNames.Contains("id"));
+
+        // ---------------------------------------------------------
+        // Case 3: 高级参数读取 (按列索引投影)
+        // ---------------------------------------------------------
+        using var dfPartialByIndex = DataFrame.ReadAvro(
+            buffer,
+            projection: [0] // 索引为 0 的列是 "id"
+        );
+        
+        Assert.Equal(5, dfPartialByIndex.Height);
+        Assert.Equal(1, dfPartialByIndex.Width);
+        Assert.True(dfPartialByIndex.ColumnNames.Contains("id"));
+        Assert.False(dfPartialByIndex.ColumnNames.Contains("name"));
     }
 }

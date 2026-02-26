@@ -61,6 +61,7 @@ public enum DataTypeKind
     Array=23,
     Int128 = 24,
     UInt128=25,
+    Float16=26,
     Unknown = 0,
     SameAsInput=0
 }
@@ -218,6 +219,45 @@ public enum JoinMaintainOrder: byte
     LeftRight =3,
     RightLeft =4
 }
+/// <summary>
+/// Specifies the strategy for the hash join build side.
+/// <para>
+/// In a hash join, one dataframe is loaded into memory (the "build side") to construct a hash table, 
+/// while the other is streamed (the "probe side") to find matches.
+/// </para>
+/// <para>
+/// Generally, the smaller dataframe should be the build side for optimal performance and memory usage.
+/// </para>
+/// </summary>
+public enum JoinSide : byte
+{
+    /// <summary>
+    /// Let Polars decide the best join strategy (Optimizer's choice).
+    /// </summary>
+    LetPolarsDecide = 0,
+    
+    /// <summary>
+    /// Prefer using the left side as the build side (hash table).
+    /// Optimizer may override this if the right side is significantly smaller.
+    /// </summary>
+    PreferLeft = 1,
+    
+    /// <summary>
+    /// Force using the left side as the build side.
+    /// </summary>
+    ForceLeft = 2,
+    
+    /// <summary>
+    /// Prefer using the right side as the build side (hash table).
+    /// Optimizer may override this if the left side is significantly smaller.
+    /// </summary>
+    PreferRight = 3,
+    
+    /// <summary>
+    /// Force using the right side as the build side.
+    /// </summary>
+    ForceRight = 4
+}
 
 public enum AsofStrategy: byte
 {
@@ -276,11 +316,11 @@ public enum SyncOnClose : byte
 
 public enum ParquetCompression : byte
 {
-    Uncompressed = 0,
+    None = 0,
     Snappy = 1,
     Gzip = 2,
     Brotli = 3,
-    Zstd = 4,
+    ZSTD = 4,
     Lz4Raw = 5
 }
 
@@ -306,6 +346,89 @@ public enum QuoteStyle : byte
     /// </summary>
     Never = 3
 }
+
+public enum InterpolationMethod
+{
+    Linear = 0,
+    Nearest = 1
+}
+
+/// <summary>
+/// Supported cloud providers for IO operations.
+/// </summary>
+public enum CloudProvider : byte
+{
+    /// <summary>
+    /// No cloud provider / Local file.
+    /// </summary>
+    None = 0,
+
+    /// <summary>
+    /// Amazon S3 or compatible services (MinIO, etc).
+    /// </summary>
+    Aws = 1,
+
+    /// <summary>
+    /// Azure Blob Storage / Data Lake Gen2.
+    /// </summary>
+    Azure = 2,
+
+    /// <summary>
+    /// Google Cloud Storage.
+    /// </summary>
+    Gcp = 3,
+
+    /// <summary>
+    /// Generic HTTP/HTTPS.
+    /// </summary>
+    Http = 4,
+
+    /// <summary>
+    /// Hugging Face datasets.
+    /// </summary>
+    HuggingFace = 5
+}
+
+/// <summary>
+/// mode for saving delta lake table
+/// </summary>
+public enum DeltaSaveMode
+{
+    /// <summary>
+    /// Append to the table.
+    /// </summary>
+    Append = 0,
+
+    /// <summary>
+    /// Overwrite the table.
+    /// </summary>
+    Overwrite = 1,
+
+    /// <summary>
+    /// Throw an error if the table already exists.
+    /// </summary>
+    ErrorIfExists = 2,
+
+    /// <summary>
+    /// Ignore the operation if the table already exists.
+    /// </summary>
+    Ignore = 3
+}
+
+public enum ExternalCompression: byte
+{
+    Uncompressed = 0,
+    Gzip=1,
+    ZSTD=2
+}
+
+public enum AvroCompression: byte
+{
+    Uncompressed = 0,
+    Deflate=1,
+    Snappy=2
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -319,6 +442,7 @@ internal static class EnumExtensions
         DataTypeKind.UInt64 => CoreEnums.PlDataType.UInt64,
         DataTypeKind.Int128 => CoreEnums.PlDataType.Int128,
         DataTypeKind.UInt128 => CoreEnums.PlDataType.UInt128,
+        DataTypeKind.Float16 => CoreEnums.PlDataType.Float16,
         DataTypeKind.Float32 => CoreEnums.PlDataType.Float32,
         DataTypeKind.Float64 => CoreEnums.PlDataType.Float64,
         DataTypeKind.Datetime => CoreEnums.PlDataType.Datetime,
@@ -480,6 +604,15 @@ internal static class EnumExtensions
         JoinMaintainOrder.RightLeft => CoreEnums.PlJoinMaintainOrder.RightLeft,
         _ => throw new ArgumentOutOfRangeException(nameof(maintainOrder), maintainOrder, null)
     };
+    internal static CoreEnums.PlJoinSide ToNative(this JoinSide joinSide) => joinSide switch
+    {
+        JoinSide.LetPolarsDecide => CoreEnums.PlJoinSide.None,
+        JoinSide.PreferLeft => CoreEnums.PlJoinSide.PreferLeft,
+        JoinSide.ForceLeft => CoreEnums.PlJoinSide.ForceLeft,
+        JoinSide.PreferRight => CoreEnums.PlJoinSide.PreferRight,
+        JoinSide.ForceRight => CoreEnums.PlJoinSide.ForceRight,
+        _ => throw new ArgumentOutOfRangeException(nameof(joinSide), joinSide, null)
+    };
     internal static CoreEnums.PlAsofStrategy ToNative(this AsofStrategy strategy) => strategy switch
     {
         AsofStrategy.Backward => CoreEnums.PlAsofStrategy.Backward,
@@ -514,6 +647,13 @@ internal static class EnumExtensions
         IpcCompression.ZSTD => CoreEnums.PlIpcCompression.ZSTD,
         _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
     };
+    internal static CoreEnums.PlExternalCompression ToNative(this ExternalCompression compression) => compression switch
+    {
+        ExternalCompression.Uncompressed => CoreEnums.PlExternalCompression.Uncompressed,
+        ExternalCompression.Gzip => CoreEnums.PlExternalCompression.Gzip,
+        ExternalCompression.ZSTD => CoreEnums.PlExternalCompression.ZSTD,
+        _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
+    };
     internal static CoreEnums.PlSyncOnClose ToNative(this SyncOnClose syncOnClose) => syncOnClose switch
     {
         SyncOnClose.None => CoreEnums.PlSyncOnClose.None,
@@ -523,11 +663,11 @@ internal static class EnumExtensions
     };
     internal static CoreEnums.PlParquetCompression ToNative(this ParquetCompression compression) => compression switch
     {
-        ParquetCompression.Uncompressed => CoreEnums.PlParquetCompression.Uncompressed,
+        ParquetCompression.None => CoreEnums.PlParquetCompression.Uncompressed,
         ParquetCompression.Snappy => CoreEnums.PlParquetCompression.Snappy,
         ParquetCompression.Gzip => CoreEnums.PlParquetCompression.Gzip,
         ParquetCompression.Brotli => CoreEnums.PlParquetCompression.Brotli,
-        ParquetCompression.Zstd => CoreEnums.PlParquetCompression.Zstd,
+        ParquetCompression.ZSTD => CoreEnums.PlParquetCompression.ZSTD,
         ParquetCompression.Lz4Raw => CoreEnums.PlParquetCompression.Lz4Raw,
         _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
     };
@@ -538,6 +678,37 @@ internal static class EnumExtensions
         QuoteStyle.NonNumeric => CoreEnums.PlQuoteStyle.NonNumeric,
         QuoteStyle.Never => CoreEnums.PlQuoteStyle.Never,
         _ => throw new ArgumentOutOfRangeException(nameof(style), style, null)
+    };
+    internal static CoreEnums.PlInterpolationMethod ToNative(this InterpolationMethod method) => method switch
+    {
+        InterpolationMethod.Nearest => CoreEnums.PlInterpolationMethod.Nearest,
+        InterpolationMethod.Linear => CoreEnums.PlInterpolationMethod.Linear,
+        _ => throw new ArgumentOutOfRangeException(nameof(method), method, null)
+    };
+    internal static CoreEnums.PlCloudProvider ToNative(this CloudProvider cloud) => cloud switch
+    {
+        CloudProvider.None => CoreEnums.PlCloudProvider.None,
+        CloudProvider.Aws => CoreEnums.PlCloudProvider.Aws,
+        CloudProvider.Azure => CoreEnums.PlCloudProvider.Azure,
+        CloudProvider.Gcp => CoreEnums.PlCloudProvider.Gcp,
+        CloudProvider.Http => CoreEnums.PlCloudProvider.Http,
+        CloudProvider.HuggingFace => CoreEnums.PlCloudProvider.HuggingFace,
+        _ => throw new ArgumentOutOfRangeException(nameof(cloud), cloud, null)
+    };
+    internal static CoreEnums.PlDeltaSaveMode ToNative(this DeltaSaveMode mode) => mode switch
+    {
+        DeltaSaveMode.Append => CoreEnums.PlDeltaSaveMode.Append,
+        DeltaSaveMode.Overwrite => CoreEnums.PlDeltaSaveMode.Overwrite,
+        DeltaSaveMode.ErrorIfExists => CoreEnums.PlDeltaSaveMode.ErrorIfExists,
+        DeltaSaveMode.Ignore => CoreEnums.PlDeltaSaveMode.Ignore,
+        _ => CoreEnums.PlDeltaSaveMode.Append
+    };
+    internal static CoreEnums.PlAvroCompression ToNative(this AvroCompression compression) => compression switch
+    {
+        AvroCompression.Uncompressed => CoreEnums.PlAvroCompression.Uncompressed,
+        AvroCompression.Snappy => CoreEnums.PlAvroCompression.Snappy,
+        AvroCompression.Deflate => CoreEnums.PlAvroCompression.Deflate,
+        _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
     };
 }
 

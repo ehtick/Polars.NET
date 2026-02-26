@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    
+    <PackageId>Polars.NET.Native.linux-musl-arm64</PackageId>
+    <Authors>ErrorLSC</Authors>
+    <Description>Linux arm64 musl native binaries for Polars.NET.</Description>
+    <PackageTags>polars;native;linux-musl-arm64</PackageTags>
+    <RepositoryUrl>https://github.com/ErrorLSC/Polars.NET</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\libs\linux-musl-arm64\libnative_shim.so" 
+          Pack="true" 
+          PackagePath="runtimes\linux-musl-arm64\native\libnative_shim.so" 
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

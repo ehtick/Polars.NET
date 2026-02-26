@@ -452,7 +452,7 @@ namespace Polars.NET.Core.Arrow
         // =============================================================
 
         /// <summary>
-        /// 尝试直接获取底层数值内存作为 Span (Zero-Copy)。
+        /// Try access scalar via Span (Zero-Copy)。
         /// Notice：Only return true if there is no nulls in array.
         /// </summary>
         public static bool TryGetSpan<T>(IArrowArray array, out ReadOnlySpan<T> span) 
@@ -476,6 +476,7 @@ namespace Polars.NET.Core.Arrow
             // 2. Floats
             if (typeof(T) == typeof(double) && array is DoubleArray dbl) { span = MemoryMarshal.Cast<double, T>(dbl.Values); return true; }
             if (typeof(T) == typeof(float) && array is FloatArray flt) { span = MemoryMarshal.Cast<float, T>(flt.Values); return true; }
+            if (typeof(T) == typeof(Half) && array is HalfFloatArray half) { span = MemoryMarshal.Cast<Half, T>(half.Values); return true; }
 
             // 3. Date/Time (Internal Int32/Int64)
             if (typeof(T) == typeof(int) && array is Date32Array d32) { span = MemoryMarshal.Cast<int, T>(d32.Values); return true; }
@@ -510,21 +511,18 @@ namespace Polars.NET.Core.Arrow
         }
 
         // =============================================================
-        // Internal Infrastructure (消除泛型约束差异的桥梁)
+        // Internal Infrastructure 
         // =============================================================
 
-        // 这是一个内部辅助方法，它的签名符合 TryGetSpan 的要求 (T : struct)
-        // 我们通过反射创建一个指向它的委托，存起来给 ReadColumn 用
         private static T[]? ReadStructInternal<T>(IArrowArray array) where T : struct
         {
             if (TryGetSpan<T>(array, out var span))
             {
-                return span.ToArray(); // 极速 Memcpy
+                return span.ToArray(); 
             }
             return null;
         }
 
-        // 静态缓存类：为每个 T 生成一个专门的读取器
         private static class PrimitiveArrayReader<T>
         {
             public static readonly Func<IArrowArray, T[]?> Read;
