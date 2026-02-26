@@ -62,7 +62,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Value = new[] { 10.5, 20.0, 30.5 }
         });
 
-        df.Lazy().SinkParquet(parquetUrl, cloudOptions: options);
+        df.WriteParquet(parquetUrl, cloudOptions: options);
 
         // ==========================================
         // 3. 第二步：手动构造 Delta Log (修正字段名大小写)
@@ -312,7 +312,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         }))
         {
             // 此时表不存在，Append 会触发 Create Table
-            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+            df.WriteDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
         }
 
         // 验证 V1
@@ -328,7 +328,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Msg = new[] { "V2_C" } 
         }))
         {
-            df2.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+            df2.WriteDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
         }
 
         // 验证 V2 (总共 3 行)
@@ -2209,10 +2209,10 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
                 Val = vals
             });
             
-            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, partitionBy: "Category", cloudOptions: options);
+            df.WriteDelta(rootUrl, mode: DeltaSaveMode.Append, partitionBy: "Category", cloudOptions: options);
         }
 
-        using var beforeDf = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
+        using var beforeDf = DataFrame.ReadDelta(rootUrl, cloudOptions: options);
         Assert.Equal(100, beforeDf.Height);
         Console.WriteLine($"Before Optimization: {beforeDf.Height} rows verified.");
 
@@ -2234,7 +2234,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         using (var delDf = DataFrame.FromColumns(new { Id = new[] { 10, 99 }, Action = new[] { "DeleteMe", "DeleteMe" } }))
         {
             // 利用我们刚刚写好的 MoR Merge 来打 DV 补丁
-            delDf.Lazy().MergeDelta(
+            delDf.MergeDelta(
                 rootUrl,
                 mergeKeys: ["Id"],
                 matchedDeleteCond: Delta.Source("Action") == "DeleteMe",

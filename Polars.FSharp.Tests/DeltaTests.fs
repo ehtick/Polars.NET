@@ -23,12 +23,12 @@ let ``Scenario 1: Delta Lake Base Read Write and Append`` () =
         // 2. Overwrite 模式写入本地 Delta 湖
         // ==========================================
         // 这里验证了 SinkDelta 的扩展方法以及默认参数的隐式转换是否顺畅
-        df1.Lazy().SinkDelta(testPath, mode = DeltaSaveMode.Overwrite, mkdir = true, syncOnClose=SyncOnClose.All)
+        df1.WriteDelta(testPath, mode = DeltaSaveMode.Overwrite, mkdir = true, syncOnClose=SyncOnClose.All)
 
         // ==========================================
         // 3. ScanDelta 读回来并验证
         // ==========================================
-        let readDf1 = LazyFrame.ScanDelta(testPath).Collect()
+        let readDf1 = DataFrame.ReadDelta testPath
         
         // 断言行数和列数完全一致
         Assert.Equal(3L, readDf1.Height)
@@ -46,7 +46,7 @@ let ``Scenario 1: Delta Lake Base Read Write and Append`` () =
         // 5. Append 模式追加进去
         // ==========================================
         // 验证 Delta 湖的追加语义
-        df2.Lazy().SinkDelta(testPath, mode = DeltaSaveMode.Append)
+        df2.WriteDelta(testPath, mode = DeltaSaveMode.Append)
 
         // ==========================================
         // 6. 再次读回来，验证数据合并
@@ -84,7 +84,7 @@ let ``Scenario 2: Delta Lake Time Travel (History & Restore)`` () =
         // 使用 DataFrame.create 工厂方法
         let df1 = DataFrame.create [| sId1; sName1 |] 
         
-        df1.Lazy().SinkDelta(testPath, mode = DeltaSaveMode.Overwrite, mkdir = true)
+        df1.WriteDelta(testPath, mode = DeltaSaveMode.Overwrite, mkdir = true)
         
         // ==========================================
         // 2. Version 2: 追加数据 (Append)
@@ -93,7 +93,7 @@ let ``Scenario 2: Delta Lake Time Travel (History & Restore)`` () =
         let sName2 = Series.create("name", ["Dave"; "Eve"])
         let df2 = DataFrame.create [| sId2; sName2 |]
         
-        df2.Lazy().SinkDelta(testPath, mode = DeltaSaveMode.Append)
+        df2.WriteDelta(testPath, mode = DeltaSaveMode.Append)
         
         // ==========================================
         // 3. 查阅历史 (History)
@@ -127,7 +127,7 @@ let ``Scenario 2: Delta Lake Time Travel (History & Restore)`` () =
         // 再次以默认方式（读取最新版）读取数据
         let restoredDf = LazyFrame.ScanDelta(testPath).Collect()
         
-        // 行数神奇地变回了 3 行，就像 Version 1 从来没发生过一样！
+        // 行数神奇地变回了 3 行，就像 Version 2 从来没发生过一样！
         Assert.Equal(3L, restoredDf.Height)
         
         // 严谨点：此时再去查 History，应该能看到刚刚的 Restore 操作也上榜了
@@ -155,7 +155,7 @@ let ``Scenario 3: Delta Lake Advanced MERGE Semantics`` () =
         let targetDf = DataFrame.create [| sId; sName; sPrice |]
         
         // 建表并写入初始数据
-        targetDf.Lazy().SinkDelta(testPath, mode = DeltaSaveMode.Overwrite, mkdir = true)
+        targetDf.WriteDelta(testPath, mode = DeltaSaveMode.Overwrite, mkdir = true)
         
         // ==========================================
         // 2. 准备源表 (Source 增量数据)
@@ -175,7 +175,7 @@ let ``Scenario 3: Delta Lake Advanced MERGE Semantics`` () =
         // 这里验证了我们之前手写的 Delta.Source 和 Delta.Target 辅助方法！
         let updateCond = Delta.Source "price" .> Delta.Target "price"
         
-        sourceDf.Lazy().MergeDelta(
+        sourceDf.MergeDelta(
             testPath,
             mergeKeys = ["id"],
             matchedUpdateCond = updateCond,
@@ -191,7 +191,7 @@ let ``Scenario 3: Delta Lake Advanced MERGE Semantics`` () =
         Assert.Equal(4L, finalDf.Height)
 
         // 提取 Name 列进行逐个验证
-        let nameCol = finalDf.Select(pl.col("name"))
+        let nameCol = finalDf.Select(pl.col "name")
 
         // ID=2 价格更高 (25 > 20)，应该被成功更新
         let bobName = nameCol.Row(1).[0].ToString()
@@ -222,9 +222,9 @@ let ``Scenario 4: Delta Lake Maintenance (Delete, Optimize, Vacuum)`` () =
         // ==========================================
         let sId = Series.create("id", [1..10])
         let sVal = Series.create("val", ["A"; "B"; "C"; "D"; "E"; "F"; "G"; "H"; "I"; "J"])
-        let df = DataFrame.create([| sId; sVal |])
+        let df = DataFrame.create [| sId; sVal |]
         
-        df.Lazy().SinkDelta(testPath, mode = DeltaSaveMode.Overwrite, mkdir = true)
+        df.WriteDelta(testPath, mode = DeltaSaveMode.Overwrite, mkdir = true)
 
         // ==========================================
         // 2. 开启超级特性：Deletion Vectors (软删除)
@@ -236,7 +236,7 @@ let ``Scenario 4: Delta Lake Maintenance (Delete, Optimize, Vacuum)`` () =
         // 3. 执行 Delete (此时将触发 Merge-on-Read 行为)
         // ==========================================
         // 删除 ID < 5 的行 (即删掉 1, 2, 3, 4)
-        let deleteCond = pl.col("id") .< pl.lit(5)
+        let deleteCond = pl.col "id" .< pl.lit 5
         Delta.Delete(testPath, deleteCond)
 
         // 验证：此时表里应该只剩下 6 行数据
@@ -273,7 +273,7 @@ let ``Scenario 4: Delta Lake Maintenance (Delete, Optimize, Vacuum)`` () =
         Assert.Equal(6L, finalDf.Height)
         
         // 我们还可以看看 History，这时候应该是一部壮丽的史诗了
-        let historyDf = Delta.History(testPath)
+        let historyDf = Delta.History testPath
         historyDf.Show()
         // 应该包含 WRITE, ADD FEATURE, DELETE, OPTIMIZE 等多个版本记录
         Assert.True(historyDf.Height >= 4L)

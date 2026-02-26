@@ -11,6 +11,8 @@ using System.Text;
 using Apache.Arrow.Types;
 using System.Reflection;
 using Polars.NET.Core.Helpers;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 
 namespace Polars.CSharp;
 
@@ -1053,6 +1055,54 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         stream.CopyTo(ms);
         var handle = PolarsWrapper.ReadAvro(ms.ToArray(), nRows, columns, projection);
         return new DataFrame(handle);
+    }
+    /// <summary>
+    /// Read a delta table into a new DataFrame
+    /// </summary>
+    /// <inheritdoc cref="LazyFrame.ScanDelta"/>
+    public static DataFrame ReadDelta(
+        string path,
+        long? version = null,
+        string? datetime = null,
+        ulong? nRows = null,
+        ParallelStrategy parallel = ParallelStrategy.Auto,
+        bool lowMemory = false,
+        bool useStatistics = true,
+        bool glob = true,
+        bool rechunk = false, 
+        bool cache = true,    
+        string? rowIndexName = null,
+        uint rowIndexOffset = 0,
+        string? includePathColumn = null,
+        PolarsSchema? schema = null,
+        bool hivePartitioning = true,
+        PolarsSchema? hivePartitionSchema = null,
+        bool tryParseHiveDates = true,
+        CloudOptions? cloudOptions = null)
+    {
+        
+        var lf = LazyFrame.ScanDelta(
+            path,
+            version,
+            datetime,
+            nRows,
+            parallel,
+            lowMemory,
+            useStatistics,
+            glob,
+            rechunk, 
+            cache,   
+            rowIndexName,
+            rowIndexOffset,
+            includePathColumn,
+            schema,     
+            hivePartitioning,
+            hivePartitionSchema, 
+            tryParseHiveDates,
+            cloudOptions
+        );
+
+        return lf.Collect();
     }
     /// <summary>
     /// Create a DataFrame directly from a <see cref="IDataReader"/>.
@@ -3157,6 +3207,145 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         string name = "")
     {
         return PolarsWrapper.WriteAvroToMemory(Handle, compression.ToNative(), name);
+    }
+    /// <summary>
+    /// Write a DataFrame into a delta table
+    /// </summary>
+    /// <inheritdoc cref="LazyFrame.SinkDelta(string, Selector?, DeltaSaveMode, bool, bool, bool, int, long, ParquetCompression, int, bool, uint, uint, int, bool, SyncOnClose, bool, CloudOptions?)"/>
+    public void WriteDelta(
+        string path,
+        Selector? partitionBy = null,
+        DeltaSaveMode mode = DeltaSaveMode.Append,
+        bool canEvolve=false,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = true, 
+        uint rowGroupSize = 0,
+        uint dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.SinkDelta(
+            path,
+            partitionBy,
+            // --- Delta Options ---
+            mode, 
+            canEvolve,
+            // --- Partition Params ---
+            
+            includeKeys,
+            keysPreGrouped,
+            maxRowsPerFile,
+            approxBytesPerFile,
+
+            // --- Parquet Options ---
+            compression,
+            compressionLevel,
+            statistics,
+            rowGroupSize,
+            dataPageSize,
+            compatLevel, 
+
+            // --- Unified Options ---
+            maintainOrder,
+            syncOnClose,
+            mkdir,
+
+            // --- Cloud Params ---
+            cloudOptions
+        );
+    }
+    /// <inheritdoc cref="WriteDelta(string, Selector?, DeltaSaveMode, bool, bool, bool, int, long, ParquetCompression, int, bool, uint, uint, int, bool, SyncOnClose, bool, CloudOptions?)"/>
+    public void WriteDelta(
+        string path,
+        string[]? partitionBy,
+        DeltaSaveMode mode = DeltaSaveMode.Append,
+        bool canEvolve = false,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = true, 
+        uint rowGroupSize = 0,
+        uint dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+    {
+        using var selector = (partitionBy != null && partitionBy.Length > 0) 
+            ? Selector.Cols(partitionBy) 
+            : null;
+
+        WriteDelta(
+            path, selector, mode, canEvolve, includeKeys, keysPreGrouped, maxRowsPerFile, 
+            approxBytesPerFile, compression, compressionLevel, statistics, rowGroupSize, 
+            dataPageSize, compatLevel, maintainOrder, syncOnClose, mkdir, cloudOptions
+        );
+    }
+
+    /// <inheritdoc cref="WriteDelta(string, Selector?, DeltaSaveMode, bool, bool, bool, int, long, ParquetCompression, int, bool, uint, uint, int, bool, SyncOnClose, bool, CloudOptions?)"/>
+    public void WriteDelta(
+        string path,
+        string partitionBy,
+        DeltaSaveMode mode = DeltaSaveMode.Append,
+        bool canEvolve = false,
+        bool includeKeys = true,
+        bool keysPreGrouped = false,
+        int maxRowsPerFile = 0,
+        long approxBytesPerFile = 0,
+        ParquetCompression compression = ParquetCompression.Snappy,
+        int compressionLevel = -1,
+        bool statistics = true, 
+        uint rowGroupSize = 0,
+        uint dataPageSize = 0,
+        int compatLevel = -1,
+        bool maintainOrder = true,
+        SyncOnClose syncOnClose = SyncOnClose.None,
+        bool mkdir = false,
+        CloudOptions? cloudOptions = null)
+            => WriteDelta(
+                path, [partitionBy], mode, canEvolve, includeKeys, keysPreGrouped, 
+                maxRowsPerFile, approxBytesPerFile, compression, compressionLevel, statistics, 
+                rowGroupSize, dataPageSize, compatLevel, maintainOrder, syncOnClose, mkdir, cloudOptions
+            );
+    /// <summary>
+    /// Merge a DataFrame into a Delta Lake table with full SQL MERGE semantics.
+    /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// </summary>
+    /// <inheritdoc cref="LazyFrame.MergeDelta(string, string[], Expr?, Expr?, Expr?, Expr?, bool, CloudOptions?)"/>
+    public void MergeDelta(
+        string path,
+        string[] mergeKeys,
+        Expr? matchedUpdateCond = null,
+        Expr? matchedDeleteCond = null,
+        Expr? notMatchedInsertCond = null,
+        Expr? notMatchedBySourceDeleteCond = null,
+        bool canEvolve=false,
+        CloudOptions? cloudOptions = null)
+    {
+        var lf = Lazy();
+        lf.MergeDelta(
+            path,
+            mergeKeys,
+            matchedUpdateCond,
+            matchedDeleteCond,
+            notMatchedInsertCond,
+            notMatchedBySourceDeleteCond,
+            canEvolve,
+            cloudOptions
+        );
     }
     /// <summary>
     /// Export DataFrame to Record Batch

@@ -44,7 +44,7 @@ codegen-units = 16
 # Release:
 [profile.release]
 strip = true        #  Strip symbols
-opt-level = 0       # Max :3
-lto = false          # Link time optimize
-codegen-units = 16   # set 1 for better binary layout
+opt-level = 3       # Max :3
+lto = "fat"          # Link time optimize
+codegen-units = 1   # set 1 for better binary layout
 panic = "unwind"     

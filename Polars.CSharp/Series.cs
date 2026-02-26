@@ -1145,7 +1145,7 @@ public partial class Series : IDisposable
     /// Explode a list column into multiple rows.
     /// The resulting Series will be longer than the original.
     /// </summary>
-    public Series Explode() => ApplyExpr(Polars.Col(Name).Explode());
+    public Series Explode(bool emptyAsNull=true,bool keepNulls=true) => ApplyExpr(Polars.Col(Name).Explode(emptyAsNull,keepNulls));
     /// <summary>
     /// Aggregate values into a list.
     /// Result is a Series with 1 row containing a List of all values.

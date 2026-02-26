@@ -92,10 +92,6 @@ jobs:
           key: ${{ matrix.target }}
           workspaces: ./native_shim
       
-      - name: Set PERL environment variable (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: echo "PERL=C:/Strawberry/perl/bin/perl.exe" >> $env:GITHUB_ENV
       # Compile Rust (Release mode)
       - name: Build Native Shim
         shell: bash
@@ -152,53 +148,36 @@ jobs:
           mkdir -p libs/win-x64
           mkdir -p libs/osx-arm64
 
-      # Linux x64
       - uses: actions/download-artifact@v4
-        with:
-          name: native-lib-linux-x64
-          path: libs/linux-x64
-
-      # Linux Musl x64
+        with: { name: native-lib-linux-x64, path: libs/linux-x64 }
       - uses: actions/download-artifact@v4
-        with:
-          name: native-lib-linux-musl-x64
-          path: libs/linux-musl-x64
-
-      # Linux ARM64
+        with: { name: native-lib-linux-musl-x64, path: libs/linux-musl-x64 }
       - uses: actions/download-artifact@v4
-        with:
-          name: native-lib-linux-arm64
-          path: libs/linux-arm64
-
-      # Linux Musl ARM64
+        with: { name: native-lib-linux-arm64, path: libs/linux-arm64 }
       - uses: actions/download-artifact@v4
-        with:
-          name: native-lib-linux-musl-arm64
-          path: libs/linux-musl-arm64
-
-      # Windows x64
+        with: { name: native-lib-linux-musl-arm64, path: libs/linux-musl-arm64 }
       - uses: actions/download-artifact@v4
-        with:
-          name: native-lib-win-x64
-          path: libs/win-x64
-
-      # MacOS ARM64
+        with: { name: native-lib-win-x64, path: libs/win-x64 }
       - uses: actions/download-artifact@v4
-        with:
-          name: native-lib-osx-arm64
-          path: libs/osx-arm64
+        with: { name: native-lib-osx-arm64, path: libs/osx-arm64 }
 
       - name: Inspect Directory Structure
         run: ls -R libs/
 
-      - name: Pack Core
-        run: dotnet pack Polars.NET.Core/Polars.NET.Core.csproj -c Release -p:BuildRustNative=false -o nupkgs
+      - name: Pack Native NuGets
+        run: |
+          dotnet pack NativePackages/Polars.NET.Native.linux-x64.csproj -c Release -o nupkgs
+          dotnet pack NativePackages/Polars.NET.Native.linux-musl-x64.csproj -c Release -o nupkgs
+          dotnet pack NativePackages/Polars.NET.Native.linux-arm64.csproj -c Release -o nupkgs
+          dotnet pack NativePackages/Polars.NET.Native.linux-musl-arm64.csproj -c Release -o nupkgs
+          dotnet pack NativePackages/Polars.NET.Native.win-x64.csproj -c Release -o nupkgs
+          dotnet pack NativePackages/Polars.NET.Native.osx-arm64.csproj -c Release -o nupkgs
 
-      - name: Pack CSharp
-        run: dotnet pack Polars.CSharp/Polars.CSharp.csproj -c Release -p:BuildRustNative=false -o nupkgs
-
-      - name: Pack FSharp
-        run: dotnet pack Polars.FSharp/Polars.FSharp.fsproj -c Release -p:BuildRustNative=false -o nupkgs
+      - name: Pack Managed Core and APIs
+        run: |
+          dotnet pack Polars.NET.Core/Polars.NET.Core.csproj -c Release -p:BuildRustNative=false -o nupkgs
+          dotnet pack Polars.CSharp/Polars.CSharp.csproj -c Release -p:BuildRustNative=false -o nupkgs
+          dotnet pack Polars.FSharp/Polars.FSharp.fsproj -c Release -p:BuildRustNative=false -o nupkgs
 
       - name: Upload NuGet Packages
         uses: actions/upload-artifact@v4
@@ -215,7 +194,13 @@ jobs:
     strategy:
       fail-fast: false 
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            native_rid: linux-x64
+          - os: windows-latest
+            native_rid: win-x64
+          - os: macos-14
+            native_rid: osx-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -231,14 +216,17 @@ jobs:
       - name: Run Smoke Test
         shell: bash
         run: |
-          VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' Polars.NET.Core/Polars.NET.Core.csproj | head -n 1 | tr -d '\r')
-          
+          VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' Directory.Build.props 2>/dev/null | head -n 1 | tr -d '\r')
           if [ -z "$VERSION" ]; then
-            echo "Failed to extract version from csproj!"
+            VERSION=$(sed -n 's/.*<Version>\([^<]*\)<\/Version>.*/\1/p' Polars.NET.Core/Polars.NET.Core.csproj | head -n 1 | tr -d '\r')
+          fi
+
+          if [ -z "$VERSION" ]; then
+            echo "Failed to extract version!"
             exit 1
           fi
 
-          echo "🔍 Detected Version: '$VERSION'"
+          echo "Detected Version: '$VERSION'"
 
           dotnet new console -n SmokeTest
           cd SmokeTest
@@ -247,6 +235,7 @@ jobs:
           dotnet nuget add source ../local_feed --name LocalFeed
           
           dotnet add package Polars.NET --version "$VERSION"
+          dotnet add package Polars.NET.Native.${{ matrix.native_rid }} --version "$VERSION"
           
           cat <<EOF > Program.cs
           using System;

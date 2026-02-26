@@ -314,7 +314,7 @@ getrandom v0.2.17
     ├── aws-config v1.8.14 (*)
     ├── object_store v0.12.5 (*)
     ├── object_store v0.13.1 (*)
-    ├── rustls v0.23.36
+    ├── rustls v0.23.37
     │   ├── aws-smithy-http-client v1.1.11 (*)
     │   ├── hyper-rustls v0.27.7 (*)
     │   ├── reqwest v0.12.28 (*)
@@ -323,7 +323,7 @@ getrandom v0.2.17
     │       ├── hyper-rustls v0.27.7 (*)
     │       └── reqwest v0.12.28 (*)
     └── rustls-webpki v0.103.9
-        └── rustls v0.23.36 (*)
+        └── rustls v0.23.37 (*)
 
 getrandom v0.3.4
 ├── ahash v0.8.12

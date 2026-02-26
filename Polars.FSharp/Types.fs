@@ -128,8 +128,8 @@ type Series(handle: SeriesHandle) =
     /// Explode a list column into multiple rows.
     /// The resulting Series will be longer than the original.
     /// </summary>
-    member this.Explode() =
-        this.ApplyExpr(Expr.Col(this.Name).Explode())
+    member this.Explode(?emptyAsNull: bool, ?keepNulls:bool) =
+        this.ApplyExpr(Expr.Col(this.Name).Explode(?emptyAsNull=emptyAsNull,?keepNulls=keepNulls))
     /// <summary>
     /// Aggregate values into a list.
     /// Result is a Series with 1 row containing a List of all values.
@@ -3192,7 +3192,7 @@ and DataFrame(handle: DataFrameHandle) =
     ) : DataFrame =
         
         use ms = new System.IO.MemoryStream()
-        stream.CopyTo(ms)
+        stream.CopyTo ms
         let bytes = ms.ToArray()
 
         DataFrame.ReadIpc(
@@ -3254,6 +3254,54 @@ and DataFrame(handle: DataFrameHandle) =
         )
         
         new DataFrame(h)
+    /// <summary>
+    /// Create a DataFrame by reading a Delta Lake table.
+    /// </summary>
+    /// <param name="path">Path to the Delta Lake table (folder containing _delta_log).</param>
+    /// <param name="version">The version of the table to read (e.g., 0L, 1L). Mutually exclusive with <paramref name="datetime"/>.</param>
+    /// <param name="datetime">The timestamp to read (ISO-8601 string, e.g., "2026-02-09T12:00:00Z"). Mutually exclusive with <paramref name="version"/>.</param>
+    /// <returns>A new LazyFrame.</returns>
+    static member ReadDelta(
+        path: string,
+        ?version: int64,
+        ?datetime: string,
+        ?nRows: uint64,
+        ?parallelStrategy: ParallelStrategy,
+        ?lowMemory: bool,
+        ?useStatistics: bool,
+        ?glob: bool,
+        ?rechunk: bool,
+        ?cache: bool,
+        ?rowIndexName: string,
+        ?rowIndexOffset: uint32,
+        ?includePathColumn: string,
+        ?schema: PolarsSchema,
+        ?hivePartitioning: bool,
+        ?hivePartitionSchema: PolarsSchema,
+        ?tryParseHiveDates: bool,
+        ?cloudOptions: CloudOptions
+    ) : DataFrame =
+        let lf = LazyFrame.ScanDelta(
+            path,
+            ?version=version,
+            ?datetime=datetime,
+            ?nRows=nRows,
+            ?parallelStrategy=parallelStrategy,
+            ?lowMemory=lowMemory,
+            ?useStatistics=useStatistics,
+            ?glob=glob,
+            ?rechunk=rechunk,
+            ?cache=cache,
+            ?rowIndexName=rowIndexName,
+            ?rowIndexOffset=rowIndexOffset,
+            ?includePathColumn=includePathColumn,
+            ?schema=schema,
+            ?hivePartitioning=hivePartitioning,
+            ?hivePartitionSchema=hivePartitionSchema,
+            ?tryParseHiveDates=tryParseHiveDates,
+            ?cloudOptions=cloudOptions
+        )
+        lf.Collect()
     /// <summary> Create a DataFrame from a sequence of objects using Arrow streaming. </summary>
     static member ofSeqStream<'T>(data: seq<'T>, ?batchSize: int) : DataFrame =
         let size = defaultArg batchSize 100_000
@@ -3545,7 +3593,7 @@ and DataFrame(handle: DataFrameHandle) =
             ?maintainOrder = maintainOrder
         )
         
-/// <summary>
+    /// <summary>
     /// Write DataFrame to a Parquet file.
     /// <para>
     /// This uses the Lazy execution engine internally to support streaming, statistics, and cloud storage.
@@ -3768,6 +3816,139 @@ and DataFrame(handle: DataFrameHandle) =
         let dtFmt = Option.toObj datetimeFormat
         
         PolarsWrapper.WriteExcel(this.Handle, path, sName, dFmt, dtFmt)
+    /// <summary>
+    /// Write the DataFrame to a Delta Lake table with partition discovery.
+    /// <para>
+    /// This operation performs a "blind write" of partitioned Parquet files (Hive-style) 
+    /// and then commits a transaction to the Delta Log, registering the new files.
+    /// </para>
+    /// </summary>
+    /// <param name="path">
+    /// Path to the root of the Delta Table. Can be local (e.g. "./data/table") 
+    /// or remote (e.g. "s3://bucket/table").
+    /// </param>
+    /// <param name="partitionBy">
+    /// The selector(s) to partition the data by. 
+    /// Directories will be created in the format "col=value".
+    /// </param>
+    /// <param name="mode">
+    /// Save mode (Append, Overwrite, ErrorIfExists, Ignore). Default is Append.
+    /// </param>
+    /// <param name="includeKeys">
+    /// Whether to include the partition keys in the Parquet files themselves. 
+    /// Default is true (recommended for Delta Lake compatibility).
+    /// </param>
+    /// <param name="keysPreGrouped">
+    /// Assert that the keys are already pre-grouped. This can speed up the operation if true.
+    /// </param>
+    /// <param name="maxRowsPerFile">Maximum number of rows per file. 0 means no limit.</param>
+    /// <param name="approxBytesPerFile">Approximate size in bytes per file. 0 means no limit.</param>
+    /// <param name="compression">Compression codec to use (Snappy, Zstd, etc.).</param>
+    /// <param name="compressionLevel">Compression level (depends on the codec).</param>
+    /// <param name="statistics">
+    /// Write statistics to the Parquet file. 
+    /// Delta Lake uses these stats for data skipping, so 'true' is highly recommended.
+    /// </param>
+    /// <param name="rowGroupSize">Target row group size (in rows).</param>
+    /// <param name="dataPageSize">Target data page size (in bytes).</param>
+    /// <param name="compatLevel">IPC format compatibility.</param>
+    /// <param name="maintainOrder">Maintain the order of the data.</param>
+    /// <param name="syncOnClose">Whether to sync the file to disk on close.</param>
+    /// <param name="mkdir">Create parent directories if they don't exist.</param>
+    /// <param name="cloudOptions">Options for cloud storage authentication and configuration.</param>
+    member this.WriteDelta(
+        path: string,
+        ?partitionBy: Selector,
+        ?mode: DeltaSaveMode,
+        ?canEvolve: bool,
+        ?includeKeys: bool,
+        ?keysPreGrouped: bool,
+        ?maxRowsPerFile: int,
+        ?approxBytesPerFile: int64,
+        ?compression: ParquetCompression,
+        ?compressionLevel: int,
+        ?statistics: bool,
+        ?rowGroupSize: uint32,
+        ?dataPageSize: uint32,
+        ?compatLevel: int,
+        ?maintainOrder: bool,
+        ?syncOnClose: SyncOnClose,
+        ?mkdir: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        this.Lazy().SinkDelta(
+            path,
+            
+            // --- Delta Options ---
+            ?partitionBy=partitionBy,
+            ?mode=mode,
+            ?canEvolve=canEvolve,
+            // --- Partition Params ---
+            ?includeKeys=includeKeys,
+            ?keysPreGrouped=keysPreGrouped,
+            ?maxRowsPerFile=maxRowsPerFile,
+            ?approxBytesPerFile=approxBytesPerFile,
+            
+            // --- Parquet Options ---
+            ?compression=compression,
+            ?compressionLevel=compressionLevel,
+            ?statistics=statistics,
+            ?rowGroupSize=rowGroupSize,  
+            ?dataPageSize=dataPageSize,
+            ?compatLevel=compatLevel,
+            
+            // --- Unified Options ---
+            ?maintainOrder=maintainOrder,
+            ?syncOnClose=syncOnClose,
+            ?mkdir=mkdir,
+            
+            // --- Cloud Params ---
+            ?cloudOptions=cloudOptions
+        )
+    /// <summary>
+    /// Merge a LazyFrame into a Delta Lake table with full SQL MERGE semantics.
+    /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// </summary>
+    /// <param name="path">Uri to the Delta Lake table (local or cloud).</param>
+    /// <param name="mergeKeys">The column names to join on (must exist in both Source and Target).</param>
+    /// <param name="matchedUpdateCond">
+    /// Condition for 'WHEN MATCHED THEN UPDATE'. 
+    /// If null, defaults to true (always update when matched).
+    /// </param>
+    /// <param name="matchedDeleteCond">
+    /// Condition for 'WHEN MATCHED THEN DELETE'. 
+    /// If null, defaults to false (never delete when matched).
+    /// </param>
+    /// <param name="notMatchedInsertCond">
+    /// Condition for 'WHEN NOT MATCHED THEN INSERT'. 
+    /// If null, defaults to true (always insert new rows).
+    /// </param>
+    /// <param name="notMatchedBySourceDeleteCond">
+    /// Condition for 'WHEN NOT MATCHED BY SOURCE THEN DELETE' (Target rows not in Source). 
+    /// If null, defaults to false (retain target-only rows).
+    /// </param>
+    /// <param name="canEvolve">Allow schema evolution during the merge.</param>
+    /// <param name="cloudOptions">Cloud storage credentials and configuration.</param>
+    member this.MergeDelta(
+        path: string,
+        mergeKeys: seq<string>,
+        ?matchedUpdateCond: Expr,
+        ?matchedDeleteCond: Expr,
+        ?notMatchedInsertCond: Expr,
+        ?notMatchedBySourceDeleteCond: Expr,
+        ?canEvolve: bool,
+        ?cloudOptions: CloudOptions
+    ) =
+        this.Lazy().MergeDelta(
+            path,
+            mergeKeys,
+            ?matchedUpdateCond=matchedUpdateCond,
+            ?matchedDeleteCond=matchedDeleteCond,
+            ?notMatchedInsertCond=notMatchedInsertCond,
+            ?notMatchedBySourceDeleteCond=notMatchedBySourceDeleteCond,
+            ?canEvolve=canEvolve,
+            ?cloudOptions=cloudOptions
+        )
     /// <summary>
     /// Export the DataFrame as a stream of Arrow RecordBatches (Zero-Copy).
     /// Calls 'onBatch' for each chunk in the DataFrame.
