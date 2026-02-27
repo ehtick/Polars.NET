@@ -10,7 +10,7 @@ open System.Collections.Generic
 let dllPath = "Polars.FSharp/bin/Release/net8.0/Polars.FSharp.dll"
 let xmlPath = "Polars.FSharp/bin/Release/net8.0/Polars.FSharp.xml"
 let outputDir = "docs/api/fsharp_generated"
-let targetTypes = ["pl"; "Series"; "DataFrame"; "Expr";"LazyFrame"] 
+let targetTypes = ["pl"; "Series"; "DataFrame"; "Expr";"LazyFrame";"Delta";"Selector";"ColumnExpr"] 
 // =========================================
 
 let binDir = Path.GetDirectoryName(Path.GetFullPath dllPath)
