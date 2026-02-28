@@ -512,7 +512,7 @@ public class Expr : IDisposable
     /// <param name="name"></param>
     /// <returns></returns>
     public Expr Alias(string name) =>
-        new(PolarsWrapper.Alias(Handle, name));
+        new(PolarsWrapper.Alias(CloneHandle(), name));
     /// <summary>
     /// Reverse the selection.
     /// <para>This is useful in a GroupBy context to reverse the order of the group.</para>
