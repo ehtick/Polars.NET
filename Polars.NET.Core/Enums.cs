@@ -316,3 +316,14 @@ public enum PlAvroCompression : byte
     Deflate = 1,
     Snappy = 2
 }
+
+/// <summary>
+/// Defines the type of action to perform during a Delta Merge operation.
+/// </summary>
+public enum PlMergeActionType : byte
+{
+    MatchedUpdate = 0,
+    MatchedDelete = 1,
+    NotMatchedInsert = 2,
+    NotMatchedBySourceDelete = 3
+}

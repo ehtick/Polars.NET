@@ -2044,7 +2044,7 @@ public class SeriesArrayOps
     /// Explode the array column into multiple rows.
     /// The resulting Series will be longer than the original.
     /// </summary>
-    public Series Explode() => Apply(e => e.Array.Explode());
+    public Series Explode(bool emptyAsNull = true, bool keepNulls = true) => Apply(e => e.Array.Explode(emptyAsNull,keepNulls));
 
     /// <summary>
     /// Convert array to struct. Useful for splitting embeddings into feature columns.

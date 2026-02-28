@@ -950,6 +950,7 @@ public class LazyFrame : IDisposable
     /// <param name="mode">
     /// Save mode (Append, Overwrite, ErrorIfExists, Ignore). Default is Append.
     /// </param>
+    /// <param name="canEvolve">Define whether schema evolution is allowed, default: false</param>
     /// <param name="includeKeys">
     /// Whether to include the partition keys in the Parquet files themselves. 
     /// Default is true (recommended for Delta Lake compatibility).
@@ -1094,6 +1095,8 @@ public class LazyFrame : IDisposable
     /// <summary>
     /// Merge a LazyFrame into a Delta Lake table with full SQL MERGE semantics.
     /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// Notice: In this method, Delete > Update > Insert > Ignore.
+    /// If you need other orders, please use LazyFrame.MergeDeltaOrdered
     /// </summary>
     /// <param name="path">Uri to the Delta Lake table (local or cloud).</param>
     /// <param name="mergeKeys">The column names to join on (must exist in both Source and Target).</param>
@@ -1113,7 +1116,9 @@ public class LazyFrame : IDisposable
     /// Condition for 'WHEN NOT MATCHED BY SOURCE THEN DELETE' (Target rows not in Source). 
     /// If null, defaults to false (retain target-only rows).
     /// </param>
+    /// <param name="canEvolve">Define whether schema evolution is allowed, default: false</param>
     /// <param name="cloudOptions">Cloud storage credentials and configuration.</param>
+    [Obsolete("This method is deprecated because its execution order of matched/not-matched actions is hardcoded and may lead to silent data corruption in complex scenarios. Please use 'MergeDeltaOrdered(...)' combined with the '.WhenMatched...()' chaining methods to ensure strict SQL MERGE semantics.")]
     public void MergeDelta(
         string path,
         string[] mergeKeys,
@@ -1154,6 +1159,36 @@ public class LazyFrame : IDisposable
             keys,
             values
         );
+    }
+    /// <summary>
+    /// Starts a fluent builder to merge a LazyFrame into a Delta Lake table with strict, order-preserving SQL MERGE semantics.
+    /// <para>
+    /// Unlike traditional merge methods, this builder guarantees that chained actions (Update, Delete, Insert) 
+    /// are evaluated exactly in the order they are defined. If no actions are specified before execution, 
+    /// it intelligently defaults to a standard Upsert (WhenMatchedUpdate + WhenNotMatchedInsert).
+    /// </para>
+    /// </summary>
+    /// <param name="path">The URI to the target Delta Lake table (local or cloud).</param>
+    /// <param name="mergeKeys">The column names to join on (must exist in both the Source DataFrame and Target Delta table).</param>
+    /// <param name="canEvolve">If set to true, allows schema evolution (e.g., adding new columns from the Source to the Target). Default is false.</param>
+    /// <param name="cloudOptions">Cloud storage credentials and configuration (e.g., AWS S3, Azure Blob).</param>
+    /// <returns>A <see cref="DeltaMergeBuilder"/> instance used to chain match conditions, culminating in a call to <c>.Execute()</c>.</returns>
+    /// <example>
+    /// <code>
+    /// lf.MergeDeltaOrdered("s3://bucket/my_table", new[] { "Id" })
+    ///   .WhenMatchedDelete(Delta.Source("Status") == "Deleted")      // Evaluated 1st
+    ///   .WhenMatchedUpdate(Delta.Source("Stock") > Delta.Target("Stock")) // Evaluated 2nd
+    ///   .WhenNotMatchedInsert()                                      // Evaluated 3rd
+    ///   .Execute();
+    /// </code>
+    /// </example>
+    public DeltaMergeBuilder MergeDeltaOrdered(
+        string path, 
+        string[] mergeKeys, 
+        bool canEvolve = false, 
+        CloudOptions? cloudOptions = null)
+    {
+        return new DeltaMergeBuilder(this, path, mergeKeys, canEvolve, cloudOptions);
     }
     // ==========================================
     // Meta / Inspection

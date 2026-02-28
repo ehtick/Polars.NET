@@ -805,7 +805,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Data = Enumerable.Repeat("A", 10).ToArray()
         }))
         {
-            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+            df.WriteDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
         }
 
         // ==========================================
@@ -856,8 +856,8 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         
         // Version 0: 原始 10 行
         // 注意：AddFeature 产生 Version 1，Delete 产生 Version 2
-        using var dfV0 = LazyFrame.ScanDelta(rootUrl, version: 1, cloudOptions: options).Collect();
-        Assert.Equal(10, dfV0.Height);
+        using var dfV1 = LazyFrame.ScanDelta(rootUrl, version: 1, cloudOptions: options).Collect();
+        Assert.Equal(10, dfV1.Height);
         
         Console.WriteLine("Delta Deletion Vector Test Passed!");
     }
@@ -899,7 +899,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Date = new[] { "2024-01-01", "2024-01-01", "2024-01-02" } 
         }))
         {
-            df.Lazy().SinkDelta(
+            df.WriteDelta(
                 rootUrl, 
                 partitionBy: "Date", 
                 mode: DeltaSaveMode.Append, 
@@ -939,7 +939,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // 预期行为:
         // - 匹配 OrderId=1 -> 更新 Status
         // - 不匹配 (Target中无 OrderId 4, 5) -> 插入
-        sourceDf.Lazy().MergeDelta(rootUrl, mergeKeys: ["OrderId"], cloudOptions: options);
+        sourceDf.MergeDeltaOrdered(rootUrl, mergeKeys: ["OrderId"], cloudOptions: options).Execute();
 
         // ==========================================
         // 5. 验证结果 (Version 1)
@@ -999,7 +999,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // 历史版本中没有 Order 4
         Assert.Equal(0, dfHistory.Filter(Col("OrderId")==4).Height);
 
-        Console.WriteLine("Delta Merge Full Cycle Passed! 🚀");
+        Console.WriteLine("Delta Merge Full Cycle Passed! ");
     }
 
     [Fact]
@@ -1054,12 +1054,12 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // 预期：不传 canEvolve=true，必须报错，防止 Schema 意外污染
         var ex = Assert.Throws<PolarsException>(() => 
         {
-            sourceDf.Lazy().MergeDelta(
+            sourceDf.MergeDeltaOrdered(
                 rootUrl, 
                 mergeKeys: ["Id"], 
                 cloudOptions: options
                 // canEvolve 默认为 false
-            );
+            ).Execute();
         });
 
         Assert.Contains("Schema mismatch", ex.Message);
@@ -1072,12 +1072,12 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // Phase 4: 究极进化 (Evolution Test)
         // ==========================================
         // 预期：传入 canEvolve=true，自动修改 Metadata 并写入数据
-        sourceDf.Lazy().MergeDelta(
+        sourceDf.MergeDeltaOrdered(
             rootUrl, 
             mergeKeys: ["Id"], 
             cloudOptions: options,
             canEvolve: true // <--- The Magic Switch
-        );
+        ).Execute();
         
         Console.WriteLine("[Pass] Merge with Schema Evolution executed.");
 
@@ -1124,11 +1124,11 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         {
             // 即使 canEvolve = false 也可以，因为我们没有“新增”列，只是“少”列
             // 你的 Rust 代码逻辑会自动处理少列的情况 (fallback to NULL)
-            dfV1_Late.Lazy().MergeDelta(
+            dfV1_Late.MergeDeltaOrdered(
                 rootUrl, 
                 mergeKeys: ["Id"], 
                 cloudOptions: options
-            );
+            ).Execute();
         }
 
         // ==========================================
@@ -1192,7 +1192,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Category = new[] { "A", "A", "B", "B", "A" } // Partition
         }))
         {
-            df.Lazy().SinkDelta(
+            df.WriteDelta(
                 rootUrl, 
                 partitionBy: "Category", 
                 mode: DeltaSaveMode.Append, 
@@ -1242,15 +1242,20 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // ==========================================
         Console.WriteLine("Step 3: Executing Full Merge...");
 
-        sourceDf.Lazy().MergeDelta(
+        sourceDf.MergeDeltaOrdered(
             rootUrl,
             mergeKeys: ["Id"],
-            matchedUpdateCond: updateCond,
-            matchedDeleteCond: matchDeleteCond,
-            notMatchedInsertCond: insertCond,
-            notMatchedBySourceDeleteCond: srcDeleteCond,
+            // matchedUpdateCond: updateCond,
+            // matchedDeleteCond: matchDeleteCond,
+            // notMatchedInsertCond: insertCond,
+            // notMatchedBySourceDeleteCond: srcDeleteCond,
             cloudOptions: options
-        );
+        )
+        .WhenMatchedDelete(matchDeleteCond)
+        .WhenMatchedUpdate(updateCond)
+        .WhenNotMatchedBySourceDelete(srcDeleteCond)
+        .WhenNotMatchedInsert(insertCond)
+        .Execute();
 
         // ==========================================
         // 6. 验证结果 (Version 2)
@@ -1379,15 +1384,20 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // ==========================================
         Console.WriteLine("Step 3: Executing Full Merge (via Deletion Vectors)...");
 
-        sourceDf.Lazy().MergeDelta(
+        sourceDf.MergeDeltaOrdered(
             rootUrl,
             mergeKeys: ["Id"],
-            matchedUpdateCond: updateCond,
-            matchedDeleteCond: matchDeleteCond,
-            notMatchedInsertCond: insertCond,
-            notMatchedBySourceDeleteCond: srcDeleteCond,
+            // matchedUpdateCond: updateCond,
+            // matchedDeleteCond: matchDeleteCond,
+            // notMatchedInsertCond: insertCond,
+            // notMatchedBySourceDeleteCond: srcDeleteCond,
             cloudOptions: options
-        );
+        )
+        .WhenMatchedUpdate(updateCond)
+        .WhenMatchedDelete(matchDeleteCond)
+        .WhenNotMatchedInsert(insertCond)
+        .WhenNotMatchedBySourceDelete(srcDeleteCond)
+        .Execute();
 
         // ==========================================
         // 6. 验证结果 (Version 2)
@@ -1434,10 +1444,11 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         Assert.Equal(5, dfV1.Height); // 原始数据完整保留
 
         Delta.History(path:rootUrl, cloudOptions:options).Show();
-        Console.WriteLine("Full Feature DV Merge Passed! 🚀");
+        Console.WriteLine("Full Feature DV Merge Passed! ");
     }
     [Fact]
     [Trait("DeltaLake", "MergeCompositeKeys")]
+    [Obsolete("This test is to test old API")]
     public void Test_Merge_Delta_Composite_Keys_Full_Logic()
     {
         // ==========================================
@@ -1477,7 +1488,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         }))
         {
             // Region 既是主键一部分，也是分区键
-            df.Lazy().SinkDelta(
+            df.WriteDelta(
                 rootUrl, 
                 partitionBy: "Region", 
                 mode: DeltaSaveMode.Append, 
@@ -1525,7 +1536,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // ==========================================
         Console.WriteLine("Step 3: Executing Composite Key Merge...");
 
-        sourceDf.Lazy().MergeDelta(
+        sourceDf.MergeDelta(
             rootUrl,
             // 关键点：传递多列作为复合主键
             mergeKeys:  ["Region", "StoreId"], 
@@ -1546,8 +1557,6 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             .Sort(["Region", "StoreId"]); // Sort for deterministic assert
 
         dfRes.Show();
-        // using var dfBack = LazyFrame.ScanDelta(rootUrl,cloudOptions:options,version:1).Collect();
-        // dfBack.Show();
         // 预期结果行数分析：
         // 1. North/101: Updated (100)
         // 2. North/102: Kept (20)
@@ -1611,7 +1620,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             ColB = new[] { 20 } 
         }))
         {
-            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+            df.WriteDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
         }
 
         // Source: Id, ColA (Missing ColB)
@@ -1622,7 +1631,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         });
 
         // 应该成功，不抛异常
-        sourceDf.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options);
+        sourceDf.MergeDeltaOrdered(rootUrl, mergeKeys: ["Id"], cloudOptions: options).Execute();
 
         // 验证
         using var res = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
@@ -1673,7 +1682,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         });
         var ex = Assert.Throws<PolarsException>(() => 
         {
-            dfSource.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id","Time"], cloudOptions: options);
+            dfSource.MergeDeltaOrdered(rootUrl, mergeKeys: ["Id","Time"], cloudOptions: options).Execute();
         });
 
     }
@@ -1702,7 +1711,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             Val = new int?[] { 100 } // 使用 int? 允许后续变 null
         }))
         {
-            dfTarget.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+            dfTarget.WriteDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
         }
 
         // 2. Source: Id=1, Val=null (显式 Null)
@@ -1718,7 +1727,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             // Rust 检查 Schema -> 发现 Source 有 "Val" 列 -> has_source_col = true
             // update_expr = col("Val_src_tmp")
             // 执行 Update -> 写入 null
-            dfSource.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options);
+            dfSource.MergeDeltaOrdered(rootUrl, mergeKeys: ["Id"], cloudOptions: options).Execute();
         }
 
         // 4. 验证
@@ -1758,7 +1767,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             OldCol = new[] { "Existing1", "Existing2" } 
         }))
         {
-            dfTarget.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+            dfTarget.WriteDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
         }
 
         // 2. Source: Id, NewCol (注意：没有 OldCol，这既是 Schema Evolution 也是 Partial Update)
@@ -1772,7 +1781,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
             // 3. Merge (开启 Schema Evolution 通常是 Delta 引擎层的参数，
             // 但 Polars Merge 只要生成了这一列，写入时由 Delta Lake 决定是否接受。
             // 我们的目标是确保 Polars 输出了这一列。)
-            dfSource.Lazy().MergeDelta(rootUrl, mergeKeys: ["Id"], cloudOptions: options,canEvolve:true);
+            dfSource.MergeDeltaOrdered(rootUrl, mergeKeys: ["Id"], cloudOptions: options,canEvolve:true).Execute();
         }
 
         // 4. 验证
@@ -1857,11 +1866,11 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
                     Console.WriteLine($"[Worker {workerId}] Starting Merge...");
                     
                     // 执行 Merge
-                    sourceDf.Lazy().MergeDelta(
+                    sourceDf.MergeDeltaOrdered(
                         rootUrl, 
-                        mergeKeys: new[] { "Id" }, 
+                        mergeKeys: ["Id"], 
                         cloudOptions: options
-                    );
+                    ).Execute();
                     
                     Console.WriteLine($"[Worker {workerId}] Success!");
                 }
@@ -2122,7 +2131,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
                 Val = vals
             });
             
-            df.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append,partitionBy: "Category", cloudOptions: options);
+            df.WriteDelta(rootUrl, mode: DeltaSaveMode.Append,partitionBy: "Category", cloudOptions: options);
         }
 
         // 验证当前有 4 个文件，100 行数据
@@ -2234,14 +2243,16 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         using (var delDf = DataFrame.FromColumns(new { Id = new[] { 10, 99 }, Action = new[] { "DeleteMe", "DeleteMe" } }))
         {
             // 利用我们刚刚写好的 MoR Merge 来打 DV 补丁
-            delDf.MergeDelta(
+            delDf.MergeDeltaOrdered(
                 rootUrl,
                 mergeKeys: ["Id"],
-                matchedDeleteCond: Delta.Source("Action") == "DeleteMe",
+                // matchedDeleteCond: Delta.Source("Action") == "DeleteMe",
                 canEvolve:true,
                 
                 cloudOptions: options
-            );
+            )
+            .WhenMatchedDelete(Delta.Source("Action") == "DeleteMe")
+            .Execute();
         }
 
         // 此时，逻辑上只剩 98 行，但在底层物理文件上，10 和 99 依然存在，只是被标记在 DV (.bin) 文件里
@@ -2325,7 +2336,7 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // 1. 初始化一张普通的表 (Protocol 默认通常是较低的，比如 Reader v1/Writer v2)
         using (var df = DataFrame.FromColumns(new { Id = new[] { 1, 2, 3 } }))
         {
-            df.Lazy().SinkDelta(rootUrl, cloudOptions: options);
+            df.WriteDelta(rootUrl, cloudOptions: options);
         }
 
         // 2. 尝试添加 DeletionVectors 特性
@@ -2393,10 +2404,248 @@ public class DeltaLakeTests : IClassFixture<MinioFixture>
         // 补充验证：尝试再次写入，确保表没坏
         using (var df2 = DataFrame.FromColumns(new { Id = new[] { 2 } }))
         {
-            df2.Lazy().SinkDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
+            df2.WriteDelta(rootUrl, mode: DeltaSaveMode.Append, cloudOptions: options);
         }
         
         using var dfRead = LazyFrame.ScanDelta(rootUrl, cloudOptions: options).Collect();
         Assert.Equal(2, dfRead.Height);
+    }
+    [Fact]
+    [Trait("DeltaLake", "MergeCompositeKeysOrdered")]
+    public void Test_Merge_Delta_Composite_Keys_Ordered_Logic()
+    {
+        // ==========================================
+        // 1. 环境准备
+        // ==========================================
+        var tableName = $"delta_merge_composite_ordered_{Guid.NewGuid()}";
+        var rootUrl = $"s3://{_minio.BucketName}/{tableName}";
+        
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: $"http://{_minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/')}"
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+        options.Credentials!["AWS_S3_ALLOW_UNSAFE_RENAME"] = "true";
+
+        // ==========================================
+        // 2. [Target] 初始化数据 (Version 1)
+        // ==========================================
+        // 复合主键: [Region, StoreId]
+        Console.WriteLine("Step 1: Initial Write (Target)...");
+        
+        // Data Scenarios:
+        // 1. [North, 101]: Stock 10  -> 待更新 (Update)
+        // 2. [North, 102]: Stock 20  -> 待忽略 (Update Skip)
+        // 3. [South, 101]: Stock 5   -> 待删除 (Matched Delete) - 注意：StoreId 也是 101，测试复合键区分能力
+        // 4. [South, 999]: Obsolete  -> 待清理 (Source Delete)
+        // 5. [East,  555]: Active    -> 待保留 (Target Only Keep)
+
+        using (var df = DataFrame.FromColumns(new { 
+            Region = new[]  { "North", "North", "South", "South", "East" },
+            StoreId = new[] { 101,     102,     101,     999,     555 },
+            Stock = new[]   { 10,      20,      5,       0,       50 },
+            Status = new[]  { "Active","Active","Recall","Obsolete","Active" }
+        }))
+        {
+            // Region 既是主键一部分，也是分区键
+            df.WriteDelta(
+                rootUrl, 
+                partitionBy: "Region", 
+                mode: DeltaSaveMode.Append, 
+                cloudOptions: options
+            );
+        }
+
+        // ==========================================
+        // 3. [Source] 准备 Merge 数据
+        // ==========================================
+        Console.WriteLine("Step 2: Preparing Source Data...");
+
+        // Source Logic:
+        // 1. [North, 101]: Stock 100 (New > Old) -> Update
+        // 2. [North, 102]: Stock 15  (New < Old) -> Skip Update
+        // 3. [South, 101]: Status "DeleteMe"     -> Matched Delete
+        // 4. [West,  888]: Stock 60              -> Insert (New Region)
+        // 5. [West,  999]: Stock 0               -> Skip Insert (Condition Fail)
+
+        using var sourceDf = DataFrame.FromColumns(new { 
+            Region = new[]  { "North", "North", "South", "West", "West" },
+            StoreId = new[] { 101,     102,     101,     888,     999 },
+            Stock = new[]   { 100,     15,      0,       60,      0 },
+            Status = new[]  { "Active","Active","DeleteMe","New",   "Bad" }
+        });
+
+        // ==========================================
+        // 4. 定义表达式 (使用语法糖)
+        // ==========================================
+        
+        // A. Update: Source 库存 > Target 库存
+        var updateCond = Delta.Source("Stock") > Delta.Target("Stock");
+
+        // B. Matched Delete: Source 状态标记
+        var matchDeleteCond = Delta.Source("Status") == "DeleteMe";
+
+        // C. Insert: 库存 > 0
+        var insertCond = Delta.Source("Stock") > 0;
+
+        // D. Source Delete: Target 状态为过期
+        var srcDeleteCond = Delta.Target("Status") == "Obsolete";
+
+        // ==========================================
+        // 5. 执行 Ordered Full Merge (全新 Builder API)
+        // ==========================================
+        Console.WriteLine("Step 3: Executing Composite Key Ordered Merge...");
+
+        // 关键点：使用全新的链式调用，底层会严格按照此处书写的顺序构建执行树
+        sourceDf.MergeDeltaOrdered(
+                rootUrl,
+                mergeKeys: ["Region", "StoreId"], 
+                cloudOptions: options
+            )
+            .WhenMatchedDelete(matchDeleteCond)           // 顺位 1: 先检查是否需要删除
+            .WhenMatchedUpdate(updateCond)                // 顺位 2: 再检查是否需要更新
+            .WhenNotMatchedInsert(insertCond)             // 顺位 3: 处理新增数据
+            .WhenNotMatchedBySourceDelete(srcDeleteCond)  // 顺位 4: 处理源端不存在但需要删除的目标数据
+            .Execute();                                   // 终极执行：下发 FFI 平行数组
+
+        // ==========================================
+        // 6. 验证结果
+        // ==========================================
+        Console.WriteLine("Step 4: Verifying Results...");
+        
+        using var dfRes = LazyFrame.ScanDelta(rootUrl, cloudOptions: options)
+            .Collect()
+            .Sort(["Region", "StoreId"]); // Sort for deterministic assert
+
+        dfRes.Show();
+        
+        // 预期结果行数分析：
+        // 1. North/101: Updated (100)
+        // 2. North/102: Kept (20)
+        // 3. South/101: Deleted
+        // 4. South/999: Deleted (Obsolete)
+        // 5. East/555:  Kept (50)
+        // 6. West/888:  Inserted (60)
+        // 7. West/999:  Ignored
+        // 总计：4 行
+
+        Assert.Equal(4, dfRes.Height);
+
+        // Case 1: Composite Match Update
+        var row1 = dfRes.Filter(Col("Region") == "North" & Col("StoreId") == 101);
+        Assert.Equal(100, row1["Stock"].ToArray<int>()[0]);
+
+        // Case 2: Composite Match Skip
+        var row2 = dfRes.Filter(Col("Region") == "North" & Col("StoreId") == 102);
+        Assert.Equal(20, row2["Stock"].ToArray<int>()[0]);
+
+        // Case 3: Composite Match Delete (South/101)
+        // 关键验证：North/101 还在，但 South/101 没了，证明复合键生效
+        Assert.Equal(0, dfRes.Filter(Col("Region") == "South" & Col("StoreId") == 101).Height);
+
+        // Case 4: Not Matched By Source Delete
+        Assert.Equal(0, dfRes.Filter(Col("Region") == "South" & Col("StoreId") == 999).Height);
+
+        // Case 5: Target Only Keep
+        var rowEast = dfRes.Filter(Col("Region") == "East");
+        Assert.Equal(50, rowEast["Stock"].ToArray<int>()[0]);
+
+        // Case 6: Insert
+        var rowWest = dfRes.Filter(Col("Region") == "West" & Col("StoreId") == 888);
+        Assert.Equal(60, rowWest["Stock"].ToArray<int>()[0]);
+
+        Console.WriteLine("Ordered Composite Key Merge Passed! 🚀");
+    }
+    [Fact]
+    [Trait("DeltaLake", "MergeOrderSemantics")]
+    public void Test_Merge_Delta_Action_Order_Matters()
+    {
+        // ==========================================
+        // 1. 环境准备：建两个完全相同的表
+        // ==========================================
+        var tableDeleteWins = $"delta_merge_order_del_{Guid.NewGuid()}";
+        var urlDeleteWins = $"s3://{_minio.BucketName}/{tableDeleteWins}";
+
+        var tableUpdateWins = $"delta_merge_order_upd_{Guid.NewGuid()}";
+        var urlUpdateWins = $"s3://{_minio.BucketName}/{tableUpdateWins}";
+
+        var options = CloudOptions.Aws(
+            region: _minio.Region,
+            accessKey: _minio.AccessKey,
+            secretKey: _minio.SecretKey,
+            endpoint: $"http://{_minio.Endpoint.Replace("http://", "").Replace("https://", "").TrimEnd('/')}"
+        );
+        options.Credentials!["AWS_ALLOW_HTTP"] = "true";
+        options.Credentials!["aws_s3_force_path_style"] = "true";
+
+        // ==========================================
+        // 2. 初始化 Target 数据：只有一条可怜的记录
+        // ==========================================
+        using (var dfTarget = DataFrame.FromColumns(new { 
+            Id = new[] { 1 }, 
+            Stock = new[] { 10 }, 
+            Status = new[] { "Active" } 
+        }))
+        {
+            dfTarget.WriteDelta(urlDeleteWins, mode: DeltaSaveMode.Overwrite, cloudOptions: options);
+            dfTarget.WriteDelta(urlUpdateWins, mode: DeltaSaveMode.Overwrite, cloudOptions: options);
+        }
+
+        // ==========================================
+        // 3. 初始化 Source 数据：制造致命冲突！
+        // ==========================================
+        // 这条新数据既满足 "Stock > Target" (100 > 10)
+        // 又满足 "Status == DeleteMe"
+        using var sourceDf = DataFrame.FromColumns(new { 
+            Id = new[] { 1 }, 
+            Stock = new[] { 100 }, 
+            Status = new[] { "DeleteMe" } 
+        });
+
+        var updateCond = Delta.Source("Stock") > Delta.Target("Stock");
+        var deleteCond = Delta.Source("Status") == "DeleteMe";
+
+        // ==========================================
+        // 4. 测试 A：Delete 优先 (Delete 截胡)
+        // ==========================================
+        Console.WriteLine("Executing Merge A: Delete -> Update");
+        sourceDf.Lazy().MergeDeltaOrdered(urlDeleteWins, mergeKeys: ["Id"], cloudOptions: options)
+            .WhenMatchedDelete(deleteCond)  // 顺位 1：先看能不能删
+            .WhenMatchedUpdate(updateCond)  // 顺位 2：再看能不能更
+            .Execute();
+
+        // ==========================================
+        // 5. 测试 B：Update 优先 (Update 截胡)
+        // ==========================================
+        Console.WriteLine("Executing Merge B: Update -> Delete");
+        sourceDf.Lazy().MergeDeltaOrdered(urlUpdateWins, mergeKeys: ["Id"], cloudOptions: options)
+            .WhenMatchedUpdate(updateCond)  // 顺位 1：先看能不能更
+            .WhenMatchedDelete(deleteCond)  // 顺位 2：再看能不能删
+            .Execute();
+
+        // ==========================================
+        // 6. 见证奇迹的时刻
+        // ==========================================
+        using var resDeleteWins = LazyFrame.ScanDelta(urlDeleteWins, cloudOptions: options).Collect();
+        using var resUpdateWins = LazyFrame.ScanDelta(urlUpdateWins, cloudOptions: options).Collect();
+
+        Console.WriteLine("--- Result A (Delete First) ---");
+        resDeleteWins.Show();
+        
+        Console.WriteLine("--- Result B (Update First) ---");
+        resUpdateWins.Show();
+
+        // 断言 A：数据被成功删除了，因为 Delete 排在前面！
+        Assert.Equal(0, resDeleteWins.Height); 
+
+        // 断言 B：数据被更新了，因为 Update 抢先一步命中了！
+        Assert.Equal(1, resUpdateWins.Height);
+        Assert.Equal(100, resUpdateWins["Stock"].ToArray<int>()[0]);
+        Assert.Equal("DeleteMe", resUpdateWins["Status"].ToArray<string>()[0]);
+
+        Console.WriteLine("Order Semantics Test Passed!");
     }
 }

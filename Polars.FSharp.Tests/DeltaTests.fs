@@ -175,12 +175,12 @@ let ``Scenario 3: Delta Lake Advanced MERGE Semantics`` () =
         // 这里验证了我们之前手写的 Delta.Source 和 Delta.Target 辅助方法！
         let updateCond = Delta.Source "price" .> Delta.Target "price"
         
-        sourceDf.MergeDelta(
+        sourceDf.MergeDeltaOrdered(
             testPath,
-            mergeKeys = ["id"],
-            matchedUpdateCond = updateCond,
-            notMatchedInsertCond = pl.lit true // 显式传一个 lit 进去测试多句柄解包
-        )
+            mergeKeys = ["id"]
+            // matchedUpdateCond = updateCond,
+            // notMatchedInsertCond = pl.lit true // 显式传一个 lit 进去测试多句柄解包
+        ).WhenMatchedUpdate(updateCond).WhenNotMatchedInsert(pl.lit true).Execute()
 
         // ==========================================
         // 4. 验证合并结果

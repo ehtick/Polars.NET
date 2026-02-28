@@ -453,3 +453,76 @@ type Delta =
             cKeys,
             cVals
         )
+
+/// <summary>
+/// A builder for constructing ordered Delta Lake Merge operations in F#.
+/// This ensures that matched and not-matched conditions are evaluated exactly 
+/// in the order they are chained by the user, adhering to standard SQL MERGE semantics.
+/// </summary>
+type DeltaMergeBuilder (sourceLf: LazyFrame, path: string, mergeKeys: string array, canEvolve: bool, cloudOptions: CloudOptions option) =
+    
+    // ResizeArray is F#'s idiomatic alias for System.Collections.Generic.List
+    let actions = ResizeArray<MergeActionType * Expr>()
+
+    /// <summary>
+    /// Update the matched target row with source data.
+    /// </summary>
+    member this.WhenMatchedUpdate(?condition: Expr) =
+        // If condition is None, default to pl.lit true
+        actions.Add(MergeActionType.MatchedUpdate, defaultArg condition (pl.lit true))
+        this
+
+    /// <summary>
+    /// Delete the matched target row.
+    /// </summary>
+    member this.WhenMatchedDelete(?condition: Expr) =
+        actions.Add(MergeActionType.MatchedDelete, defaultArg condition (pl.lit true))
+        this
+
+    /// <summary>
+    /// Insert a new row from the source data when it does not match any target row.
+    /// </summary>
+    member this.WhenNotMatchedInsert(?condition: Expr) =
+        actions.Add(MergeActionType.NotMatchedInsert, defaultArg condition (pl.lit true))
+        this
+
+    /// <summary>
+    /// Delete the target row when it does not exist in the source data.
+    /// </summary>
+    member this.WhenNotMatchedBySourceDelete(?condition: Expr) =
+        actions.Add(MergeActionType.NotMatchedBySourceDelete, defaultArg condition (pl.lit true))
+        this
+
+    /// <summary>
+    /// Executes the constructed merge operation against the Delta Table.
+    /// </summary>
+    member this.Execute() =
+        if actions.Count = 0 then
+            this.WhenMatchedUpdate() |> ignore
+            this.WhenNotMatchedInsert() |> ignore
+
+        let actionTypes = 
+            actions |> Seq.map (fun (t, _) -> t.ToNative()) |> Seq.toArray
+        
+        let actionExprs = 
+            actions |> Seq.map (fun (_, expr) -> expr.CloneHandle()) |> Seq.toArray
+
+        let cProv, cRet, cToMs, cInitMs, cMaxMs, cCache, cKeys, cVals = 
+            CloudOptions.ParseCloudOptions cloudOptions
+
+        PolarsWrapper.DeltaMergeOrdered(
+            sourceLf.CloneHandle(), 
+            path,
+            mergeKeys,
+            actionTypes,
+            actionExprs,
+            canEvolve,
+            cProv,
+            cRet,
+            cToMs,
+            cInitMs,
+            cMaxMs,
+            cCache,
+            cKeys,
+            cVals
+        )

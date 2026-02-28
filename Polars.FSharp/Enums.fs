@@ -583,3 +583,18 @@ type AvroCompression =
         | Deflate -> PlAvroCompression.Deflate
         | Snappy -> PlAvroCompression.Snappy
 
+/// <summary>
+/// Defines the type of action to perform during a Delta Merge operation.
+/// </summary>
+type MergeActionType =
+    | MatchedUpdate
+    | MatchedDelete
+    | NotMatchedInsert
+    | NotMatchedBySourceDelete
+    member internal this.ToNative() =
+        match this with
+        | MatchedUpdate -> PlMergeActionType.MatchedUpdate
+        | MatchedDelete -> PlMergeActionType.MatchedDelete
+        | NotMatchedInsert -> PlMergeActionType.NotMatchedInsert
+        | NotMatchedBySourceDelete -> PlMergeActionType.NotMatchedBySourceDelete
+

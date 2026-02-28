@@ -2061,19 +2061,19 @@ and ArrayOps(handle: ExprHandle) =
     // --- Aggregations ---
 
     /// <summary> Compute the sum of the values in the array. </summary>
-    member _.Sum() = new Expr(PolarsWrapper.ArraySum(handle))
+    member _.Sum() = new Expr(PolarsWrapper.ArraySum handle)
 
     /// <summary> Compute the minimum value in the array. </summary>
-    member _.Min() = new Expr(PolarsWrapper.ArrayMin(handle))
+    member _.Min() = new Expr(PolarsWrapper.ArrayMin handle)
 
     /// <summary> Compute the maximum value in the array. </summary>
-    member _.Max() = new Expr(PolarsWrapper.ArrayMax(handle))
+    member _.Max() = new Expr(PolarsWrapper.ArrayMax handle)
 
     /// <summary> Compute the mean value in the array. </summary>
-    member _.Mean() = new Expr(PolarsWrapper.ArrayMean(handle))
+    member _.Mean() = new Expr(PolarsWrapper.ArrayMean handle)
 
     /// <summary> Compute the median value in the array. </summary>
-    member _.Median() = new Expr(PolarsWrapper.ArrayMedian(handle))
+    member _.Median() = new Expr(PolarsWrapper.ArrayMedian handle)
 
     /// <summary> Compute the standard deviation of the values in the array. </summary>
     member _.Std(?ddof: int) = 

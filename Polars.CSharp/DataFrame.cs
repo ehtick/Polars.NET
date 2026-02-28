@@ -3320,11 +3320,15 @@ public class DataFrame : IDisposable,IEnumerable<Series>
                 maxRowsPerFile, approxBytesPerFile, compression, compressionLevel, statistics, 
                 rowGroupSize, dataPageSize, compatLevel, maintainOrder, syncOnClose, mkdir, cloudOptions
             );
+
     /// <summary>
     /// Merge a DataFrame into a Delta Lake table with full SQL MERGE semantics.
     /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// Notice: In this method, Delete > Update > Insert > Ignore.
+    /// If you need other orders, please use LazyFrame.MergeDeltaOrdered
     /// </summary>
     /// <inheritdoc cref="LazyFrame.MergeDelta(string, string[], Expr?, Expr?, Expr?, Expr?, bool, CloudOptions?)"/>
+    [Obsolete("This method is deprecated because its execution order of matched/not-matched actions is hardcoded and may lead to silent data corruption in complex scenarios. Please use 'MergeDeltaOrdered(...)' combined with the '.WhenMatched...()' chaining methods to ensure strict SQL MERGE semantics.")]
     public void MergeDelta(
         string path,
         string[] mergeKeys,
@@ -3346,6 +3350,24 @@ public class DataFrame : IDisposable,IEnumerable<Series>
             canEvolve,
             cloudOptions
         );
+    }
+    /// <summary>
+    /// Merge a DataFrame into a Delta Lake table with full SQL MERGE semantics.
+    /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// This method is builder mode.
+    /// </summary>
+    /// <param name="path">Uri to the Delta Lake table (local or cloud).</param>
+    /// <param name="mergeKeys">The column names to join on (must exist in both Source and Target).</param>
+    /// <param name="canEvolve">Define whether schema evolution is allowed, default: false</param>
+    /// <param name="cloudOptions">Cloud storage credentials and configuration.</param>
+    /// <returns></returns>
+    public DeltaMergeBuilder MergeDeltaOrdered(
+        string path, 
+        string[] mergeKeys, 
+        bool canEvolve = false, 
+        CloudOptions? cloudOptions = null)
+    {
+        return new DeltaMergeBuilder(Lazy(), path, mergeKeys, canEvolve, cloudOptions);
     }
     /// <summary>
     /// Export DataFrame to Record Batch
