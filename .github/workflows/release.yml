@@ -72,6 +72,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Add Swap Space to prevent OOM
+        if: runner.os == 'Linux'
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
+
       - name: Remove Local Config (Linux)
         if: runner.os == 'Linux'
         run: rm -rf native_shim/.cargo
