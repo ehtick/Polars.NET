@@ -1,4 +1,5 @@
 namespace Polars.FSharp
+open System.Runtime.CompilerServices
 
 [<AutoOpen>]
 module Describe =
@@ -43,3 +44,33 @@ module Describe =
                 )
 
             pl.concat rowFrames
+
+[<Extension>]
+type LazyFrameDeltaExtensions =
+
+    [<Extension>]
+    static member MergeDeltaOrdered(
+        this: LazyFrame,
+        path: string,
+        mergeKeys: seq<string>,
+        ?canEvolve: bool,
+        ?cloudOptions: CloudOptions
+    ) : DeltaMergeBuilder =
+        let keysArr = mergeKeys |> Seq.toArray
+        let evolve = defaultArg canEvolve false
+        new DeltaMergeBuilder(this, path, keysArr, evolve, cloudOptions)
+
+[<Extension>]
+type DataFrameDeltaExtensions =
+
+    [<Extension>]
+    static member MergeDeltaOrdered(
+        this: DataFrame,
+        path: string,
+        mergeKeys: seq<string>,
+        ?canEvolve: bool,
+        ?cloudOptions: CloudOptions
+    ) : DeltaMergeBuilder =
+        let keysArr = mergeKeys |> Seq.toArray
+        let evolve = defaultArg canEvolve false
+        new DeltaMergeBuilder(this.Lazy(), path, keysArr, evolve, cloudOptions)

@@ -429,6 +429,17 @@ public enum AvroCompression: byte
     Snappy=2
 }
 
+/// <summary>
+/// Defines the type of action to perform during a Delta Merge operation.
+/// </summary>
+public enum MergeActionType : byte
+{
+    MatchedUpdate = 0,
+    MatchedDelete = 1,
+    NotMatchedInsert = 2,
+    NotMatchedBySourceDelete = 3
+}
+
 internal static class EnumExtensions
 {
     public static CoreEnums.PlDataType ToNative(this DataTypeKind kind) => kind switch
@@ -709,6 +720,14 @@ internal static class EnumExtensions
         AvroCompression.Snappy => CoreEnums.PlAvroCompression.Snappy,
         AvroCompression.Deflate => CoreEnums.PlAvroCompression.Deflate,
         _ => throw new ArgumentOutOfRangeException(nameof(compression), compression, null)
+    };
+    internal static CoreEnums.PlMergeActionType ToNative(this MergeActionType condition) => condition switch
+    {
+        MergeActionType.MatchedUpdate => CoreEnums.PlMergeActionType.MatchedUpdate,
+        MergeActionType.MatchedDelete => CoreEnums.PlMergeActionType.MatchedDelete,
+        MergeActionType.NotMatchedInsert => CoreEnums.PlMergeActionType.NotMatchedInsert,
+        MergeActionType.NotMatchedBySourceDelete => CoreEnums.PlMergeActionType.NotMatchedBySourceDelete,
+        _ => throw new ArgumentOutOfRangeException(nameof(condition), condition, null)
     };
 }
 

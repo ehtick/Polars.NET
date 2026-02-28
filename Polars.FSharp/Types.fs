@@ -22,7 +22,6 @@ type Series(handle: SeriesHandle) =
 
     interface IDisposable with member _.Dispose() = handle.Dispose()
     member _.Handle = handle
-
     member _.Name = PolarsWrapper.SeriesName handle
     member _.Length = PolarsWrapper.SeriesLen handle
     member _.Len = PolarsWrapper.SeriesLen handle
@@ -2414,7 +2413,7 @@ and SeriesArrayNameSpace(parent: Series) =
     member _.ArgMin() = apply (fun e -> e.Array.ArgMin())
     member _.ArgMax() = apply (fun e -> e.Array.ArgMax())
 
-    member _.Explode() = apply (fun e -> e.Array.Explode())
+    member _.Explode(?emptyAsNull:bool,?keepNulls:bool) = apply (fun e -> e.Array.Explode(?emptyAsNull=emptyAsNull,?keepNulls=keepNulls))
 
     // --- Indexing ---
 
@@ -3906,8 +3905,10 @@ and DataFrame(handle: DataFrameHandle) =
             ?cloudOptions=cloudOptions
         )
     /// <summary>
-    /// Merge a LazyFrame into a Delta Lake table with full SQL MERGE semantics.
+    /// Merge a DataFrame into a Delta Lake table with full SQL MERGE semantics.
     /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// Notice: In this method, Delete > Update > Insert > Ignore.
+    /// If you need other orders, please use DataFrame.MergeDeltaOrdered
     /// </summary>
     /// <param name="path">Uri to the Delta Lake table (local or cloud).</param>
     /// <param name="mergeKeys">The column names to join on (must exist in both Source and Target).</param>
@@ -3929,6 +3930,7 @@ and DataFrame(handle: DataFrameHandle) =
     /// </param>
     /// <param name="canEvolve">Allow schema evolution during the merge.</param>
     /// <param name="cloudOptions">Cloud storage credentials and configuration.</param>
+    [<Obsolete("This method is deprecated because its execution order of matched/not-matched actions is hardcoded and may lead to silent data corruption in complex scenarios. Please use 'MergeDeltaOrdered(...)' combined with the '.WhenMatched...()' chaining methods to ensure strict SQL MERGE semantics.")>]
     member this.MergeDelta(
         path: string,
         mergeKeys: seq<string>,
@@ -6699,6 +6701,8 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// <summary>
     /// Merge a LazyFrame into a Delta Lake table with full SQL MERGE semantics.
     /// Provides fine-grained control over Update, Insert, and Delete behaviors.
+    /// Notice: In this method, Delete > Update > Insert > Ignore.
+    /// If you need other orders, please use LazyFrame.MergeDeltaOrdered
     /// </summary>
     /// <param name="path">Uri to the Delta Lake table (local or cloud).</param>
     /// <param name="mergeKeys">The column names to join on (must exist in both Source and Target).</param>
@@ -6720,6 +6724,7 @@ and LazyFrame(handle: LazyFrameHandle) =
     /// </param>
     /// <param name="canEvolve">Allow schema evolution during the merge.</param>
     /// <param name="cloudOptions">Cloud storage credentials and configuration.</param>
+    [<Obsolete("This method is deprecated because its execution order of matched/not-matched actions is hardcoded and may lead to silent data corruption in complex scenarios. Please use 'MergeDeltaOrdered(...)' combined with the '.WhenMatched...()' chaining methods to ensure strict SQL MERGE semantics.")>]
     member this.MergeDelta(
         path: string,
         mergeKeys: seq<string>,

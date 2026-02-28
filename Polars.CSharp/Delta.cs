@@ -446,3 +446,117 @@ public static class Delta
         );
     }
 }
+
+/// <summary>
+/// A builder for constructing ordered Delta Lake Merge operations.
+/// This ensures that matched and not-matched conditions are evaluated exactly 
+/// in the order they are chained by the user, adhering to standard SQL MERGE semantics.
+/// </summary>
+public class DeltaMergeBuilder
+{
+    private readonly LazyFrame _sourceLf;
+    private readonly string _path;
+    private readonly string[] _mergeKeys;
+    private readonly bool _canEvolve;
+    private readonly CloudOptions? _cloudOptions;
+
+    // Use a List to strictly preserve the exact order of method calls
+    private readonly List<(MergeActionType ActionType, Expr Condition)> _actions = new();
+
+    internal DeltaMergeBuilder(
+        LazyFrame sourceLf, 
+        string path, 
+        string[] mergeKeys, 
+        bool canEvolve = false, 
+        CloudOptions? cloudOptions = null)
+    {
+        _sourceLf = sourceLf;
+        _path = path;
+        _mergeKeys = mergeKeys;
+        _canEvolve = canEvolve;
+        _cloudOptions = cloudOptions;
+    }
+
+    /// <summary>
+    /// Update the matched target row with source data.
+    /// </summary>
+    /// <param name="condition">Optional condition for the update to occur. If null, updates all matched rows.</param>
+    public DeltaMergeBuilder WhenMatchedUpdate(Expr? condition = null)
+    {
+        // If condition is null, we default to Polars.Lit(true) for unconditional action
+        _actions.Add((MergeActionType.MatchedUpdate, condition ?? Polars.Lit(true)));
+        return this;
+    }
+
+    /// <summary>
+    /// Delete the matched target row.
+    /// </summary>
+    /// <param name="condition">Optional condition for the delete to occur. If null, deletes all matched rows.</param>
+    public DeltaMergeBuilder WhenMatchedDelete(Expr? condition = null)
+    {
+        _actions.Add((MergeActionType.MatchedDelete, condition ?? Polars.Lit(true)));
+        return this;
+    }
+
+    /// <summary>
+    /// Insert a new row from the source data when it does not match any target row.
+    /// </summary>
+    /// <param name="condition">Optional condition for the insert to occur. If null, inserts all unmatched source rows.</param>
+    public DeltaMergeBuilder WhenNotMatchedInsert(Expr? condition = null)
+    {
+        _actions.Add((MergeActionType.NotMatchedInsert, condition ?? Polars.Lit(true)));
+        return this;
+    }
+
+    /// <summary>
+    /// Delete the target row when it does not exist in the source data.
+    /// </summary>
+    /// <param name="condition">Optional condition for the target delete to occur. If null, deletes all unmatched target rows.</param>
+    public DeltaMergeBuilder WhenNotMatchedBySourceDelete(Expr? condition = null)
+    {
+        _actions.Add((MergeActionType.NotMatchedBySourceDelete, condition ?? Polars.Lit(true)));
+        return this;
+    }
+
+    /// <summary>
+    /// Executes the constructed merge operation against the Delta Table.
+    /// </summary>
+    public void Execute()
+    {
+        if (_actions.Count == 0)
+        {
+            WhenMatchedUpdate();     
+            WhenNotMatchedInsert();  
+        }
+
+        var actionTypes = new PlMergeActionType[_actions.Count];
+        var actionExprs = new ExprHandle[_actions.Count];
+
+        for (int i = 0; i < _actions.Count; i++)
+        {
+            actionTypes[i] = _actions[i].ActionType.ToNative();
+            actionExprs[i] = _actions[i].Condition.CloneHandle(); 
+        }
+
+        var (provider, retries, timeout, initBackoff, maxBackoff, cacheTtl, keys, values) = 
+            CloudOptions.ParseCloudOptions(_cloudOptions);
+
+        // Assume PolarsWrapper.DeltaMergeOrdered is the wrapper method you defined earlier
+        PolarsWrapper.DeltaMergeOrdered(
+            _sourceLf.CloneHandle(), // Clone LazyFrame handle to pass ownership
+            _path,
+            _mergeKeys,
+            actionTypes,
+            actionExprs,
+            _canEvolve,
+            provider.ToNative(),
+            retries,
+            timeout,
+            initBackoff,
+            maxBackoff,
+            cacheTtl,
+            keys,
+            values
+        );
+    }
+}

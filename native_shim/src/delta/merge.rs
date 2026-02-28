@@ -9,7 +9,7 @@ use url::Url;
 use deltalake::{DeltaTable, Path, table::state::DeltaTableState};
 use deltalake::kernel::{Action, Add, Remove, scalars::ScalarExt, transaction::CommitBuilder};
 use deltalake::parquet::arrow::async_reader::{AsyncFileReader, ParquetObjectReader};
-use deltalake::protocol::{DeltaOperation, MergePredicate};
+use deltalake::protocol::{DeltaOperation};
 use uuid::Uuid;
 
 use crate::{delta::{delete::{create_dv_descriptor, write_dv_file}, deletion_vector::{apply_deletion_vector, read_deletion_vector}, utils::*}, pl_io::parquet::parquet_utils::build_parquet_write_options};
@@ -60,7 +60,7 @@ impl MergeStrategy {
     }
 }
 
-struct MergeContext {
+pub(crate) struct MergeContext {
     pub merge_keys: Vec<String>,
     pub table_url: Url,
     pub can_evolve: bool,
@@ -73,12 +73,12 @@ struct MergeContext {
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-enum PruningBound {
+pub(crate) enum PruningBound {
     Integer(i128),
     Float(f64),
     Lexical(String), 
 }
-fn bound_to_json(bound: &PruningBound) -> serde_json::Value {
+pub(crate) fn bound_to_json(bound: &PruningBound) -> serde_json::Value {
     match bound {
         // A. Integer (i128)
         PruningBound::Integer(i) => {
@@ -98,7 +98,7 @@ fn bound_to_json(bound: &PruningBound) -> serde_json::Value {
     }
 }
 /// Parse Source LazyFrame to extract partition values
-fn get_source_partition_values(
+pub(crate) fn get_source_partition_values(
     source_lf: &LazyFrame,
     partition_cols: &[String]
 ) -> Option<HashSet<Vec<String>>> {
@@ -123,7 +123,7 @@ fn get_source_partition_values(
     }
     Some(affected_partitions)
 }
-fn any_value_to_string(val: &AnyValue) -> String {
+pub(crate) fn any_value_to_string(val: &AnyValue) -> String {
     match val {
         AnyValue::Null => "__HIVE_DEFAULT_PARTITION__".to_string(),
         AnyValue::String(s) => s.to_string(),
@@ -134,7 +134,7 @@ fn any_value_to_string(val: &AnyValue) -> String {
     }
 }
 
-fn any_value_to_bound(val: &AnyValue, _dtype: &DataType) -> Option<PruningBound> {
+pub(crate) fn any_value_to_bound(val: &AnyValue, _dtype: &DataType) -> Option<PruningBound> {
     match val {
         AnyValue::Int8(v) => Some(PruningBound::Integer(*v as i128)),
         AnyValue::Int16(v) => Some(PruningBound::Integer(*v as i128)),
@@ -168,7 +168,7 @@ fn any_value_to_bound(val: &AnyValue, _dtype: &DataType) -> Option<PruningBound>
 }
 
 // Get Source Min/Max
-fn get_source_key_bounds(lf: &LazyFrame, key: &str, dtype: &DataType) -> Option<(PruningBound, PruningBound)> {
+pub(crate) fn get_source_key_bounds(lf: &LazyFrame, key: &str, dtype: &DataType) -> Option<(PruningBound, PruningBound)> {
     if !dtype.is_numeric() && !dtype.is_temporal() && !matches!(dtype, DataType::String) {
         return None;
     }
@@ -186,14 +186,14 @@ fn get_source_key_bounds(lf: &LazyFrame, key: &str, dtype: &DataType) -> Option<
 }
 
 #[derive(Debug, Clone)]
-enum PruningCandidates {
+pub(crate) enum PruningCandidates {
     Integers(Vec<i64>), 
     Strings(Vec<String>), 
 }
 
 /// Phase 1: Pruning
 /// Partition Pruning, Z-Order Bounds Pruning, Discrete Candidates Pruning
-async fn phase_1_load_table(
+pub(crate) async fn phase_1_load_table(
     table_url: Url,
     storage_options: HashMap<String, String>,
 ) -> PolarsResult<(DeltaTable, Vec<String>, SchemaRef)> {
@@ -212,8 +212,8 @@ async fn phase_1_load_table(
 // =========================================================
 // Step 2: Analyze Source (Sync - Pure CPU/Polars)
 // =========================================================
-fn phase_1_analyze_source(
-    ctx: &MergeContext,
+pub(crate) fn phase_1_analyze_source(
+    merge_keys: &[String],
     source_lf: &LazyFrame,
     polars_schema: &Schema,
     part_cols: &[String],
@@ -224,7 +224,7 @@ fn phase_1_analyze_source(
 
     // B. Key Bounds
     let mut key_bounds_json = HashMap::new(); 
-    for key in &ctx.merge_keys {
+    for key in merge_keys {
         let dtype = polars_schema.get_field(key).map(|f| f.dtype.clone()).unwrap_or(DataType::Null);
         if let Some((min_lit, max_lit)) = get_source_key_bounds(source_lf, key, &dtype) {
             let min_json = bound_to_json(&min_lit);
@@ -235,8 +235,8 @@ fn phase_1_analyze_source(
 
     // C. Discrete Candidates
     let mut pruning_candidates: Option<PruningCandidates> = None;
-    if ctx.merge_keys.len() == 1 {
-        let key_col = &ctx.merge_keys[0];
+    if merge_keys.len() == 1 {
+        let key_col = &merge_keys[0];
         let distinct_lf = source_lf.clone()
             .select([col(key_col)])
             .unique(None, UniqueKeepStrategy::Any)
@@ -244,7 +244,7 @@ fn phase_1_analyze_source(
 
         if let Ok(df) = distinct_lf.collect_with_engine(Engine::Streaming) {
             if df.height() <= MAX_PRUNING_CANDIDATES {
-                let s = df.column(key_col).unwrap();
+                let s = df.column(&key_col).unwrap();
                 let dtype = s.dtype();
                 if dtype.is_integer() {
                     if let Ok(s_cast) = s.cast(&DataType::Int64) {
@@ -267,7 +267,7 @@ fn phase_1_analyze_source(
 
     Ok((source_partitions, key_bounds_json, pruning_candidates))
 }
-async fn phase_1_scan_and_prune(
+pub(crate) async fn phase_1_scan_and_prune(
     table: &DeltaTable,
     part_cols: &[String],
     source_partitions: Option<HashSet<Vec<String>>>,
@@ -363,8 +363,9 @@ async fn phase_1_scan_and_prune(
     Ok(candidate_files)
 }
 
-fn phase_validation(
-    ctx: &MergeContext,
+pub(crate) fn phase_validation(
+    merge_keys: &[String],     
+    can_evolve: bool,          
     source_lf: &mut LazyFrame,
     target_schema: &Schema,
 ) -> PolarsResult<()> {
@@ -376,7 +377,7 @@ fn phase_validation(
         .map_err(|e| PolarsError::ComputeError(format!("Failed to get source schema: {}", e).into()))?;
 
     // A. Merge Key Checks
-    for key in &ctx.merge_keys {
+    for key in merge_keys {
         // 1. Check Source Existence
         let src_field = src_schema.get(key)
             .ok_or_else(|| PolarsError::ComputeError(format!(
@@ -402,7 +403,7 @@ fn phase_validation(
     }
 
     // Extra Column Check (Schema Evolution Guard)
-    if !ctx.can_evolve {
+    if !can_evolve {
         for name in src_schema.iter_names() {
             if target_schema.get_field(name).is_none() {
                 return Err(PolarsError::SchemaMismatch(
@@ -415,10 +416,10 @@ fn phase_validation(
     // =========================================================
     // 2. Data Quality Check (Execution Level)
     // =========================================================
-    let partition_exprs: Vec<Expr> = ctx.merge_keys.iter().map(|k| col(k)).collect();
+    let partition_exprs: Vec<Expr> = merge_keys.iter().map(|k| col(k)).collect();
     
     let has_null_expr = polars::prelude::any_horizontal(
-         ctx.merge_keys.iter().map(|k| col(k).is_null()).collect::<Vec<_>>()
+         merge_keys.iter().map(|k| col(k).is_null()).collect::<Vec<_>>()
     )?.alias("has_null_key");
 
     let check_lf = source_lf.clone()
@@ -445,7 +446,7 @@ fn phase_validation(
              let msg = format!(
                 "CRITICAL ERROR: Null values detected in Merge Keys! \n\
                  Merge Keys: {:?}", 
-                ctx.merge_keys
+                merge_keys
             );
             return Err(PolarsError::ComputeError(msg.into()));
         } else {
@@ -466,7 +467,7 @@ fn phase_validation(
                  [Merge Keys]: {:?}\n\
                  --- Duplicate Key Examples (Top 5) ---\n\
                  {}", 
-                ctx.merge_keys, 
+                merge_keys, 
                 example_dupes
             );
             
@@ -477,8 +478,9 @@ fn phase_validation(
     Ok(())
 }
 
-fn construct_target_lf(
-    ctx: &MergeContext,
+pub(crate) fn construct_target_lf(
+    table_url: &url::Url,       // <--- 提取解耦: table_url
+    strategy: MergeStrategy,
     table: &DeltaTable, 
     remove_actions: &[Add], 
     target_schema: &Schema,
@@ -489,8 +491,8 @@ fn construct_target_lf(
         return Ok(DataFrame::empty_with_schema(target_schema).lazy());
     }
 
-    let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
-    let is_mor = ctx.strategy == MergeStrategy::MergeOnRead;
+    let root_trimmed = table_url.as_str().trim_end_matches('/');
+    let is_mor = strategy == MergeStrategy::MergeOnRead;
     
     let make_scan_args = || unsafe {
         let mut args = ScanArgsParquet::default();
@@ -517,7 +519,6 @@ fn construct_target_lf(
     // CoW (Fast Path): Bulk Scan
     // =========================================================
     if !is_mor {
-        // CoW 模式不需要精准的 row_index，直接批量扫描获得最佳性能
         let full_paths: Vec<PlRefPath> = remove_actions.iter()
             .map(|r| PlRefPath::new(format!("{}/{}", root_trimmed, r.path)))
             .collect();
@@ -571,7 +572,7 @@ fn construct_target_lf(
 }
 
 /// Phase 3: Planning
-fn phase_planning(
+pub(crate) fn phase_planning(
     ctx: &MergeContext,
     target_lf: LazyFrame,
     mut source_lf: LazyFrame,
@@ -722,7 +723,7 @@ fn phase_planning(
 /// Returns: 
 /// 1. new_data_lf: Rows to be written to new Parquet files (Updates' New Values + Inserts)
 /// 2. tombstones_lf: Rows to be soft-deleted (Updates Old Rows + Deletes) -> (Path, RowIndex)
-fn phase_planning_mor(
+pub(crate) fn phase_planning_mor(
     ctx: &MergeContext,
     target_lf: LazyFrame, 
     mut source_lf: LazyFrame,
@@ -885,8 +886,8 @@ fn phase_planning_mor(
 
 
 /// Phase 4: Execution 
-fn phase_execution(
-    ctx: &MergeContext,
+pub(crate) fn phase_execution(
+    table_url: &url::Url,
     processed_lf: LazyFrame,
     partition_cols: &[String],
     cloud_args: &RawCloudArgs,
@@ -897,7 +898,7 @@ fn phase_execution(
     let staging_dir_name = format!(".merge_staging_{}", write_id);
     
     // table_url: s3://bucket/table -> trim -> s3://bucket/table
-    let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
+    let root_trimmed = table_url.as_str().trim_end_matches('/');
     let staging_uri = format!("{}/{}", root_trimmed, staging_dir_name);
 
     // 2. Configure Partition Strategy
@@ -962,8 +963,8 @@ fn phase_execution(
 }
 
 /// Phase 4-B (MoR Only): Process Tombstones into Deletion Vectors
-async fn phase_execution_dv(
-    ctx: &MergeContext,
+pub(crate) async fn phase_execution_dv(
+    table_url: &url::Url,
     table: &DeltaTable,
     // tombstones_lf: LazyFrame,
     df: DataFrame,
@@ -975,7 +976,7 @@ async fn phase_execution_dv(
     }
 
     // Build Lookup Table for Original Files
-    let root_trimmed = ctx.table_url.as_str().trim_end_matches('/');
+    let root_trimmed = table_url.as_str().trim_end_matches('/');
     let mut file_lookup: HashMap<String, &Add> = HashMap::new();
     for f in candidate_files {
         file_lookup.insert(f.path.clone(), f);
@@ -1149,68 +1150,21 @@ pub async fn phase_process_staging(
 }
 
 /// Phase 5-B: Commit Transaction
-async fn phase_commit(
-    ctx: &MergeContext,
+pub(crate) async fn phase_commit(
     table: &mut DeltaTable,
-    mut actions: Vec<Action>, // Including Add(New) and Remove(Old)
+    mut actions: Vec<Action>, 
     staging_dir_name: &str,
-    source_schema: &Schema,   // Polars Source Schema
-    target_schema: &Schema,   // Polars Target Schema
+    source_schema: &Schema,   
+    target_schema: &Schema,
+    merge_keys: &[String],
+    can_evolve: bool,
+    matched_preds: Vec<deltalake::protocol::MergePredicate>,
+    not_matched_preds: Vec<deltalake::protocol::MergePredicate>,
+    not_matched_by_source_preds: Vec<deltalake::protocol::MergePredicate>,
 ) -> PolarsResult<()> {
 
     // =========================================================
-    // 1. Construct Logic Metadata (Audit Logs)
-    // =========================================================
-    let mut matched_preds = Vec::new();
-    let mut not_matched_preds = Vec::new();           
-    let mut not_matched_by_source_preds = Vec::new(); 
-
-    // A. Matched (Update/Delete)
-    if ctx.cond_delete.is_some() {
-        matched_preds.push(MergePredicate {
-            predicate: Some("matched_delete_condition".into()),
-            action_type: "DELETE".into(),
-        });
-    }
-
-    // Update 
-    if ctx.cond_update.is_some() {
-        // Update Cond -> Predicate
-        matched_preds.push(MergePredicate { 
-            predicate: Some("custom_update_condition".into()), 
-            action_type: "UPDATE".into() 
-        });
-    } else {
-        //  Upsert -> No Predicate
-        matched_preds.push(MergePredicate { 
-            predicate: None, 
-            action_type: "UPDATE".into() 
-        });
-    }
-
-    // B. Not Matched (Insert)
-    if ctx.cond_insert.is_some() {
-        not_matched_preds.push(MergePredicate {
-            predicate: Some("not_matched_insert_condition".into()),
-            action_type: "INSERT".into(),
-        });
-    } else {
-        not_matched_preds.push(MergePredicate {
-            predicate: None,
-            action_type: "INSERT".into(),
-        });
-    }
-
-    // C. Not Matched By Source (Target Delete)
-    if ctx.cond_src_delete.is_some() {
-        not_matched_by_source_preds.push(MergePredicate {
-            predicate: Some("not_matched_by_source_delete_condition".into()),
-            action_type: "DELETE".into(),
-        });
-    }
-
-    // =========================================================
-    // 2. Schema Evolution (Metadata Action)
+    // 1. Schema Evolution (Metadata Action)
     // =========================================================
     
     // Build New Polars Schema (Target + Source New Cols)
@@ -1232,7 +1186,7 @@ async fn phase_commit(
         let current_delta_schema = current_snapshot.schema();
 
         if current_delta_schema.as_ref() != &new_delta_schema {
-            if !ctx.can_evolve {
+            if !can_evolve {
                 return Err(PolarsError::SchemaMismatch("Schema mismatch detected. Pass 'can_evolve=true'.".into()));
             }
             
@@ -1262,11 +1216,11 @@ async fn phase_commit(
     }
 
     // =========================================================
-    // 3. Commit Transaction
+    // 2. Commit Transaction
     // =========================================================
     
     // Build SQL Style Predicate (e.g. "source.id = target.id")
-    let join_predicate = ctx.merge_keys.iter()
+    let join_predicate = merge_keys.iter()
         .map(|k| format!("source.{} = target.{}", k, k))
         .collect::<Vec<_>>()
         .join(" AND ");
@@ -1416,7 +1370,7 @@ pub extern "C" fn pl_io_delta_merge(
         };
 
         let (source_partitions, key_bounds, candidates) = phase_1_analyze_source(
-            &ctx, 
+            &ctx.merge_keys, 
             &source_lf, 
             &target_schema, 
             &partition_cols
@@ -1463,9 +1417,9 @@ pub extern "C" fn pl_io_delta_merge(
             // Clone source_lf_plan
             let mut current_source_lf = source_lf.clone(); 
             
-            phase_validation(&ctx, &mut current_source_lf, &target_schema)?;
+            phase_validation(&ctx.merge_keys, ctx.can_evolve, &mut current_source_lf, &target_schema)?;
 
-            let target_lf = construct_target_lf(&ctx,&table ,&candidate_files, &target_schema, &cloud_args)?;
+            let target_lf = construct_target_lf(&ctx.table_url,ctx.strategy,&table ,&candidate_files, &target_schema, &cloud_args)?;
             
             // let processed_lf = phase_planning(&ctx, target_lf, current_source_lf, &target_schema)?;
             let (new_data_lf, tombstones_lf_opt) = match ctx.strategy {
@@ -1482,7 +1436,7 @@ pub extern "C" fn pl_io_delta_merge(
             // ---------------------------------------------------------------------
             // Phase 4: Execution (IO - Write NEW Staging Files)
             // ---------------------------------------------------------------------
-            let (staging_dir, write_id) = phase_execution(&ctx, new_data_lf, &partition_cols, &cloud_args)?;
+            let (staging_dir, write_id) = phase_execution(&ctx.table_url, new_data_lf, &partition_cols, &cloud_args)?;
 
             let staging_dir_for_commit = staging_dir.clone();
 
@@ -1528,17 +1482,30 @@ pub extern "C" fn pl_io_delta_merge(
                     MergeStrategy::MergeOnRead => {
                         // MoR：Generate DV then build Remove/Add Actions
                         if let Some(t_df) = tombstones_df_opt {
-                            let dv_actions = phase_execution_dv(&ctx, &table, t_df, &candidate_files).await?;
+                            let dv_actions = phase_execution_dv(&ctx.table_url, &table, t_df, &candidate_files).await?;
                             final_actions.extend(dv_actions);
                         }
                     }
                 }
-
+                    
                 if !final_actions.is_empty() {
                     let src_schema = source_lf.collect_schema().unwrap();
-                    phase_commit(
-                        &ctx, &mut table, final_actions, &staging_dir, &src_schema, &target_schema
-                    ).await?;
+                    let mut matched_preds = Vec::new();
+                        let mut not_matched_preds = Vec::new();           
+                        let mut not_matched_by_source_preds = Vec::new(); 
+                        
+                        if ctx.cond_delete.is_some() { matched_preds.push(deltalake::protocol::MergePredicate { predicate: Some("matched_delete_condition".into()), action_type: "DELETE".into() }); }
+                        if ctx.cond_update.is_some() { matched_preds.push(deltalake::protocol::MergePredicate { predicate: Some("custom_update_condition".into()), action_type: "UPDATE".into() }); } 
+                        else { matched_preds.push(deltalake::protocol::MergePredicate { predicate: None, action_type: "UPDATE".into() }); }
+                        if ctx.cond_insert.is_some() { not_matched_preds.push(deltalake::protocol::MergePredicate { predicate: Some("not_matched_insert_condition".into()), action_type: "INSERT".into() }); } 
+                        else { not_matched_preds.push(deltalake::protocol::MergePredicate { predicate: None, action_type: "INSERT".into() }); }
+                        if ctx.cond_src_delete.is_some() { not_matched_by_source_preds.push(deltalake::protocol::MergePredicate { predicate: Some("not_matched_by_source_delete_condition".into()), action_type: "DELETE".into() }); }
+
+                        phase_commit(
+                            &mut table, final_actions, &staging_dir, &src_schema, &target_schema,
+                            &ctx.merge_keys, ctx.can_evolve,
+                            matched_preds, not_matched_preds, not_matched_by_source_preds
+                        ).await?;
                 } else {
                      let object_store = table.object_store();
                      let _ = object_store.delete(&Path::from(staging_dir)).await;
