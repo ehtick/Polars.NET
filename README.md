@@ -34,6 +34,12 @@ And it brings a lot of fun.
     <img alt="Speedup Summary" src="assets/benchmark_summary_light.png">
     </picture>
 
+- Delta Lake Read
+![pic](assets/read_benchmark.png)
+
+- Delta Lake Write
+![pic](assets/write_benchmark.png)
+
 ## Installation
 
 C# Users:

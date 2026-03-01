@@ -3352,15 +3352,27 @@ public class DataFrame : IDisposable,IEnumerable<Series>
         );
     }
     /// <summary>
-    /// Merge a DataFrame into a Delta Lake table with full SQL MERGE semantics.
-    /// Provides fine-grained control over Update, Insert, and Delete behaviors.
-    /// This method is builder mode.
+    /// Starts a fluent builder to merge a DataFrame into a Delta Lake table with strict, order-preserving SQL MERGE semantics.
+    /// <para>
+    /// Unlike traditional merge methods, this builder guarantees that chained actions (Update, Delete, Insert) 
+    /// are evaluated exactly in the order they are defined. If no actions are specified before execution, 
+    /// it intelligently defaults to a standard Upsert (WhenMatchedUpdate + WhenNotMatchedInsert).
+    /// </para>
     /// </summary>
-    /// <param name="path">Uri to the Delta Lake table (local or cloud).</param>
-    /// <param name="mergeKeys">The column names to join on (must exist in both Source and Target).</param>
-    /// <param name="canEvolve">Define whether schema evolution is allowed, default: false</param>
-    /// <param name="cloudOptions">Cloud storage credentials and configuration.</param>
-    /// <returns></returns>
+    /// <param name="path">The URI to the target Delta Lake table (local or cloud).</param>
+    /// <param name="mergeKeys">The column names to join on (must exist in both the Source DataFrame and Target Delta table).</param>
+    /// <param name="canEvolve">If set to true, allows schema evolution (e.g., adding new columns from the Source to the Target). Default is false.</param>
+    /// <param name="cloudOptions">Cloud storage credentials and configuration (e.g., AWS S3, Azure Blob).</param>
+    /// <returns>A <see cref="DeltaMergeBuilder"/> instance used to chain match conditions, culminating in a call to <c>.Execute()</c>.</returns>
+    /// <example>
+    /// <code>
+    /// df.MergeDeltaOrdered("s3://bucket/my_table", new[] { "Id" })
+    ///   .WhenMatchedDelete(Delta.Source("Status") == "Deleted")      // Evaluated 1st
+    ///   .WhenMatchedUpdate(Delta.Source("Stock") > Delta.Target("Stock")) // Evaluated 2nd
+    ///   .WhenNotMatchedInsert()                                      // Evaluated 3rd
+    ///   .Execute();
+    /// </code>
+    /// </example>
     public DeltaMergeBuilder MergeDeltaOrdered(
         string path, 
         string[] mergeKeys, 
